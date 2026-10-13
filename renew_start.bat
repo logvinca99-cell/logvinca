@@ -1,14 +1,18 @@
 @echo off
-chcp 65001 > nul
 cd /d "%~dp0"
 
-where python > nul 2>&1
+set PY=python
+where python > /dev/null 2>&1
+if errorlevel 1 set PY=py
+where %PY% > /dev/null 2>&1
 if errorlevel 1 (
-  echo [!] 파이썬이 설치되어 있지 않습니다.
-  echo     python.org 에서 설치할 때 "Add python.exe to PATH" 를 꼭 체크하세요.
+  echo [!] Python is not installed.
+  echo     Install it from python.org and check "Add python.exe to PATH".
   pause
   exit /b
 )
 
-python renew.py %*
+set PYTHONIOENCODING=utf-8
+chcp 65001 > nul
+%PY% renew.py %*
 pause
