@@ -11,10 +11,18 @@ playwright install chrome   # PC에 크롬이 이미 있으면 생략 가능
 
 ## 실행
 
+`zzim_start.bat`을 더블클릭하면 조작 창이 뜹니다. 크롬보다 항상 위에 떠 있습니다.
+
+- 스토어 주소 칸에 주소를 넣고(여러 개면 한 줄에 하나) **▶ 시작**을 누릅니다.
+- **⏸ 일시정지 / ▶ 계속**: 지금 누르는 상품까지 처리하고 멈춥니다.
+- **■ 종료**: 작업을 끝냅니다. 다시 시작하면 남은 것부터 이어서 합니다.
+- 진행률, 성공·이미 찜·실패·남은 개수, 지금 누르는 상품, 남은 시간이 표시됩니다.
+
+검은 창 모드도 남아 있습니다.
+
 ```bash
-python zzim.py https://smartstore.naver.com/abcstore   # 주소를 인자로
-python zzim.py                                         # 실행 후 주소 입력
-python zzim.py --file stores.txt                       # 여러 스토어 (한 줄에 하나)
+python zzim.py --console https://smartstore.naver.com/abcstore
+python zzim.py --console --file stores.txt
 ```
 
 옵션

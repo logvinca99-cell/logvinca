@@ -6,19 +6,20 @@
 - 화면 좌표순으로 정렬해 한 줄 5개씩 행/열 번호를 매겨 로그에 기록
 
 사용법:
-    python zzim.py https://smartstore.naver.com/abcstore
-    python zzim.py                      # 실행 후 주소 입력
-    python zzim.py --file stores.txt    # 여러 스토어 연속 처리
+    python zzim.py                      # 조작 창(GUI)으로 실행
+    python zzim.py --console https://smartstore.naver.com/abcstore   # 검은 창 모드
+    python zzim.py --console --file stores.txt                       # 여러 스토어 연속 처리
 """
 
 import argparse
 import csv
-import math
 import os
 import random
 import re
 import subprocess
 import sys
+import threading
+import time
 import traceback
 
 try:
@@ -118,7 +119,69 @@ btn => {
 
 
 class StopRun(Exception):
-    """로그인 만료, 찜 개수 초과 등 계속 진행하면 안 되는 상황."""
+    """로그인 만료, 찜 개수 초과, 사용자 종료 등 계속 진행하면 안 되는 상황."""
+
+
+class Controller:
+    """작업 스레드와 화면(GUI 또는 검은 창) 사이의 연결.
+
+    emit(kind, data)로 화면에 알리고, pause/stop 이벤트로 화면의 버튼 입력을 받는다.
+    """
+
+    def __init__(self, emit=None):
+        self.emit = emit or self._print
+        self.paused = threading.Event()
+        self.stopped = threading.Event()
+
+    @staticmethod
+    def _print(kind, data):
+        if kind == "log":
+            print(data[0])
+        elif kind == "status":
+            print(f"[상태] {data}")
+
+    def log(self, text, level="info"):
+        self.emit("log", (text, level))
+
+    def status(self, text):
+        self.emit("status", text)
+
+    def check(self):
+        """클릭 사이마다 호출: 일시정지면 대기, 종료면 중단."""
+        if self.paused.is_set() and not self.stopped.is_set():
+            self.status("일시정지")
+            while self.paused.is_set() and not self.stopped.is_set():
+                time.sleep(0.2)
+            if not self.stopped.is_set():
+                self.status("진행 중")
+        if self.stopped.is_set():
+            raise StopRun("사용자가 종료했습니다.")
+
+    def wait(self, page, ms):
+        """종료 버튼에 바로 반응하도록 잘게 나눠 대기."""
+        end = time.time() + ms / 1000
+        while time.time() < end:
+            if self.stopped.is_set():
+                raise StopRun("사용자가 종료했습니다.")
+            page.wait_for_timeout(min(250, max(1, int((end - time.time()) * 1000))))
+
+
+class Stats:
+    def __init__(self, store, total, prior_done):
+        self.store, self.total = store, total
+        self.done = prior_done          # 누적 완료(이전 실행 포함)
+        self.clicked = self.already = self.failed = 0
+        self.page, self.pos, self.name = 0, "", ""
+        self.started = time.time()
+        self.processed = 0              # 이번 실행에서 처리한 개수(속도 계산용)
+
+    def snapshot(self):
+        elapsed = time.time() - self.started
+        remain = max(0, self.total - self.done)
+        eta = elapsed / self.processed * remain if self.processed else None
+        return dict(store=self.store, total=self.total, done=self.done, clicked=self.clicked,
+                    already=self.already, failed=self.failed, page=self.page, pos=self.pos,
+                    name=self.name, elapsed=elapsed, eta=eta, remain=remain)
 
 
 def normalize_store(raw: str) -> str:
@@ -159,16 +222,17 @@ class Log:
             self.done.add(row["id"])
 
 
-def wait_for_login(context, page, timeout_min=10):
-    """네이버 로그인 쿠키(NID_AUT, NID_SES)가 생길 때까지 기다린다. Enter 입력 불필요."""
-    print("열린 크롬 창에서 네이버 로그인을 해 주세요. 로그인되면 자동으로 시작합니다...")
+def wait_for_login(context, page, ctl, timeout_min=10):
+    """네이버 로그인 쿠키(NID_AUT, NID_SES)가 생길 때까지 기다린다."""
+    ctl.status("로그인 대기")
+    ctl.log("크롬 창에서 네이버 로그인을 해 주세요. 로그인되면 자동으로 시작합니다.", "warn")
     for _ in range(timeout_min * 60):
         names = {c["name"] for c in context.cookies("https://naver.com")}
         if {"NID_AUT", "NID_SES"} <= names:
-            print("로그인 확인!")
-            page.wait_for_timeout(2000)  # 로그인 후 이동하는 페이지가 다 뜰 때까지 대기
+            ctl.log("로그인 확인!", "ok")
+            ctl.wait(page, 2000)  # 로그인 후 이동하는 페이지가 다 뜰 때까지 대기
             return
-        page.wait_for_timeout(1000)
+        ctl.wait(page, 1000)
     raise StopRun(f"{timeout_min}분 안에 로그인이 확인되지 않았습니다.")
 
 
@@ -209,7 +273,7 @@ def read_total(page):
     return int(m.group(1).replace(",", "")) if m else None
 
 
-def scan_cards(page, expected):
+def scan_cards(page, expected, ctl):
     """카드를 스캔하고, 기대 개수보다 적으면 다시 스크롤해서 재스캔."""
     cards = []
     for _ in range(3):
@@ -217,11 +281,11 @@ def scan_cards(page, expected):
         cards = page.evaluate(SCAN_JS)
         if expected is None or len(cards) >= expected:
             break
-        print(f"  카드 {len(cards)}/{expected}개 → 재스캔")
+        ctl.log(f"카드 {len(cards)}/{expected}개 → 재스캔", "warn")
     return sorted(cards, key=lambda c: (c["y"], c["x"]))
 
 
-def choose_sort(page, label):
+def choose_sort(page, label, ctl):
     """'최신 등록순' 같은 정렬 버튼을 눌러 진행 중 순서가 바뀌지 않게 한다."""
     if not label:
         return
@@ -229,9 +293,9 @@ def choose_sort(page, label):
     try:
         btn.click(timeout=3000)
         page.wait_for_timeout(2500)
-        print(f"정렬: {label}")
+        ctl.log(f"정렬: {label}")
     except PlaywrightError:
-        print(f"'{label}' 정렬 버튼을 못 찾아 기본 정렬로 진행합니다.")
+        ctl.log(f"'{label}' 정렬 버튼을 못 찾아 기본 정렬로 진행합니다.", "warn")
 
 
 def go_to_page(page, n):
@@ -269,7 +333,7 @@ def wait_state(btn, page, timeout_ms=4000):
     return state
 
 
-def click_zzim(page, pid, delay, retries=3):
+def click_zzim(page, pid, delay, ctl, retries=3):
     btn = page.locator(f'li[data-pid="{pid}"] button', has_text="찜").first
     btn.scroll_into_view_if_needed()
     if btn.evaluate(STATE_JS) is True:
@@ -283,92 +347,95 @@ def click_zzim(page, pid, delay, retries=3):
         if "nid.naver.com" in page.url:
             raise StopRun("로그인이 풀렸습니다. 다시 로그인 후 실행하세요.")
         if state is True:
-            page.wait_for_timeout(random.randint(*delay))
+            ctl.wait(page, random.randint(*delay))
             return "clicked", toasts
         if state is None:
             return "clicked?", toasts  # 상태 판별 불가 → 로그에서 확인
         # 반영이 안 됨 = 너무 빨라서 네이버가 거절했을 가능성 → 점점 길게 쉬고 재시도
         wait = 4000 * (attempt + 1)
-        print(f"    반영 안 됨{' (' + ' / '.join(toasts) + ')' if toasts else ''} → {wait // 1000}초 쉬고 재시도")
-        page.wait_for_timeout(wait)
+        why = f" ({' / '.join(toasts)})" if toasts else ""
+        ctl.log(f"  반영 안 됨{why} → {wait // 1000}초 쉬고 재시도", "warn")
+        ctl.wait(page, wait)
     return "fail", toasts
 
 
-def run_store(page, store, args, alerts):
+def run_store(page, store, args, alerts, ctl):
     name = store.rsplit("/", 1)[-1]
     log = Log(f"zzim_{name}.csv")
+    ctl.status("스토어 여는 중")
     open_url(page, list_url(store, 1, args.sort))
     total = read_total(page)
     if not total:
-        print(f"[{name}] 상품 목록을 찾지 못했습니다. 주소를 확인하세요.")
+        ctl.log(f"[{name}] 상품 목록을 찾지 못했습니다. 주소를 확인하세요.", "err")
         return
-    choose_sort(page, args.sort_label)
-    print(f"[{name}] 총 {total}개 / 이전 진행 {len(log.done)}개")
+    choose_sort(page, args.sort_label, ctl)
+    st = Stats(name, total, len(log.done))
+    ctl.emit("stats", st.snapshot())
+    ctl.log(f"[{name}] 총 {total}개 / 이전 진행 {len(log.done)}개")
+    ctl.status("진행 중")
 
     pno, seen = 1, set()
     while True:
-        cards = scan_cards(page, min(PAGE_SIZE, total - len(seen)))
+        cards = scan_cards(page, min(PAGE_SIZE, total - len(seen)), ctl)
         new = [c for c in cards if c["id"] not in seen]
-        print(f"[{name}] {pno}페이지: 카드 {len(cards)}개 (새 상품 {len(new)}개)")
+        ctl.log(f"── {pno}페이지: 카드 {len(cards)}개 (새 상품 {len(new)}개)")
         if cards and not new:
             raise StopRun(f"{pno}페이지가 이전 페이지와 같습니다. 페이지 이동이 안 된 것 같습니다.")
         seen.update(c["id"] for c in cards)
+        st.page = pno
 
         rows = [cards[i:i + COLS] for i in range(0, len(cards), COLS)]
         for r, row in enumerate(rows, 1):
             for c, it in enumerate(row, 1):
                 if it["id"] in log.done:
                     continue
+                ctl.check()
+                st.pos, st.name = f"{pno}페이지 {r}행 {c}열", it["name"]
+                ctl.emit("stats", st.snapshot())
                 toasts = []
                 try:
-                    status, toasts = click_zzim(page, it["id"], args.delay)
+                    status, toasts = click_zzim(page, it["id"], args.delay, ctl)
                 except PlaywrightError as e:
                     status = "error"
-                    print(f"  {it['id']} 클릭 실패: {e.message.splitlines()[0]}")
+                    ctl.log(f"  {it['id']} 클릭 오류: {e.message.splitlines()[0]}", "err")
                 for msg in alerts + toasts:
                     if re.search(r"최대|초과|제한", msg):
                         raise StopRun(f"네이버 알림: {msg}")
                 alerts.clear()
                 log.write(page=pno, row=r, col=c, id=it["id"], name=it["name"], status=status)
-                note = f"  [알림: {' / '.join(toasts)}]" if toasts else ""
-                print(f"  {pno}p {r}행 {c}열 {it['id']} {status} {it['name']}{note}")
+
+                st.processed += 1
+                if status in ("clicked", "clicked?"):
+                    st.clicked += 1
+                elif status == "already":
+                    st.already += 1
+                else:
+                    st.failed += 1
+                st.done = len(log.done)
+                ctl.emit("stats", st.snapshot())
+                level = {"clicked": "ok", "already": "info", "clicked?": "warn"}.get(status, "err")
+                label = {"clicked": "성공", "already": "이미 찜", "clicked?": "확인 필요"}.get(status, "실패")
+                ctl.log(f"{pno}p {r}행 {c}열  {label}  {it['name']}", level)
 
         if len(seen) >= total or not go_to_page(page, pno + 1):
             break
         pno += 1
 
     missing = total - len(log.done)
-    print(f"[{name}] 완료: {len(log.done)}/{total}개 처리"
-          + (f" — {missing}개 누락. 다시 실행하면 누락분만 처리합니다." if missing > 0 else ""))
+    ctl.log(f"[{name}] 완료: {len(log.done)}/{total}개"
+            + (f" — {missing}개 남음. 다시 실행하면 남은 것만 처리합니다." if missing > 0 else ""),
+            "ok" if missing <= 0 else "warn")
 
 
-def main():
-    ap = argparse.ArgumentParser(description="스마트스토어 목록 페이지 찜 클릭")
-    ap.add_argument("store", nargs="?", help="스토어 주소 또는 스토어명")
-    ap.add_argument("--file", help="스토어 주소 목록 파일(한 줄에 하나)")
-    ap.add_argument("--sort", default="RECENT",
-                    help="목록 정렬(st 값). 진행 중 순서가 바뀌지 않는 최신순 권장 (기본 RECENT)")
-    ap.add_argument("--sort-label", default="최신 등록순",
-                    help="화면에서 누를 정렬 버튼 글자. 빈 값이면 누르지 않음 (기본 '최신 등록순')")
-    ap.add_argument("--delay", type=int, nargs=2, default=[1500, 2500], metavar=("MIN", "MAX"),
-                    help="찜 성공 후 다음 클릭까지 대기 ms 범위 (기본 1500 2500)")
-    args = ap.parse_args()
-
-    try:
-        if args.file:
-            with open(args.file, encoding="utf-8") as f:
-                stores = [normalize_store(l) for l in f if l.strip()]
-        else:
-            stores = [normalize_store(args.store or input("스토어 주소: "))]
-    except ValueError as e:
-        sys.exit(str(e))
-
+def run_all(stores, args, ctl):
+    """브라우저를 열고 로그인 후 스토어를 차례로 처리. 작업 스레드에서 실행된다."""
+    result = "완료"
     with sync_playwright() as p:
         try:
             browser = p.chromium.launch(channel="chrome", headless=False,
                                         args=["--start-maximized"])  # PC에 설치된 크롬, 전체 화면
         except PlaywrightError:
-            print("크롬을 찾지 못해 브라우저를 내려받습니다...")
+            ctl.log("크롬을 찾지 못해 브라우저를 내려받습니다...", "warn")
             subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
             browser = p.chromium.launch(headless=False, args=["--start-maximized"])
         # new_context()는 쿠키·기록을 남기지 않는 시크릿(off-the-record) 컨텍스트
@@ -385,25 +452,77 @@ def main():
 
         try:
             page.goto(LOGIN_URL)
-            wait_for_login(context, page)
+            wait_for_login(context, page, ctl)
             for store in stores:
-                run_store(page, store, args, alerts)
+                run_store(page, store, args, alerts, ctl)
         except StopRun as e:
-            print(f"중단: {e}")
+            result = "중단"
+            ctl.log(f"중단: {e}", "warn")
         except KeyboardInterrupt:
-            print("사용자 중단. 다시 실행하면 이어서 진행합니다.")
+            result = "중단"
+            ctl.log("사용자 중단. 다시 실행하면 이어서 진행합니다.", "warn")
+        except Exception as e:
+            result = "오류"
+            ctl.log("오류: " + "".join(traceback.format_exception_only(type(e), e)).strip(), "err")
+            ctl.log(traceback.format_exc(), "err")
         finally:
-            browser.close()
+            try:
+                browser.close()
+            except Exception:
+                pass
+    ctl.status(result)
+    ctl.emit("finished", result)
+    return result
+
+
+def parse_args():
+    ap = argparse.ArgumentParser(description="스마트스토어 목록 페이지 찜 클릭")
+    ap.add_argument("store", nargs="?", help="스토어 주소 또는 스토어명")
+    ap.add_argument("--file", help="스토어 주소 목록 파일(한 줄에 하나)")
+    ap.add_argument("--console", action="store_true", help="조작 창 없이 검은 창에서 실행")
+    ap.add_argument("--sort", default="RECENT",
+                    help="목록 주소의 st 값 (기본 RECENT)")
+    ap.add_argument("--sort-label", default="최신 등록순",
+                    help="화면에서 누를 정렬 버튼 글자. 빈 값이면 누르지 않음 (기본 '최신 등록순')")
+    ap.add_argument("--delay", type=int, nargs=2, default=[1500, 2500], metavar=("MIN", "MAX"),
+                    help="찜 성공 후 다음 클릭까지 대기 ms 범위 (기본 1500 2500)")
+    return ap.parse_args()
+
+
+def main_console(args):
+    try:
+        if args.file:
+            with open(args.file, encoding="utf-8") as f:
+                stores = [normalize_store(l) for l in f if l.strip()]
+        else:
+            stores = [normalize_store(args.store or input("스토어 주소: "))]
+    except ValueError as e:
+        sys.exit(str(e))
+    run_all(stores, args, Controller())
+
+
+def main():
+    args = parse_args()
+    if not args.console:
+        try:
+            import zzim_gui
+        except ImportError as e:  # tkinter가 없는 파이썬이면 검은 창 모드로
+            print(f"조작 창을 열 수 없어 검은 창 모드로 실행합니다. ({e})")
+        else:
+            zzim_gui.run(args)
+            return
+    main_console(args)
+    input("\nEnter를 누르면 창이 닫힙니다...")
 
 
 if __name__ == "__main__":
-    # 더블클릭으로 실행해도 창이 바로 닫히지 않게 끝에서 대기
     try:
         main()
     except SystemExit as e:
         if e.code not in (None, 0):
             print(e.code)
+            input("\nEnter를 누르면 창이 닫힙니다...")
     except Exception:
         traceback.print_exc()
         print("\n오류가 났습니다. 위 내용을 캡처해서 보내주세요.")
-    input("\nEnter를 누르면 창이 닫힙니다...")
+        input("\nEnter를 누르면 창이 닫힙니다...")
