@@ -61,10 +61,10 @@ Apple 계정 구독 페이지에서 **Renew → Confirm → (Unable to complete 
 
 ## 준비 (처음 1회)
 
-1. 텔레그램 알림 연결: `renew_start.bat --telegram-setup`
+1. 텔레그램 알림 연결: `renew_telegram.bat` 더블클릭
    - @BotFather에서 `/newbot`으로 봇을 만들고 토큰을 붙여넣기 → 봇에게 아무 메시지 보내기 → Enter
    - `renew_config.json`에 저장되고 시험 메시지가 옵니다.
-2. 버튼 인식 시험: `renew_start.bat --dry-run`
+2. 버튼 인식 시험: `renew_test.bat` 더블클릭
    - Confirm 대신 Cancel을 눌러 결제 없이 버튼을 잘 찾는지 확인합니다. 몇 번 돌아가는 것을 봤으면 Ctrl+C.
 
 ## 실행

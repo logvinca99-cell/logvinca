@@ -322,6 +322,7 @@ def run(args):
         context = browser.new_context(no_viewport=True, locale="en-US")
         page = context.new_page()
         page.goto(START_URL)
+        print("※ 이 창은 InPrivate과 같은 임시 창입니다. 표시만 일반 탭처럼 보이고, 쿠키·로그인·기록은 닫으면 모두 지워집니다.")
         print("브라우저에서 로그인 → 구독 → YouTube Premium Family 카드를 눌러 Renew 버튼이 보이게 해 주세요.")
         print("Renew 버튼이 보이면 자동으로 시작합니다. 멈추려면 이 창에서 Ctrl+C.\n")
         wait_for_renew(page, cfg, None, args)
