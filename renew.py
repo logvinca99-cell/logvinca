@@ -44,6 +44,8 @@ SHOT_DIR = "renew_shots"
 RENEW_RE = re.compile(r"^\s*Renew\b", re.I)
 CONFIRM_TITLE_RE = re.compile(r"Confirm Subscription", re.I)
 FAIL_RE = re.compile(r"Unable to complete", re.I)
+# 보안 잠금: 시도가 너무 많아 Apple이 결제를 막은 상태. 누를수록 손해이므로 멈추고 몇 시간 기다린다
+LOCK_RE = re.compile(r"Purchase Not Completed|Submit a request to Apple Support", re.I)
 # 이 문구가 보이면 잠시 쉬었다가 다시 시도 (1~2시간 뒤 된다는 후기 기준)
 COOLDOWN_RE = re.compile(r"too many|try again later|temporarily|not available at this time", re.I)
 # 이 문구가 보이면 결제 자체 문제 → 멈추고 알림
@@ -260,7 +262,7 @@ def recover(page, cfg, args, reload=True):
 
 
 def cycle(page, args):
-    """한 번 시도. 결과: fail / success / cooldown / fatal / stuck(무한 로딩) / norenew"""
+    """한 번 시도. 결과: fail / success / locked / cooldown / fatal / stuck(무한 로딩) / norenew"""
     btn = renew_btn(page)
     if not btn:
         return "norenew", ""
@@ -281,6 +283,8 @@ def cycle(page, args):
     # 2) 결과 창 판별
     def outcome():
         txt = page_text(page)
+        if LOCK_RE.search(txt):
+            return "locked"
         if FAIL_RE.search(txt):
             return "fail"
         if FATAL_RE.search(txt):
@@ -344,7 +348,14 @@ def run(args):
                 print(f"[{datetime.datetime.now():%H:%M:%S}] {n}회  {res}  {note}  "
                       f"(실패 {fails}, 경과 {elapsed // 3600}시간 {elapsed % 3600 // 60}분)")
 
-                if res in ("stuck", "norenew", "cooldown"):
+                if res in ("stuck", "norenew", "cooldown", "locked"):
+                    if res == "locked":
+                        hrs = args.lock_wait
+                        telegram(cfg, f"🔒 Purchase Not Completed (보안 잠금)이 떴습니다. ({n}번째)\n"
+                                      "창에 있는 'Submit a request' 버튼으로 검토 요청을 직접 보내 주세요.\n"
+                                      f"매크로는 {hrs}시간 쉬었다가 다시 시도합니다. 그사이 직접 누르지 마세요.",
+                                 screenshot(page, "locked"))
+                        page.wait_for_timeout(int(hrs * 3600_000))
                     if res == "cooldown":
                         mins = random.randint(*args.cooldown)
                         telegram(cfg, f"⏳ 제한 메시지가 나와 {mins}분 쉽니다. ({n}번째)", screenshot(page, "cooldown"))
@@ -406,12 +417,14 @@ def parse_args():
                     help="Renew 버튼이 사라졌을 때 다시 열 카드의 글자 (기본 'Expired 12 October')")
     ap.add_argument("--click-delay", type=int, nargs=2, default=[250, 700], metavar=("MIN", "MAX"),
                     help="창이 뜬 뒤 버튼을 누르기까지 대기 ms (기본 250 700)")
-    ap.add_argument("--cycle-delay", type=int, nargs=2, default=[1200, 3500], metavar=("MIN", "MAX"),
-                    help="한 번 시도가 끝나고 다음 Renew까지 대기 ms (기본 1200 3500)")
-    ap.add_argument("--rest-every", type=int, nargs=2, default=[40, 70], metavar=("MIN", "MAX"),
-                    help="이 횟수마다 길게 휴식 (기본 40~70회)")
-    ap.add_argument("--rest-sec", type=int, nargs=2, default=[60, 180], metavar=("MIN", "MAX"),
-                    help="긴 휴식 시간 초 (기본 60~180초)")
+    ap.add_argument("--cycle-delay", type=int, nargs=2, default=[4000, 10000], metavar=("MIN", "MAX"),
+                    help="한 번 시도가 끝나고 다음 Renew까지 대기 ms (기본 4000 10000)")
+    ap.add_argument("--rest-every", type=int, nargs=2, default=[15, 30], metavar=("MIN", "MAX"),
+                    help="이 횟수마다 길게 휴식 (기본 15~30회)")
+    ap.add_argument("--rest-sec", type=int, nargs=2, default=[180, 480], metavar=("MIN", "MAX"),
+                    help="긴 휴식 시간 초 (기본 180~480초)")
+    ap.add_argument("--lock-wait", type=float, default=6,
+                    help="Purchase Not Completed(보안 잠금)가 뜨면 쉴 시간, 시간 단위 (기본 6)")
     ap.add_argument("--cooldown", type=int, nargs=2, default=[60, 90], metavar=("MIN", "MAX"),
                     help="제한 메시지가 나오면 쉴 시간 분 (기본 60~90분)")
     ap.add_argument("--step-timeout", type=int, default=12000,
