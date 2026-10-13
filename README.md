@@ -52,3 +52,43 @@ python zzim.py --console --file stores.txt
 - 찜 버튼은 버튼 안에 "찜" 글자(숨김 텍스트 포함)가 있는지로 찾습니다. 찜 상태는 `aria-pressed` 속성이나 "찜하기 취소" 문구로 판별합니다. `clicked?`가 많이 나오면 F12로 버튼 구조를 확인해 `zzim.py`의 `STATE_JS`를 수정하세요.
 - `--sort` 값(`st=` 파라미터)은 실제 목록 URL에서 확인하세요.
 - 본인 계정 하나로 관심상품을 저장하는 용도로만 사용하세요. 여러 계정으로 찜 수를 부풀리면 네이버 약관 위반입니다.
+
+---
+
+# YouTube Premium 갱신 매크로 (`renew.py`)
+
+Apple 계정 구독 페이지에서 **Renew → Confirm → (Unable to complete purchase) Cancel**을 될 때까지 반복합니다.
+
+## 준비 (처음 1회)
+
+1. 텔레그램 알림 연결: `renew_start.bat --telegram-setup`
+   - @BotFather에서 `/newbot`으로 봇을 만들고 토큰을 붙여넣기 → 봇에게 아무 메시지 보내기 → Enter
+   - `renew_config.json`에 저장되고 시험 메시지가 옵니다.
+2. 버튼 인식 시험: `renew_start.bat --dry-run`
+   - Confirm 대신 Cancel을 눌러 결제 없이 버튼을 잘 찾는지 확인합니다. 몇 번 돌아가는 것을 봤으면 Ctrl+C.
+
+## 실행
+
+`renew_start.bat` 더블클릭 → 엣지 InPrivate 같은 창이 열립니다.
+로그인 → 구독 → **YouTube Premium Family 카드**를 눌러 Renew 버튼이 보이게 하면 자동으로 시작합니다.
+크롬으로 하려면 `renew_start.bat --browser chrome`.
+
+## 멈추는 경우 (모두 텔레그램 알림 + `renew_shots/` 스크린샷)
+
+| 상황 | 동작 |
+|---|---|
+| 성공 문구가 나오거나 실패 창 없이 Renew가 사라짐 | **즉시 멈춤** (이중 결제 방지) |
+| 처음 보는 화면 | 멈추고 기다림. Renew 화면으로 돌려놓으면 다시 시작 |
+| too many / try again later 등 | 60~90분 쉬었다가 다시 시작 |
+| declined 등 결제 문제 | 멈춤 |
+| 로그인 풀림 | 알림 후 기다림. 다시 로그인하고 카드를 열면 이어서 진행 |
+
+시도 기록은 `renew_log.csv`에 남고, 1시간마다 진행 상황을 텔레그램으로 보냅니다.
+
+## 속도 조절 옵션
+
+- `--click-delay 250 700`: 창이 뜬 뒤 버튼 누르기까지(ms)
+- `--cycle-delay 1200 3500`: 한 번 시도 후 다음 Renew까지(ms)
+- `--rest-every 40 70` / `--rest-sec 60 180`: 40~70회마다 1~3분 휴식
+- `--cooldown 60 90`: 제한 메시지가 나오면 쉴 시간(분)
+- `--max-tries 0`: 최대 시도 횟수(0 = 무제한)

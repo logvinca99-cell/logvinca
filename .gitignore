@@ -1,3 +1,6 @@
 __pycache__/
 zzim_*.csv
 stores.txt
+renew_config.json
+renew_log.csv
+renew_shots/
