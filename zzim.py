@@ -17,10 +17,19 @@ import math
 import os
 import random
 import re
+import subprocess
 import sys
+import traceback
 
-from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import sync_playwright
+try:
+    from playwright.sync_api import Error as PlaywrightError
+    from playwright.sync_api import sync_playwright
+except ImportError:
+    # 처음 실행이면 플레이라이트를 자동 설치
+    print("필요한 도구(playwright)를 설치합니다. 1~2분 걸립니다...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "playwright"])
+    from playwright.sync_api import Error as PlaywrightError
+    from playwright.sync_api import sync_playwright
 
 COLS = 5
 PAGE_SIZE = 80
@@ -216,9 +225,11 @@ def main():
 
     with sync_playwright() as p:
         try:
-            browser = p.chromium.launch(channel="chrome", headless=False)
+            browser = p.chromium.launch(channel="chrome", headless=False)  # PC에 설치된 크롬
         except PlaywrightError:
-            browser = p.chromium.launch(headless=False)  # 크롬 미설치 시 크로미움
+            print("크롬을 찾지 못해 브라우저를 내려받습니다...")
+            subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
+            browser = p.chromium.launch(headless=False)
         # new_context()는 쿠키·기록을 남기지 않는 시크릿(off-the-record) 컨텍스트
         context = browser.new_context(viewport={"width": 1680, "height": 1000}, locale="ko-KR")
         page = context.new_page()
@@ -244,4 +255,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # 더블클릭으로 실행해도 창이 바로 닫히지 않게 끝에서 대기
+    try:
+        main()
+    except SystemExit as e:
+        if e.code not in (None, 0):
+            print(e.code)
+    except Exception:
+        traceback.print_exc()
+        print("\n오류가 났습니다. 위 내용을 캡처해서 보내주세요.")
+    input("\nEnter를 누르면 창이 닫힙니다...")
