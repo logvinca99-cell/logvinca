@@ -192,47 +192,75 @@ def wait_for_renew(page, cfg, why, args):
                  screenshot(page, "wait"))
     last_try = 0
     while True:
-        btn = renew_btn(page)
-        # 열린 대화상자가 없을 때만 시작 (결과 창이 떠 있는 채로 다시 누르지 않도록)
-        if btn and not dialog_with(page, FAIL_RE) and \
-                not find(page, lambda f: f.get_by_role("button", name="Confirm", exact=True)):
-            return btn
-        # 로그인은 되어 있는데 카드가 닫혀 있으면 직접 열어 본다(1분에 한 번)
-        if args.card_text and time.time() - last_try > 60:
+        if ready(page):
+            return
+        # 로그인은 되어 있는데 카드가 닫혀 있으면 직접 열어 본다(30초에 한 번)
+        if time.time() - last_try > 30:
             last_try = time.time()
-            card = find(page, lambda f: f.get_by_text(args.card_text))
-            if card:
-                try:
-                    card.click(timeout=3000)
-                except PlaywrightError:
-                    pass
+            open_card(page, args)
         page.wait_for_timeout(1000)
 
 
-def recover(page, cfg, args):
-    """Renew 버튼이 안 보일 때: 열린 창 닫기 → 새로고침 → 그래도 없으면 사람을 기다림."""
-    for fr in page.frames:  # 남아 있는 대화상자 닫기
-        for name in ("Cancel", "Close", "OK", "Done"):
-            loc = fr.get_by_role("button", name=name, exact=True)
-            if visible(loc):
-                try:
-                    loc.first.click(timeout=2000)
-                except PlaywrightError:
-                    pass
-    if renew_btn(page):
-        return
+def ready(page):
+    """Renew 버튼이 보이고, 결과 창이나 Confirm 창이 떠 있지 않음."""
+    return renew_btn(page) and not dialog_with(page, FAIL_RE) and \
+        not find(page, lambda f: f.get_by_role("button", name="Confirm", exact=True))
+
+
+def open_card(page, args):
+    """구독 목록에서 YouTube Premium Family 카드(--card-text 글자)를 눌러 Renew 화면을 연다."""
+    if not args.card_text:
+        return False
+    card = find(page, lambda f: f.get_by_text(args.card_text))
+    if not card:
+        return False
     try:
-        page.goto(START_URL, wait_until="domcontentloaded")
+        card.click(timeout=3000)
+        return True
     except PlaywrightError:
-        pass
-    page.wait_for_timeout(3000)
-    signed_out = "signin" in page.url or LOGIN_RE.search(page_text(page))
-    why = "로그인이 풀린 것 같습니다." if signed_out else "Renew 버튼을 찾지 못했습니다."
-    wait_for_renew(page, cfg, why, args)
+        return False
+
+
+def recover(page, cfg, args, reload=True):
+    """무한 로딩이나 Renew가 안 보일 때: 새로고침 → 카드 다시 열기 → Renew가 보이면 이어서 진행.
+
+    돌려주는 값: "ok"(다시 시작 가능) / "maybe_success"(새로고침 후 만료 카드가 사라짐)
+    """
+    if not reload:
+        for fr in page.frames:  # 남아 있는 결과 창 닫기 (Confirm은 절대 누르지 않음)
+            for name in ("Cancel", "Close", "OK", "Done"):
+                loc = fr.get_by_role("button", name=name, exact=True)
+                if visible(loc):
+                    try:
+                        loc.first.click(timeout=2000)
+                    except PlaywrightError:
+                        pass
+        if wait_for(page, lambda: ready(page), 3000):
+            return "ok"
+    try:
+        page.goto(START_URL, wait_until="domcontentloaded", timeout=30000)
+    except PlaywrightError:
+        pass  # 로딩이 끝나지 않아도 화면에 보이는 것으로 판단
+    end = time.time() + args.reload_wait / 1000
+    while time.time() < end:
+        if ready(page):
+            return "ok"
+        open_card(page, args)
+        page.wait_for_timeout(1500)
+
+    txt = page_text(page)
+    if "signin" in page.url or LOGIN_RE.search(txt):
+        wait_for_renew(page, cfg, "로그인이 풀린 것 같습니다.", args)
+        return "ok"
+    # 구독 목록은 떴는데 만료(Expired) 카드가 사라졌다 = 갱신됐을 가능성
+    if "Subscriptions" in txt and "YouTube" in txt and args.card_text and args.card_text not in txt:
+        return "maybe_success"
+    wait_for_renew(page, cfg, "새로고침 후에도 Renew 버튼을 찾지 못했습니다.", args)
+    return "ok"
 
 
 def cycle(page, args):
-    """한 번 시도. 결과: fail / success / cooldown / fatal / unknown / norenew"""
+    """한 번 시도. 결과: fail / success / cooldown / fatal / stuck(무한 로딩) / norenew"""
     btn = renew_btn(page)
     if not btn:
         return "norenew", ""
@@ -242,7 +270,7 @@ def cycle(page, args):
     confirm = wait_for(page, lambda: find(page, lambda f: f.get_by_role("button", name="Confirm", exact=True)),
                        args.step_timeout)
     if not confirm:
-        return "unknown", "Confirm 창이 뜨지 않음"
+        return "stuck", "Confirm 창이 뜨지 않음"
     jitter(page, *args.click_delay)
     if args.dry_run:
         dlg = dialog_with(page, CONFIRM_TITLE_RE) or page
@@ -265,11 +293,8 @@ def cycle(page, args):
 
     res = wait_for(page, outcome, args.result_timeout, step=150)
     if res is None:
-        # 실패 문구도 성공 문구도 없음: Confirm 창이 닫히고 Renew도 사라졌으면 성공 가능성이 높다
-        still_confirm = find(page, lambda f: f.get_by_role("button", name="Confirm", exact=True))
-        if not still_confirm and not renew_btn(page):
-            return "success", "실패 창 없이 Renew가 사라짐"
-        return "unknown", "결과 창을 판별하지 못함"
+        # 실패도 성공도 안 뜸 = 무한 로딩 → 새로고침 후 상태로 판단
+        return "stuck", "Confirm 후 결과가 뜨지 않음"
     if res != "fail":
         return res, ""
 
@@ -300,6 +325,7 @@ def run(args):
         print("브라우저에서 로그인 → 구독 → YouTube Premium Family 카드를 눌러 Renew 버튼이 보이게 해 주세요.")
         print("Renew 버튼이 보이면 자동으로 시작합니다. 멈추려면 이 창에서 Ctrl+C.\n")
         wait_for_renew(page, cfg, None, args)
+        stuck_row = 0
         telegram(cfg, "▶ 갱신 매크로 시작" + (" (시험 모드)" if args.dry_run else ""))
 
         n = fails = 0
@@ -311,11 +337,28 @@ def run(args):
                 try:
                     res, note = cycle(page, args)
                 except PlaywrightError as e:
-                    res, note = "unknown", e.message.splitlines()[0]
+                    res, note = "stuck", e.message.splitlines()[0]
                 log_row(n, res, note)
                 elapsed = int(time.time() - started)
                 print(f"[{datetime.datetime.now():%H:%M:%S}] {n}회  {res}  {note}  "
                       f"(실패 {fails}, 경과 {elapsed // 3600}시간 {elapsed % 3600 // 60}분)")
+
+                if res in ("stuck", "norenew", "cooldown"):
+                    if res == "cooldown":
+                        mins = random.randint(*args.cooldown)
+                        telegram(cfg, f"⏳ 제한 메시지가 나와 {mins}분 쉽니다. ({n}번째)", screenshot(page, "cooldown"))
+                        page.wait_for_timeout(mins * 60_000)
+                    if res == "stuck":
+                        stuck_row += 1
+                        print("  ↻ 무한 로딩 → 새로고침 후 다시 시작")
+                        if stuck_row % 10 == 0:
+                            telegram(cfg, f"⚠️ 무한 로딩이 {stuck_row}번 연속입니다. 계속 새로고침하며 시도합니다.",
+                                     screenshot(page, "stuck"))
+                    if recover(page, cfg, args, reload=res != "norenew") == "maybe_success":
+                        res, note = "success", "새로고침 후 만료 카드가 사라짐"
+                        log_row(n, res, note)
+                    else:
+                        continue
 
                 if res == "success":
                     shot = screenshot(page, "success")
@@ -328,23 +371,8 @@ def run(args):
                     telegram(cfg, f"⛔ 결제 문제 메시지가 나와 멈췄습니다. ({n}번째)", screenshot(page, "fatal"))
                     input("Enter를 누르면 브라우저가 닫힙니다...")
                     return
-                if res == "unknown":
-                    # 결제가 됐을 수도 있는 상황 → 절대 다시 누르지 않고 사람을 기다림
-                    telegram(cfg, f"❓ 처음 보는 화면이라 멈췄습니다. ({n}번째, {note})\n"
-                                  "확인 후 Renew 버튼이 보이는 화면으로 돌려놓으면 다시 시작합니다.",
-                             screenshot(page, "unknown"))
-                    wait_for_renew(page, cfg, None, args)
-                    continue
-                if res == "cooldown":
-                    mins = random.randint(*args.cooldown)
-                    telegram(cfg, f"⏳ 제한 메시지가 나와 {mins}분 쉽니다. ({n}번째)", screenshot(page, "cooldown"))
-                    page.wait_for_timeout(mins * 60_000)
-                    recover(page, cfg, args)
-                    continue
-                if res == "norenew":
-                    recover(page, cfg, args)
-                    continue
 
+                stuck_row = 0
                 fails += res == "fail"
                 if args.report_min and time.time() - last_report > args.report_min * 60:
                     last_report = time.time()
@@ -385,8 +413,12 @@ def parse_args():
                     help="긴 휴식 시간 초 (기본 60~180초)")
     ap.add_argument("--cooldown", type=int, nargs=2, default=[60, 90], metavar=("MIN", "MAX"),
                     help="제한 메시지가 나오면 쉴 시간 분 (기본 60~90분)")
-    ap.add_argument("--step-timeout", type=int, default=15000, help="창이 뜨기를 기다리는 최대 ms")
-    ap.add_argument("--result-timeout", type=int, default=25000, help="Confirm 후 결과를 기다리는 최대 ms")
+    ap.add_argument("--step-timeout", type=int, default=12000,
+                    help="Renew 후 Confirm 창을 기다리는 최대 ms. 넘으면 무한 로딩으로 보고 새로고침")
+    ap.add_argument("--result-timeout", type=int, default=20000,
+                    help="Confirm 후 결과 창을 기다리는 최대 ms. 넘으면 무한 로딩으로 보고 새로고침")
+    ap.add_argument("--reload-wait", type=int, default=20000,
+                    help="새로고침 후 Renew 버튼이 다시 보이기를 기다리는 최대 ms")
     ap.add_argument("--max-tries", type=int, default=0, help="최대 시도 횟수 (0 = 무제한)")
     ap.add_argument("--report-min", type=int, default=60, help="진행 상황 텔레그램 보고 간격 분 (0 = 끔)")
     return ap.parse_args()

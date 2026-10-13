@@ -78,7 +78,8 @@ Apple 계정 구독 페이지에서 **Renew → Confirm → (Unable to complete 
 | 상황 | 동작 |
 |---|---|
 | 성공 문구가 나오거나 실패 창 없이 Renew가 사라짐 | **즉시 멈춤** (이중 결제 방지) |
-| 처음 보는 화면 | 멈추고 기다림. Renew 화면으로 돌려놓으면 다시 시작 |
+| 무한 로딩 (Confirm 창이 12초, 결과 창이 20초 안에 안 뜸) | 새로고침 → 카드 다시 열기 → 처음부터 반복. 10번 연속이면 알림 |
+| 새로고침했더니 "Expired 12 October" 카드가 사라짐 | 갱신된 것으로 보고 **즉시 멈춤** |
 | too many / try again later 등 | 60~90분 쉬었다가 다시 시작 |
 | declined 등 결제 문제 | 멈춤 |
 | 로그인 풀림 | 알림 후 기다림. 다시 로그인하고 카드를 열면 이어서 진행 |
@@ -91,4 +92,5 @@ Apple 계정 구독 페이지에서 **Renew → Confirm → (Unable to complete 
 - `--cycle-delay 1200 3500`: 한 번 시도 후 다음 Renew까지(ms)
 - `--rest-every 40 70` / `--rest-sec 60 180`: 40~70회마다 1~3분 휴식
 - `--cooldown 60 90`: 제한 메시지가 나오면 쉴 시간(분)
+- `--step-timeout 12000` / `--result-timeout 20000`: 이 시간(ms) 안에 창이 안 뜨면 무한 로딩으로 보고 새로고침
 - `--max-tries 0`: 최대 시도 횟수(0 = 무제한)
