@@ -113,6 +113,37 @@ class Log:
             self.done.add(row["id"])
 
 
+def wait_for_login(context, page, timeout_min=10):
+    """네이버 로그인 쿠키(NID_AUT, NID_SES)가 생길 때까지 기다린다. Enter 입력 불필요."""
+    print("열린 크롬 창에서 네이버 로그인을 해 주세요. 로그인되면 자동으로 시작합니다...")
+    for _ in range(timeout_min * 60):
+        names = {c["name"] for c in context.cookies("https://naver.com")}
+        if {"NID_AUT", "NID_SES"} <= names:
+            print("로그인 확인!")
+            page.wait_for_timeout(2000)  # 로그인 후 이동하는 페이지가 다 뜰 때까지 대기
+            return
+        page.wait_for_timeout(1000)
+    raise StopRun(f"{timeout_min}분 안에 로그인이 확인되지 않았습니다.")
+
+
+def open_url(page, url):
+    """다른 페이지 이동과 겹쳐 끊기면 잠시 뒤 다시 시도."""
+    for attempt in range(3):
+        try:
+            page.goto(url)
+            break
+        except PlaywrightError as e:
+            if "interrupted" not in e.message or attempt == 2:
+                raise
+            page.wait_for_timeout(2000)
+    try:
+        page.wait_for_load_state("networkidle", timeout=15000)
+    except PlaywrightError:
+        pass  # 광고 등 계속 통신하는 요소가 있어도 진행
+    if "nid.naver.com" in page.url:
+        raise StopRun("로그인 페이지로 이동했습니다. 다시 실행해서 로그인해 주세요.")
+
+
 def scroll_to_bottom(page):
     """지연 로딩된 카드가 모두 그려질 때까지 스크롤."""
     prev = -1
@@ -165,8 +196,7 @@ def click_zzim(page, pid, delay):
 def run_store(page, store, args, alerts):
     name = store.rsplit("/", 1)[-1]
     log = Log(f"zzim_{name}.csv")
-    page.goto(list_url(store, 1, args.sort))
-    page.wait_for_load_state("networkidle")
+    open_url(page, list_url(store, 1, args.sort))
     total = read_total(page)
     if not total:
         print(f"[{name}] 상품 목록을 찾지 못했습니다. 주소를 확인하세요.")
@@ -176,8 +206,7 @@ def run_store(page, store, args, alerts):
 
     for pno in range(1, pages + 1):
         if pno > 1:
-            page.goto(list_url(store, pno, args.sort))
-            page.wait_for_load_state("networkidle")
+            open_url(page, list_url(store, pno, args.sort))
         expected = min(PAGE_SIZE, total - PAGE_SIZE * (pno - 1))
         cards = scan_cards(page, expected)
         print(f"[{name}] {pno}/{pages}페이지: 카드 {len(cards)}개")
@@ -240,10 +269,9 @@ def main():
             d.accept()
         page.on("dialog", on_dialog)
 
-        page.goto(LOGIN_URL)
-        input("브라우저에서 네이버 로그인을 마친 뒤 Enter를 누르세요...")
-
         try:
+            page.goto(LOGIN_URL)
+            wait_for_login(context, page)
             for store in stores:
                 run_store(page, store, args, alerts)
         except StopRun as e:
