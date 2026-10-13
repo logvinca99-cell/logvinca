@@ -213,7 +213,8 @@ class App:
             self.nums[k].set(f"{s[k]:,}")
         self.pos_var.set(f"지금: [{s['store']}] {s['pos'] or '-'}")
         self.name_var.set(s["name"])
-        self.time_var.set(f"경과 {fmt_time(s['elapsed'])}   ·   남은 시간 약 {fmt_time(s['eta'])}")
+        pace = f"   ·   간격 {s['pace_ms'] / 1000:.1f}초" if s.get("pace_ms") else ""
+        self.time_var.set(f"경과 {fmt_time(s['elapsed'])}   ·   남은 시간 약 {fmt_time(s['eta'])}{pace}")
 
     def poll(self):
         try:
