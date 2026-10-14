@@ -1,3 +1,6 @@
 __pycache__/
 zzim_*.csv
 stores.txt
+chrome_profile/
+probe_report.txt
+jobs/
