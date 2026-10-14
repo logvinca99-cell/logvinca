@@ -38,7 +38,7 @@ class App:
 
         root.title("스마트스토어 찜 클릭기")
         sw = root.winfo_screenwidth()
-        root.geometry(f"440x700+{sw - 460}+30")  # 화면 오른쪽 위
+        root.geometry(f"440x780+{sw - 460}+20")  # 화면 오른쪽 위
         root.minsize(400, 560)
         root.attributes("-topmost", True)
         root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -119,6 +119,20 @@ class App:
         for k, c in COLORS.items():
             self.logbox.tag_configure(k, foreground=c)
 
+        # ── 텔레그램 알림 (끝나거나 멈추면 메시지)
+        settings = zzim.load_settings()
+        tg = ttk.LabelFrame(root, text="텔레그램 알림 (끝나거나 멈추면 메시지)")
+        tg.pack(fill="x", pady=(8, 0), **pad)
+        tg.columnconfigure(1, weight=1)
+        ttk.Label(tg, text="봇 토큰").grid(row=0, column=0, sticky="w", padx=6, pady=2)
+        ttk.Label(tg, text="채팅 ID").grid(row=1, column=0, sticky="w", padx=6, pady=2)
+        self.tg_token = tk.StringVar(value=settings.get("tg_token", ""))
+        self.tg_chat = tk.StringVar(value=settings.get("tg_chat", ""))
+        ttk.Entry(tg, textvariable=self.tg_token, show="•").grid(row=0, column=1, sticky="ew", padx=6)
+        ttk.Entry(tg, textvariable=self.tg_chat).grid(row=1, column=1, sticky="ew", padx=6)
+        ttk.Button(tg, text="테스트 전송", command=self.test_telegram).grid(
+            row=0, column=2, rowspan=2, padx=6, pady=4, sticky="ns")
+
         # ── 아래쪽
         ff = ttk.Frame(root)
         ff.pack(fill="x", pady=10, **pad)
@@ -141,6 +155,8 @@ class App:
         except ValueError as e:
             messagebox.showerror("주소 오류", str(e), parent=self.root)
             return
+        self.save_telegram()
+        self.args.tg_token, self.args.tg_chat = self.tg_token.get().strip(), self.tg_chat.get().strip()
         self.ctl = zzim.Controller(lambda kind, data: self.q.put((kind, data)))
         self.worker = threading.Thread(target=zzim.run_all, args=(stores, self.args, self.ctl),
                                        daemon=True)
@@ -150,6 +166,20 @@ class App:
         self.btn_pause.configure(state="normal", text="⏸ 일시정지")
         self.btn_stop.configure(state="normal")
         self.set_status("크롬 여는 중")
+
+    def save_telegram(self):
+        st = zzim.load_settings()
+        st.update(tg_token=self.tg_token.get().strip(), tg_chat=self.tg_chat.get().strip())
+        zzim.save_settings(st)
+
+    def test_telegram(self):
+        self.save_telegram()
+        err = zzim.send_telegram(self.tg_token.get().strip(), self.tg_chat.get().strip(),
+                                 "[찜 클릭기] 테스트 메시지입니다. 알림이 잘 연결됐어요.")
+        if err:
+            messagebox.showerror("텔레그램", f"전송 실패:\n{err}", parent=self.root)
+        else:
+            messagebox.showinfo("텔레그램", "전송했습니다. 텔레그램을 확인해 주세요.", parent=self.root)
 
     def toggle_pause(self):
         if not self.ctl:

@@ -13,6 +13,7 @@
 
 import argparse
 import csv
+import json
 import os
 import random
 import re
@@ -21,6 +22,8 @@ import sys
 import threading
 import time
 import traceback
+import urllib.parse
+import urllib.request
 
 try:
     from playwright.sync_api import Error as PlaywrightError
@@ -54,7 +57,7 @@ SCAN_JS = r"""
     card.dataset.pid = m[1];
     const r = card.getBoundingClientRect();
     const name = (card.innerText || '').split('\n').map(s => s.trim())
-      .find(s => s && s !== 'NEW' && !s.includes('찜') && !/^[\d,.%원\s]+$/.test(s)) || '';
+      .find(s => s && s !== 'NEW' && s !== '상품 상세보기' && !s.includes('찜') && !/^[\d,.%원\s]+$/.test(s)) || '';
     out.push({ id: m[1], y: Math.round(r.top + scrollY), x: Math.round(r.left), name: name.slice(0, 40) });
   });
   return out;
@@ -122,6 +125,36 @@ class StopRun(Exception):
     """로그인 만료, 찜 개수 초과, 사용자 종료 등 계속 진행하면 안 되는 상황."""
 
 
+SETTINGS_FILE = "zzim_settings.json"
+
+
+def load_settings():
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_settings(data):
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def send_telegram(token, chat_id, text):
+    """텔레그램 봇으로 메시지 전송. 성공하면 None, 실패하면 오류 문구."""
+    if not token or not chat_id:
+        return "텔레그램 토큰/채팅 ID가 비어 있습니다."
+    data = urllib.parse.urlencode({"chat_id": chat_id, "text": text}).encode()
+    try:
+        with urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage",
+                                    data=data, timeout=10) as r:
+            body = json.load(r)
+        return None if body.get("ok") else str(body)
+    except Exception as e:
+        return str(e)
+
+
 class Controller:
     """작업 스레드와 화면(GUI 또는 검은 창) 사이의 연결.
 
@@ -129,9 +162,15 @@ class Controller:
     """
 
     def __init__(self, emit=None):
-        self.emit = emit or self._print
+        self._emit = emit or self._print
         self.paused = threading.Event()
         self.stopped = threading.Event()
+        self.last_stats = None
+
+    def emit(self, kind, data):
+        if kind == "stats":
+            self.last_stats = data
+        self._emit(kind, data)
 
     @staticmethod
     def _print(kind, data):
@@ -426,6 +465,8 @@ def run_store(page, store, args, alerts, ctl, pacer=None):
                 try:
                     status, toasts = click_zzim(page, it["id"], pacer, ctl)
                 except PlaywrightError as e:
+                    if "has been closed" in e.message:
+                        raise StopRun("크롬 창이 닫혔습니다.")
                     status = "error"
                     ctl.log(f"  {it['id']} 클릭 오류: {e.message.splitlines()[0]}", "err")
                 for msg in alerts + toasts:
@@ -447,6 +488,11 @@ def run_store(page, store, args, alerts, ctl, pacer=None):
                 level = {"clicked": "ok", "already": "info", "clicked?": "warn"}.get(status, "err")
                 label = {"clicked": "성공", "already": "이미 찜", "clicked?": "확인 필요"}.get(status, "실패")
                 ctl.log(f"{pno}p {r}행 {c}열  {label}  {it['name']}", level)
+                if status == "fail":
+                    # 세 번 쉬어 가며 눌러도 안 되면 네이버가 찜을 막은 상태.
+                    # 계속 누르면 계정 보호조치로 이어지므로 바로 멈춘다.
+                    raise StopRun("네이버가 찜을 계속 거절합니다(차단 신호). 계정 보호를 위해 멈췄습니다. "
+                                  "몇 시간 이상 쉰 뒤 다시 실행하세요.")
 
         if len(seen) >= total or not go_to_page(page, pno + 1):
             break
@@ -460,7 +506,7 @@ def run_store(page, store, args, alerts, ctl, pacer=None):
 
 def run_all(stores, args, ctl):
     """브라우저를 열고 로그인 후 스토어를 차례로 처리. 작업 스레드에서 실행된다."""
-    result = "완료"
+    result, reason = "완료", ""
     with sync_playwright() as p:
         try:
             browser = p.chromium.launch(channel="chrome", headless=False,
@@ -488,13 +534,13 @@ def run_all(stores, args, ctl):
             for store in stores:
                 run_store(page, store, args, alerts, ctl, pacer)
         except StopRun as e:
-            result = "중단"
+            result, reason = "중단", str(e)
             ctl.log(f"중단: {e}", "warn")
         except KeyboardInterrupt:
             result = "중단"
             ctl.log("사용자 중단. 다시 실행하면 이어서 진행합니다.", "warn")
         except Exception as e:
-            result = "오류"
+            result, reason = "오류", f"{type(e).__name__}: {e}".splitlines()[0]
             ctl.log("오류: " + "".join(traceback.format_exception_only(type(e), e)).strip(), "err")
             ctl.log(traceback.format_exc(), "err")
         finally:
@@ -503,8 +549,24 @@ def run_all(stores, args, ctl):
             except Exception:
                 pass
     ctl.status(result)
+    notify_end(args, ctl, result, reason)
     ctl.emit("finished", result)
     return result
+
+
+def notify_end(args, ctl, result, reason):
+    token, chat = getattr(args, "tg_token", ""), getattr(args, "tg_chat", "")
+    if not (token and chat):
+        return
+    s = ctl.last_stats or {}
+    lines = [f"[찜 클릭기] {result}"]
+    if reason:
+        lines.append(f"사유: {reason}")
+    if s:
+        lines.append(f"스토어: {s['store']}  진행 {s['done']:,}/{s['total']:,}")
+        lines.append(f"이번 실행: 성공 {s['clicked']:,} · 이미 찜 {s['already']:,} · 실패 {s['failed']:,}")
+    err = send_telegram(token, chat, "\n".join(lines))
+    ctl.log("텔레그램 알림 전송" + (f" 실패: {err}" if err else " 완료"), "warn" if err else "info")
 
 
 def parse_args():
@@ -530,6 +592,8 @@ def main_console(args):
             stores = [normalize_store(args.store or input("스토어 주소: "))]
     except ValueError as e:
         sys.exit(str(e))
+    st = load_settings()
+    args.tg_token, args.tg_chat = st.get("tg_token", ""), st.get("tg_chat", "")
     run_all(stores, args, Controller())
 
 
