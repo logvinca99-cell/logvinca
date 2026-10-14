@@ -1,3 +1,8 @@
 __pycache__/
 zzim_*.csv
 stores.txt
+upload_config.json
+category_cache.json
+upload_result_*.csv
+upload_check/
+*.xlsx

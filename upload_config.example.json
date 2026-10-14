@@ -1,0 +1,19 @@
+{
+  "client_id": "여기에 애플리케이션 ID",
+  "client_secret": "여기에 애플리케이션 시크릿",
+
+  "as_phone": "010-0000-0000",
+  "as_guide": "상세페이지 참조",
+  "importer": "상세페이지 참조",
+  "origin_default": "중국",
+  "origin_codes": {"중국": "0200037"},
+
+  "delivery_company": "CJGLS",
+  "return_fee": 5000,
+  "exchange_fee": 10000,
+
+  "reupload_images": true,
+  "delay_sec": 1.0,
+
+  "extra": {}
+}
