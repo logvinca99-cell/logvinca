@@ -244,6 +244,8 @@ class App:
         self.pos_var.set(f"지금: [{s['store']}] {s['pos'] or '-'}")
         self.name_var.set(s["name"])
         pace = f"   ·   간격 {s['pace_ms'] / 1000:.1f}초" if s.get("pace_ms") else ""
+        if self.args.max_rejects:
+            pace += f"   ·   반영 안 됨 {s.get('rejects', 0)}/{self.args.max_rejects}"
         self.time_var.set(f"경과 {fmt_time(s['elapsed'])}   ·   남은 시간 약 {fmt_time(s['eta'])}{pace}")
 
     def poll(self):

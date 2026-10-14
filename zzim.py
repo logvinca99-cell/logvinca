@@ -214,6 +214,7 @@ class Stats:
         self.started = time.time()
         self.processed = 0              # 이번 실행에서 처리한 개수(속도 계산용)
         self.pace_ms = 0
+        self.rejects = 0
 
     def snapshot(self):
         elapsed = time.time() - self.started
@@ -221,7 +222,8 @@ class Stats:
         eta = elapsed / self.processed * remain if self.processed else None
         return dict(store=self.store, total=self.total, done=self.done, clicked=self.clicked,
                     already=self.already, failed=self.failed, page=self.page, pos=self.pos,
-                    name=self.name, elapsed=elapsed, eta=eta, remain=remain, pace_ms=self.pace_ms)
+                    name=self.name, elapsed=elapsed, eta=eta, remain=remain, pace_ms=self.pace_ms,
+                    rejects=self.rejects)
 
 
 class Pacer:
@@ -231,10 +233,12 @@ class Pacer:
     간격은 floor(최소)~ceiling(최대) 사이에서만 움직인다.
     """
 
-    def __init__(self, floor_ms, ceiling_ms, start_ms=1200):
+    def __init__(self, floor_ms, ceiling_ms, start_ms=1200, max_rejects=3):
         self.floor, self.ceiling = floor_ms, ceiling_ms
         self.ms = min(max(start_ms, floor_ms), ceiling_ms)
         self.streak = 0
+        self.rejects = 0                # 이번 실행에서 '반영 안 됨' 누적 횟수
+        self.max_rejects = max_rejects
 
     def next_wait(self):
         return int(self.ms * random.uniform(0.8, 1.2))  # 사람처럼 매번 조금씩 다르게
@@ -248,6 +252,10 @@ class Pacer:
     def on_reject(self):
         self.ms = min(self.ceiling, int(self.ms * 1.5) + 500)
         self.streak = 0
+        self.rejects += 1
+        if self.max_rejects and self.rejects >= self.max_rejects:
+            raise StopRun(f"'반영 안 됨'이 {self.rejects}번 나와서 멈췄습니다. "
+                          "계정 보호를 위해 몇 시간 이상 쉰 뒤 다시 실행하세요.")
 
 
 def normalize_store(raw: str) -> str:
@@ -419,10 +427,11 @@ def click_zzim(page, pid, pacer, ctl, retries=3):
         if state is None:
             return "clicked?", toasts  # 상태 판별 불가 → 로그에서 확인
         # 반영이 안 됨 = 너무 빨라서 네이버가 거절했을 가능성 → 간격을 늘리고, 점점 길게 쉬고 재시도
-        pacer.on_reject()
-        wait = 4000 * (attempt + 1)
         why = f" ({' / '.join(toasts)})" if toasts else ""
-        ctl.log(f"  반영 안 됨{why} → {wait // 1000}초 쉬고 재시도", "warn")
+        ctl.log(f"  반영 안 됨{why}  [누적 {pacer.rejects + 1}/{pacer.max_rejects or '∞'}]", "warn")
+        pacer.on_reject()  # 누적 한도에 닿으면 여기서 StopRun
+        wait = 4000 * (attempt + 1)
+        ctl.log(f"  → {wait // 1000}초 쉬고 재시도", "warn")
         ctl.wait(page, wait)
     return "fail", toasts
 
@@ -430,7 +439,7 @@ def click_zzim(page, pid, pacer, ctl, retries=3):
 def run_store(page, store, args, alerts, ctl, pacer=None):
     name = store.rsplit("/", 1)[-1]
     log = Log(f"zzim_{name}.csv")
-    pacer = pacer or Pacer(*args.delay)
+    pacer = pacer or Pacer(*args.delay, max_rejects=args.max_rejects)
     ctl.status("스토어 여는 중")
     open_url(page, list_url(store, 1, args.sort))
     total = read_total(page)
@@ -483,7 +492,7 @@ def run_store(page, store, args, alerts, ctl, pacer=None):
                 else:
                     st.failed += 1
                 st.done = len(log.done)
-                st.pace_ms = pacer.ms
+                st.pace_ms, st.rejects = pacer.ms, pacer.rejects
                 ctl.emit("stats", st.snapshot())
                 level = {"clicked": "ok", "already": "info", "clicked?": "warn"}.get(status, "err")
                 label = {"clicked": "성공", "already": "이미 찜", "clicked?": "확인 필요"}.get(status, "실패")
@@ -530,7 +539,7 @@ def run_all(stores, args, ctl):
         try:
             page.goto(LOGIN_URL)
             wait_for_login(context, page, ctl)
-            pacer = Pacer(*args.delay)  # 스토어가 바뀌어도 익힌 속도를 이어서 사용
+            pacer = Pacer(*args.delay, max_rejects=args.max_rejects)  # 스토어가 바뀌어도 익힌 속도를 이어서 사용
             for store in stores:
                 run_store(page, store, args, alerts, ctl, pacer)
         except StopRun as e:
@@ -578,6 +587,8 @@ def parse_args():
                     help="목록 주소의 st 값 (기본 RECENT)")
     ap.add_argument("--sort-label", default="최신 등록순",
                     help="화면에서 누를 정렬 버튼 글자. 빈 값이면 누르지 않음 (기본 '최신 등록순')")
+    ap.add_argument("--max-rejects", type=int, default=3,
+                    help="'반영 안 됨'이 이 횟수만큼 누적되면 멈추고 알림 (0이면 끔, 기본 3)")
     ap.add_argument("--delay", type=int, nargs=2, default=[600, 6000], metavar=("MIN", "MAX"),
                     help="클릭 간격 자동 조절 범위 ms. 1.2초에서 시작해 이 범위 안에서 조절 (기본 600 6000)")
     return ap.parse_args()
