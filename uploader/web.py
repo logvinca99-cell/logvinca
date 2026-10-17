@@ -9,7 +9,7 @@ import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import config, convert, engine, inventory, lexicon, naver, orders
+from . import config, convert, engine, inventory, keywords, lexicon, naver, orders
 from .db import DB
 from .tasks import Tasks
 
@@ -117,9 +117,9 @@ def create_app(db=None):
     @app.post("/api/settings")
     def save_settings():
         v = body()
-        ints = ("recombine_fixed_prefix", "recombine_new_min", "recombine_new_max", "max_word_repeat", "opendict_daily_limit", "kipris_limit", "orders_auto_sync_minutes", "orders_initial_days", "max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
+        ints = ("recombine_fixed_prefix", "recombine_new_min", "recombine_new_max", "max_word_repeat", "opendict_daily_limit", "kipris_limit", "kw_daily_limit", "kw_results", "kw_min_malls", "kw_refresh_days", "kw_max_words", "core_scan_words", "orders_auto_sync_minutes", "orders_initial_days", "max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
                 "name_max_len", "ai_names_per_product", "ai_products_per_call", "ai_workers")
-        floats = ("recombine_replace_ratio", "delay_sec", "price_jitter_pct", "recombine_max_overlap", "image_cache_gb")
+        floats = ("kw_min_share", "recombine_replace_ratio", "delay_sec", "price_jitter_pct", "recombine_max_overlap", "image_cache_gb")
         for k in ints:
             if k in v:
                 v[k] = convert.to_int(v[k], config.DEFAULTS[k])
@@ -261,7 +261,40 @@ def create_app(db=None):
                        if row.get(k) not in (None, "")},
             "detail_html": row.get("상세설명") or "",
         })
+        s["kw"] = _source_kw(sid, row)
         return jsonify(s)
+
+    def _source_kw(sid, row):
+        """원본의 핵심 키워드와 네이버에서 모은 단어 (재조합에 쓰는 것 / 빠진 이유)."""
+        cfg = config.load()
+        lex = lexicon.get(db)
+        src = db.one("SELECT id, name, core_kw, core_manual, kw_at FROM sources WHERE id=?", (sid,))
+        core, used = keywords.words_for(db, [{**src, "data": None, "_row": row}], {**cfg, "use_naver_keywords": True},
+                                        lex)[sid]
+        off = {r["word"] for r in db.q("SELECT word FROM kw_off WHERE core IN ('', ?)", (core,))}
+        text = None
+        words = []
+        for r in db.q("""SELECT k.word, k.malls, k.share, v.pc, v.mobile FROM source_kw k LEFT JOIN kw_volume v ON v.word=k.word
+                WHERE k.source_id=? ORDER BY k.malls DESC""", (sid,)):
+            why = ""
+            if r["word"] not in used:
+                if r["word"] in off:
+                    why = "끈 단어"
+                elif not lex.ok_new_word(r["word"]):
+                    why = "상표 단어" if lex.mark_of(r["word"]) else "금지 단어"
+                elif lexicon.attrs_in(r["word"], lex):
+                    why = "원본에 없는 속성"
+                else:
+                    why = "순위 밖"
+            words.append({**r, "used": r["word"] in used, "why": why,
+                          "volume": (r["pc"] or 0) + (r["mobile"] or 0) if r["pc"] is not None else None})
+        return {"core": core, "manual": bool(src["core_manual"]), "collected_at": src["kw_at"], "words": words}
+
+    @app.post("/api/sources/<int:sid>/core")
+    def source_core(sid):
+        core = (body().get("core") or "").strip()
+        db.x("UPDATE sources SET core_kw=?, core_manual=? WHERE id=?", (core, 1 if core else 0, sid))
+        return jsonify({"ok": True})
 
     @app.post("/api/sources/import")
     def import_sources():
@@ -467,7 +500,7 @@ def create_app(db=None):
     @app.post("/api/lexicon")
     def lexicon_save():
         b = body()
-        lexicon.save_text(db, b.get("groups", ""), b.get("blocked", ""), b.get("opendict"))
+        lexicon.save_text(db, b.get("groups", ""), b.get("blocked", ""), b.get("opendict"), b.get("attrs"))
         return jsonify(lexicon.export_text(db))
 
     @app.post("/api/lexicon/preview")
@@ -476,21 +509,25 @@ def create_app(db=None):
         from . import namegen
         b = body()
         name, category = (b.get("name") or "").strip(), (b.get("category") or "").strip()
-        if b.get("source_id"):
-            s = db.one("SELECT name, category FROM sources WHERE id=?", (int(b["source_id"]),))
-            if s:
-                name, category = s["name"], s["category"]
-        if not name:
-            return fail("상품명을 넣어 주세요.")
         cfg = config.load()
         lex = lexicon.get(db)
+        core, kw = (b.get("core") or "").strip(), []
+        if b.get("source_id"):
+            src = db.one("SELECT id, name, category, core_kw, data FROM sources WHERE id=?", (int(b["source_id"]),))
+            if src:
+                name, category = src["name"], src["category"]
+                core, kw = keywords.words_for(db, [src], cfg, lex)[src["id"]]
+        if not name:
+            return fail("상품명을 넣어 주세요.")
+        core = core or keywords.detect_core(name, None, lex)
         out = namegen.recombine(name, int(b.get("count") or 5), set(), [name], cfg, seed=f"preview:{time.time()}",
-                                lex=lex, category=category)
+                                lex=lex, category=category, core=core, kw_words=kw)
         orig = name.split()
         return jsonify({
-            "original": name, "category": category, "original_len": len(name),
+            "original": name, "category": category, "original_len": len(name), "core": core,
             "original_repeat": lexicon.repeated_word(orig, lex, int(cfg.get("max_word_repeat") or 2)),
             "pool": {"synonyms": list(dict.fromkeys(w for t in orig for w in lex.synonyms(t)))[:30],
+                     "keywords": kw,
                      "category": lexicon.category_words(category) if cfg.get("use_category_words") else []},
             "marks": [{"word": w, "verdict": v} for w, v in lexicon.marks_in(name, lex)],
             "names": [{"name": n, "len": len(n), "new": [w for w in n.split() if w not in orig]} for n in out],
@@ -513,20 +550,25 @@ def create_app(db=None):
         cfg = config.load()
         st = db.one("""SELECT COUNT(*) AS checked, SUM(verdict='registered') AS registered, SUM(verdict='pending') AS pending,
             SUM(verdict='error') AS errors, SUM(allowed) AS allowed FROM trademark_check""")
-        rows = db.q("""SELECT word, verdict, allowed, marks, classes, titles, message, checked_at FROM trademark_check
-            WHERE verdict IN ('registered','pending','error') ORDER BY allowed, verdict DESC, checked_at DESC LIMIT 500""")
+        generic = kipris._generic(db)
+        rows = [r for r in db.q("""SELECT word, verdict, allowed, marks, classes, titles, message, checked_at FROM trademark_check
+            WHERE verdict IN ('registered','pending','error') ORDER BY allowed, verdict DESC, checked_at DESC LIMIT 2000""")
+                if len(r["word"]) >= 3 and r["word"] not in generic][:500]
+        fake = os.environ.get("UPLOADER_FAKE_API") == "1"
         return jsonify({
             "stats": {k: st[k] or 0 for k in ("checked", "registered", "pending", "errors", "allowed")},
-            "todo_lexicon": len(kipris.words_to_check(db, "lexicon", 100000)),
-            "has_key": bool(cfg.get("kipris_key")) or os.environ.get("UPLOADER_FAKE_API") == "1",
-            "rows": [dict(r) for r in rows],
+            "in_dict": db.one("SELECT COUNT(*) AS n FROM word_dict WHERE in_dict=1")["n"],
+            "todo": len(kipris.words_to_check(db, "all", 10 ** 6)),
+            "has_key": bool(cfg.get("kipris_key")) or fake,
+            "has_opendict": bool(cfg.get("opendict_key")) or fake,
+            "rows": rows,
         })
 
     @app.post("/api/trademark/check")
     def trademark_check():
         from . import kipris
         b = body()
-        scope = b.get("scope") if b.get("scope") in ("lexicon", "original", "all") else "lexicon"
+        scope = b.get("scope") if b.get("scope") in ("original", "keywords", "names", "all") else "all"
         cfg = config.load()
         if not cfg.get("kipris_key") and os.environ.get("UPLOADER_FAKE_API") != "1":
             return fail("설정 → 상표 확인에 키프리스(KIPRIS Plus) 키를 먼저 넣어 주세요.")
@@ -543,6 +585,80 @@ def create_app(db=None):
         with db.tx() as c:
             c.execute("UPDATE trademark_check SET allowed=? WHERE word=?", (1 if b.get("allowed") else 0, word))
             lexicon._bump(c)
+        return jsonify({"ok": True})
+
+    # ── 네이버 키워드
+
+    @app.get("/api/keywords")
+    def keywords_list():
+        a = request.args
+        cfg = config.load()
+        lex = lexicon.get(db)
+        page, size = int(a.get("page", 0)), 30
+        q = (a.get("q") or "").strip()
+        where, args = "WHERE kw_at IS NOT NULL", []
+        if q:
+            where += " AND core_kw LIKE ?"
+            args.append(f"%{q}%")
+        total = db.one(f"SELECT COUNT(DISTINCT core_kw) AS n FROM sources {where}", args)["n"]
+        cores = db.q(f"""SELECT core_kw AS core, COUNT(*) AS n FROM sources {where} GROUP BY core_kw
+            ORDER BY n DESC, core_kw LIMIT ? OFFSET ?""", args + [size, page * size])
+        off = {}
+        for r in db.q("SELECT core, word FROM kw_off"):
+            off.setdefault(r["core"], set()).add(r["word"])
+        for c in cores:
+            ws = db.q("""SELECT k.word, COUNT(*) AS n, MAX(k.malls) AS malls, v.pc, v.mobile FROM source_kw k
+                JOIN sources s ON s.id=k.source_id LEFT JOIN kw_volume v ON v.word=k.word
+                WHERE s.core_kw=? GROUP BY k.word ORDER BY n DESC, malls DESC LIMIT 40""", (c["core"],))
+            dead = off.get("", set()) | off.get(c["core"], set())
+            c["words"] = [{"word": w["word"], "n": w["n"], "malls": w["malls"],
+                           "volume": (w["pc"] or 0) + (w["mobile"] or 0) if w["pc"] is not None else None,
+                           "off": w["word"] in dead, "all_off": w["word"] in off.get("", set()),
+                           "attr": bool(lexicon.attrs_in(w["word"], lex)),
+                           "bad": "" if lex.ok_new_word(w["word"]) else ("상표" if lex.mark_of(w["word"]) else "금지")}
+                          for w in ws]
+        st = db.one("""SELECT COUNT(*) AS total, SUM(kw_at IS NOT NULL) AS done, SUM(core_manual) AS manual
+            FROM sources WHERE valid=1""")
+        fake = os.environ.get("UPLOADER_FAKE_API") == "1"
+        return jsonify({
+            "cores": cores, "total": total, "page": page, "size": size,
+            "stats": {"sources": st["total"] or 0, "done": st["done"] or 0, "manual": st["manual"] or 0,
+                      "queries": db.one("SELECT COUNT(*) AS n FROM kw_query")["n"],
+                      "words": db.one("SELECT COUNT(DISTINCT word) AS n FROM source_kw")["n"],
+                      "volumes": db.one("SELECT COUNT(*) AS n FROM kw_volume")["n"]},
+            "has_key": bool(cfg.get("naver_client_id") and cfg.get("naver_client_secret")) or fake,
+            "has_searchad": bool(cfg.get("searchad_api_key") and cfg.get("searchad_secret")
+                                 and cfg.get("searchad_customer_id")) or fake,
+            "enabled": bool(cfg.get("use_naver_keywords", True)),
+        })
+
+    @app.post("/api/keywords/collect")
+    def keywords_collect():
+        b = body()
+        cfg = config.load()
+        ids = None
+        if b.get("filter"):
+            ids = inventory.source_ids(db, {**_filter_from(b["filter"]), "status": b["filter"].get("status") or "valid"})
+            if not ids:
+                return fail("대상 상품이 없습니다.")
+        elif b.get("source_id"):
+            ids = [int(b["source_id"])]
+        try:
+            tid = tasks.start("keywords", "네이버 키워드 모으기", lambda **kw: keywords.collect(db, cfg, ids, **kw))
+        except RuntimeError as e:
+            return fail(str(e))
+        return jsonify({"task": tid})
+
+    @app.post("/api/keywords/off")
+    def keywords_off():
+        b = body()
+        word, core = (b.get("word") or "").strip(), "" if b.get("all") else (b.get("core") or "").strip()
+        if not word:
+            return fail("단어가 없습니다.")
+        if b.get("off"):
+            db.x("INSERT OR IGNORE INTO kw_off(core, word) VALUES(?,?)", (core, word))
+        else:
+            db.x("DELETE FROM kw_off WHERE word=? AND (core=? OR ?)", (word, core, 1 if b.get("all") else 0))
         return jsonify({"ok": True})
 
     @app.get("/api/orders/list")

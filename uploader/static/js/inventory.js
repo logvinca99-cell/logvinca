@@ -129,6 +129,7 @@ App.page("inventory", {
         ${!this.selAll && this.total ? `<button class="link-btn" id="i-all">조건에 맞는 ${num(this.total)}개 모두 고르기</button>` : ""}
       </div>
       <div class="ab-right">
+        <button class="btn" id="i-kw" ${n ? "" : "disabled"} title="고른 원본의 핵심 키워드와 다른 판매자들이 쓴 단어를 네이버에서 모읍니다">네이버 키워드 모으기</button>
         <button class="btn" id="i-names" ${n ? "" : "disabled"}>상품명 후보 만들기…</button>
         <button class="btn primary" id="i-plan" ${n ? "" : "disabled"}>다른 스토어로 복사…</button>
       </div>`;
@@ -184,6 +185,7 @@ App.page("inventory", {
       if (id === "i-clear") { this.clearSel(); this.load(); }
       if (id === "i-all") { this.selAll = true; this.sel.clear(); this.load(); }
       if (id === "i-names") this.namesModal();
+      if (id === "i-kw") App.startTask(App.api("/api/keywords/collect", { json: { filter: this.target() } }));
       if (id === "i-plan") this.planModal();
     });
   },
@@ -310,6 +312,7 @@ App.page("inventory", {
       tabs: [
         { key: "info", label: "정보", render: (b) => self.renderInfo(b, d) },
         { key: "names", label: `상품명 후보 ${d.names.length}`, render: (b) => self.renderNames(b, d) },
+        { key: "kw", label: `키워드${d.kw.core ? " · " + d.kw.core : ""}`, render: (b) => self.renderKw(b, d) },
         { key: "stores", label: `스토어 ${d.listings.filter((l) => l.status !== "deleted").length}/${d.max_copies}`, render: (b) => self.renderListings(b, d) },
         { key: "detail", label: "상세페이지", render: (b) => {
           b.innerHTML = `<iframe class="preview" sandbox referrerpolicy="no-referrer"></iframe>`;
@@ -334,6 +337,34 @@ App.page("inventory", {
           <td class="r">${o.price ? (o.price > 0 ? "+" : "") + num(o.price) + "원" : "-"}</td><td class="r">${num(o.stockQuantity)}</td></tr>`).join("")}
         </table></div>` : "") +
       (d.tags_list.length ? `<div><h3 class="sec-title">엑셀 태그</h3><div class="tags">${d.tags_list.map((t) => `<span>${esc(t)}</span>`).join("")}</div></div>` : "");
+  },
+
+  renderKw(b, d) {
+    const k = d.kw;
+    const used = k.words.filter((w) => w.used);
+    b.innerHTML = `<div class="kw-src">
+      <h3 class="sec-title">핵심 키워드</h3>
+      <div class="core-edit"><input id="core-in" value="${esc(k.core)}" placeholder="예: 책상">
+        <button class="btn" id="core-save">저장</button>
+        ${k.manual ? `<button class="link-btn" id="core-auto">자동으로 되돌리기</button>` : `<span class="muted small">${k.collected_at ? "네이버 검색으로 정함" : "아직 안 모음 → 앞 단어로 대충 정함"}</span>`}</div>
+      <p class="muted small">재조합 때 이 단어의 유의어를 가장 먼저 넣고, 4번째 이후에 있어도 빼지 않습니다.</p>
+      <h3 class="sec-title">다른 판매자들이 쓴 단어 ${k.collected_at ? `<span class="muted small">· ${ymd(k.collected_at)} 모음</span>` : ""}
+        <button class="link-btn" id="kw-one">${k.collected_at ? "다시 모으기" : "지금 모으기"}</button></h3>
+      ${k.words.length ? `<p class="muted small">재조합에 쓰는 단어 ${used.length}개 (초록). 회색은 쓰지 않는 단어 — 이유에 마우스를 올리세요.</p>
+        <div class="kw-chips">${k.words.map((w) => `<span class="kw-chip ${w.used ? "used" : "off"}" title="${esc(w.used ? `판매자 ${w.malls}곳` : w.why)}">${esc(w.word)}${w.volume != null ? `<small>${num(w.volume)}</small>` : ""}${w.used ? "" : `<small>${esc(w.why)}</small>`}</span>`).join("")}</div>`
+        : `<p class="muted small">모은 단어가 없습니다.</p>`}
+    </div>`;
+    const reload = async () => { const nd = await App.api(`/api/sources/${d.id}`); Object.assign(d, nd); this.renderKw(b, d); };
+    const save = async (core) => {
+      try { await App.api(`/api/sources/${d.id}/core`, { json: { core } }); await reload(); App.toast("핵심 키워드를 저장했습니다"); }
+      catch (e) { App.toast(e.message, true); }
+    };
+    $("#core-save", b).addEventListener("click", () => save($("#core-in", b).value.trim()));
+    $("#core-auto", b)?.addEventListener("click", () => save(""));
+    $("#kw-one", b).addEventListener("click", async () => {
+      const t = await App.startTask(App.api("/api/keywords/collect", { json: { source_id: d.id } }));
+      if (t) App.on("task-done", async function h(x) { if (x.kind === "keywords") { App.off("task-done", h); await reload(); } });
+    });
   },
 
   renderNames(b, d) {

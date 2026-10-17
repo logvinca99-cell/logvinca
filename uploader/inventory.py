@@ -12,7 +12,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from . import config, convert, excel, lexicon, namegen, naver
+from . import config, convert, excel, keywords, lexicon, namegen, naver
 from .db import pack, unpack
 
 CHUNK = 500
@@ -262,8 +262,12 @@ def generate_recombine(db, ids, per_source, progress=None, should_stop=None):
         if should_stop and should_stop():
             break
         chunk = ids[i:i + CHUNK]
-        rows = db.q(f"SELECT id, name, tags, category, n_free_names FROM sources WHERE id IN ({','.join('?' * len(chunk))})",
+        rows = db.q(f"SELECT id, name, tags, category, n_free_names, core_kw, data FROM sources WHERE id IN ({','.join('?' * len(chunk))})",
                     chunk)
+        kws = keywords.words_for(db, rows, cfg, cfg["_lex"])
+        for r in rows:
+            r["_kw"] = kws.get(r["id"])
+            r.pop("data", None)
         with db.tx() as c:
             for r in rows:
                 free = c.execute("SELECT COUNT(*) FROM names WHERE source_id=? AND listing_id IS NULL "
@@ -277,7 +281,8 @@ def generate_recombine(db, ids, per_source, progress=None, should_stop=None):
                     sibs = _siblings(c, r["id"])
                     cands = namegen.recombine(r["name"], need - got, set(), sibs, cfg,
                                               seed=f"{r['id']}:{len(sibs)}:{attempt}",
-                                              tag_words=[t for t in r["tags"].split(",") if t], category=r["category"])
+                                              tag_words=[t for t in r["tags"].split(",") if t], category=r["category"],
+                                              **_kw_args(r))
                     if not cands:
                         break
                     added, _ = add_names(c, r["id"], cands, "recombine")
@@ -463,6 +468,11 @@ def _free_names(c, sid, use_orig):
     return rows
 
 
+def _kw_args(s):
+    core, kw = s.get("_kw") or (s.get("core_kw") or "", [])
+    return {"core": core, "kw_words": kw}
+
+
 def _fill_names(c, s, need, cfg, now):
     """이름 후보가 need개보다 적으면 재조합으로 채우고, 안 쓴 후보 목록을 돌려준다."""
     use_orig = bool(cfg.get("use_original_name"))
@@ -472,7 +482,7 @@ def _fill_names(c, s, need, cfg, now):
         cands = namegen.recombine(s["name"], need - len(pool), set(), sibs, cfg,
                                   seed=f"{s['id']}:{len(sibs)}:plan",
                                   tag_words=[t for t in (s.get("tags") or "").split(",") if t],
-                                  category=s.get("category") or "")
+                                  category=s.get("category") or "", **_kw_args(s))
         add_names(c, s["id"], cands, "recombine", now)
         pool = _free_names(c, s["id"], use_orig)
     return pool
@@ -504,7 +514,12 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
             break
         chunk = ids[i:i + CHUNK]
         marks = ",".join("?" * len(chunk))
-        srcs = db.q(f"SELECT id, source_key, name, price, tags, category, valid FROM sources WHERE id IN ({marks})", chunk)
+        srcs = db.q(f"SELECT id, source_key, name, price, tags, category, valid, core_kw, data FROM sources WHERE id IN ({marks})",
+                    chunk)
+        kws = keywords.words_for(db, srcs, cfg, cfg["_lex"])
+        for s in srcs:
+            s["_kw"] = kws.get(s["id"])
+            s.pop("data", None)
         active, dead = {}, {}
         for r in db.q(f"SELECT id, source_id, store_id, status, name_id, round FROM listings WHERE source_id IN ({marks})",
                       chunk):

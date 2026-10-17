@@ -46,7 +46,21 @@ const SETTING_SECTIONS = [
     ["opendict_key", "우리말샘 오픈 API 키", "secret"],
     ["opendict_daily_limit", "한 번에 찾아볼 단어 수", "number"],
   ] },
-  { title: "상표 확인 (키프리스)", note: "KIPRIS Plus(plus.kipris.or.kr) 회원가입 → 상표 정보 검색 API 활용 신청 → 받은 키를 넣습니다. 단어 사전 화면에서 확인을 누르면 상표명과 정확히 같은 등록·출원 상표가 있는 단어를 새 단어에서 빼고, AI·가져온 이름에 있으면 버립니다.", fields: [
+  { title: "네이버 키워드", note: "developers.naver.com → Application → 애플리케이션 등록 → 사용 API '검색' → Client ID·Secret을 넣습니다(무료, 하루 25,000회). 검색량은 선택: searchad.naver.com → 도구 → API 사용 관리에서 받은 고객 ID·액세스 라이선스·비밀키.", fields: [
+    ["use_naver_keywords", "재조합에 네이버에서 모은 단어 쓰기", "check"],
+    ["naver_client_id", "검색 API Client ID", "text"],
+    ["naver_client_secret", "검색 API Client Secret", "secret"],
+    ["core_scan_words", "핵심 키워드를 찾을 앞 단어 수", "number"],
+    ["kw_min_malls", "판매자 몇 곳 이상이 쓴 단어만", "number"],
+    ["kw_min_share", "검색 결과 중 이 비율 이상에 나온 단어만 (0~1)", "number", { step: 0.01 }],
+    ["kw_max_words", "원본 하나에 쓸 단어 수 (많이 쓴 순)", "number"],
+    ["kw_daily_limit", "한 번에 검색할 횟수 (같은 검색어는 저장한 결과 재사용)", "number"],
+    ["kw_refresh_days", "이 일수가 지나면 다시 모음", "number"],
+    ["searchad_customer_id", "검색광고 고객 ID (선택)", "text"],
+    ["searchad_api_key", "검색광고 액세스 라이선스 (선택)", "text"],
+    ["searchad_secret", "검색광고 비밀키 (선택)", "secret"],
+  ] },
+  { title: "상표 확인 (키프리스)", note: "KIPRIS Plus(plus.kipris.or.kr) 회원가입 → 상표 정보 검색 API 활용 신청 → 받은 키를 넣습니다. 사전에 있는 일반명사는 확인하지 않고, '효도의자'처럼 붙여 만든 조어만 확인합니다(우리말샘 키가 있으면 사전 단어인지 먼저 확인).", fields: [
     ["kipris_key", "키프리스 API 키 (ServiceKey)", "secret"],
     ["kipris_block_pending", "출원·공고 중(등록 전) 상표 단어도 쓰지 않음", "check"],
     ["kipris_limit", "한 번에 확인할 단어 수", "number"],

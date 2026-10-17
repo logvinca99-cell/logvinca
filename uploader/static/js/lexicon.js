@@ -26,7 +26,8 @@ App.page("lexicon", {
         <ol class="muted">
           <li>원본의 <b>앞 ${s.recombine_fixed_prefix}단어는 그대로 맨 앞에 고정</b>합니다.</li>
           <li>나머지 단어 중 0~3개를 빼고 순서를 섞습니다.</li>
-          <li>새 단어 ${s.recombine_new_min}~${s.recombine_new_max}개를 <b>핵심 키워드 유의어부터</b> 고릅니다: ① 앞 ${s.recombine_fixed_prefix}단어(핵심 키워드)의 유의어${s.use_category_words ? " → ② 카테고리 맨 아래 단계 이름 → ③ 카테고리와 겹치는 단어의 유의어 → ④" : " → ②"} 나머지 단어의 유의어${s.recombine_use_tags ? " → 엑셀 태그" : ""}.
+          <li>새 단어 ${s.recombine_new_min}~${s.recombine_new_max}개를 우선순위대로 고릅니다: ① <b>핵심 키워드</b>의 유의어 → ② <b>네이버에서 다른 판매자들이 쓴 단어</b>(원본에 없는 속성은 뺌) → ③ 앞 ${s.recombine_fixed_prefix}단어의 유의어${s.use_category_words ? "·카테고리 이름" : ""} → ④ 나머지 단어의 유의어${s.recombine_use_tags ? " → ⑤ 엑셀 태그" : ""}.
+            핵심 키워드는 앞 5단어 중에서 찾고(<a href="#keywords">네이버 키워드</a>), 4번째 이후에 있어도 빼지 않습니다.
             카테고리는 상품명 만들기에 쓰지 않습니다${s.use_category_words ? "(지금은 설정에서 켜져 있음)" : ""}.
             ${Math.round(s.recombine_replace_ratio * 100)}% 확률로 덧붙이지 않고 원래 단어 자리에 바꿔 넣습니다(예: 수리용 → 수선용).
             새 단어는 <b>한글 일반명사만</b>, 아래 <b>금지 단어</b>가 들어간 말과 <b>키프리스에서 상표로 확인된 단어</b>는 넣지 않습니다.</li>
@@ -40,20 +41,21 @@ App.page("lexicon", {
 
       <section class="card pad" id="tm-sec">
         <div class="sec-head"><h2>상표 확인 (키프리스)</h2>
-          <span class="muted small">확인한 단어 ${num(tm.stats.checked)}개 · 등록 상표 ${num(tm.stats.registered)} · 출원 중 ${num(tm.stats.pending)}${tm.stats.allowed ? ` · 허용 ${num(tm.stats.allowed)}` : ""}${tm.stats.errors ? ` · 오류 ${num(tm.stats.errors)}` : ""}</span>
+          <span class="muted small">확인한 조어 ${num(tm.stats.checked)}개 · 걸린 단어 ${num(tm.rows.filter((r) => !r.allowed && r.verdict !== "error").length)}${tm.stats.allowed ? ` · 허용 ${num(tm.stats.allowed)}` : ""} · 사전 단어로 확인돼 건너뛴 것 ${num(tm.in_dict)}</span>
           <div class="head-actions">
-            <button class="btn" id="tm-lex" ${tm.has_key ? "" : "disabled"} title="유의어 묶음의 단어 중 아직 확인 안 한 것">사전 단어 확인 (${num(tm.todo_lexicon)}개 남음)</button>
-            <button class="btn" id="tm-orig" ${tm.has_key ? "" : "disabled"} title="원본 상품명에 2번 이상 나오는 단어 중 아직 확인 안 한 것 (원본 경고에 표시)">원본 상품명 단어 확인</button>
+            <button class="btn" id="tm-all" ${tm.has_key ? "" : "disabled"} title="원본 상품명·네이버 키워드·AI/가져온 이름에 나오는 조어 중 아직 확인 안 한 것">조어 상표 확인 (${num(tm.todo)}개 남음)</button>
           </div></div>
         ${tm.has_key ? "" : `<p class="flag warn">키프리스 키가 없습니다. <a href="#settings">설정 → 상표 확인</a>에 KIPRIS Plus 키를 넣으세요.</p>`}
-        <p class="muted small">단어와 <b>상표명이 정확히 같은</b> 등록·출원 상표가 있으면 그 단어를 새 단어로 넣지 않고, AI·가져온 이름에 들어 있으면 버립니다.
-          원본 상품명에 있으면 원본 상품 화면에 경고로 띄웁니다. '보온병'처럼 흔한 말도 다른 분류에 상표가 있을 수 있으니, 분류를 보고 문제 없으면 <b>허용</b>하세요. 한 번 확인한 단어는 180일 동안 다시 묻지 않습니다.</p>
+        ${tm.has_key && !tm.has_opendict ? `<p class="flag warn">우리말샘 키가 없으면 사전에 있는 일반명사도 키프리스로 확인해 걸릴 수 있습니다. <a href="#settings">설정 → 우리말샘</a>에 키를 넣는 걸 권합니다.</p>` : ""}
+        <p class="muted small">사전에 있는 일반명사(의자·행거·수납함)는 상표가 있어도 그 상품의 보통 명칭이라 <b>확인하지 않습니다</b>.
+          '효도의자'·'왕자행거'처럼 <b>일반명사를 붙여 만든 조어</b>만 확인합니다: 3글자 이상 한글 단어 중 유의어 묶음·속성 단어에 없고 우리말샘 표제어도 아닌 것.
+          상표명이 정확히 같은 등록·출원 상표가 있으면 새 단어로 넣지 않고, AI·가져온 이름에 있으면(띄어 쓴 '효도 의자'도) 버리고, 원본 상품명에 있으면 경고합니다.</p>
         ${tm.rows.length ? `<div class="tm-wrap"><table class="opt-table tm-tbl"><thead><tr><th>단어</th><th>결과</th><th>분류</th><th>상표 예</th><th></th></tr></thead><tbody>
           ${tm.rows.map((r) => `<tr class="${r.allowed ? "muted" : ""}"><td><b>${esc(r.word)}</b></td>
             <td>${r.verdict === "registered" ? `<span class="flag bad">등록</span>` : r.verdict === "pending" ? `<span class="flag warn">출원 중</span>` : `<span class="flag">오류</span>`}</td>
             <td>${esc(r.classes || "")}</td><td class="small">${esc(r.titles || r.message || "")}</td>
             <td>${r.verdict === "error" ? "" : `<button class="btn" data-allow="${esc(r.word)}" data-v="${r.allowed ? 0 : 1}">${r.allowed ? "다시 막기" : "허용"}</button>`}</td></tr>`).join("")}
-        </tbody></table></div>` : `<p class="muted">상표로 걸린 단어가 아직 없습니다.</p>`}
+        </tbody></table></div>` : `<p class="muted">상표로 걸린 조어가 아직 없습니다.</p>`}
       </section>
       <div class="lx-grid">
         <section class="card pad">
@@ -69,6 +71,10 @@ App.page("lexicon", {
             근거 없이 쓰면 안 되는 효능·인증·원산지 표현(치료·무독성·항균·KC인증·국산 등)이 기본으로 들어 있습니다.
             원본 상품명에 이 단어가 있으면 원본 상품 화면에 경고로 표시됩니다(바꾼 뒤 '다시 검사').
             원본 상품명에 이미 있던 단어는 그대로 두므로, 원본 자체에 문제 단어가 있으면 원본 엑셀을 고치세요.</p>
+          <div class="sec-head" style="margin-top:14px"><h2>속성 단어</h2><span class="muted small">${num(d.stats.attrs)}개 · 쉼표로 구분</span></div>
+          <textarea id="lx-attrs" rows="7" spellcheck="false">${esc(d.attrs)}</textarea>
+          <p class="muted small">재질·모양·색·크기처럼 같은 상품을 서로 다른 상품으로 가르는 말입니다. 네이버에서 모은 단어에 이 말이 들어 있으면
+            원본 상품명·옵션·상세설명에 그 말이 있을 때만 씁니다(철제 책상에 '우드'가 들어가지 않게). 끝이 '~식·~형·~색'인 3글자 이상 단어도 속성으로 봅니다.</p>
         </section>
       </div>
     </div>`;
@@ -76,8 +82,7 @@ App.page("lexicon", {
     $("#lx-try").addEventListener("click", () => this.preview());
     $("#lx-name").addEventListener("keydown", (e) => { if (e.key === "Enter") this.preview(); });
     $("#lx-fetch").addEventListener("click", () => App.startTask(App.api("/api/lexicon/fetch", { json: {} })));
-    $("#tm-lex").addEventListener("click", () => App.startTask(App.api("/api/trademark/check", { json: { scope: "lexicon" } })));
-    $("#tm-orig").addEventListener("click", () => App.startTask(App.api("/api/trademark/check", { json: { scope: "original" } })));
+    $("#tm-all").addEventListener("click", () => App.startTask(App.api("/api/trademark/check", { json: { scope: "all" } })));
     $("#tm-sec").addEventListener("click", async (e) => {
       const b = e.target.closest("[data-allow]");
       if (!b) return;
@@ -91,7 +96,7 @@ App.page("lexicon", {
 
   async save() {
     try {
-      const d = await App.api("/api/lexicon", { json: { groups: $("#lx-groups").value, blocked: $("#lx-block").value, opendict: $("#lx-opendict").value } });
+      const d = await App.api("/api/lexicon", { json: { groups: $("#lx-groups").value, blocked: $("#lx-block").value, opendict: $("#lx-opendict").value, attrs: $("#lx-attrs").value } });
       $("#lx-msg").textContent = `저장했습니다 ✓ 묶음 ${num(d.stats.groups)}개 · 금지 단어 ${num(d.stats.blocked)}개`;
     } catch (e) { App.toast(e.message, true); }
   },
@@ -105,12 +110,13 @@ App.page("lexicon", {
       const max = App.state.settings.name_max_len;
       const hl = (n) => n.name.split(" ").map((w) => n.new.includes(w) ? `<mark>${esc(w)}</mark>` : esc(w)).join(" ");
       $("#lx-out").innerHTML = `<div class="lx-orig"><span class="muted">원본</span> ${esc(r.original)} <span class="muted">(${r.original_len}자)</span>
+          <span class="flag">핵심 키워드: ${esc(r.core)}</span>
           ${r.original_repeat ? `<span class="flag warn">원본에 '${esc(r.original_repeat)}' 반복</span>` : ""}
           ${r.marks.map((x) => `<span class="flag bad">상표 단어 '${esc(x.word)}'(${x.verdict})</span>`).join("")}</div>
         <ul class="lx-names">${r.names.map((n) => `<li><span>${hl(n)}</span>
           <span class="lx-len ${n.len >= max - 4 ? "full" : ""}">${n.len}/${max}자</span><span class="muted small">새 단어 ${n.new.length}</span></li>`).join("")
           || `<li class="muted">만들 수 있는 이름이 없습니다. 단어가 적고 넣을 새 단어도 없을 때 그렇습니다 (유의어 묶음을 더하거나 AI를 쓰세요).</li>`}</ul>
-        <p class="muted small">넣을 수 있던 새 단어 — 유의어: ${r.pool.synonyms.map(esc).join(", ") || "없음"}${r.pool.category.length ? ` · 카테고리: ${r.pool.category.map(esc).join(", ")}` : ""}</p>`;
+        <p class="muted small">넣을 수 있던 새 단어 — 유의어: ${r.pool.synonyms.map(esc).join(", ") || "없음"} · 네이버 키워드: ${r.pool.keywords.map(esc).join(", ") || (m ? "아직 안 모음" : "원본 번호(#12)로 넣으면 보임")}${r.pool.category.length ? ` · 카테고리: ${r.pool.category.map(esc).join(", ")}` : ""}</p>`;
     } catch (e) { App.toast(e.message, true); }
   },
 });

@@ -1,5 +1,9 @@
 """키프리스(KIPRIS Plus) 상표 확인.
 
+사전에 있는 일반명사(의자·행거·수납함)는 상표로 등록돼 있어도 그 상품의 보통 명칭이라 막지 않는다.
+위험한 건 일반명사를 붙여 만든 조어('효도의자', '왕자행거')라서, 확인 대상은
+3글자 이상 한글 단어 중 유의어 묶음·속성 단어에 없고, 우리말샘 표제어도 아닌 것(키가 있으면 먼저 사전 확인).
+
 단어 하나를 상표명으로 검색해서, 상표명이 그 단어와 정확히 같은(띄어쓰기·기호 무시) 상표가
     등록  → registered  (새 단어로 쓰지 않음)
     출원·공고 중 → pending (설정 kipris_block_pending이면 쓰지 않음, 기본 켜짐)
@@ -95,40 +99,57 @@ def check_word(word, key, session):
     return parse(r.text, word)
 
 
+def _fake_dict(word):
+    """시연 모드: 조어 예시는 사전에 없고, 나머지는 대부분 있다고 본다."""
+    if word in ("효도의자", "왕자행거"):
+        return False
+    return int(hashlib.md5(word.encode()).hexdigest()[:4], 16) % 4 != 0
+
+
 def _fake(word):
     """시연 모드: 네이버 접속 없이 그럴듯한 결과 (단어마다 항상 같은 결과)."""
     h = int(hashlib.md5(word.encode()).hexdigest()[:6], 16)
-    if h % 13 == 0:
+    if word in ("효도의자", "왕자행거") or h % 13 == 0:
         return "registered", 1, ["21"], [f"{word}(등록, 예시상사)"]
     if h % 17 == 0:
         return "pending", 1, ["16"], [f"{word}(출원, 예시상사)"]
     return "clear", 0, [], []
 
 
-def words_to_check(db, scope, limit):
-    """확인할 단어: 단어 사전의 새 단어 후보 / 원본 상품명에 자주 나오는 단어. 이미 확인했으면 뺀다(180일 지나면 다시)."""
-    import collections
-    fresh = time.time() - RECHECK_DAYS * 86400
-    done = {r["word"] for r in db.q("SELECT word FROM trademark_check WHERE checked_at>? AND verdict!='error'", (fresh,))}
-    words = []
-    if scope in ("lexicon", "all"):
-        for r in db.q("SELECT words FROM word_groups WHERE enabled=1"):
-            words += [w for w in r["words"].split(",") if len(w) >= 2]
-    if scope in ("original", "all"):
-        cnt = collections.Counter()
-        for r in db.q("SELECT name FROM sources WHERE valid=1"):
-            cnt.update(t for t in set(r["name"].split()) if len(t) >= 2)
-        words += [w for w, n in cnt.most_common() if n >= 2]
-    out = []
-    for w in dict.fromkeys(words):
-        if w not in done and re.search(r"[가-힣A-Za-z]", w):
-            out.append(w)
-        if len(out) >= limit:
-            break
+def _generic(db):
+    """일반명사로 보는 단어: 유의어 묶음·속성 단어·우리말샘 표제어. 키프리스에 묻지 않는다."""
+    out = {w for r in db.q("SELECT words FROM word_groups WHERE enabled=1") for w in r["words"].split(",")}
+    out |= {r["word"] for r in db.q("SELECT word FROM word_attr")}
+    out |= {r["word"] for r in db.q("SELECT word FROM word_dict WHERE in_dict=1")}
     return out
 
 
-def check_words(db, cfg, scope="lexicon", progress=None, should_stop=None):
+def candidates(db, scope):
+    """상표인지 확인할 단어 후보: 붙여 쓴 조어처럼 보이는 3글자 이상 한글 단어 (자주 나오는 순).
+    scope: original(원본 상품명) / keywords(네이버에서 모은 단어) / names(AI·가져온 이름) / all"""
+    import collections
+    cnt = collections.Counter()
+    if scope in ("original", "all"):
+        for r in db.q("SELECT name FROM sources WHERE valid=1"):
+            cnt.update(set(r["name"].split()))
+    if scope in ("keywords", "all"):
+        for r in db.q("SELECT word, COUNT(*) AS n FROM source_kw GROUP BY word"):
+            cnt[r["word"]] += r["n"]
+    if scope in ("names", "all"):
+        for r in db.q("SELECT name FROM names WHERE listing_id IS NULL AND origin IN ('ai','import')"):
+            cnt.update(set(r["name"].split()))
+    generic = _generic(db)
+    return [w for w, _ in cnt.most_common() if re.fullmatch(r"[가-힣]{3,10}", w) and w not in generic]
+
+
+def words_to_check(db, scope, limit):
+    """아직 확인 안 한 후보 (180일 지나면 다시)."""
+    fresh = time.time() - RECHECK_DAYS * 86400
+    done = {r["word"] for r in db.q("SELECT word FROM trademark_check WHERE checked_at>? AND verdict!='error'", (fresh,))}
+    return [w for w in candidates(db, scope) if w not in done][:limit]
+
+
+def check_words(db, cfg, scope="all", progress=None, should_stop=None):
     """단어들을 키프리스에서 확인해 trademark_check에 저장한다."""
     import requests
     from . import lexicon
@@ -138,10 +159,28 @@ def check_words(db, cfg, scope="lexicon", progress=None, should_stop=None):
         raise RuntimeError("설정 → 상표 확인에서 키프리스(KIPRIS Plus) 키를 먼저 넣어 주세요 (plus.kipris.or.kr).")
     todo = words_to_check(db, scope, int(cfg.get("kipris_limit") or 500))
     s = requests.Session()
-    stats = {"checked": 0, "registered": 0, "pending": 0, "errors": 0, "examples": []}
+    stats = {"checked": 0, "registered": 0, "pending": 0, "errors": 0, "examples": [], "in_dict": 0}
+    od_key = (cfg.get("opendict_key") or "").strip()
     for i, w in enumerate(todo, 1):
         if should_stop and should_stop():
             break
+        # 먼저 우리말샘: 표제어로 있으면 일반명사 → 키프리스에 묻지 않음 (예: '수납함'). 붙여 만든 조어만 남는다.
+        if od_key or fake:
+            known = db.one("SELECT in_dict FROM word_dict WHERE word=?", (w,))
+            if known is None:
+                try:
+                    in_dict = _fake_dict(w) if fake else lexicon.in_dictionary(w, od_key, s)
+                    db.x("INSERT OR REPLACE INTO word_dict(word, in_dict, checked_at) VALUES(?,?,?)",
+                         (w, int(in_dict), time.time()))
+                except Exception:  # noqa: BLE001 - 사전을 못 보면 키프리스로 확인
+                    in_dict = False
+            else:
+                in_dict = bool(known["in_dict"])
+            if in_dict:
+                stats["in_dict"] += 1
+                if progress:
+                    progress(i, len(todo), f"{w} → 사전 단어")
+                continue
         try:
             verdict, marks, classes, notes = _fake(w) if fake else check_word(w, key, s)
             msg = ""

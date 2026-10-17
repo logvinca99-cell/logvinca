@@ -71,6 +71,21 @@ DEFAULTS = {
     "opendict_daily_limit": 1000,
     # 같은 원본의 다른 이름과 단어가 이만큼 이상 겹치면 너무 비슷하다고 보고 버림 (0~1)
     "recombine_max_overlap": 0.85,
+    # 네이버 키워드: 상품명 앞 5단어로 네이버 쇼핑을 검색해 다른 판매자들이 쓴 단어를 재조합 새 단어로 씀
+    "use_naver_keywords": True,
+    "naver_client_id": "",           # developers.naver.com 애플리케이션 (검색 API)
+    "naver_client_secret": "",
+    "kw_daily_limit": 1000,          # 한 번에 검색할 횟수 (무료 하루 25,000회)
+    "kw_results": 100,               # 검색 결과 몇 개를 볼지 (최대 100)
+    "kw_min_malls": 3,               # 판매자 몇 곳 이상이 쓴 단어만
+    "kw_min_share": 0.08,            # 검색 결과 중 이 비율 이상에 나온 단어만
+    "kw_refresh_days": 60,           # 이만큼 지나면 다시 모음
+    "kw_max_words": 15,              # 원본 하나에 넘길 단어 수
+    "core_scan_words": 5,            # 핵심 키워드를 찾을 앞 단어 수
+    # 검색량(선택): searchad.naver.com → 도구 → API 사용 관리
+    "searchad_customer_id": "",
+    "searchad_api_key": "",
+    "searchad_secret": "",
     # 키프리스(KIPRIS Plus) 상표 확인 키 (plus.kipris.or.kr) — 상표로 등록된 단어는 새 단어로 쓰지 않음
     "kipris_key": "",
     # 출원·공고 중(아직 등록 전)인 상표 단어도 쓰지 않을지
@@ -104,7 +119,7 @@ DEFAULTS = {
     "extra": {},
 }
 
-SECRET_KEYS = ("anthropic_api_key", "opendict_key", "kipris_key")
+SECRET_KEYS = ("anthropic_api_key", "opendict_key", "kipris_key", "naver_client_secret", "searchad_secret")
 _lock = threading.Lock()
 
 

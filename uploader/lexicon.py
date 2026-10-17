@@ -186,6 +186,21 @@ CLAIM_BLOCK = """
 인증,KC인증,특허,국산,국내산,국내생산,국내제작,한국산,공식,공식판매,독점,최초,유일,살충,방역,FDA,
 """
 
+# 속성 단어: 같은 종류 상품을 서로 다른 상품으로 가르는 말(재질·모양·색·크기 등).
+# 네이버에서 모은 키워드 중 이런 말은 원본(상품명·옵션·상세설명)에 그 말이 있을 때만 쓴다.
+# 이 말이 들어간 단어(원목책상 등)도 같은 규칙. 끝이 '~식·~형·~색'인 3글자 이상 단어도 속성으로 본다.
+ATTR_SEED = """
+원목,우드,나무,목재,원목형,철제,스틸,금속,메탈,알루미늄,스테인리스,스텐,유리,강화유리,아크릴,플라스틱,실리콘,고무,
+가죽,인조가죽,패브릭,천,면,린넨,라탄,대나무,세라믹,도자기,대리석,석재,종이,골판지,비닐,
+접이식,폴딩,조립식,높이조절,각도조절,회전,원형,사각,사각형,타원,코너,좌식,입식,스탠딩,이동식,벽걸이,
+무선,유선,충전식,건전지,자동,수동,방수,투명,반투명,
+화이트,블랙,그레이,베이지,브라운,아이보리,네이비,핑크,레드,블루,그린,옐로우,오렌지,퍼플,실버,골드,
+흰색,검정,검은색,회색,갈색,빨강,파랑,초록,노랑,
+대형,중형,소형,미니,특대,초대형,슬림,와이드,롱,숏,
+일인용,이인용,삼인용,아동용,유아용,성인용,남성용,여성용
+"""
+ATTR_ENDINGS = ("식", "형", "색")
+
 SUFFIXES = ("용", "형", "식")
 _HANGUL_WORD = re.compile(r"^[가-힣]{2,10}$")   # 새로 넣을 수 있는 단어
 _GROUP_WORD = re.compile(r"^[가-힣]{1,10}$")    # 묶음 안의 단어 (컵·칼처럼 한 글자도 원본 단어로는 찾게)
@@ -200,6 +215,12 @@ CREATE TABLE IF NOT EXISTS word_groups (
     enabled INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS word_block (word TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS word_attr (word TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS word_dict (           -- 우리말샘 표제어인지 (일반명사 판정, 키프리스 확인 전에)
+    word TEXT PRIMARY KEY,
+    in_dict INTEGER NOT NULL,
+    checked_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS word_lookup (     -- 우리말샘에서 이미 찾아본 단어 (결과가 없어도 남김)
     word TEXT PRIMARY KEY,
     found TEXT NOT NULL DEFAULT '',
@@ -229,6 +250,12 @@ def ensure(db):
                     c.execute("INSERT OR IGNORE INTO word_block(word) VALUES(?)", (w.strip(),))
             c.execute("INSERT OR REPLACE INTO meta(k, v) VALUES('block_v2', '1')")
             _bump(c)
+        if not c.execute("SELECT 1 FROM meta WHERE k='attr_seeded'").fetchone():
+            for w in ATTR_SEED.replace("\n", ",").split(","):
+                if w.strip():
+                    c.execute("INSERT OR IGNORE INTO word_attr(word) VALUES(?)", (w.strip(),))
+            c.execute("INSERT OR REPLACE INTO meta(k, v) VALUES('attr_seeded', '1')")
+            _bump(c)
 
 
 def _bump(c):
@@ -236,8 +263,9 @@ def _bump(c):
 
 
 class Lexicon:
-    def __init__(self, groups, blocked, marks=None):
+    def __init__(self, groups, blocked, marks=None, attrs=()):
         self.blocked = {w.lower() for w in blocked}
+        self.attrs = {w for w in attrs if w}
         # 키프리스에서 상표로 확인된 단어 {단어: 등록/출원} — 단어 전체가 같을 때만 (붙여 쓴 '수납'+'함' 등은 따로 확인)
         self.marks = {w.lower(): v for w, v in (marks or {}).items()}
         self.syn = {}
@@ -286,15 +314,33 @@ def blocked_in(name, lex):
 
 
 def marks_in(name, lex):
-    """상품명에 들어 있는 상표 단어 [(단어, 등록/출원)]."""
+    """상품명에 들어 있는 상표 단어 [(단어, 등록/출원)]. 띄어 쓴 '효도 의자'도 '효도의자'로 본다."""
     if not lex or not lex.marks:
         return []
+    toks = str(name or "").split()
     out = []
-    for t in str(name or "").split():
-        m = lex.mark_of(t)
-        if m:
-            out.append((t, m))
+    for i, t in enumerate(toks):
+        for w in (t, t + toks[i + 1] if i + 1 < len(toks) else None):
+            m = w and lex.mark_of(w)
+            if m:
+                out.append((w if w == t else f"{t} {toks[i + 1]}", m))
     return list(dict.fromkeys(out))
+
+
+def attrs_in(word, lex=None):
+    """단어에 들어 있는 속성 단어들 ([] 이면 속성 아님). '원목책상' → ['원목'], '코너형' → ['코너형']."""
+    w = str(word or "")
+    attrs = lex.attrs if lex else set()
+    found = [a for a in attrs if len(a) >= 2 and a in w] + [a for a in attrs if len(a) == 1 and a == w]
+    if not found and len(w) >= 3 and w.endswith(ATTR_ENDINGS):
+        found = [w]
+    return sorted(set(found), key=len, reverse=True)
+
+
+def is_attr(word, lex=None):
+    """단어 자체가 속성인가 (속성이 들어간 '방수테이프' 같은 상품 이름은 아님)."""
+    w = str(word or "")
+    return w in (lex.attrs if lex else ()) or (len(w) >= 3 and w.endswith(ATTR_ENDINGS))
 
 
 def category_words(category):
@@ -317,11 +363,16 @@ def get(db):
         if _cache["lex"] is None or _cache["version"] != ver:
             groups = [r["words"].split(",") for r in db.q("SELECT words FROM word_groups WHERE enabled=1")]
             blocked = [r["word"] for r in db.q("SELECT word FROM word_block")]
+            attrs = [r["word"] for r in db.q("SELECT word FROM word_attr")]
             from . import config
             verdicts = ("registered", "pending") if config.load().get("kipris_block_pending", True) else ("registered",)
             marks = {r["word"]: r["verdict"] for r in db.q(
-                f"SELECT word, verdict FROM trademark_check WHERE allowed=0 AND verdict IN ({','.join('?' * len(verdicts))})", verdicts)}
-            _cache.update(lex=Lexicon(groups, blocked, marks), version=ver)
+                f"""SELECT word, verdict FROM trademark_check WHERE allowed=0 AND verdict IN ({','.join('?' * len(verdicts))})
+                AND word NOT IN (SELECT word FROM word_dict WHERE in_dict=1)""", verdicts)}
+            # 사전 단어(유의어 묶음·속성 단어·우리말샘 표제어)와 두 글자 이하는 일반명사로 보고 상표로 막지 않는다
+            generic = {w for g in groups for w in g} | set(attrs)
+            marks = {w: v for w, v in marks.items() if len(w) >= 3 and w not in generic}
+            _cache.update(lex=Lexicon(groups, blocked, marks, attrs), version=ver)
         return _cache["lex"]
 
 
@@ -359,13 +410,15 @@ def export_text(db):
         "groups": "\n".join(g["words"] for g in groups if g["source"] != "opendict"),
         "opendict": "\n".join(g["words"] for g in groups if g["source"] == "opendict"),
         "blocked": ", ".join(r["word"] for r in db.q("SELECT word FROM word_block ORDER BY word")),
+        "attrs": ", ".join(r["word"] for r in db.q("SELECT word FROM word_attr ORDER BY word")),
         "stats": db.one("""SELECT (SELECT COUNT(*) FROM word_groups WHERE enabled=1) AS groups,
             (SELECT COUNT(*) FROM word_groups WHERE enabled=1 AND source='opendict') AS opendict,
-            (SELECT COUNT(*) FROM word_block) AS blocked, (SELECT COUNT(*) FROM word_lookup) AS looked"""),
+            (SELECT COUNT(*) FROM word_block) AS blocked, (SELECT COUNT(*) FROM word_lookup) AS looked,
+            (SELECT COUNT(*) FROM word_attr) AS attrs"""),
     }
 
 
-def save_text(db, groups_text, blocked_text, opendict_text=None):
+def save_text(db, groups_text, blocked_text, opendict_text=None, attrs_text=None):
     """화면의 글자를 그대로 사전으로 저장 (기본 묶음도 여기서 고친 대로)."""
     lines = [l for l in (groups_text or "").splitlines() if l.strip()]
     with db.tx() as c:
@@ -384,6 +437,11 @@ def save_text(db, groups_text, blocked_text, opendict_text=None):
         for w in (blocked_text or "").replace("\n", ",").split(","):
             if w.strip():
                 c.execute("INSERT OR IGNORE INTO word_block(word) VALUES(?)", (w.strip(),))
+        if attrs_text is not None:
+            c.execute("DELETE FROM word_attr")
+            for w in attrs_text.replace("\n", ",").split(","):
+                if w.strip():
+                    c.execute("INSERT OR IGNORE INTO word_attr(word) VALUES(?)", (w.strip(),))
         _bump(c)
 
 
@@ -439,6 +497,28 @@ def lookup_opendict(word, key, session):
         if _HANGUL_WORD.match(w) and w != word:
             clean.append(w)
     return list(dict.fromkeys(clean))[:8]
+
+
+def in_dictionary(word, key, session):
+    """우리말샘에 이 단어가 표제어로 있는가 (붙여 쓴 조어 '효도의자'는 보통 없음)."""
+    r = session.get(f"{OPENDICT}/search", params={
+        "key": key, "q": word, "req_type": "json", "part": "word", "method": "exact", "advanced": "y", "num": 10},
+        timeout=15)
+    r.raise_for_status()
+    data = r.json()
+    words = []
+
+    def walk(o):
+        if isinstance(o, dict):
+            if isinstance(o.get("word"), str):
+                words.append(o["word"])
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    walk(data)
+    return any(re.sub(r"[\-\^\s·]", "", w) == word for w in words)
 
 
 def fetch_opendict(db, cfg, progress=None, should_stop=None):
