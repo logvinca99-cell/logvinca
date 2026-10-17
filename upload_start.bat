@@ -10,11 +10,11 @@ if errorlevel 1 (
   exit /b
 )
 
-python -c "import openpyxl, requests, bcrypt" > nul 2>&1
+python -c "import flask, openpyxl, requests, bcrypt" > nul 2>&1
 if errorlevel 1 (
   echo 필요한 프로그램을 설치합니다...
-  python -m pip install openpyxl requests bcrypt
+  python -m pip install flask openpyxl requests bcrypt
 )
 
-python smartstore_upload.py %*
+python -m uploader %*
 if errorlevel 1 pause
