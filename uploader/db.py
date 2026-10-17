@@ -73,6 +73,11 @@ CREATE TABLE IF NOT EXISTS sources (
     core_kw TEXT NOT NULL DEFAULT '',        -- 핵심 키워드 (네이버 검색으로 찾거나 직접 정함)
     core_manual INTEGER NOT NULL DEFAULT 0,  -- 직접 정했으면 1 (다시 모아도 안 바꿈)
     kw_at REAL,                              -- 네이버 키워드를 모은 때
+    review TEXT NOT NULL DEFAULT 'wait',     -- 눈검수: wait(대기) / pass(통과) / reject(제외). pass만 등록됨
+    reviewed_at REAL,
+    review_sig TEXT NOT NULL DEFAULT '',     -- 검수할 때의 상품명+카테고리+썸네일 서명 (바뀌면 다시 wait)
+    ai_flag TEXT NOT NULL DEFAULT '',        -- (나중에) 이미지 AI 의견
+    ai_reason TEXT NOT NULL DEFAULT '',
     import_id INTEGER,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL
@@ -223,9 +228,10 @@ class DB:
         self._migrate_columns()
         self.c.executescript(SCHEMA)
         self._migrate_data()
-        from . import bait, keywords, kipris, lexicon
+        from . import bait, keywords, kipris, lexicon, review
         lexicon.ensure(self)
         bait.ensure(self)
+        review.ensure(self)
         kipris.ensure(self)
         keywords.ensure(self)
         # 프로그램이 등록 도중 꺼졌으면 남은 상태를 되돌린다.
@@ -238,7 +244,10 @@ class DB:
     # 예전 버전의 db에 새 열을 더한다 (SCHEMA의 CREATE는 이미 있는 표를 바꾸지 않으므로).
     NEW_COLUMNS = {
         "sources": [("seller_code", "TEXT NOT NULL DEFAULT ''"), ("core_kw", "TEXT NOT NULL DEFAULT ''"),
-                    ("core_manual", "INTEGER NOT NULL DEFAULT 0"), ("kw_at", "REAL")],
+                    ("core_manual", "INTEGER NOT NULL DEFAULT 0"), ("kw_at", "REAL"),
+                    ("review", "TEXT NOT NULL DEFAULT 'wait'"), ("reviewed_at", "REAL"),
+                    ("review_sig", "TEXT NOT NULL DEFAULT ''"), ("ai_flag", "TEXT NOT NULL DEFAULT ''"),
+                    ("ai_reason", "TEXT NOT NULL DEFAULT ''")],
         "stores": [("code", "TEXT NOT NULL DEFAULT ''"), ("orders_synced_to", "REAL"),
                    ("mall_name", "TEXT NOT NULL DEFAULT ''"), ("wm_text", "TEXT NOT NULL DEFAULT ''")],
         "listings": [("sold_count", "INTEGER NOT NULL DEFAULT 0"), ("last_sold_at", "REAL"),

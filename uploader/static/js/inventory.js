@@ -33,6 +33,7 @@ App.page("inventory", {
           <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
             <input id="i-q" placeholder="상품명·판매자코드·카테고리"></div>
           <select id="i-missing" class="sel"><option value="">스토어 조건 없음</option></select>
+          <select id="i-review" class="sel"><option value="">검수 전체</option><option value="wait">검수 대기</option><option value="pass">검수 통과</option><option value="reject">검수 제외</option></select>
         </div>
         <div class="muted small" id="i-info"></div>
       </div>
@@ -91,6 +92,8 @@ App.page("inventory", {
       slots = `<div class="slots">${cells.join("")}</div>`;
     }
     const flags = [
+      p.review === "reject" ? `<span class="flag bad" title="눈검수에서 제외 · 등록되지 않음">검수 제외</span>`
+        : p.review !== "pass" ? `<span class="flag rv-flag-wait" title="눈검수 전 · 통과해야 등록됨">검수 대기</span>` : "",
       p.warnings.length ? `<span class="flag warn" title="${esc(p.warnings.join("\n"))}">경고 ${p.warnings.length}</span>` : "",
       p.has_video ? `<span class="flag video">동영상</span>` : "",
     ].join("");
@@ -156,6 +159,8 @@ App.page("inventory", {
       timer = setTimeout(() => { this.f.q = e.target.value.trim(); this.page = 0; this.clearSel(); this.load(); }, 300);
     });
     $("#i-missing").addEventListener("change", (e) => { this.f.store_missing = e.target.value; this.page = 0; this.clearSel(); this.load(); });
+    $("#i-review").value = this.f.review || "";
+    $("#i-review").addEventListener("change", (e) => { this.f.review = e.target.value; this.page = 0; this.clearSel(); this.load(); });
     $("#i-check-all").addEventListener("change", (e) => {
       this.selAll = false;
       this.rows.forEach((p) => (e.target.checked ? this.sel.add(p.id) : this.sel.delete(p.id)));
@@ -324,6 +329,9 @@ App.page("inventory", {
 
   renderInfo(b, d) {
     const notes = [];
+    const RV = { wait: "검수 대기 — 눈검수를 통과해야 등록됩니다", pass: "검수 통과", reject: "검수 제외 — 등록되지 않습니다" };
+    notes.push(`<div class="notice ${d.review === "reject" ? "err" : d.review === "pass" ? "ok" : "warn"} lock-box"><div><b>${RV[d.review] || RV.wait}</b>${d.reviewed_at ? ` <span class="muted small">· ${ymd(d.reviewed_at)}</span>` : ""}</div>
+      <div><button class="btn" data-rv="pass" ${d.review === "pass" ? "disabled" : ""}>통과로</button> <button class="btn" data-rv="reject" ${d.review === "reject" ? "disabled" : ""}>제외로</button></div></div>`);
     if (d.errors.length) notes.push(`<div class="notice err"><b>고쳐야 등록할 수 있어요</b><ul>${d.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>`);
     if (d.warnings.length) notes.push(`<div class="notice warn"><b>확인해 보세요</b><ul>${d.warnings.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>`);
     const kv = [["카테고리", esc(d.category)], ...Object.entries(d.fields).map(([k, v]) => [esc(k), esc(v)]),
@@ -337,6 +345,14 @@ App.page("inventory", {
           <td class="r">${o.price ? (o.price > 0 ? "+" : "") + num(o.price) + "원" : "-"}</td><td class="r">${num(o.stockQuantity)}</td></tr>`).join("")}
         </table></div>` : "") +
       (d.tags_list.length ? `<div><h3 class="sec-title">엑셀 태그</h3><div class="tags">${d.tags_list.map((t) => `<span>${esc(t)}</span>`).join("")}</div></div>` : "");
+    $$("[data-rv]", b).forEach((btn) => btn.addEventListener("click", async () => {
+      const rej = btn.dataset.rv === "reject";
+      if (rej && !confirm("이 원본을 제외로 바꿀까요? 이미 판매 중인 복사본은 눈검수 화면의 '제외된 판매 중 상품 내리기'로 내릴 수 있습니다.")) return;
+      try {
+        await App.api("/api/review/set", { json: { ids: [d.id], rejected: rej ? [d.id] : [] } });
+        const nd = await App.api(`/api/sources/${d.id}`); Object.assign(d, nd); this.renderInfo(b, d); this.load();
+      } catch (e) { App.toast(e.message, true); }
+    }));
   },
 
   renderKw(b, d) {

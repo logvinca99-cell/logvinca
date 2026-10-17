@@ -281,6 +281,12 @@ class Runner:
         on_wait = lambda m: self._stage(lid, label, m)  # noqa: E731
         notes = []
         try:
+            if op in ("create", "refresh"):
+                # 눈검수 통과 전이면 올리지 않는다 (계획 뒤에 제외됐거나 다시 불러와 바뀐 경우도). 최신화는 지우기 전에 막음.
+                rv = self.db.one("SELECT review FROM sources WHERE id=?", (t["source_id"],))
+                if not rv or rv["review"] != "pass":
+                    what = "검수에서 제외됨" if rv and rv["review"] == "reject" else "검수 통과 전"
+                    raise naver.ApiError(f"{what} · 눈검수에서 통과한 원본만 올립니다")
             if op in ("refresh", "delete") and t["origin_no"]:
                 # 판매된 상품은 지우지 않는다 (예약 뒤에 팔렸을 수 있으니 실행 직전에 다시 확인).
                 if not store.get("_sales_ok", True):
