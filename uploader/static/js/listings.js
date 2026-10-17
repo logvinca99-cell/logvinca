@@ -23,7 +23,7 @@ App.page("listings", {
         <div class="head-actions">
           <a class="btn ghost" id="l-export">결과 CSV</a>
           <label class="btn" title="아바닛 등 주문 수집 웹에서 내려받은 주문 파일"><input type="file" id="l-sales-file" accept=".xlsx,.xlsm,.csv" hidden>판매 이력 파일 가져오기</label>
-          <button class="btn" id="l-sync" title="스토어마다 네이버 주문(결제)을 가져와 판매된 복사본을 표시">네이버 주문 가져오기</button>
+          <a class="btn" href="#orders" title="판매자센터 주문을 가져오고 기간·스토어별로 보기">판매 현황</a>
         </div></header>
       <div class="card run" id="l-run"></div>
       <div class="toolbar"><div class="filters">
@@ -260,7 +260,7 @@ App.page("listings", {
 
   bind() {
     $("#l-sales-file").addEventListener("change", (e) => { if (e.target.files[0]) App.upload("/api/orders/import", e.target.files[0]); e.target.value = ""; });
-    $("#l-sync").addEventListener("click", () => App.startTask(App.api("/api/orders/sync", { json: this.f.store_id ? { store_ids: [+this.f.store_id] } : {} })));
+
     $("#l-tiles").addEventListener("click", (e) => {
       const t = e.target.closest("[data-filter]");
       if (t) { this.f.status = t.dataset.filter; this.page = 0; this.clearSel(); this.load(); }

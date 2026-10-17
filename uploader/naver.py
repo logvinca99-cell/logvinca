@@ -291,12 +291,15 @@ class Client:
 
     # ── 주문 (판매 이력)
 
-    def paid_product_order_ids(self, since_ts, until_ts, on_progress=None):
-        """since~until 사이에 결제된 상품주문번호들. 네이버는 한 번에 24시간까지만 조회된다."""
+    def changed_product_order_ids(self, since_ts, until_ts, change_type=None, on_progress=None):
+        """since~until 사이에 상태가 바뀐(결제·발송·취소·반품·구매확정 등) 상품주문번호들.
+        change_type을 주면 그 변경만 (예: PAYED). 네이버는 한 번에 24시간까지만 조회된다."""
         ids, t = [], since_ts
         while t < until_ts:
             end = min(t + 86400 - 1, until_ts)
-            params = {"lastChangedFrom": kst_iso(t), "lastChangedTo": kst_iso(end), "lastChangedType": "PAYED"}
+            params = {"lastChangedFrom": kst_iso(t), "lastChangedTo": kst_iso(end)}
+            if change_type:
+                params["lastChangedType"] = change_type
             while True:
                 r = self.request("GET", "/v1/pay-order/seller/product-orders/last-changed-statuses", params=params)
                 if r.status_code != 200:

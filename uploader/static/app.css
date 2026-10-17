@@ -371,3 +371,11 @@ tr.copy-row:hover td { background: var(--accent-soft); }
 .copy-arrow { color: var(--muted); text-align: right; font-size: 16px; }
 .copy-name { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
 .flag.sold { background: var(--warn-soft); color: var(--warn); }
+
+/* ── 판매 현황 */
+.sync-info { padding: 12px 16px; display: flex; flex-direction: column; gap: 2px; font-size: 13.5px; }
+.order-grid { display: grid; grid-template-columns: 1fr 300px; gap: 14px; align-items: start; }
+.w-date { width: 110px; } .w-small2 { width: 100px; } .w-copy { width: 150px; }
+.thin-usage { height: 5px; margin-top: 4px; }
+input[type=date].sel { padding: 0 8px; }
+@media (max-width: 1100px) { .order-grid { grid-template-columns: 1fr; } }

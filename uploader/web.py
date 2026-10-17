@@ -4,6 +4,7 @@ import csv
 import io
 import os
 import tempfile
+import threading
 import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory
@@ -113,7 +114,7 @@ def create_app(db=None):
     @app.post("/api/settings")
     def save_settings():
         v = body()
-        ints = ("max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
+        ints = ("orders_auto_sync_minutes", "orders_initial_days", "max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
                 "name_max_len", "ai_names_per_product", "ai_products_per_call", "ai_workers")
         floats = ("delay_sec", "price_jitter_pct", "recombine_max_overlap", "image_cache_gb")
         for k in ints:
@@ -420,10 +421,13 @@ def create_app(db=None):
             pairs.append((s, naver.make_client(s)))
         if not pairs:
             return fail("주문을 가져올 스토어가 없습니다 (API 키가 있는 사용 중 스토어).")
-        days = body().get("days")
+        days = body().get("days") or config.load().get("orders_initial_days")
+        since = _date_ts(body().get("from"))
+        until = _date_ts(body().get("to"), end=True)
+        title = f"주문 가져오기 · 스토어 {len(pairs)}곳" + (f" · {body().get('from')}~{body().get('to') or '오늘'}" if since else "")
         try:
-            tid = tasks.start("orders", f"주문 가져오기 · 스토어 {len(pairs)}곳",
-                              lambda **kw: orders.sync_stores(db, pairs, days=days, **kw))
+            tid = tasks.start("orders", title,
+                              lambda **kw: orders.sync_stores(db, pairs, days=days, since=since, until=until, **kw))
         except RuntimeError as e:
             return fail(str(e))
         return jsonify({"task": tid})
@@ -431,6 +435,25 @@ def create_app(db=None):
     @app.post("/api/orders/import")
     def orders_import():
         return file_task("orders", "판매 이력 파일 가져오기", orders.import_sales_file)
+
+    @app.get("/api/orders/list")
+    def order_rows():
+        a = request.args
+        f = {k: a.get(k) for k in ("store_id", "matched", "status", "q", "source_id") if a.get(k)}
+        if a.get("from"):
+            f["from_ts"] = _date_ts(a.get("from"))
+        if a.get("to"):
+            f["to_ts"] = _date_ts(a.get("to"), end=True)
+        page, size = int(a.get("page", 0)), min(int(a.get("size", 100)), 500)
+        res = orders.query_orders(db, f, page, size)
+        res["auto"] = auto
+        res["stores"] = [{"id": s["id"], "name": s["name"], "code": s["code"], "synced_to": s["orders_synced_to"],
+                          "has_keys": s["has_keys"]} for s in db.stores()]
+        return jsonify(res)
+
+    @app.post("/api/orders/rematch")
+    def order_rematch():
+        return jsonify({"matched": orders.rematch(db)})
 
     @app.get("/api/orders")
     def order_list():
@@ -508,4 +531,49 @@ def create_app(db=None):
     def runs():
         return jsonify(db.q("SELECT * FROM runs ORDER BY id DESC LIMIT 200"))
 
+    # ── 주문 자동 가져오기: 프로그램이 켜져 있는 동안 정해진 간격마다
+
+    auto = {"minutes": 0, "last_at": None, "next_at": None, "last_result": ""}
+
+    def auto_sync_loop():
+        while True:
+            try:
+                cfg = config.load()
+                minutes = int(cfg.get("orders_auto_sync_minutes") or 0)
+                auto["minutes"] = minutes
+                now = time.time()
+                if minutes <= 0:
+                    auto["next_at"] = None
+                else:
+                    if auto["next_at"] is None:
+                        auto["next_at"] = now + 120  # 켜고 2분 뒤 첫 실행
+                    if now >= auto["next_at"]:
+                        auto["next_at"] = now + minutes * 60
+                        pairs = [(s, naver.make_client(s)) for s in db.stores(with_secret=True)
+                                 if s["enabled"] and (s["has_keys"] or os.environ.get("UPLOADER_FAKE_API") == "1")]
+                        if pairs:
+                            tasks.start("orders", f"주문 자동 가져오기 · 스토어 {len(pairs)}곳",
+                                        lambda **kw: orders.sync_stores(db, pairs, days=cfg.get("orders_initial_days"), **kw))
+                            auto["last_at"] = now
+            except RuntimeError:
+                pass  # 이미 주문 가져오기가 돌고 있음 → 다음 차례에
+            except Exception as e:  # noqa: BLE001
+                auto["last_result"] = str(e)
+            time.sleep(30)
+
+    if not app.config.get("TESTING"):
+        threading.Thread(target=auto_sync_loop, daemon=True).start()
+
     return app
+
+
+def _date_ts(v, end=False):
+    """'2026-10-01' → 그날 0시(한국 시간) 타임스탬프. end면 다음날 0시."""
+    if not v:
+        return None
+    import datetime
+    kst = datetime.timezone(datetime.timedelta(hours=9))
+    d = datetime.datetime.strptime(str(v)[:10], "%Y-%m-%d").replace(tzinfo=kst)
+    if end:
+        d += datetime.timedelta(days=1)
+    return d.timestamp()

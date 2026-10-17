@@ -18,6 +18,13 @@ from . import excel, naver
 
 INITIAL_DAYS = 30
 
+# 네이버 상품주문 상태 → 화면 글자
+STATUS_KO = {
+    "PAYMENT_WAITING": "입금 대기", "PAYED": "결제 완료", "DELIVERING": "배송 중", "DELIVERED": "배송 완료",
+    "PURCHASE_DECIDED": "구매 확정", "EXCHANGED": "교환", "CANCELED": "취소", "RETURNED": "반품",
+    "CANCELED_BY_NOPAYMENT": "미입금 취소", "file": "파일",
+}
+
 
 def _match(c, o, store_id=None):
     st = "AND l.store_id=?" if store_id else ""
@@ -64,8 +71,11 @@ def save_orders(db, orders, source, store_id=None):
                              int(o.get("quantity") or 1), o.get("status", ""), o.get("ordered_at"), source, now))
             if cur.rowcount:
                 new += 1
-            elif lid:
-                c.execute("UPDATE orders SET listing_id=? WHERE order_key=? AND listing_id IS NULL", (lid, o["order_key"]))
+            else:
+                # 이미 있던 주문: 상태(취소·반품·구매확정 등)를 최신으로, 못 맞췄던 복사본은 이번에 맞춤
+                c.execute("""UPDATE orders SET status=COALESCE(NULLIF(?,''), status),
+                    ordered_at=COALESCE(ordered_at, ?), listing_id=COALESCE(listing_id, ?) WHERE order_key=?""",
+                          (o.get("status", ""), o.get("ordered_at"), lid, o["order_key"]))
             if lid:
                 matched += 1
                 touched.add(lid)
@@ -107,29 +117,39 @@ def rematch(db):
 
 # ───────────────────────── 네이버 주문 가져오기
 
-def sync_store(db, store, client, days=None):
-    """스토어 하나의 결제된 주문을 마지막으로 가져온 때부터 지금까지 가져온다."""
+def sync_store(db, store, client, days=None, since=None, until=None):
+    """스토어 하나의 주문(상태가 바뀐 것 모두)을 가져온다.
+
+    기간을 안 주면: 마지막으로 가져온 때부터 지금까지 (처음이면 days일 전부터) → 이어 받기 표시를 옮긴다.
+    기간을 주면(since~until): 그 기간만 다시 가져온다 (지난 주문 채우기). 이어 받기 표시는 그대로.
+    """
     now = time.time()
-    since = store.get("orders_synced_to") or (now - (days or INITIAL_DAYS) * 86400)
+    incremental = since is None
+    if incremental:
+        # 경계에서 빠지는 주문이 없도록 10분 겹쳐서 가져온다 (같은 주문은 한 번만 저장됨)
+        last = store.get("orders_synced_to")
+        since = (last - 600) if last else now - (days or INITIAL_DAYS) * 86400
+    until = min(until or now, now)
     if os.environ.get("UPLOADER_FAKE_API") == "1":
         orders = _fake_orders(db, store)
     else:
-        ids = client.paid_product_order_ids(since, now)
+        ids = client.changed_product_order_ids(since, until)
         orders = client.product_order_details(ids) if ids else []
     for o in orders:
         o["store_id"] = store["id"]
     new, matched = save_orders(db, orders, "naver", store["id"])
-    db.x("UPDATE stores SET orders_synced_to=? WHERE id=?", (now, store["id"]))
+    if incremental:
+        db.x("UPDATE stores SET orders_synced_to=? WHERE id=?", (until, store["id"]))
     return {"orders": len(orders), "new": new, "matched": matched}
 
 
-def sync_stores(db, stores_with_clients, progress=None, should_stop=None, days=None):
+def sync_stores(db, stores_with_clients, progress=None, should_stop=None, days=None, since=None, until=None):
     total = {"stores": 0, "orders": 0, "new": 0, "matched": 0, "errors": []}
     for i, (store, client) in enumerate(stores_with_clients, 1):
         if should_stop and should_stop():
             break
         try:
-            r = sync_store(db, store, client, days)
+            r = sync_store(db, store, client, days, since, until)
             for k in ("orders", "new", "matched"):
                 total[k] += r[k]
         except Exception as e:  # noqa: BLE001 - 스토어 하나 실패는 기록하고 계속
@@ -150,6 +170,56 @@ def _fake_orders(db, store):
                     "channel_no": r["channel_no"], "product_name": r["name"], "quantity": rnd.randint(1, 3),
                     "status": "PAYED", "ordered_at": time.time() - rnd.randint(0, 20) * 86400})
     return out
+
+
+# ───────────────────────── 판매 현황 (화면)
+
+def order_where(f):
+    w, a = [], []
+    if f.get("store_id"):
+        w.append("o.store_id=?")
+        a.append(int(f["store_id"]))
+    if f.get("from_ts"):
+        w.append("COALESCE(o.ordered_at, o.created_at)>=?")
+        a.append(float(f["from_ts"]))
+    if f.get("to_ts"):
+        w.append("COALESCE(o.ordered_at, o.created_at)<?")
+        a.append(float(f["to_ts"]))
+    if f.get("matched") == "1":
+        w.append("o.listing_id IS NOT NULL")
+    elif f.get("matched") == "0":
+        w.append("o.listing_id IS NULL")
+    if f.get("status"):
+        w.append("o.status=?")
+        a.append(f["status"])
+    if f.get("source_id"):
+        w.append("l.source_id=?")
+        a.append(int(f["source_id"]))
+    q = (f.get("q") or "").strip()
+    if q:
+        w.append("(o.product_name LIKE ? OR o.order_key LIKE ? OR o.seller_code LIKE ? OR o.channel_no=?)")
+        a += [f"%{q}%"] * 3 + [q]
+    return (" WHERE " + " AND ".join(w)) if w else "", a
+
+
+def query_orders(db, f, page=0, size=100):
+    where, args = order_where(f)
+    base = "FROM orders o LEFT JOIN listings l ON l.id=o.listing_id LEFT JOIN stores t ON t.id=o.store_id"
+    summary = db.one(f"""SELECT COUNT(*) AS orders, COALESCE(SUM(o.quantity),0) AS quantity,
+        SUM(o.listing_id IS NOT NULL) AS matched, SUM(o.listing_id IS NULL) AS unmatched,
+        COUNT(DISTINCT o.listing_id) AS copies, COUNT(DISTINCT l.source_id) AS sources,
+        SUM(o.status IN ('CANCELED','RETURNED','CANCELED_BY_NOPAYMENT')) AS canceled
+        {base}{where}""", args)
+    rows = db.q(f"""SELECT o.*, l.name AS listing_name, l.source_id, l.price, l.status AS listing_status,
+        t.name AS store_name, COALESCE(NULLIF(t.code,''), 'S'||printf('%02d', t.id)) AS store_code
+        {base}{where} ORDER BY COALESCE(o.ordered_at, o.created_at) DESC LIMIT ? OFFSET ?""",
+                (*args, size, page * size))
+    for r in rows:
+        r["status_ko"] = STATUS_KO.get(r["status"], r["status"])
+    by_store = db.q(f"""SELECT t.id, t.name, COALESCE(NULLIF(t.code,''), 'S'||printf('%02d', t.id)) AS code,
+        COUNT(*) AS orders, COALESCE(SUM(o.quantity),0) AS quantity
+        {base}{where} GROUP BY t.id ORDER BY orders DESC""", args)
+    return {"rows": rows, "total": summary["orders"], "summary": summary, "by_store": by_store}
 
 
 # ───────────────────────── 주문 파일 가져오기 (아바닛 등)

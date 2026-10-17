@@ -30,6 +30,12 @@ DEFAULTS = {
     # 새로고침(지우고 다시 올리기)·다시 올리기 때 상품명을 새 후보로 바꿀지 (끄면 같은 이름)
     "refresh_new_name": False,
 
+    # ── 주문(판매 이력): 판매자센터 주문을 커머스API로 가져온다
+    # 프로그램이 켜져 있는 동안 이 간격(분)마다 모든 스토어 주문을 가져옴 (0이면 끔)
+    "orders_auto_sync_minutes": 60,
+    # 처음 가져올 때 며칠 전부터
+    "orders_initial_days": 30,
+
     # ── 가격: 스토어마다 원본가에서 ±price_jitter_pct% 안에서 정하고 price_round 단위로 맞춤.
     #    같은 상품·같은 스토어는 언제 계획해도 같은 가격이 나온다.
     "price_jitter_pct": 3.0,

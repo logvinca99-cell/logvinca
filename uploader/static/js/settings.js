@@ -18,6 +18,10 @@ const SETTING_SECTIONS = [
     ["seller_code_format", "판매자 관리코드 형식", "text", { hint: "{store}=스토어 코드, {source:07d}=원본 번호, {round}=회차" }],
     ["refresh_new_name", "새로고침·다시 올리기 때 상품명을 새 후보로 바꿈 (끄면 같은 이름 그대로)", "check"],
   ] },
+  { title: "주문 (판매 이력)", note: "판매자센터의 주문을 커머스API로 가져옵니다. 판매 이력이 있는 복사본은 새로고침·내리기에서 빠집니다.", fields: [
+    ["orders_auto_sync_minutes", "자동 가져오기 간격 (분, 0이면 끔 · 프로그램이 켜져 있을 때만)", "number"],
+    ["orders_initial_days", "처음 가져올 때 며칠 전부터", "number"],
+  ] },
   { title: "스토어별 가격", note: "같은 상품도 스토어마다 원본가에서 조금씩 다르게 정합니다. 같은 상품·같은 스토어는 언제 계획해도 같은 가격입니다.", fields: [
     ["price_jitter_pct", "조정 범위 (± %)", "number", { step: 0.5 }],
     ["price_round", "단위 (원)", "number", { step: 10 }],
