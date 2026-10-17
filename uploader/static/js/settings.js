@@ -37,7 +37,7 @@ const SETTING_SECTIONS = [
     ["recombine_new_min", "재조합: 새로 넣을 단어 최소 개수 (단어 사전의 유의어·카테고리 단어)", "number"],
     ["recombine_new_max", "재조합: 새로 넣을 단어 최대 개수", "number"],
     ["recombine_fill", "재조합: 남는 칸을 최대 글자 수까지 채움 (노출에 유리)", "check"],
-    ["use_category_words", "재조합: 카테고리 이름의 단어를 새 단어로 씀", "check"],
+    ["use_category_words", "재조합: 카테고리 이름의 단어를 새 단어로 씀 (카테고리를 따로 정할 거면 끄세요)", "check"],
     ["max_word_repeat", "한 상품명 안에서 같은 단어 허용 횟수 (다른 단어 안에 든 것도 셈, 넘으면 버림)", "number"],
     ["recombine_use_tags", "재조합에 엑셀 상품태그 단어도 섞기 (태그가 상품과 맞을 때만 켜세요)", "check"],
     ["recombine_max_overlap", "재조합: 같은 원본의 다른 이름과 단어가 이 비율 이상 겹치면 버림 (0~1)", "number", { step: 0.05 }],
@@ -45,6 +45,11 @@ const SETTING_SECTIONS = [
   { title: "우리말샘 (단어 사전 유의어)", note: "국립국어원 우리말샘 오픈 API 키(무료, opendict.korean.go.kr 에서 신청)를 넣으면 단어 사전에서 유의어를 받을 수 있습니다. 한 번 찾아본 단어는 다시 묻지 않습니다.", fields: [
     ["opendict_key", "우리말샘 오픈 API 키", "secret"],
     ["opendict_daily_limit", "한 번에 찾아볼 단어 수", "number"],
+  ] },
+  { title: "상표 확인 (키프리스)", note: "KIPRIS Plus(plus.kipris.or.kr) 회원가입 → 상표 정보 검색 API 활용 신청 → 받은 키를 넣습니다. 단어 사전 화면에서 확인을 누르면 상표명과 정확히 같은 등록·출원 상표가 있는 단어를 새 단어에서 빼고, AI·가져온 이름에 있으면 버립니다.", fields: [
+    ["kipris_key", "키프리스 API 키 (ServiceKey)", "secret"],
+    ["kipris_block_pending", "출원·공고 중(등록 전) 상표 단어도 쓰지 않음", "check"],
+    ["kipris_limit", "한 번에 확인할 단어 수", "number"],
   ] },
   { title: "AI 상품명 (Claude API)", note: "console.anthropic.com에서 API 키를 만들어 넣습니다. 사용한 만큼 요금이 나옵니다.", fields: [
     ["anthropic_api_key", "Anthropic API 키", "secret"],

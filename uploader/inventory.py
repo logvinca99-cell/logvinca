@@ -121,6 +121,10 @@ def _name_warnings(name, lex):
     bad = lexicon.blocked_in(name, lex)
     if bad:
         out.append(f"원본 상품명에 금지 단어가 있습니다: {', '.join(bad[:5])} (상표·효능·인증·원산지 표현인지 확인하세요)")
+    tm = lexicon.marks_in(name, lex)
+    if tm:
+        out.append("원본 상품명에 상표로 등록·출원된 단어가 있습니다: " + ", ".join(f"{w}({v})" for w, v in tm[:5])
+                   + " (일반 명칭으로 쓴 것인지 확인하세요)")
     rep = lexicon.repeated_word(namegen.tokens(name), lex, 2)
     if rep:
         out.append(f"원본 상품명에 '{rep}'가 3번 이상 나옵니다")

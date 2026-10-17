@@ -175,6 +175,8 @@ const App = {
           : `상품명 만들기 끝: 새 이름 ${num(r.added)}개` + (r.short ? ` · 단어가 적어 다 못 채운 상품 ${num(r.short)}개` : "")
             + (r.rejected ? ` · 반복·금지 단어로 버림 ${num(r.rejected)}개` : "")
             + (r.failed ? ` · 실패 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : ""),
+        kipris: () => `상표 확인 끝: ${num(r.checked)}개 단어 · 등록 상표 ${num(r.registered)}개 · 출원 중 ${num(r.pending)}개`
+          + (r.examples?.length ? ` (예: ${r.examples.join(", ")})` : "") + (r.errors ? ` · 오류 ${r.errors}` : ""),
         lexicon: () => `우리말샘: ${num(r.looked)}개 단어를 찾아 ${num(r.found)}개에 유의어가 있었습니다` + (r.errors ? ` · 오류 ${r.errors}` : ""),
         plan: () => `복사 계획 끝: 새로 ${num(r.created)}건${r.revived ? ` · 다시 살림 ${num(r.revived)}건` : ""}` + (r.no_name ? ` · 이름 부족 ${num(r.no_name)}` : "")
           + (r.capacity ? ` · 자리 부족 ${num(r.capacity)}` : "") + (r.exists ? ` · 이미 있음 ${num(r.exists)}` : ""),

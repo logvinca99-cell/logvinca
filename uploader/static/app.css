@@ -404,3 +404,13 @@ td.num .flag { display: inline-block; margin: 1px 0; }
 .lx-grid textarea { width: 100%; font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: var(--panel); line-height: 1.6; }
 @media (max-width: 1000px) { .lx-grid { grid-template-columns: 1fr; } }
 .sec-head h2 { white-space: nowrap; }
+
+/* 상표 확인 (단어 사전) */
+#tm-sec { margin-bottom: 16px; }
+#tm-sec .sec-head { flex-wrap: wrap; }
+#tm-sec .head-actions { margin-left: auto; display: flex; gap: 8px; }
+.flag.bad { background: var(--err-soft); color: var(--err); }
+.tm-wrap { max-height: 360px; overflow: auto; }
+.tm-tbl { width: 100%; }
+.tm-tbl td { vertical-align: middle; }
+.tm-tbl tr.muted b { text-decoration: line-through; }

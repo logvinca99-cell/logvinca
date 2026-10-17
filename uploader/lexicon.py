@@ -236,21 +236,35 @@ def _bump(c):
 
 
 class Lexicon:
-    def __init__(self, groups, blocked):
+    def __init__(self, groups, blocked, marks=None):
         self.blocked = {w.lower() for w in blocked}
+        # 키프리스에서 상표로 확인된 단어 {단어: 등록/출원} — 단어 전체가 같을 때만 (붙여 쓴 '수납'+'함' 등은 따로 확인)
+        self.marks = {w.lower(): v for w, v in (marks or {}).items()}
         self.syn = {}
         for g in groups:
-            ws = [w for w in g if w and w.lower() not in self.blocked]
+            ws = [w for w in g if w and w.lower() not in self.blocked and not self.mark_of(w)]
             for w in ws:
                 self.syn.setdefault(w, set()).update(x for x in ws if x != w)
         self.words = set(self.syn)
 
+    def mark_of(self, w):
+        """상표로 확인된 단어면 '등록'/'출원', 아니면 None. '수리용'은 '수리'로도 본다."""
+        lw = str(w or "").lower()
+        v = self.marks.get(lw)
+        if not v:
+            for suf in SUFFIXES:
+                if lw.endswith(suf) and len(lw) > len(suf) + 1:
+                    v = self.marks.get(lw[: -len(suf)])
+                    if v:
+                        break
+        return {"registered": "등록", "pending": "출원"}.get(v) if v else None
+
     def ok_new_word(self, w):
-        """새로 넣어도 되는 단어인가: 한글 2~10자, 금지 단어 아님 (금지 단어가 들어 있어도 안 됨)."""
+        """새로 넣어도 되는 단어인가: 한글 2~10자, 금지 단어 아님 (금지 단어가 들어 있어도 안 됨), 상표 아님."""
         if not _HANGUL_WORD.match(w):
             return False
         lw = w.lower()
-        return not any(b and b in lw for b in self.blocked)
+        return not any(b and b in lw for b in self.blocked) and not self.mark_of(w)
 
     def synonyms(self, token):
         """단어의 유의어. '수리용'이면 '수리'의 유의어에 '용'을 붙여 '보수용·수선용'."""
@@ -269,6 +283,18 @@ def blocked_in(name, lex):
     low = str(name or "").lower()
     words = {t.lower() for t in low.split()}
     return [b for b in sorted(lex.blocked) if (b in words if b.isascii() else (len(b) >= 2 and b in low))]
+
+
+def marks_in(name, lex):
+    """상품명에 들어 있는 상표 단어 [(단어, 등록/출원)]."""
+    if not lex or not lex.marks:
+        return []
+    out = []
+    for t in str(name or "").split():
+        m = lex.mark_of(t)
+        if m:
+            out.append((t, m))
+    return list(dict.fromkeys(out))
 
 
 def category_words(category):
@@ -291,7 +317,11 @@ def get(db):
         if _cache["lex"] is None or _cache["version"] != ver:
             groups = [r["words"].split(",") for r in db.q("SELECT words FROM word_groups WHERE enabled=1")]
             blocked = [r["word"] for r in db.q("SELECT word FROM word_block")]
-            _cache.update(lex=Lexicon(groups, blocked), version=ver)
+            from . import config
+            verdicts = ("registered", "pending") if config.load().get("kipris_block_pending", True) else ("registered",)
+            marks = {r["word"]: r["verdict"] for r in db.q(
+                f"SELECT word, verdict FROM trademark_check WHERE allowed=0 AND verdict IN ({','.join('?' * len(verdicts))})", verdicts)}
+            _cache.update(lex=Lexicon(groups, blocked, marks), version=ver)
         return _cache["lex"]
 
 

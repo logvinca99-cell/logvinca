@@ -54,10 +54,10 @@ def recombine(original, count, taken_norms, siblings, cfg, seed, tag_words=(), l
     1. 원본의 앞 N단어(기본 3)는 그대로 맨 앞에 둔다 (보통 가장 중요한 키워드).
     2. 나머지 단어 중 0~3개를 빼고 순서를 섞는다.
     3. 새 단어 1~2개: 핵심 키워드의 유의어를 먼저 고른다.
-         우선순위  ① 앞 N단어의 유의어  ② 카테고리 맨 아래 단계 이름
-                   ③ 카테고리와 겹치는 단어(핵심)의 유의어  ④ 나머지 단어의 유의어  ⑤ (설정 시) 엑셀 태그
+         우선순위  ① 앞 N단어(핵심 키워드)의 유의어  ② 나머지 단어의 유의어  ③ (설정 시) 엑셀 태그
+                   (설정 use_category_words를 켜면 카테고리 맨 아래 단계 이름과 그와 겹치는 단어의 유의어가 ①과 ② 사이에 들어감)
        유의어는 덧붙이거나, 일정 확률로 원래 단어 자리에 바꿔 넣는다 (예: 수리용 → 수선용).
-       새 단어는 한글 일반명사만, 금지 단어가 들어간 말은 넣지 않는다.
+       새 단어는 한글 일반명사만, 금지 단어가 들어간 말과 키프리스에서 상표로 확인된 단어는 넣지 않는다.
     4. 남는 칸을 최대 글자 수(기본 50자)까지 채운다: 뺐던 원본 단어 → 그래도 남으면 우선순위 높은 새 단어.
     5. 버리는 경우: 같은 단어가 3번 이상 / 33개 스토어의 다른 이름과 같음 /
        같은 원본의 다른 이름과 (앞 N단어 뒤 부분이) 85% 이상 겹치거나 그 첫 두 단어가 같음.
@@ -76,7 +76,7 @@ def recombine(original, count, taken_norms, siblings, cfg, seed, tag_words=(), l
 
     prefix, tail = words[:fixed_n], words[fixed_n:]
     have = {w.lower() for w in words}
-    cat_words = lx.category_words(category) if (lex and cfg.get("use_category_words", True)) else []
+    cat_words = lx.category_words(category) if (lex and cfg.get("use_category_words", False)) else []
     cat_text = "".join(cat_words)
     core_tail = [w for w in tail if any(c in w or w in c for c in cat_words) or (cat_text and w in cat_text)]
 
@@ -208,6 +208,9 @@ def check_name(name, cfg, lex=None):
             hit = (b in words) if b.isascii() else (len(b) >= 2 and b in low)
             if hit:
                 return f"금지 단어 '{b}'"
+        m = lx.marks_in(name, lex)
+        if m:
+            return f"상표 단어 '{m[0][0]}'({m[0][1]})"
     return None
 
 

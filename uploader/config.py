@@ -63,7 +63,7 @@ DEFAULTS = {
     # 남는 칸을 최대 글자 수까지 채움 (노출에 유리)
     "recombine_fill": True,
     # 카테고리 이름의 단어를 새 단어로 쓸지
-    "use_category_words": True,
+    "use_category_words": False,
     # 한 상품명 안에서 같은 단어를 몇 번까지 허용할지 (다른 단어 안에 들어간 것도 셈)
     "max_word_repeat": 2,
     # 우리말샘 오픈 API 키 (opendict.korean.go.kr, 무료) — 단어 사전에서 유의어 받기
@@ -71,6 +71,12 @@ DEFAULTS = {
     "opendict_daily_limit": 1000,
     # 같은 원본의 다른 이름과 단어가 이만큼 이상 겹치면 너무 비슷하다고 보고 버림 (0~1)
     "recombine_max_overlap": 0.85,
+    # 키프리스(KIPRIS Plus) 상표 확인 키 (plus.kipris.or.kr) — 상표로 등록된 단어는 새 단어로 쓰지 않음
+    "kipris_key": "",
+    # 출원·공고 중(아직 등록 전)인 상표 단어도 쓰지 않을지
+    "kipris_block_pending": True,
+    # 한 번에 확인할 단어 수
+    "kipris_limit": 500,
 
     # ── AI 상품명 (Claude API)
     "anthropic_api_key": "",
@@ -98,7 +104,7 @@ DEFAULTS = {
     "extra": {},
 }
 
-SECRET_KEYS = ("anthropic_api_key", "opendict_key")
+SECRET_KEYS = ("anthropic_api_key", "opendict_key", "kipris_key")
 _lock = threading.Lock()
 
 
@@ -106,7 +112,10 @@ def load():
     cfg = json.loads(json.dumps(DEFAULTS))
     if os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH, encoding="utf-8") as f:
-            cfg.update(json.load(f))
+            saved = json.load(f)
+        if "kipris_block_pending" not in saved:
+            saved.pop("use_category_words", None)  # 이 버전부터 상품명에 카테고리를 쓰지 않음 (예전 설정도 끔)
+        cfg.update(saved)
     return cfg
 
 

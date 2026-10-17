@@ -117,7 +117,7 @@ def create_app(db=None):
     @app.post("/api/settings")
     def save_settings():
         v = body()
-        ints = ("recombine_fixed_prefix", "recombine_new_min", "recombine_new_max", "max_word_repeat", "opendict_daily_limit", "orders_auto_sync_minutes", "orders_initial_days", "max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
+        ints = ("recombine_fixed_prefix", "recombine_new_min", "recombine_new_max", "max_word_repeat", "opendict_daily_limit", "kipris_limit", "orders_auto_sync_minutes", "orders_initial_days", "max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
                 "name_max_len", "ai_names_per_product", "ai_products_per_call", "ai_workers")
         floats = ("recombine_replace_ratio", "delay_sec", "price_jitter_pct", "recombine_max_overlap", "image_cache_gb")
         for k in ints:
@@ -133,6 +133,9 @@ def create_app(db=None):
         cfg = config.save(v)
         if any(before.get(k) != cfg.get(k) for k in ("lock_sold", "lock_canceled_too")):
             orders.recount_sold(db)  # 잠금 기준이 바뀌었으면 전체 다시 계산
+        if before.get("kipris_block_pending") != cfg.get("kipris_block_pending"):
+            with db.tx() as c:
+                lexicon._bump(c)  # 상표 단어 기준이 바뀌었으면 사전 다시 읽게
         return jsonify({"settings": config.public(cfg)})
 
     @app.post("/api/categories/refresh")
@@ -488,7 +491,8 @@ def create_app(db=None):
             "original": name, "category": category, "original_len": len(name),
             "original_repeat": lexicon.repeated_word(orig, lex, int(cfg.get("max_word_repeat") or 2)),
             "pool": {"synonyms": list(dict.fromkeys(w for t in orig for w in lex.synonyms(t)))[:30],
-                     "category": lexicon.category_words(category)},
+                     "category": lexicon.category_words(category) if cfg.get("use_category_words") else []},
+            "marks": [{"word": w, "verdict": v} for w, v in lexicon.marks_in(name, lex)],
             "names": [{"name": n, "len": len(n), "new": [w for w in n.split() if w not in orig]} for n in out],
         })
 
@@ -500,6 +504,46 @@ def create_app(db=None):
         except RuntimeError as e:
             return fail(str(e))
         return jsonify({"task": tid})
+
+    # ── 상표 확인 (키프리스)
+
+    @app.get("/api/trademark")
+    def trademark_list():
+        from . import kipris
+        cfg = config.load()
+        st = db.one("""SELECT COUNT(*) AS checked, SUM(verdict='registered') AS registered, SUM(verdict='pending') AS pending,
+            SUM(verdict='error') AS errors, SUM(allowed) AS allowed FROM trademark_check""")
+        rows = db.q("""SELECT word, verdict, allowed, marks, classes, titles, message, checked_at FROM trademark_check
+            WHERE verdict IN ('registered','pending','error') ORDER BY allowed, verdict DESC, checked_at DESC LIMIT 500""")
+        return jsonify({
+            "stats": {k: st[k] or 0 for k in ("checked", "registered", "pending", "errors", "allowed")},
+            "todo_lexicon": len(kipris.words_to_check(db, "lexicon", 100000)),
+            "has_key": bool(cfg.get("kipris_key")) or os.environ.get("UPLOADER_FAKE_API") == "1",
+            "rows": [dict(r) for r in rows],
+        })
+
+    @app.post("/api/trademark/check")
+    def trademark_check():
+        from . import kipris
+        b = body()
+        scope = b.get("scope") if b.get("scope") in ("lexicon", "original", "all") else "lexicon"
+        cfg = config.load()
+        if not cfg.get("kipris_key") and os.environ.get("UPLOADER_FAKE_API") != "1":
+            return fail("설정 → 상표 확인에 키프리스(KIPRIS Plus) 키를 먼저 넣어 주세요.")
+        try:
+            tid = tasks.start("kipris", "키프리스 상표 확인", lambda **kw: kipris.check_words(db, cfg, scope, **kw))
+        except RuntimeError as e:
+            return fail(str(e))
+        return jsonify({"task": tid})
+
+    @app.post("/api/trademark/allow")
+    def trademark_allow():
+        b = body()
+        word = (b.get("word") or "").strip()
+        with db.tx() as c:
+            c.execute("UPDATE trademark_check SET allowed=? WHERE word=?", (1 if b.get("allowed") else 0, word))
+            lexicon._bump(c)
+        return jsonify({"ok": True})
 
     @app.get("/api/orders/list")
     def order_rows():
