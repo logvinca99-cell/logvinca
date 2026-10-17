@@ -168,8 +168,7 @@ const App = {
     else {
       const r = t.result || {};
       const msg = {
-        import: () => `원본 불러오기 끝: 새로 ${num(r.added)}개 · 갱신 ${num(r.updated)}개 · 오류 ${num(r.invalid)}개`
-          + (r.review_reset ? ` · 내용이 바뀌어 다시 검수 ${num(r.review_reset)}개` : "") + " · 새 원본은 눈검수를 통과해야 올라갑니다",
+        import: () => `원본 불러오기 끝: 새로 ${num(r.added)}개 · 갱신 ${num(r.updated)}개 · 오류 ${num(r.invalid)}개`,
         names: () => r.not_found !== undefined
           ? `상품명 가져오기 끝: 새 이름 ${num(r.added)}개 · 다른 이름과 중복 ${num(r.dup)}개 · 원본 못 찾음 ${num(r.not_found)}줄`
             + (r.rejected ? ` · 반복·금지 단어로 버림 ${num(r.rejected)}개 (예: ${r.rejected_examples?.[0] || ""})` : "")
@@ -189,8 +188,7 @@ const App = {
           + (r.examples?.length ? ` (예: ${r.examples.join(", ")})` : "") + (r.errors ? ` · 오류 ${r.errors}` : ""),
         lexicon: () => `우리말샘: ${num(r.looked)}개 단어를 찾아 ${num(r.found)}개에 유의어가 있었습니다` + (r.errors ? ` · 오류 ${r.errors}` : ""),
         plan: () => `복사 계획 끝: 새로 ${num(r.created)}건${r.revived ? ` · 다시 살림 ${num(r.revived)}건` : ""}` + (r.no_name ? ` · 이름 부족 ${num(r.no_name)}` : "")
-          + (r.capacity ? ` · 자리 부족 ${num(r.capacity)}` : "") + (r.exists ? ` · 이미 있음 ${num(r.exists)}` : "")
-          + (r.review_wait || r.review_reject ? ` · 검수 안 됨 ${num(r.review_wait || 0)}개 / 제외 ${num(r.review_reject || 0)}개는 뺌` : ""),
+          + (r.capacity ? ` · 자리 부족 ${num(r.capacity)}` : "") + (r.exists ? ` · 이미 있음 ${num(r.exists)}` : ""),
         revalidate: () => `다시 검사 끝: ${num(r.total)}개`,
         orders: () => r.rows !== undefined
           ? `판매 이력 파일 끝: ${num(r.rows)}줄 중 복사본과 맞춘 주문 ${num(r.matched)}건 · 못 맞춘 ${num(r.unmatched)}건`

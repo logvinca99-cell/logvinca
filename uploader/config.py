@@ -93,15 +93,6 @@ DEFAULTS = {
     # 한 번에 확인할 단어 수
     "kipris_limit": 500,
 
-    # ── 눈검수
-    "review_risk_cats": "낚시,공구,호신,완구,의류,잡화",
-    "review_risk_size": 12,
-    "review_normal_size": 24,
-    "review_trap_rate": 50,
-    # 카테고리별 주의 문구 ('카테고리 단어: 볼 것' 한 줄씩)
-    "review_cautions": "낚시: 투망·통발·작살·전기 어구 등 어획 어구\n공구: 타정총·네일건\n호신: 전기충격기·가스총\n"
-                       "완구: 캐릭터·브랜드 로고\n의류: 캐릭터·브랜드 로고\n잡화: 캐릭터·브랜드 로고",
-
     # ── 도둑방지
     # 처음 올릴 때 가격을 bait_amount만큼 높여 두고, 베낀 상품이 보이거나 bait_days가 지나면 원래 가격으로
     "bait_enabled": False,

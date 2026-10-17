@@ -9,12 +9,12 @@ import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import bait, config, convert, engine, inventory, keywords, lexicon, naver, orders, review, watermark
+from . import bait, config, convert, engine, inventory, keywords, lexicon, naver, orders, watermark
 from .db import DB
 from .tasks import Tasks
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-FILTER_KEYS = ("q", "status", "review", "category", "store_missing", "store_has", "import_id", "max_listings",
+FILTER_KEYS = ("q", "status", "category", "store_missing", "store_has", "import_id", "max_listings",
                "min_names", "store_id", "plan_id", "op", "age_days", "sold", "locked")
 STORE_FIELDS = ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "capacity", "enabled", "memo",
                 "mall_name", "wm_text")
@@ -118,7 +118,7 @@ def create_app(db=None):
     @app.post("/api/settings")
     def save_settings():
         v = body()
-        ints = ("recombine_fixed_prefix", "recombine_new_min", "recombine_new_max", "max_word_repeat", "opendict_daily_limit", "kipris_limit", "review_risk_size", "review_normal_size", "review_trap_rate", "bait_amount", "bait_watch_limit", "kw_daily_limit", "kw_results", "kw_min_malls", "kw_refresh_days", "kw_max_words", "core_scan_words", "orders_auto_sync_minutes", "orders_initial_days", "max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
+        ints = ("recombine_fixed_prefix", "recombine_new_min", "recombine_new_max", "max_word_repeat", "opendict_daily_limit", "kipris_limit", "bait_amount", "bait_watch_limit", "kw_daily_limit", "kw_results", "kw_min_malls", "kw_refresh_days", "kw_max_words", "core_scan_words", "orders_auto_sync_minutes", "orders_initial_days", "max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
                 "name_max_len", "ai_names_per_product", "ai_products_per_call", "ai_workers")
         floats = ("bait_copy_match", "bait_watch_hours", "bait_days", "wm_size_pct", "wm_opacity", "wm_margin_pct", "kw_min_share", "recombine_replace_ratio", "delay_sec", "price_jitter_pct", "recombine_max_overlap", "image_cache_gb")
         for k in ints:
@@ -612,68 +612,6 @@ def create_app(db=None):
             lexicon._bump(c)
         return jsonify({"ok": True})
 
-    # ── 눈검수
-
-    @app.get("/api/review/counts")
-    def review_counts():
-        return jsonify(review.counts(db))
-
-    @app.post("/api/review/start")
-    def review_start():
-        return jsonify({"session": review.start_session(db), "counts": review.counts(db)})
-
-    @app.get("/api/review/page")
-    def review_page():
-        sid = request.args.get("session")
-        p = review.next_page(db, int(sid) if sid else None)
-        return jsonify({"page": p, "counts": review.counts(db),
-                        "session": review.session(db, int(sid)) if sid else None})
-
-    @app.post("/api/review/submit")
-    def review_submit():
-        b = body()
-        try:
-            return jsonify(review.submit(db, b.get("page_id"), b.get("rejected") or []))
-        except ValueError as e:
-            return fail(str(e))
-
-    @app.post("/api/review/cards")
-    def review_cards():
-        return jsonify(review.cards(db, [int(i) for i in body().get("ids") or []]))
-
-    @app.post("/api/review/set")
-    def review_set():
-        b = body()
-        ids = [int(i) for i in b.get("ids") or []]
-        if not ids:
-            return fail("원본이 없습니다.")
-        review.set_review(db, ids, b.get("rejected") or [])
-        return jsonify({"ok": True, "counts": review.counts(db)})
-
-    @app.get("/api/review/rejected")
-    def review_rejected():
-        page = int(request.args.get("page", 0))
-        rows = db.q("""SELECT id, name, category, thumb, review FROM sources WHERE review='reject'
-            ORDER BY reviewed_at DESC LIMIT 48 OFFSET ?""", (page * 48,))
-        return jsonify({"cards": [{**review._card(r), "review": r["review"]} for r in rows],
-                        "total": db.one("SELECT COUNT(*) AS n FROM sources WHERE review='reject'")["n"], "page": page})
-
-    @app.get("/api/review/live-reject")
-    def review_live_reject():
-        rows = db.q("""SELECT l.id, l.name, l.status, l.locked, l.lock_note, st.name AS store_name, s.id AS source_id,
-            s.thumb FROM listings l JOIN sources s ON s.id=l.source_id JOIN stores st ON st.id=l.store_id
-            WHERE s.review='reject' AND l.origin_no!='' AND l.status!='deleted' ORDER BY s.id LIMIT 1000""")
-        return jsonify(rows)
-
-    @app.post("/api/review/live-reject/delete")
-    def review_live_reject_delete():
-        ids = [r["id"] for r in db.q("""SELECT l.id FROM listings l JOIN sources s ON s.id=l.source_id
-            WHERE s.review='reject' AND l.origin_no!='' AND l.status!='deleted'""")]
-        if not ids:
-            return fail("제외된 판매 중 상품이 없습니다.")
-        n, skipped = inventory.schedule_op(db, {"ids": ids}, "delete")
-        return jsonify({"count": n, "skipped": skipped})
-
     # ── 도둑방지
 
     @app.get("/api/bait")
@@ -891,7 +829,7 @@ def create_app(db=None):
         buf = io.StringIO()
         w = csv.writer(buf)
         w.writerow(["스토어", "판매자 관리코드", "회차", "등록 상품명", "원본 번호", "원본 판매자코드", "원본 상품명",
-                    "판매가", "원본가", "상태", "할 일", "올린 날", "원상품번호", "채널상품번호", "메시지", "검수"])
+                    "판매가", "원본가", "상태", "할 일", "올린 날", "원상품번호", "채널상품번호", "메시지"])
         page = 0
         while True:
             res = inventory.query_listings(db, f, page, 500)
@@ -899,8 +837,7 @@ def create_app(db=None):
                 w.writerow([r["store_name"], r["seller_code"], r["round"], r["name"], r["source_id"], r["source_code"],
                             r["source_name"], r["price"], r["source_price"], r["status"], r["op"],
                             time.strftime("%Y-%m-%d", time.localtime(r["registered_at"])) if r["registered_at"] else "",
-                            r["origin_no"], r["channel_no"], r["message"],
-                            {"pass": "통과", "reject": "제외"}.get(r["source_review"], "대기")])
+                            r["origin_no"], r["channel_no"], r["message"]])
             if len(res["rows"]) < 500:
                 break
             page += 1

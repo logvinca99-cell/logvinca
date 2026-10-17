@@ -455,37 +455,3 @@ span.kw-chip { cursor: default; }
 .wm-store { display: flex; gap: 12px; align-items: center; margin-top: 6px; }
 .wm-store img { width: 110px; height: 110px; border: 1px solid var(--line); border-radius: 6px; }
 .wm-store > div { display: flex; flex-direction: column; gap: 6px; }
-
-/* 눈검수 */
-.rv-page { padding-bottom: 80px; }
-.rv-stat { gap: 14px; font-size: 13px; }
-.rv-caution, .rv-missed { margin-bottom: 12px; }
-.rv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
-.rv-grid.big { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
-.rv-card { position: relative; border: 3px solid transparent; border-radius: 10px; background: var(--panel); cursor: pointer; overflow: hidden; box-shadow: 0 0 0 1px var(--line); user-select: none; }
-.rv-card img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; background: var(--panel-2); }
-.rv-card.rej { border-color: var(--err); }
-.rv-card.rej::after { content: "제외"; position: absolute; top: 6px; left: 6px; background: var(--err); color: #fff; font-size: 12px; font-weight: 700; padding: 1px 8px; border-radius: 4px; }
-.rv-card.revived { border-color: var(--accent); }
-.rv-card.revived::after { content: "통과로"; position: absolute; top: 6px; left: 6px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; padding: 1px 8px; border-radius: 4px; }
-.rv-cap { display: flex; gap: 6px; align-items: baseline; padding: 6px 8px; font-size: 13px; }
-.rv-cap b { font-size: 15px; letter-spacing: .5px; }
-.rv-leaf { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60%; }
-.rv-noimg { aspect-ratio: 1; display: flex; flex-direction: column; gap: 6px; padding: 10px; font-size: 12.5px; background: var(--warn-soft); overflow: hidden; }
-.rv-noimg span { flex: 1; overflow: hidden; }
-.rv-pick { display: flex; gap: 6px; }
-.rv-pick .btn { flex: 1; height: 30px; }
-.rv-foot { position: fixed; bottom: 0; left: 216px; right: 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 28px; background: var(--panel); border-top: 1px solid var(--line); z-index: 5; }
-.rv-foot > span:last-child { display: flex; gap: 8px; }
-#rv-zoom { position: fixed; right: 24px; top: 80px; width: 420px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px; box-shadow: 0 12px 40px rgba(0,0,0,.25); z-index: 20; pointer-events: none; }
-#rv-zoom.left { right: auto; left: 240px; }
-#rv-zoom img { width: 100%; aspect-ratio: 1; object-fit: contain; background: var(--panel-2); border-radius: 8px; }
-#rv-zoom p { margin: 8px 2px 0; font-size: 14px; }
-@media (max-width: 900px) { .rv-foot { left: 0; } }
-.rv-home { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; color: inherit; text-decoration: none; }
-.rv-home > div:first-child { display: flex; flex-direction: column; }
-.rv-home-n { display: flex; gap: 22px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
-.rv-home-n b { font-size: 18px; color: var(--text); margin-right: 3px; }
-.rv-home-n b.c-warn { color: var(--warn); }
-.rv-home-n b.c-err { color: var(--err); }
-.rv-flag-wait { background: var(--idle-soft); color: var(--idle); }

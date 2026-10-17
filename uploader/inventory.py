@@ -12,7 +12,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from . import config, convert, excel, keywords, lexicon, namegen, naver, review
+from . import config, convert, excel, keywords, lexicon, namegen, naver
 from .db import pack, unpack
 
 CHUNK = 500
@@ -74,17 +74,13 @@ def import_products(db, fileobj, filename, progress=None, should_stop=None):
                 vals = (s["name"], s["price"], s["category"], s["thumb"], s["option_count"], s["image_count"],
                         int(s["has_video"]), tags, pack(row), json.dumps(errors, ensure_ascii=False),
                         json.dumps(warnings, ensure_ascii=False), int(not errors), s["seller_code"], iid, now)
-                old = c.execute("SELECT id, review, review_sig FROM sources WHERE source_key=?", (key,)).fetchone()
+                old = c.execute("SELECT id FROM sources WHERE source_key=?", (key,)).fetchone()
                 if old:
                     c.execute("""UPDATE sources SET name=?, price=?, category=?, thumb=?, option_count=?,
                         image_count=?, has_video=?, tags=?, data=?, errors=?, warnings=?, valid=?, seller_code=?,
                         import_id=?, updated_at=? WHERE id=?""", (*vals, old["id"]))
                     sid = old["id"]
                     stats["updated"] += 1
-                    if old["review"] != "wait" and old["review_sig"] != review.signature(row):
-                        # 검수한 뒤 상품명·카테고리·썸네일이 바뀌었으면 다시 검수
-                        c.execute("UPDATE sources SET review='wait', reviewed_at=NULL WHERE id=?", (sid,))
-                        stats["review_reset"] = stats.get("review_reset", 0) + 1
                 else:
                     sid = c.execute("""INSERT INTO sources(name, price, category, thumb, option_count, image_count,
                         has_video, tags, data, errors, warnings, valid, seller_code, import_id, updated_at, source_key,
@@ -190,9 +186,6 @@ def source_where(f):
         a.append(int(f.get("min_names") or 3))
     elif st == "warn":
         w.append("valid=1 AND warnings!='[]'")
-    if f.get("review") in ("wait", "pass", "reject"):
-        w.append("review=?")
-        a.append(f["review"])
     if f.get("category"):
         w.append("category LIKE ?")
         a.append(f"{f['category']}%")
@@ -216,7 +209,7 @@ def source_where(f):
 
 
 LIST_COLS = ("id, source_key, seller_code, name, price, category, thumb, option_count, image_count, has_video, errors, "
-             "warnings, valid, n_listings, n_success, n_free_names, updated_at, review")
+             "warnings, valid, n_listings, n_success, n_free_names, updated_at")
 
 
 def query_sources(db, f, page=0, size=100):
@@ -524,7 +517,7 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
             break
         chunk = ids[i:i + CHUNK]
         marks = ",".join("?" * len(chunk))
-        srcs = db.q(f"SELECT id, source_key, name, price, tags, category, valid, core_kw, review, data FROM sources WHERE id IN ({marks})",
+        srcs = db.q(f"SELECT id, source_key, name, price, tags, category, valid, core_kw, data FROM sources WHERE id IN ({marks})",
                     chunk)
         kws = keywords.words_for(db, srcs, cfg, cfg["_lex"])
         for s in srcs:
@@ -538,11 +531,6 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
         with db.tx() as c:
             for s in srcs:
                 st["sources"] += 1
-                if s["review"] != "pass":
-                    # 눈검수를 통과하지 않은 원본은 계획에 넣지 않는다
-                    key = "review_reject" if s["review"] == "reject" else "review_wait"
-                    st[key] = st.get(key, 0) + 1
-                    continue
                 if not s["valid"]:
                     st["invalid"] += 1
                     continue
@@ -704,7 +692,7 @@ def query_listings(db, f, page=0, size=100):
     rows = db.q(f"""SELECT l.id, l.name, l.price, l.status, l.op, l.round, l.stage, l.message, l.origin_no, l.sold_count,
         l.cancel_count, l.locked, l.lock_note, l.manual_lock,
         l.channel_no, l.seller_code, l.registered_at, l.deleted_at, l.seconds, l.plan_id, l.updated_at,
-        s.id AS source_id, s.source_key, s.seller_code AS source_code, s.name AS source_name, s.review AS source_review,
+        s.id AS source_id, s.source_key, s.seller_code AS source_code, s.name AS source_name,
         s.price AS source_price, s.thumb, s.category, s.n_listings AS source_copies,
         t.id AS store_id, t.name AS store_name, t.store_url,
         COALESCE(NULLIF(t.code,''), 'S'||printf('%02d', t.id)) AS store_code

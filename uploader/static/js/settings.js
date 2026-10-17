@@ -65,13 +65,6 @@ const SETTING_SECTIONS = [
     ["kipris_block_pending", "출원·공고 중(등록 전) 상표 단어도 쓰지 않음", "check"],
     ["kipris_limit", "한 번에 확인할 단어 수", "number"],
   ] },
-  { title: "눈검수", note: "통과한 원본만 등록됩니다. 위험 카테고리는 한 화면에 적게(카드 크게) 보여 줍니다. 주의 문구는 '카테고리 단어: 볼 것' 한 줄씩.", fields: [
-    ["review_risk_cats", "위험 카테고리 단어 (쉼표로 구분, 카테고리 이름에 들어 있으면)", "text"],
-    ["review_risk_size", "위험 카테고리 한 화면 카드 수", "number"],
-    ["review_normal_size", "일반 카테고리 한 화면 카드 수", "number"],
-    ["review_trap_rate", "함정 카드: 약 몇 장에 1장 섞을지 (0이면 안 섞음)", "number"],
-    ["review_cautions", "카테고리별 주의 문구", "textarea"],
-  ] },
   { title: "도둑방지", note: "처음 올릴 때 가격을 높여 두었다가, 베낀 상품이 보이거나 정한 날이 지나면 원래 가격으로 되돌립니다. 베낀 상품 찾기에는 네이버 검색 API 키(위 '네이버 키워드')가 필요합니다. 결과는 도둑방지 화면에서 봅니다.", fields: [
     ["bait_enabled", "도둑방지 가격 켜기 (이후 새로 올리는 상품부터)", "check"],
     ["bait_amount", "처음 올릴 때 더할 금액 (원)", "number"],
