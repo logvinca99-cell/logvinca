@@ -126,6 +126,25 @@ class StopRun(Exception):
 
 
 SETTINGS_FILE = "zzim_settings.json"
+REPORT_FILE = "zzim_report.csv"
+REPORT_FIELDS = ["시작", "종료", "소요(분)", "네이버ID", "스토어", "전체 상품", "이번 성공", "이미 찜",
+                 "실패", "반영 안 됨", "누적 완료", "남은 개수", "진행률(%)", "결과", "사유"]
+
+
+def append_report(row):
+    """실행 결과 한 줄을 보고서에 덧붙인다. 엑셀에서 열려 있어 못 쓰면 예비 파일에 쓴다."""
+    for path in (REPORT_FILE, "zzim_report_미기록.csv"):
+        try:
+            new = not os.path.exists(path)
+            with open(path, "a", newline="", encoding="utf-8-sig") as f:
+                w = csv.DictWriter(f, fieldnames=REPORT_FIELDS)
+                if new:
+                    w.writeheader()
+                w.writerow(row)
+            return path
+        except PermissionError:
+            continue
+    return None
 
 
 def load_settings():
@@ -300,12 +319,18 @@ def wait_for_login(context, page, ctl, timeout_min=10):
     """네이버 로그인 쿠키(NID_AUT, NID_SES)가 생길 때까지 기다린다."""
     ctl.status("로그인 대기")
     ctl.log("크롬 창에서 네이버 로그인을 해 주세요. 로그인되면 자동으로 시작합니다.", "warn")
+    typed_id = ""
     for _ in range(timeout_min * 60):
+        try:  # 로그인 화면의 아이디 칸 값만 기억(보고서용)
+            v = page.evaluate("(document.querySelector('#id') || {}).value || ''")
+            typed_id = v.strip() or typed_id
+        except PlaywrightError:
+            pass
         names = {c["name"] for c in context.cookies("https://naver.com")}
         if {"NID_AUT", "NID_SES"} <= names:
-            ctl.log("로그인 확인!", "ok")
+            ctl.log("로그인 확인!" + (f" ({typed_id})" if typed_id else ""), "ok")
             ctl.wait(page, 2000)  # 로그인 후 이동하는 페이지가 다 뜰 때까지 대기
-            return
+            return typed_id
         ctl.wait(page, 1000)
     raise StopRun(f"{timeout_min}분 안에 로그인이 확인되지 않았습니다.")
 
@@ -436,7 +461,7 @@ def click_zzim(page, pid, pacer, ctl, retries=3):
     return "fail", toasts
 
 
-def run_store(page, store, args, alerts, ctl, pacer=None):
+def run_store(page, store, args, alerts, ctl, pacer=None, account=""):
     name = store.rsplit("/", 1)[-1]
     log = Log(f"zzim_{name}.csv")
     pacer = pacer or Pacer(*args.delay, max_rejects=args.max_rejects)
@@ -452,65 +477,93 @@ def run_store(page, store, args, alerts, ctl, pacer=None):
     ctl.log(f"[{name}] 총 {total}개 / 이전 진행 {len(log.done)}개")
     ctl.status("진행 중")
 
-    pno, seen = 1, set()
-    while True:
-        cards = scan_cards(page, min(PAGE_SIZE, total - len(seen)), ctl)
-        new = [c for c in cards if c["id"] not in seen]
-        ctl.log(f"── {pno}페이지: 카드 {len(cards)}개 (새 상품 {len(new)}개)")
-        if cards and not new:
-            raise StopRun(f"{pno}페이지가 이전 페이지와 같습니다. 페이지 이동이 안 된 것 같습니다.")
-        seen.update(c["id"] for c in cards)
-        st.page = pno
+    rejects_before = pacer.rejects
+    started = time.strftime("%Y-%m-%d %H:%M:%S")
 
-        rows = [cards[i:i + COLS] for i in range(0, len(cards), COLS)]
-        for r, row in enumerate(rows, 1):
-            for c, it in enumerate(row, 1):
-                if it["id"] in log.done:
-                    continue
-                ctl.check()
-                st.pos, st.name = f"{pno}페이지 {r}행 {c}열", it["name"]
-                ctl.emit("stats", st.snapshot())
-                toasts = []
-                try:
-                    status, toasts = click_zzim(page, it["id"], pacer, ctl)
-                except PlaywrightError as e:
-                    if "has been closed" in e.message:
-                        raise StopRun("크롬 창이 닫혔습니다.")
-                    status = "error"
-                    ctl.log(f"  {it['id']} 클릭 오류: {e.message.splitlines()[0]}", "err")
-                for msg in alerts + toasts:
-                    if re.search(r"최대|초과|제한", msg):
-                        raise StopRun(f"네이버 알림: {msg}")
-                alerts.clear()
-                log.write(page=pno, row=r, col=c, id=it["id"], name=it["name"], status=status)
+    def report(result, reason=""):
+        s_ = st.snapshot()
+        done, tot = len(log.done), total
+        path = append_report({
+            "시작": started, "종료": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "소요(분)": round(s_["elapsed"] / 60, 1), "네이버ID": account or "(알 수 없음)",
+            "스토어": name, "전체 상품": tot, "이번 성공": st.clicked, "이미 찜": st.already,
+            "실패": st.failed, "반영 안 됨": pacer.rejects - rejects_before, "누적 완료": done,
+            "남은 개수": max(0, tot - done), "진행률(%)": round(done / tot * 100, 1) if tot else 0,
+            "결과": result, "사유": reason,
+        })
+        if path:
+            ctl.log(f"보고서 기록: {path}")
+        else:
+            ctl.log("보고서 파일이 열려 있어 기록하지 못했습니다. 엑셀을 닫아 주세요.", "err")
 
-                st.processed += 1
-                if status in ("clicked", "clicked?"):
-                    st.clicked += 1
-                elif status == "already":
-                    st.already += 1
-                else:
-                    st.failed += 1
-                st.done = len(log.done)
-                st.pace_ms, st.rejects = pacer.ms, pacer.rejects
-                ctl.emit("stats", st.snapshot())
-                level = {"clicked": "ok", "already": "info", "clicked?": "warn"}.get(status, "err")
-                label = {"clicked": "성공", "already": "이미 찜", "clicked?": "확인 필요"}.get(status, "실패")
-                ctl.log(f"{pno}p {r}행 {c}열  {label}  {it['name']}", level)
-                if status == "fail":
-                    # 세 번 쉬어 가며 눌러도 안 되면 네이버가 찜을 막은 상태.
-                    # 계속 누르면 계정 보호조치로 이어지므로 바로 멈춘다.
-                    raise StopRun("네이버가 찜을 계속 거절합니다(차단 신호). 계정 보호를 위해 멈췄습니다. "
-                                  "몇 시간 이상 쉰 뒤 다시 실행하세요.")
+    try:
+        pno, seen = 1, set()
+        while True:
+            cards = scan_cards(page, min(PAGE_SIZE, total - len(seen)), ctl)
+            new = [c for c in cards if c["id"] not in seen]
+            ctl.log(f"── {pno}페이지: 카드 {len(cards)}개 (새 상품 {len(new)}개)")
+            if cards and not new:
+                raise StopRun(f"{pno}페이지가 이전 페이지와 같습니다. 페이지 이동이 안 된 것 같습니다.")
+            seen.update(c["id"] for c in cards)
+            st.page = pno
 
-        if len(seen) >= total or not go_to_page(page, pno + 1):
-            break
-        pno += 1
+            rows = [cards[i:i + COLS] for i in range(0, len(cards), COLS)]
+            for r, row in enumerate(rows, 1):
+                for c, it in enumerate(row, 1):
+                    if it["id"] in log.done:
+                        continue
+                    ctl.check()
+                    st.pos, st.name = f"{pno}페이지 {r}행 {c}열", it["name"]
+                    ctl.emit("stats", st.snapshot())
+                    toasts = []
+                    try:
+                        status, toasts = click_zzim(page, it["id"], pacer, ctl)
+                    except PlaywrightError as e:
+                        if "has been closed" in e.message:
+                            raise StopRun("크롬 창이 닫혔습니다.")
+                        status = "error"
+                        ctl.log(f"  {it['id']} 클릭 오류: {e.message.splitlines()[0]}", "err")
+                    for msg in alerts + toasts:
+                        if re.search(r"최대|초과|제한", msg):
+                            raise StopRun(f"네이버 알림: {msg}")
+                    alerts.clear()
+                    log.write(page=pno, row=r, col=c, id=it["id"], name=it["name"], status=status)
 
-    missing = total - len(log.done)
-    ctl.log(f"[{name}] 완료: {len(log.done)}/{total}개"
-            + (f" — {missing}개 남음. 다시 실행하면 남은 것만 처리합니다." if missing > 0 else ""),
-            "ok" if missing <= 0 else "warn")
+                    st.processed += 1
+                    if status in ("clicked", "clicked?"):
+                        st.clicked += 1
+                    elif status == "already":
+                        st.already += 1
+                    else:
+                        st.failed += 1
+                    st.done = len(log.done)
+                    st.pace_ms, st.rejects = pacer.ms, pacer.rejects
+                    ctl.emit("stats", st.snapshot())
+                    level = {"clicked": "ok", "already": "info", "clicked?": "warn"}.get(status, "err")
+                    label = {"clicked": "성공", "already": "이미 찜", "clicked?": "확인 필요"}.get(status, "실패")
+                    ctl.log(f"{pno}p {r}행 {c}열  {label}  {it['name']}", level)
+                    if status == "fail":
+                        # 세 번 쉬어 가며 눌러도 안 되면 네이버가 찜을 막은 상태.
+                        # 계속 누르면 계정 보호조치로 이어지므로 바로 멈춘다.
+                        raise StopRun("네이버가 찜을 계속 거절합니다(차단 신호). 계정 보호를 위해 멈췄습니다. "
+                                      "몇 시간 이상 쉰 뒤 다시 실행하세요.")
+
+            if len(seen) >= total or not go_to_page(page, pno + 1):
+                break
+            pno += 1
+
+        missing = total - len(log.done)
+        ctl.log(f"[{name}] 완료: {len(log.done)}/{total}개"
+                + (f" — {missing}개 남음. 다시 실행하면 남은 것만 처리합니다." if missing > 0 else ""),
+                "ok" if missing <= 0 else "warn")
+    except StopRun as e:
+        report("중단", str(e))
+        raise
+    except Exception as e:
+        report("오류", f"{type(e).__name__}: {e}".splitlines()[0])
+        raise
+    else:
+        report("완료" if missing <= 0 else "완료(남음)")
 
 
 def run_all(stores, args, ctl):
@@ -538,10 +591,11 @@ def run_all(stores, args, ctl):
 
         try:
             page.goto(LOGIN_URL)
-            wait_for_login(context, page, ctl)
+            typed_id = wait_for_login(context, page, ctl)
+            account = (getattr(args, "account", "") or "").strip() or typed_id
             pacer = Pacer(*args.delay, max_rejects=args.max_rejects)  # 스토어가 바뀌어도 익힌 속도를 이어서 사용
             for store in stores:
-                run_store(page, store, args, alerts, ctl, pacer)
+                run_store(page, store, args, alerts, ctl, pacer, account)
         except StopRun as e:
             result, reason = "중단", str(e)
             ctl.log(f"중단: {e}", "warn")
@@ -587,6 +641,7 @@ def parse_args():
                     help="목록 주소의 st 값 (기본 RECENT)")
     ap.add_argument("--sort-label", default="최신 등록순",
                     help="화면에서 누를 정렬 버튼 글자. 빈 값이면 누르지 않음 (기본 '최신 등록순')")
+    ap.add_argument("--account", default="", help="보고서에 적을 네이버 아이디(비우면 로그인 화면에서 자동)")
     ap.add_argument("--max-rejects", type=int, default=3,
                     help="'반영 안 됨'이 이 횟수만큼 누적되면 멈추고 알림 (0이면 끔, 기본 3)")
     ap.add_argument("--delay", type=int, nargs=2, default=[600, 6000], metavar=("MIN", "MAX"),

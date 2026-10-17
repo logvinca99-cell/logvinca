@@ -38,7 +38,7 @@ class App:
 
         root.title("스마트스토어 찜 클릭기")
         sw = root.winfo_screenwidth()
-        root.geometry(f"440x780+{sw - 460}+20")  # 화면 오른쪽 위
+        root.geometry(f"440x830+{sw - 460}+10")  # 화면 오른쪽 위
         root.minsize(400, 560)
         root.attributes("-topmost", True)
         root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -56,6 +56,13 @@ class App:
         self.store_box.pack(fill="x", **pad)
         if args.store:
             self.store_box.insert("1.0", args.store)
+
+        af = ttk.Frame(root)
+        af.pack(fill="x", pady=(6, 0), **pad)
+        ttk.Label(af, text="네이버 아이디 (보고서용, 비우면 로그인 화면에서 자동)").pack(anchor="w")
+        self.account = tk.StringVar(value=getattr(args, "account", "") or "")
+        self.account_entry = ttk.Entry(af, textvariable=self.account)
+        self.account_entry.pack(fill="x")
 
         # ── 버튼
         bf = ttk.Frame(root)
@@ -136,7 +143,8 @@ class App:
         # ── 아래쪽
         ff = ttk.Frame(root)
         ff.pack(fill="x", pady=10, **pad)
-        ttk.Button(ff, text="📁 결과 폴더 열기", command=self.open_folder).pack(side="left")
+        ttk.Button(ff, text="📁 결과 폴더", command=self.open_folder).pack(side="left")
+        ttk.Button(ff, text="📊 보고서 열기", command=self.open_report).pack(side="left", padx=4)
         self.topmost_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(ff, text="항상 위에", variable=self.topmost_var,
                         command=lambda: root.attributes("-topmost", self.topmost_var.get())
@@ -157,11 +165,13 @@ class App:
             return
         self.save_telegram()
         self.args.tg_token, self.args.tg_chat = self.tg_token.get().strip(), self.tg_chat.get().strip()
+        self.args.account = self.account.get().strip()
         self.ctl = zzim.Controller(lambda kind, data: self.q.put((kind, data)))
         self.worker = threading.Thread(target=zzim.run_all, args=(stores, self.args, self.ctl),
                                        daemon=True)
         self.worker.start()
         self.store_box.configure(state="disabled")
+        self.account_entry.configure(state="disabled")
         self.btn_start.configure(state="disabled")
         self.btn_pause.configure(state="normal", text="⏸ 일시정지")
         self.btn_stop.configure(state="normal")
@@ -214,6 +224,16 @@ class App:
             self.set_status("종료 중")
             return  # 작업 스레드가 브라우저를 닫고 끝나면 poll에서 창을 닫음
         self.root.destroy()
+
+    def open_report(self):
+        path = os.path.abspath(zzim.REPORT_FILE)
+        if not os.path.exists(path):
+            messagebox.showinfo("보고서", "아직 보고서가 없습니다. 한 번 실행하면 생깁니다.", parent=self.root)
+            return
+        try:
+            os.startfile(path)  # 윈도우: 엑셀로 열림
+        except AttributeError:
+            messagebox.showinfo("보고서", path, parent=self.root)
 
     def open_folder(self):
         folder = os.getcwd()
@@ -269,6 +289,7 @@ class App:
 
     def on_finished(self, result):
         self.store_box.configure(state="normal")
+        self.account_entry.configure(state="normal")
         self.btn_start.configure(state="normal", text="▶ 다시 시작")
         self.btn_pause.configure(state="disabled", text="⏸ 일시정지")
         self.btn_stop.configure(state="disabled")

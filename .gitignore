@@ -2,3 +2,4 @@ __pycache__/
 zzim_*.csv
 stores.txt
 zzim_settings.json
+zzim_report*.csv
