@@ -3,8 +3,9 @@
 
 const INV_TILES = [
   { key: "all", label: "전체", dot: "var(--text-2)", count: "all_" },
-  { key: "valid", label: "등록 가능", dot: "var(--idle)" },
-  { key: "unlisted", label: "아직 어디에도 안 올림", dot: "var(--info)" },
+  { key: "unlisted", label: "아직 0곳", dot: "var(--info)" },
+  { key: "partial", label: "1~2곳에 있음", dot: "var(--ok)" },
+  { key: "full", label: "3곳 다 참", dot: "var(--dup)" },
   { key: "names_short", label: "이름 후보 3개 미만", dot: "var(--warn)" },
   { key: "warn", label: "경고 있음", dot: "var(--warn)" },
   { key: "invalid", label: "오류 (고쳐야 함)", dot: "var(--err)" },
@@ -41,7 +42,7 @@ App.page("inventory", {
           <th class="w-check"><input type="checkbox" id="i-check-all" aria-label="이 쪽 모두 선택"></th>
           <th class="w-thumb"></th><th>원본 상품</th><th class="w-cat">카테고리</th>
           <th class="w-num">원본가</th><th class="w-small" title="아직 안 쓴 상품명 후보">이름 후보</th>
-          <th class="w-small" title="등록 완료 / 계획된 스토어">스토어</th><th class="w-status">상태</th>
+          <th class="w-copies" title="이 원본이 올라간(또는 올라갈) 스토어. 원본당 최대 칸 수까지">스토어 칸</th>
         </tr></thead><tbody id="i-rows"></tbody></table>
         <div class="pager" id="i-pager"></div>
       </div>
@@ -80,11 +81,15 @@ App.page("inventory", {
 
   rowHtml(p) {
     const cat = (p.category || "").split(">");
-    let badge, msg = "";
-    if (!p.valid) { badge = `<span class="badge s-fail">오류</span>`; msg = p.errors[0] || ""; }
-    else if (p.n_success) badge = `<span class="badge s-success">${p.n_success}곳 등록</span>`;
-    else if (p.n_listings) badge = `<span class="badge s-running">${p.n_listings}곳 계획</span>`;
-    else badge = `<span class="badge s-planned">등록 가능</span>`;
+    const mx = App.state.settings.max_copies || 3;
+    let slots;
+    if (!p.valid) slots = `<span class="badge s-fail">오류</span><div class="s-msg err" title="${esc(p.errors[0] || "")}">${esc(p.errors[0] || "")}</div>`;
+    else {
+      const cells = p.copies.map((c) => `<span class="slot s-${c.status === "planned" && c.op !== "create" ? c.op : c.status}"
+        title="${esc(c.store)} · ${esc(statusLabel(c.status, c.op))} · ${c.round}회차">${esc(c.code)}</span>`);
+      for (let i = p.copies.length; i < mx; i++) cells.push(`<span class="slot empty" title="빈 칸">·</span>`);
+      slots = `<div class="slots">${cells.join("")}</div>`;
+    }
     const flags = [
       p.warnings.length ? `<span class="flag warn" title="${esc(p.warnings.join("\n"))}">경고 ${p.warnings.length}</span>` : "",
       p.has_video ? `<span class="flag video">동영상</span>` : "",
@@ -92,12 +97,11 @@ App.page("inventory", {
     return `<tr data-id="${p.id}" class="${this.selAll || this.sel.has(p.id) ? "sel" : ""}">
       <td class="w-check" data-stop><input type="checkbox" ${this.selAll || this.sel.has(p.id) ? "checked" : ""} ${this.selAll ? "disabled" : ""}></td>
       <td>${img(p.thumb)}</td>
-      <td><div class="p-name">${esc(p.name)}</div><div class="p-sub"><span>${esc(p.source_key)}</span>${flags}</div></td>
+      <td><div class="p-name">${esc(p.name)}</div><div class="p-sub"><span>원본 #${p.id}</span>${p.seller_code ? `<span>${esc(p.seller_code)}</span>` : ""}${flags}</div></td>
       <td class="cat-td"><div class="cat">${cat.length > 2 ? `<div class="cat-top">${esc(cat.slice(0, -2).join(" › "))}</div>` : ""}${esc(cat.slice(-2).join(" › "))}</div></td>
       <td class="num">${num(p.price)}원</td>
       <td class="num small-td ${p.valid && p.n_free_names < 3 ? "c-warn" : ""}">${num(p.n_free_names)}</td>
-      <td class="num small-td">${p.n_success}/${p.n_listings}</td>
-      <td>${badge}${msg ? `<div class="s-msg err" title="${esc(msg)}">${esc(msg)}</div>` : ""}</td></tr>`;
+      <td>${slots}</td></tr>`;
   },
 
   renderActions() {
@@ -230,15 +234,17 @@ App.page("inventory", {
         <div class="plan-opts">
           <h3>나누는 방법</h3>
           <div class="radio-cards">
-            <label><input type="radio" name="mode" value="all" checked><div><b>고른 스토어 모두에</b>
-              <span class="muted small">원본 하나를 고른 스토어마다 하나씩 올립니다. 이미 올린 스토어는 건너뜁니다.</span></div></label>
-            <label><input type="radio" name="mode" value="spread"><div><b>상품마다 <input type="number" id="p-per" min="1" value="1" class="inline-num">개 스토어에 골고루</b>
-              <span class="muted small">남은 자리가 많은 스토어부터 나눠 담습니다. 1이면 원본마다 한 스토어에만.</span></div></label>
+            <label><input type="radio" name="mode" value="spread" checked><div><b>원본마다 <input type="number" id="p-per" min="1" max="${App.state.settings.max_copies}" value="1" class="inline-num">곳이 되도록 골고루</b>
+              <span class="muted small">고른 스토어 중 남은 자리가 많은 곳부터 나눠 담습니다. 이미 고른 스토어에 있으면 그만큼 덜 올립니다.</span></div></label>
+            <label><input type="radio" name="mode" value="all"><div><b>빈 칸을 모두 채우기</b>
+              <span class="muted small">원본마다 남은 칸(최대 ${App.state.settings.max_copies}곳)을 고른 스토어로 채웁니다.</span></div></label>
           </div>
           <label class="field">계획 이름 <span class="muted">(나중에 등록 화면에서 이 이름으로 거를 수 있음)</span>
             <input id="p-title" placeholder="예: 10월 3주차 공구류"></label>
           <div class="plan-sum" id="p-sum"></div>
-          <p class="muted small">· 상품명: 원본마다 안 쓴 후보에서 하나씩 씁니다 (가져옴 → AI → 재조합 순). 모자라면 ${App.state.settings.auto_recombine ? "재조합으로 자동으로 채웁니다" : "건너뜁니다"}.<br>
+          <p class="muted small">· 원본 하나는 최대 <b>${App.state.settings.max_copies}곳</b>까지만 올라갑니다 (내린 스토어는 세지 않음).<br>
+            · 전에 내렸던 스토어에 다시 계획하면 같은 이름·가격으로 다음 회차가 됩니다.<br>
+            · 상품명: 원본마다 안 쓴 후보에서 하나씩 씁니다 (가져옴 → AI → 재조합 순). 모자라면 ${App.state.settings.auto_recombine ? "재조합으로 자동으로 채웁니다" : "건너뜁니다"}.<br>
             · 가격: 스토어마다 원본가 ±${App.state.settings.price_jitter_pct}% 안에서 정하고 ${num(App.state.settings.price_round)}원 단위로 맞춥니다.<br>
             · 스토어 한도를 넘는 건은 만들지 않습니다.</p>
         </div></div>`,
@@ -260,14 +266,15 @@ App.page("inventory", {
       const free = picked.reduce((a, x) => a + (stores.find((s) => s.id === +x.value)?.free || 0), 0);
       const mode = $("input[name=mode]:checked").value;
       const per = +$("#p-per").value || 1;
-      const want = mode === "all" ? n * picked.length : n * Math.min(per, picked.length);
+      const mx = App.state.settings.max_copies || 3;
+      const want = n * Math.min(mode === "all" ? mx : Math.min(per, mx), picked.length);
       $("#p-sum").innerHTML = `최대 <b>${num(want)}건</b> 계획 · 고른 스토어 ${picked.length}곳의 남은 자리 합계 ${num(free)}`
         + (want > free ? ` <span class="c-err">(자리가 모자라 일부만 계획됩니다)</span>` : "");
     };
     $("#p-all").addEventListener("click", () => { $$(".store-pick input").forEach((x) => (x.checked = true)); sum(); });
     $("#p-none").addEventListener("click", () => { $$(".store-pick input").forEach((x) => (x.checked = false)); sum(); });
     $$("#m-body input").forEach((x) => x.addEventListener("input", sum));
-    $("#p-per").addEventListener("focus", () => { $("input[name=mode][value=spread]").checked = true; sum(); });
+    $("#p-per").addEventListener("input", (e) => { if (+e.target.value > (App.state.settings.max_copies || 3)) e.target.value = App.state.settings.max_copies; });
     sum();
   },
 
@@ -278,11 +285,11 @@ App.page("inventory", {
     try { d = await App.api(`/api/sources/${id}`); } catch (e) { return App.toast(e.message, true); }
     const self = this;
     App.openDrawer({
-      title: d.name, sub: `${d.source_key} · 원본가 ${num(d.price)}원`, tab,
+      title: d.name, sub: `원본 #${d.id}${d.seller_code ? " · " + d.seller_code : ""} · 원본가 ${num(d.price)}원`, tab,
       tabs: [
         { key: "info", label: "정보", render: (b) => self.renderInfo(b, d) },
         { key: "names", label: `상품명 후보 ${d.names.length}`, render: (b) => self.renderNames(b, d) },
-        { key: "stores", label: `스토어 ${d.listings.length}`, render: (b) => self.renderListings(b, d) },
+        { key: "stores", label: `스토어 ${d.listings.filter((l) => l.status !== "deleted").length}/${d.max_copies}`, render: (b) => self.renderListings(b, d) },
         { key: "detail", label: "상세페이지", render: (b) => {
           b.innerHTML = `<iframe class="preview" sandbox referrerpolicy="no-referrer"></iframe>`;
           $("iframe", b).srcdoc = `<meta name="referrer" content="no-referrer"><style>body{margin:0}img{max-width:100%}</style>` + d.detail_html;
@@ -332,10 +339,18 @@ App.page("inventory", {
   },
 
   renderListings(b, d) {
-    b.innerHTML = d.listings.length ? `<table class="opt-table"><tr><th>스토어</th><th>등록 상품명</th><th class="r">가격</th><th>상태</th></tr>
-      ${d.listings.map((l) => `<tr><td>${esc(l.store_name)}</td><td>${esc(l.name)}</td><td class="r">${num(l.price)}</td>
-        <td><span class="badge s-${l.status}">${STATUS[l.status]}</span>${l.status === "success" && l.store_url && l.channel_no
-          ? ` <a href="${esc(l.store_url.replace(/\/$/, ""))}/products/${esc(l.channel_no)}" target="_blank" rel="noopener">보기</a>` : ""}</td></tr>`).join("")}</table>`
-      : `<p class="muted">아직 어느 스토어에도 계획되지 않았습니다.</p>`;
+    const link = (l) => l.store_url && l.channel_no
+      ? ` <a href="${esc(l.store_url.replace(/\/$/, ""))}/products/${esc(l.channel_no)}" target="_blank" rel="noopener">보기</a>` : "";
+    const live = d.listings.filter((l) => l.status !== "deleted").length;
+    b.innerHTML = `<p class="muted small" style="margin:0">이 원본은 <b>${live}/${d.max_copies}곳</b>에 있습니다. 판매자 관리코드는 '스토어코드-원본번호-회차'입니다.</p>` +
+      (d.listings.length ? `<table class="opt-table"><tr><th>스토어</th><th>등록 상품명</th><th>관리코드·회차</th><th>올린 날</th><th>상태</th></tr>
+      ${d.listings.map((l) => `<tr class="${l.status === "deleted" ? "off" : ""}"><td>${esc(l.store_name)}</td><td>${esc(l.name)}<div class="p-sub">${num(l.price)}원</div></td>
+        <td>${esc(l.seller_code || "-")}<div class="p-sub">${l.round}회차</div></td>
+        <td>${l.status === "deleted" ? `내림 ${ymd(l.deleted_at)}` : l.registered_at ? `${ymd(l.registered_at)}<div class="p-sub">${age(l.registered_at)}</div>` : "-"}</td>
+        <td>${statusBadge(l.status, l.op)}${link(l)}</td></tr>`).join("")}</table>`
+        : `<p class="muted">아직 어느 스토어에도 계획되지 않았습니다.</p>`) +
+      (d.history.length ? `<h3 class="sec-title">지난 회차 (지운 기록)</h3><table class="opt-table"><tr><th>스토어</th><th>관리코드</th><th>상품명</th><th>올린 날</th><th>지운 날</th><th>이유</th></tr>
+        ${d.history.map((h) => `<tr><td>${esc(h.store_name)}</td><td>${esc(h.seller_code)}</td><td>${esc(h.name)}</td>
+        <td>${ymd(h.registered_at)}</td><td>${ymd(h.deleted_at)}</td><td>${h.reason === "refresh" ? "새로고침" : "내리기"}</td></tr>`).join("")}</table>` : "");
   },
 });

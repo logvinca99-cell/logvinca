@@ -61,6 +61,25 @@ def detail_images(row):
     return out
 
 
+def _norm_url(u):
+    """https·쿼리·크기 옵션을 빼고 호스트+경로만 (같은 이미지를 다른 주소 형태로 받아도 같게)."""
+    u = re.sub(r"^https?:", "", u.strip()).lstrip("/")
+    return u.split("?")[0].split("#")[0].lower()
+
+
+def source_fingerprint(row):
+    """원본 상품을 구분하는 값. 스토어마다 바뀌는 판매자코드 대신 바뀌지 않는 대표 썸네일 주소를 쓴다.
+    썸네일이 없으면 상세 이미지(모든 상품 공통 배너는 거르기 어려워 앞 5장 묶음), 그것도 없으면 상품명."""
+    th = thumbnails(row)
+    if th:
+        basis = "img:" + _norm_url(th[0])
+    else:
+        det = detail_images(row)
+        from .namegen import normalize
+        basis = ("det:" + "|".join(_norm_url(u) for u in det[:5])) if det else "name:" + normalize(row.get("상품명"))
+    return hashlib.sha1(basis.encode()).hexdigest()[:24]
+
+
 def tags(row):
     t = row.get("상품태그")
     if isinstance(t, str):
@@ -107,6 +126,7 @@ def summary(row, cfg):
     th = thumbnails(row)
     return {
         "row_key": str(row.get("id") or ""),
+        "source_key": source_fingerprint(row),
         "seller_code": str(row.get("판매자코드") or ""),
         "name": str(row.get("상품명") or "").strip(),
         "price": to_int(row.get("판매가")),
@@ -222,9 +242,9 @@ def adjusted_price(price, key, cfg):
     return max(unit, int(round(p / unit)) * unit)
 
 
-def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_phone=None):
+def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_phone=None, seller_code=None):
     """url_map: 원본 이미지 주소 → 네이버 이미지 주소. 없는 주소는 원본 그대로 쓴다.
-    name / price / as_phone: 스토어별로 바꿔 쓸 값 (없으면 엑셀 값)."""
+    name / price / as_phone / seller_code: 스토어별로 바꿔 쓸 값 (없으면 엑셀 값)."""
     url_map = url_map or {}
     errors, _ = validate(row, cfg)
     if errors:
@@ -259,8 +279,9 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
                     "customerServicePhoneNumber": phone},
         },
     }
-    if row.get("판매자코드"):
-        detail["sellerCodeInfo"] = {"sellerManagementCode": str(row["판매자코드"])}
+    code = seller_code or row.get("판매자코드")
+    if code:
+        detail["sellerCodeInfo"] = {"sellerManagementCode": str(code)}
     o = options(row)
     if o:
         detail["optionInfo"] = _strip_empty(o)

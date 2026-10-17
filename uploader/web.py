@@ -14,8 +14,8 @@ from .tasks import Tasks
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 FILTER_KEYS = ("q", "status", "category", "store_missing", "store_has", "import_id", "max_listings",
-               "min_names", "store_id", "plan_id")
-STORE_FIELDS = ("name", "client_id", "client_secret", "store_url", "as_phone", "capacity", "enabled", "memo")
+               "min_names", "store_id", "plan_id", "op", "age_days")
+STORE_FIELDS = ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "capacity", "enabled", "memo")
 
 
 def _filter_from(src):
@@ -113,7 +113,7 @@ def create_app(db=None):
     @app.post("/api/settings")
     def save_settings():
         v = body()
-        ints = ("return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
+        ints = ("max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
                 "name_max_len", "ai_names_per_product", "ai_products_per_call", "ai_workers")
         floats = ("delay_sec", "price_jitter_pct", "recombine_max_overlap", "image_cache_gb")
         for k in ints:
@@ -153,7 +153,7 @@ def create_app(db=None):
             v["capacity"] = max(0, convert.to_int(v["capacity"], 10000))
         if "enabled" in v:
             v["enabled"] = int(bool(v["enabled"]))
-        for k in ("name", "client_id", "client_secret", "store_url", "as_phone", "memo"):
+        for k in ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "memo"):
             if k in v:
                 v[k] = str(v[k] or "").strip()
         if sid:
@@ -170,7 +170,7 @@ def create_app(db=None):
 
     @app.post("/api/stores/bulk")
     def bulk_stores():
-        """한 줄에 한 스토어: 이름, 애플리케이션 ID, 시크릿, 스토어 주소, A/S 전화 (쉼표나 탭으로 구분)."""
+        """한 줄에 한 스토어: 이름, 애플리케이션 ID, 시크릿, 스토어 주소, A/S 전화, 코드 (쉼표나 탭으로 구분)."""
         text = body().get("text") or ""
         existing = {s["name"]: s["id"] for s in db.stores()}
         added = updated = 0
@@ -178,24 +178,24 @@ def create_app(db=None):
             parts = [p.strip() for p in (line.split("\t") if "\t" in line else line.split(","))]
             if not parts or not parts[0] or parts[0] in ("이름", "스토어"):
                 continue
-            parts += [""] * (5 - len(parts))
-            name, cid, sec, url, phone = parts[:5]
+            parts += [""] * (6 - len(parts))
+            name, cid, sec, url, phone, code = parts[:6]
             if name in existing:
                 fields = {k: v for k, v in (("client_id", cid), ("client_secret", sec), ("store_url", url),
-                                            ("as_phone", phone)) if v}
+                                            ("as_phone", phone), ("code", code)) if v}
                 if fields:
                     db.x(f"UPDATE stores SET {', '.join(f'{k}=?' for k in fields)} WHERE id=?",
                          (*fields.values(), existing[name]))
                 updated += 1
             else:
-                db.x("INSERT INTO stores(name, client_id, client_secret, store_url, as_phone, created_at) "
-                     "VALUES(?,?,?,?,?,?)", (name, cid, sec, url, phone, time.time()))
+                db.x("INSERT INTO stores(name, code, client_id, client_secret, store_url, as_phone, created_at) "
+                     "VALUES(?,?,?,?,?,?,?)", (name, code, cid, sec, url, phone, time.time()))
                 added += 1
         return jsonify({"added": added, "updated": updated})
 
     @app.delete("/api/stores/<int:sid>")
     def delete_store(sid):
-        n = db.one("SELECT COUNT(*) AS n FROM listings WHERE store_id=? AND status IN ('success','queued','running')",
+        n = db.one("SELECT COUNT(*) AS n FROM listings WHERE store_id=? AND (origin_no!='' OR status IN ('queued','running'))",
                    (sid,))["n"]
         if n:
             return fail(f"이 스토어에 등록된 상품 기록이 {n:,}건 있어 지울 수 없습니다. '사용 안 함'으로 바꾸세요.")
@@ -362,7 +362,7 @@ def create_app(db=None):
 
     @app.get("/api/listings/<int:lid>")
     def listing(lid):
-        l = db.one("SELECT l.*, t.name AS store_name, t.store_url, t.as_phone FROM listings l "
+        l = db.one("SELECT l.*, t.name AS store_name, t.store_url, t.as_phone, t.code AS store_code FROM listings l "
                    "JOIN stores t ON t.id=l.store_id WHERE l.id=?", (lid,))
         if not l:
             return fail("등록 건이 없습니다.", 404)
@@ -372,9 +372,16 @@ def create_app(db=None):
         cat = str(row.get("카테고리") or "").strip()
         url_map = {**db.image_map(l["store_id"], convert.thumbnails(row)[:10]),
                    **db.image_map(engine.DETAIL_SCOPE, convert.detail_images_to_upload(row, cfg))}
+        store = db.store(l["store_id"])
+        nxt = {**l, "round": l["round"] + (1 if l["op"] == "refresh" and l["origin_no"] else 0)}
+        l["next_seller_code"] = engine.seller_code(cfg, store, nxt)
+        l["history"] = db.q("SELECT * FROM listing_history WHERE listing_id=? ORDER BY round DESC", (lid,))
+        l["siblings"] = db.q("""SELECT l.id, l.name, l.status, l.round, t.name AS store_name FROM listings l
+            JOIN stores t ON t.id=l.store_id WHERE l.source_id=? AND l.id!=? AND l.status!='deleted'""",
+                             (l["source_id"], lid))
         try:
             l["body"] = convert.build_body(row, cfg, cats.get(cat) or f"(카테고리 번호 확인 필요) {cat}", url_map,
-                                           name=l["name"], price=l["price"],
+                                           name=l["name"], price=l["price"], seller_code=l["next_seller_code"],
                                            as_phone=l["as_phone"] or cfg.get("as_phone"))
         except convert.ConvertError as e:
             l["body"] = {"검사 오류": str(e)}
@@ -383,30 +390,50 @@ def create_app(db=None):
         l["source_price"] = convert.to_int(row.get("판매가"))
         return jsonify(l)
 
+    @app.post("/api/listings/schedule")
+    def schedule():
+        """올라가 있는 건에 새로고침(지우고 다시 올리기) 또는 내리기를 예약한다."""
+        b = body()
+        op = b.get("op")
+        if op not in ("refresh", "delete"):
+            return fail("알 수 없는 작업입니다.")
+        if runner.state["running"]:
+            return fail("등록이 끝난 뒤에 예약할 수 있습니다.")
+        f = _filter_from(b)
+        f.pop("op", None)  # 'op'는 여기서 거르기 조건이 아니라 걸 작업
+        n = inventory.schedule_op(db, f, op)
+        return jsonify({"scheduled": n})
+
     @app.post("/api/listings/cancel")
     def cancel():
         f = _filter_from(body())
         where, args = inventory.listing_where(f)
         if runner.state["running"]:
             return fail("등록이 끝난 뒤에 취소할 수 있습니다.")
-        cond = where.replace(" WHERE ", "", 1).replace("l.", "") or "1"
-        if "s." in cond:
-            return fail("검색어가 있는 상태에서는 취소할 수 없습니다. 검색어를 지우고 다시 시도하세요.")
-        return jsonify({"cancelled": inventory.cancel_listings(db, cond, args)})
+        ids = inventory.listing_ids(db, f)
+        if not ids:
+            return jsonify({"cancelled": 0})
+        n = 0
+        for i in range(0, len(ids), 900):
+            chunk = ids[i:i + 900]
+            n += inventory.cancel_listings(db, f"id IN ({','.join('?' * len(chunk))})", chunk)
+        return jsonify({"cancelled": n})
 
     @app.get("/api/listings/export.csv")
     def export():
         f = _filter_from(request.args)
         buf = io.StringIO()
         w = csv.writer(buf)
-        w.writerow(["스토어", "판매자코드", "등록 상품명", "원본 상품명", "판매가", "원본가", "상태",
-                    "원상품번호", "채널상품번호", "메시지"])
+        w.writerow(["스토어", "판매자 관리코드", "회차", "등록 상품명", "원본 번호", "원본 판매자코드", "원본 상품명",
+                    "판매가", "원본가", "상태", "할 일", "올린 날", "원상품번호", "채널상품번호", "메시지"])
         page = 0
         while True:
             res = inventory.query_listings(db, f, page, 500)
             for r in res["rows"]:
-                w.writerow([r["store_name"], r["source_key"], r["name"], r["source_name"], r["price"],
-                            r["source_price"], r["status"], r["origin_no"], r["channel_no"], r["message"]])
+                w.writerow([r["store_name"], r["seller_code"], r["round"], r["name"], r["source_id"], r["source_code"],
+                            r["source_name"], r["price"], r["source_price"], r["status"], r["op"],
+                            time.strftime("%Y-%m-%d", time.localtime(r["registered_at"])) if r["registered_at"] else "",
+                            r["origin_no"], r["channel_no"], r["message"]])
             if len(res["rows"]) < 500:
                 break
             page += 1

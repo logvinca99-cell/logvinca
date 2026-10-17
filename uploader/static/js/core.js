@@ -33,8 +33,32 @@ const img = (url, cls = "thumb") =>
   `<img class="${cls}" loading="lazy" referrerpolicy="no-referrer" src="${esc(url)}" onerror="onImgError(this)" alt="">`;
 
 const STATUS = {
-  planned: "등록 대기", queued: "순서 대기", running: "등록 중", success: "등록 완료", fail: "실패",
+  planned: "등록 대기", queued: "순서 대기", running: "처리 중", success: "판매 중", fail: "실패", deleted: "내림",
 };
+const OP = { create: "등록", refresh: "새로고침", delete: "내리기" };
+
+/* 상태 + 할 일을 한 낱말로: "새로고침 대기", "내리기 실패" … */
+function statusLabel(status, op = "create") {
+  if (status === "planned") return `${OP[op] || "등록"} 대기`;
+  if (status === "fail") return `${OP[op] || "등록"} 실패`;
+  if (status === "running") return `${OP[op] || "등록"} 중`;
+  return STATUS[status] || status;
+}
+function statusBadge(status, op) {
+  const cls = status === "planned" && op !== "create" ? `s-${op}` : `s-${status}`;
+  return `<span class="badge ${cls}">${esc(statusLabel(status, op))}</span>`;
+}
+/* 올린 지 며칠 */
+function age(ts) {
+  if (!ts) return "";
+  const d = Math.floor((Date.now() / 1000 - ts) / 86400);
+  return d <= 0 ? "오늘" : `${d}일 전`;
+}
+function ymd(ts) {
+  if (!ts) return "-";
+  const d = new Date(ts * 1000), p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
 const ORIGIN = { original: "원본", recombine: "재조합", import: "가져옴", ai: "AI", manual: "직접" };
 
 const App = {

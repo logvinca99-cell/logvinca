@@ -21,13 +21,8 @@ ORIGIN_LABEL = {"original": "원본", "recombine": "재조합", "import": "가�
 
 
 def source_key(row):
-    for k in ("판매자코드", "상품코드", "사이트상품코드"):
-        v = str(row.get(k) or "").strip()
-        if v:
-            return v
-    if row.get("id") not in (None, ""):
-        return f"id:{row['id']}"
-    return "name:" + namegen.normalize(row.get("상품명"))
+    """원본 구분값: 대표 썸네일 주소 기준 (판매자코드는 스토어마다 바뀌므로 쓰지 않는다)."""
+    return convert.source_fingerprint(row)
 
 
 def add_names(c, source_id, names, origin, now=None):
@@ -69,18 +64,18 @@ def import_products(db, fileobj, filename, progress=None, should_stop=None):
                 tags = ",".join(convert.tags(row))
                 vals = (s["name"], s["price"], s["category"], s["thumb"], s["option_count"], s["image_count"],
                         int(s["has_video"]), tags, pack(row), json.dumps(errors, ensure_ascii=False),
-                        json.dumps(warnings, ensure_ascii=False), int(not errors), iid, now)
+                        json.dumps(warnings, ensure_ascii=False), int(not errors), s["seller_code"], iid, now)
                 old = c.execute("SELECT id FROM sources WHERE source_key=?", (key,)).fetchone()
                 if old:
                     c.execute("""UPDATE sources SET name=?, price=?, category=?, thumb=?, option_count=?,
-                        image_count=?, has_video=?, tags=?, data=?, errors=?, warnings=?, valid=?, import_id=?,
-                        updated_at=? WHERE id=?""", (*vals, old["id"]))
+                        image_count=?, has_video=?, tags=?, data=?, errors=?, warnings=?, valid=?, seller_code=?,
+                        import_id=?, updated_at=? WHERE id=?""", (*vals, old["id"]))
                     sid = old["id"]
                     stats["updated"] += 1
                 else:
                     sid = c.execute("""INSERT INTO sources(name, price, category, thumb, option_count, image_count,
-                        has_video, tags, data, errors, warnings, valid, import_id, updated_at, source_key, created_at)
-                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (*vals, key, now)).lastrowid
+                        has_video, tags, data, errors, warnings, valid, seller_code, import_id, updated_at, source_key,
+                        created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (*vals, key, now)).lastrowid
                     stats["added"] += 1
                 if errors:
                     stats["invalid"] += 1
@@ -139,8 +134,8 @@ def source_where(f):
     w, a = [], []
     q = (f.get("q") or "").strip()
     if q:
-        w.append("(name LIKE ? OR source_key LIKE ? OR category LIKE ?)")
-        a += [f"%{q}%"] * 3
+        w.append("(name LIKE ? OR seller_code LIKE ? OR category LIKE ? OR id=?)")
+        a += [f"%{q}%"] * 3 + [int(q) if q.isdigit() else -1]
     st = f.get("status") or "all"
     if st == "valid":
         w.append("valid=1")
@@ -150,6 +145,12 @@ def source_where(f):
         w.append("valid=1 AND n_listings=0")
     elif st == "listed":
         w.append("n_listings>0")
+    elif st == "partial":
+        w.append("valid=1 AND n_listings>0 AND n_listings<?")
+        a.append(int(config.load().get("max_copies") or 3))
+    elif st == "full":
+        w.append("n_listings>=?")
+        a.append(int(config.load().get("max_copies") or 3))
     elif st == "names_short":
         w.append("valid=1 AND n_free_names < ?")
         a.append(int(f.get("min_names") or 3))
@@ -159,10 +160,10 @@ def source_where(f):
         w.append("category LIKE ?")
         a.append(f"{f['category']}%")
     if f.get("store_missing"):
-        w.append("id NOT IN (SELECT source_id FROM listings WHERE store_id=?)")
+        w.append("id NOT IN (SELECT source_id FROM listings WHERE store_id=? AND status!='deleted')")
         a.append(int(f["store_missing"]))
     if f.get("store_has"):
-        w.append("id IN (SELECT source_id FROM listings WHERE store_id=?)")
+        w.append("id IN (SELECT source_id FROM listings WHERE store_id=? AND status!='deleted')")
         a.append(int(f["store_has"]))
     if f.get("import_id"):
         w.append("import_id=?")
@@ -177,17 +178,23 @@ def source_where(f):
     return (" WHERE " + " AND ".join(w)) if w else "", a
 
 
-LIST_COLS = ("id, source_key, name, price, category, thumb, option_count, image_count, has_video, errors, "
+LIST_COLS = ("id, source_key, seller_code, name, price, category, thumb, option_count, image_count, has_video, errors, "
              "warnings, valid, n_listings, n_success, n_free_names, updated_at")
 
 
 def query_sources(db, f, page=0, size=100):
     where, args = source_where(f)
     total = db.one(f"SELECT COUNT(*) AS n FROM sources{where}", args)["n"]
-    rows = db.q(f"SELECT {LIST_COLS} FROM sources{where} ORDER BY id LIMIT ? OFFSET ?",
-                (*args, size, page * size))
+    rows = db.q(f"""SELECT {LIST_COLS},
+        (SELECT GROUP_CONCAT(COALESCE(NULLIF(t.code,''), 'S'||printf('%02d', t.id)) || ':' || l.status || ':' || l.op
+                             || ':' || l.round || ':' || t.name, '|')
+           FROM listings l JOIN stores t ON t.id=l.store_id
+          WHERE l.source_id=sources.id AND l.status!='deleted') AS copies
+        FROM sources{where} ORDER BY id LIMIT ? OFFSET ?""", (*args, size, page * size))
     for r in rows:
         r["errors"], r["warnings"] = json.loads(r["errors"]), json.loads(r["warnings"])
+        r["copies"] = [dict(zip(("code", "status", "op", "round", "store"), c.split(":", 4)))
+                       for c in (r["copies"] or "").split("|") if c]
     return {"rows": rows, "total": total}
 
 
@@ -197,10 +204,12 @@ def source_ids(db, f):
 
 
 def source_counts(db):
+    mx = int(config.load().get("max_copies") or 3)
     return db.one("""SELECT COUNT(*) AS all_, SUM(valid=1) AS valid, SUM(valid=0) AS invalid,
         SUM(valid=1 AND n_listings=0) AS unlisted, SUM(n_listings>0) AS listed,
+        SUM(valid=1 AND n_listings>0 AND n_listings<?) AS partial, SUM(n_listings>=?) AS full,
         SUM(valid=1 AND n_free_names<3) AS names_short, SUM(valid=1 AND warnings!='[]') AS warn
-        FROM sources""")
+        FROM sources""", (mx, mx))
 
 
 # ───────────────────────── 2. 상품명 후보
@@ -302,7 +311,7 @@ def generate_ai(db, ids, per_source, progress=None, should_stop=None):
     return stats
 
 
-NAME_KEY_COLS = ("판매자코드", "상품코드", "원본코드", "sellerCode", "id")
+NAME_KEY_COLS = ("판매자코드", "상품코드", "원본코드", "sellerCode")
 
 
 def import_names(db, fileobj, filename, progress=None, should_stop=None):
@@ -316,7 +325,7 @@ def import_names(db, fileobj, filename, progress=None, should_stop=None):
     iid = db.x("INSERT INTO imports(kind, file_name, created_at) VALUES('names', ?, ?)", (filename, now))
     stats = {"rows": 0, "added": 0, "dup": 0, "not_found": 0, "same_as_original": 0}
     key_col = name_cols = None
-    by_name = False
+    by_name = by_thumb = False
     batch = []
 
     def flush():
@@ -325,9 +334,11 @@ def import_names(db, fileobj, filename, progress=None, should_stop=None):
                 if by_name:
                     src = c.execute("SELECT id, name FROM sources WHERE id IN (SELECT source_id FROM names "
                                     "WHERE norm=? AND origin='original')", (namegen.normalize(key),)).fetchone()
+                elif by_thumb:
+                    src = c.execute("SELECT id, name FROM sources WHERE source_key=?", (key,)).fetchone()
                 else:
-                    src = c.execute("SELECT id, name FROM sources WHERE source_key=? OR source_key=?",
-                                    (key, f"id:{key}")).fetchone()
+                    src = c.execute("SELECT id, name FROM sources WHERE seller_code=? OR source_key=?",
+                                    (key, key)).fetchone()
                 if not src:
                     stats["not_found"] += 1
                     continue
@@ -344,11 +355,15 @@ def import_names(db, fileobj, filename, progress=None, should_stop=None):
             cols = list(row.keys())
             key_col = next((k for k in NAME_KEY_COLS if k in cols), None)
             name_cols = [k for k in cols if "상품명" in k and not any(x in k for x in ("원본", "기존", "원래"))]
+            if "썸네일" in cols:
+                key_col, by_thumb = "썸네일", True  # 원본 엑셀 형식 그대로면 썸네일로 찾는 게 가장 정확
             if not key_col and "원본상품명" in cols:
                 key_col, by_name = "원본상품명", True
             if not key_col or not name_cols:
                 raise ValueError(f"원본을 찾을 열(판매자코드 등)이나 새 상품명 열을 찾지 못했습니다. 이 파일의 열: {', '.join(cols)}")
         key = str(row.get(key_col) or "").strip()
+        if by_thumb:
+            key = convert.source_fingerprint({"썸네일": excel.parse_value(row.get(key_col))})
         names = []
         for col in name_cols:
             for part in str(row.get(col) or "").replace("|", "\n").splitlines():
@@ -383,24 +398,51 @@ def source_detail(db, sid):
     s["names"] = db.q("""SELECT n.id, n.name, n.origin, n.listing_id, st.name AS store_name, l.status
         FROM names n LEFT JOIN listings l ON l.id=n.listing_id LEFT JOIN stores st ON st.id=l.store_id
         WHERE n.source_id=? ORDER BY n.listing_id IS NULL, n.id""", (sid,))
-    s["listings"] = db.q("""SELECT l.id, l.name, l.price, l.status, l.message, l.channel_no, l.origin_no,
-        st.name AS store_name, st.store_url FROM listings l JOIN stores st ON st.id=l.store_id
-        WHERE l.source_id=? ORDER BY st.id""", (sid,))
+    s["listings"] = db.q("""SELECT l.id, l.name, l.price, l.status, l.op, l.round, l.message, l.channel_no,
+        l.origin_no, l.seller_code, l.registered_at, l.deleted_at, st.name AS store_name, st.store_url
+        FROM listings l JOIN stores st ON st.id=l.store_id WHERE l.source_id=? ORDER BY l.status='deleted', st.id""",
+                         (sid,))
+    s["history"] = db.q("""SELECT h.*, st.name AS store_name FROM listing_history h
+        JOIN listings l ON l.id=h.listing_id JOIN stores st ON st.id=l.store_id
+        WHERE l.source_id=? ORDER BY h.deleted_at DESC""", (sid,))
+    s["max_copies"] = int(config.load().get("max_copies") or 3)
     return s
 
 
 # ───────────────────────── 3. 등록 계획
 
+def _free_names(c, sid, use_orig):
+    rows = [dict(r) for r in c.execute(
+        "SELECT id, name, origin FROM names WHERE source_id=? AND listing_id IS NULL AND (origin!='original' OR ?)",
+        (sid, int(use_orig)))]
+    rows.sort(key=lambda n: (NAME_ORIGIN_ORDER.get(n["origin"], 9), n["id"]))
+    return rows
+
+
+def _fill_names(c, s, need, cfg, now):
+    """이름 후보가 need개보다 적으면 재조합으로 채우고, 안 쓴 후보 목록을 돌려준다."""
+    use_orig = bool(cfg.get("use_original_name"))
+    pool = _free_names(c, s["id"], use_orig)
+    if len(pool) < need and cfg.get("auto_recombine", True):
+        sibs = _siblings(c, s["id"])
+        cands = namegen.recombine(s["name"], need - len(pool), set(), sibs, cfg,
+                                  seed=f"{s['id']}:{len(sibs)}:plan",
+                                  tag_words=[t for t in (s.get("tags") or "").split(",") if t])
+        add_names(c, s["id"], cands, "recombine", now)
+        pool = _free_names(c, s["id"], use_orig)
+    return pool
+
+
 def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progress=None, should_stop=None):
     """원본 × 스토어마다 등록 한 건(planned)을 만든다.
 
-    mode="all":    고른 스토어 모두에 (이미 있는 스토어는 건너뜀)
-    mode="spread": 원본마다 per_product개 스토어에. 남은 자리가 많은 스토어부터 골고루.
-    이름은 그 원본의 안 쓴 후보 중 가져옴 > AI > 재조합 순으로 쓰고, 모자라면 재조합으로 채운다.
-    가격은 스토어마다 원본가 ±price_jitter_pct%.
+    원본 하나는 최대 max_copies곳(기본 3)까지만. 내린(deleted) 스토어는 세지 않는다.
+    mode="all":    고른 스토어에 (원본마다 남은 칸만큼, 남은 자리가 많은 스토어부터)
+    mode="spread": 원본마다 per_product곳이 되도록 (이미 고른 스토어에 있는 것 포함)
+    전에 내렸던 스토어에 다시 계획하면 같은 줄을 다음 회차로 살린다 (이름·가격 그대로, 설정으로 새 이름).
     """
     cfg = config.load()
-    use_orig = bool(cfg.get("use_original_name"))
+    max_copies = max(1, int(cfg.get("max_copies") or 3))
     stores = {s["id"]: s for s in db.stores() if s["id"] in set(store_ids) and s["enabled"]}
     if not stores:
         raise ValueError("등록할 스토어를 골라 주세요. (사용 중지된 스토어는 제외)")
@@ -408,7 +450,7 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
     now = time.time()
     pid = db.x("INSERT INTO plans(title, created_at) VALUES(?, ?)",
                (title or time.strftime("%m/%d %H:%M 계획"), now))
-    st = {"created": 0, "exists": 0, "no_name": 0, "capacity": 0, "invalid": 0, "sources": 0}
+    st = {"created": 0, "revived": 0, "exists": 0, "full": 0, "no_name": 0, "capacity": 0, "invalid": 0, "sources": 0}
     rot = 0
 
     for i in range(0, len(ids), CHUNK):
@@ -417,9 +459,10 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
         chunk = ids[i:i + CHUNK]
         marks = ",".join("?" * len(chunk))
         srcs = db.q(f"SELECT id, source_key, name, price, tags, valid FROM sources WHERE id IN ({marks})", chunk)
-        have = {}
-        for r in db.q(f"SELECT source_id, store_id FROM listings WHERE source_id IN ({marks})", chunk):
-            have.setdefault(r["source_id"], set()).add(r["store_id"])
+        active, dead = {}, {}
+        for r in db.q(f"SELECT id, source_id, store_id, status, name_id, round FROM listings WHERE source_id IN ({marks})",
+                      chunk):
+            (dead if r["status"] == "deleted" else active).setdefault(r["source_id"], {})[r["store_id"]] = r
         touched = []
         with db.tx() as c:
             for s in srcs:
@@ -427,72 +470,102 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
                 if not s["valid"]:
                     st["invalid"] += 1
                     continue
-                missing = [sid for sid in stores if sid not in have.get(s["id"], set())]
-                st["exists"] += len(stores) - len(missing)
+                act = active.get(s["id"], {})
+                slots = max_copies - len(act)
+                cand = [sid for sid in stores if sid not in act]
+                st["exists"] += len(stores) - len(cand)
+                if slots <= 0:
+                    st["full"] += 1
+                    continue
+                rot += 1
+                cand.sort(key=lambda sid: (-free[sid], (sid + rot) % len(stores)))
+                cand = [sid for sid in cand if free[sid] > 0] or cand
                 if mode == "spread":
-                    want = max(0, per_product - len(have.get(s["id"], set()) & set(stores)))
-                    rot += 1
-                    missing.sort(key=lambda sid: (-free[sid], (sid + rot) % len(stores)))
-                    targets = [sid for sid in missing if free[sid] > 0][:want]
+                    want = min(slots, max(0, per_product - len(set(act) & set(stores))))
                 else:
-                    targets = missing
+                    want = slots
+                targets = cand[:want]
+                if mode == "all" and len(cand) > slots:
+                    st["full"] += 1  # 고른 스토어가 남은 칸보다 많아 일부만
                 if not targets:
                     continue
-                pool = [dict(r) for r in c.execute(
-                    "SELECT id, name, origin FROM names WHERE source_id=? AND listing_id IS NULL AND (origin!='original' OR ?)",
-                    (s["id"], int(use_orig)))]
-                if len(pool) < len(targets) and cfg.get("auto_recombine", True):
-                    sibs = _siblings(c, s["id"])
-                    cands = namegen.recombine(s["name"], len(targets) - len(pool), set(), sibs, cfg,
-                                              seed=f"{s['id']}:{len(sibs)}:plan",
-                                              tag_words=[t for t in s["tags"].split(",") if t])
-                    add_names(c, s["id"], cands, "recombine", now)
-                    pool = [dict(r) for r in c.execute(
-                        "SELECT id, name, origin FROM names WHERE source_id=? AND listing_id IS NULL AND (origin!='original' OR ?)",
-                        (s["id"], int(use_orig)))]
-                pool.sort(key=lambda n: (NAME_ORIGIN_ORDER.get(n["origin"], 9), n["id"]))
+                need_names = sum(1 for sid in targets if sid not in dead.get(s["id"], {}) or cfg.get("refresh_new_name"))
+                pool = _fill_names(c, s, need_names, cfg, now) if need_names else []
                 for sid in targets:
                     if free[sid] <= 0:
                         st["capacity"] += 1
                         continue
-                    if not pool:
-                        st["no_name"] += 1
-                        continue
-                    nm = pool.pop(0)
+                    old = dead.get(s["id"], {}).get(sid)
                     price = convert.adjusted_price(s["price"], f"{s['source_key']}|{sid}", cfg)
-                    lid = c.execute("""INSERT INTO listings(store_id, source_id, plan_id, name_id, name, price, status,
-                        created_at, updated_at) VALUES(?,?,?,?,?,?,'planned',?,?)""",
-                                    (sid, s["id"], pid, nm["id"], nm["name"], price, now, now)).lastrowid
-                    c.execute("UPDATE names SET listing_id=? WHERE id=?", (lid, nm["id"]))
+                    if old and not cfg.get("refresh_new_name"):
+                        c.execute("""UPDATE listings SET status='planned', op='create', round=round+1, plan_id=?,
+                            message='', stage='', updated_at=? WHERE id=?""", (pid, now, old["id"]))
+                        st["revived"] += 1
+                    else:
+                        if not pool:
+                            st["no_name"] += 1
+                            continue
+                        nm = pool.pop(0)
+                        if old:
+                            c.execute("""UPDATE listings SET status='planned', op='create', round=round+1, plan_id=?,
+                                name_id=?, name=?, message='', stage='', updated_at=? WHERE id=?""",
+                                      (pid, nm["id"], nm["name"], now, old["id"]))
+                            c.execute("UPDATE names SET listing_id=? WHERE id=?", (old["id"], nm["id"]))
+                            st["revived"] += 1
+                        else:
+                            lid = c.execute("""INSERT INTO listings(store_id, source_id, plan_id, name_id, name, price,
+                                status, created_at, updated_at) VALUES(?,?,?,?,?,?,'planned',?,?)""",
+                                            (sid, s["id"], pid, nm["id"], nm["name"], price, now, now)).lastrowid
+                            c.execute("UPDATE names SET listing_id=? WHERE id=?", (lid, nm["id"]))
+                            st["created"] += 1
                     free[sid] -= 1
-                    st["created"] += 1
                 touched.append(s["id"])
         db.recount_sources(touched)
         if progress:
-            progress(min(i + CHUNK, len(ids)), len(ids), f"등록 {st['created']:,}건 계획")
+            progress(min(i + CHUNK, len(ids)), len(ids), f"등록 {st['created'] + st['revived']:,}건 계획")
     db.x("UPDATE plans SET note=? WHERE id=?", (json.dumps(st, ensure_ascii=False), pid))
-    if not st["created"]:
+    if not st["created"] and not st["revived"]:
         db.x("DELETE FROM plans WHERE id=?", (pid,))
         pid = None
     st["plan_id"] = pid
     return st
 
 
-def cancel_listings(db, where_sql, args):
-    """아직 등록 안 된(계획·실패) 건을 지우고 이름을 되돌린다."""
-    rows = db.q(f"SELECT id, source_id FROM listings WHERE status IN ('planned','fail') AND ({where_sql})", args)
-    if not rows:
-        return 0
+def schedule_op(db, f, op):
+    """올라가 있는 건에 할 일을 건다. op: refresh(지우고 다시 올리기) / delete(내리기)."""
+    where, args = listing_where({**f, "status": "live"})
+    rows = db.q(f"SELECT l.id, l.source_id FROM listings l JOIN sources s ON s.id=l.source_id{where}", args)
     ids = [r["id"] for r in rows]
+    now = time.time()
     with db.tx() as c:
         for i in range(0, len(ids), 900):
             chunk = ids[i:i + 900]
-            m = ",".join("?" * len(chunk))
-            c.execute(f"UPDATE names SET listing_id=NULL WHERE listing_id IN ({m})", chunk)
-            c.execute(f"DELETE FROM listings WHERE id IN ({m})", chunk)
+            c.execute(f"UPDATE listings SET status='planned', op=?, message='', updated_at=? "
+                      f"WHERE id IN ({','.join('?' * len(chunk))})", (op, now, *chunk))
+    return len(ids)
+
+
+def cancel_listings(db, where_sql, args):
+    """아직 처리 안 된(대기·실패) 할 일을 취소한다.
+    새 등록이면 줄을 지우고 이름을 후보로 돌린다 (다시 살린 줄이면 '내림'으로 되돌림).
+    새로고침·내리기면 할 일만 지우고 '판매 중'으로 되돌린다."""
+    rows = db.q(f"SELECT id, source_id, op, round, origin_no FROM listings "
+                f"WHERE status IN ('planned','fail') AND ({where_sql})", args)
+    if not rows:
+        return 0
+    with db.tx() as c:
+        for r in rows:
+            if r["origin_no"]:
+                c.execute("UPDATE listings SET status='success', op='create', message='' WHERE id=?", (r["id"],))
+            elif r["round"] > 1:
+                c.execute("UPDATE listings SET status='deleted', op='create', round=round-1, message='' WHERE id=?",
+                          (r["id"],))
+            else:
+                c.execute("UPDATE names SET listing_id=NULL WHERE listing_id=?", (r["id"],))
+                c.execute("DELETE FROM listings WHERE id=?", (r["id"],))
     db.recount_sources({r["source_id"] for r in rows})
     db.x("DELETE FROM plans WHERE id NOT IN (SELECT DISTINCT plan_id FROM listings WHERE plan_id IS NOT NULL)")
-    return len(ids)
+    return len(rows)
 
 
 # ───────────────────────── 등록 목록 (화면)
@@ -508,13 +581,23 @@ def listing_where(f):
     st = f.get("status") or "all"
     if st == "pending":
         w.append("l.status IN ('planned','queued','running')")
+    elif st == "live":
+        w.append("l.origin_no!='' AND l.status='success'")
+    elif st == "active":
+        w.append("l.status!='deleted'")
     elif st != "all":
         w.append("l.status=?")
         a.append(st)
+    if f.get("op"):
+        w.append("l.op=?")
+        a.append(f["op"])
+    if f.get("age_days") not in (None, ""):
+        w.append("l.origin_no!='' AND l.registered_at<=?")
+        a.append(time.time() - float(f["age_days"]) * 86400)
     q = (f.get("q") or "").strip()
     if q:
-        w.append("(l.name LIKE ? OR s.source_key LIKE ?)")
-        a += [f"%{q}%"] * 2
+        w.append("(l.name LIKE ? OR l.seller_code LIKE ? OR s.seller_code LIKE ? OR l.channel_no=?)")
+        a += [f"%{q}%"] * 3 + [q]
     if f.get("ids"):
         ids = [int(i) for i in f["ids"]]
         w.append(f"l.id IN ({','.join('?' * len(ids))})")
@@ -526,11 +609,19 @@ def query_listings(db, f, page=0, size=100):
     where, args = listing_where(f)
     base = "FROM listings l JOIN sources s ON s.id=l.source_id JOIN stores t ON t.id=l.store_id"
     total = db.one(f"SELECT COUNT(*) AS n {base}{where}", args)["n"]
-    rows = db.q(f"""SELECT l.id, l.name, l.price, l.status, l.stage, l.message, l.origin_no, l.channel_no,
-        l.seconds, l.plan_id, l.updated_at, s.id AS source_id, s.source_key, s.name AS source_name,
-        s.price AS source_price, s.thumb, s.category, t.id AS store_id, t.name AS store_name, t.store_url
+    rows = db.q(f"""SELECT l.id, l.name, l.price, l.status, l.op, l.round, l.stage, l.message, l.origin_no,
+        l.channel_no, l.seller_code, l.registered_at, l.deleted_at, l.seconds, l.plan_id, l.updated_at,
+        s.id AS source_id, s.source_key, s.seller_code AS source_code, s.name AS source_name,
+        s.price AS source_price, s.thumb, s.category, s.n_listings AS source_copies,
+        t.id AS store_id, t.name AS store_name, t.store_url,
+        COALESCE(NULLIF(t.code,''), 'S'||printf('%02d', t.id)) AS store_code
         {base}{where} ORDER BY l.id LIMIT ? OFFSET ?""", (*args, size, page * size))
     return {"rows": rows, "total": total}
+
+
+def listing_ids(db, f):
+    where, args = listing_where(f)
+    return [r["id"] for r in db.q(f"SELECT l.id FROM listings l JOIN sources s ON s.id=l.source_id{where}", args)]
 
 
 def listing_counts(db, store_id=None, plan_id=None):
@@ -542,5 +633,14 @@ def listing_counts(db, store_id=None, plan_id=None):
         w.append("plan_id=?")
         a.append(int(plan_id))
     where = (" WHERE " + " AND ".join(w)) if w else ""
-    return db.one(f"""SELECT COUNT(*) AS all_, SUM(status IN ('planned','queued','running')) AS pending,
-        SUM(status='success') AS success, SUM(status='fail') AS fail FROM listings{where}""", a)
+    day = 86400
+    now = time.time()
+    return db.one(f"""SELECT COUNT(*) AS all_,
+        SUM(status IN ('planned','queued','running')) AS pending,
+        SUM(status IN ('planned','queued','running') AND op='create') AS pending_create,
+        SUM(status IN ('planned','queued','running') AND op='refresh') AS pending_refresh,
+        SUM(status IN ('planned','queued','running') AND op='delete') AS pending_delete,
+        SUM(origin_no!='' AND status='success') AS live, SUM(status='fail') AS fail, SUM(status='deleted') AS deleted,
+        SUM(origin_no!='' AND registered_at<=?) AS age30, SUM(origin_no!='' AND registered_at<=?) AS age60,
+        SUM(origin_no!='' AND registered_at<=?) AS age90
+        FROM listings{where}""", (now - 30 * day, now - 60 * day, now - 90 * day, *a))

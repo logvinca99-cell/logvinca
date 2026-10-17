@@ -22,6 +22,14 @@ DEFAULTS = {
     "return_fee": 5000,
     "exchange_fee": 10000,
 
+    # ── 복사·구분
+    # 원본 하나를 올릴 수 있는 최대 스토어 수 (내린 것은 세지 않음)
+    "max_copies": 3,
+    # 스토어에 등록하는 판매자 관리코드. {store}=스토어 코드, {source}=원본 번호, {round}=회차
+    "seller_code_format": "{store}-{source:07d}-{round}",
+    # 새로고침(지우고 다시 올리기)·다시 올리기 때 상품명을 새 후보로 바꿀지 (끄면 같은 이름)
+    "refresh_new_name": False,
+
     # ── 가격: 스토어마다 원본가에서 ±price_jitter_pct% 안에서 정하고 price_round 단위로 맞춤.
     #    같은 상품·같은 스토어는 언제 계획해도 같은 가격이 나온다.
     "price_jitter_pct": 3.0,

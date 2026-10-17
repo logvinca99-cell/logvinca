@@ -3,34 +3,38 @@
 
 const LST_TILES = [
   { key: "all", label: "전체", dot: "var(--text-2)", count: "all_" },
-  { key: "pending", label: "등록 대기", dot: "var(--idle)" },
-  { key: "success", label: "등록 완료", dot: "var(--ok)" },
+  { key: "live", label: "판매 중", dot: "var(--ok)" },
+  { key: "pending", label: "할 일 대기", dot: "var(--idle)" },
   { key: "fail", label: "실패", dot: "var(--err)" },
+  { key: "deleted", label: "내림", dot: "var(--dup)" },
 ];
 
 App.page("listings", {
   size: 100,
 
   async mount(el, params) {
-    this.f = { status: "all", store_id: "", plan_id: "", q: "", ...params };
+    this.f = { status: "all", store_id: "", plan_id: "", q: "", age_days: "", ...params };
     this.page = 0;
+    this.sel = new Set();
+    this.selAll = false;
     el.innerHTML = `<div class="page">
       <header class="page-head"><h1>등록</h1>
-        <div class="head-actions">
-          <a class="btn ghost" id="l-export">결과 CSV</a>
-          <button class="btn ghost danger-text" id="l-cancel">대기·실패 건 계획 취소</button>
-        </div></header>
+        <div class="head-actions"><a class="btn ghost" id="l-export">결과 CSV</a></div></header>
       <div class="card run" id="l-run"></div>
       <div class="toolbar"><div class="filters">
         <select id="l-store" class="sel"><option value="">모든 스토어</option></select>
         <select id="l-plan" class="sel"><option value="">모든 계획</option></select>
+        <select id="l-age" class="sel"><option value="">올린 날 전체</option><option value="7">올린 지 7일 넘음</option>
+          <option value="30">30일 넘음</option><option value="60">60일 넘음</option><option value="90">90일 넘음</option></select>
         <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
-          <input id="l-q" placeholder="등록 상품명·판매자코드"></div>
+          <input id="l-q" placeholder="상품명·관리코드·상품번호"></div>
       </div></div>
       <div class="tiles" id="l-tiles"></div>
+      <div class="actionbar" id="l-actions"></div>
       <div class="card table-card">
-        <table class="grid"><thead><tr><th class="w-thumb"></th><th>등록 상품명</th><th class="w-store">스토어</th>
-          <th class="w-num">판매가</th><th class="w-status">상태</th></tr></thead><tbody id="l-rows"></tbody></table>
+        <table class="grid"><thead><tr><th class="w-check"><input type="checkbox" id="l-check-all" aria-label="이 쪽 모두 선택"></th>
+          <th class="w-thumb"></th><th>등록 상품명</th><th class="w-store">스토어</th>
+          <th class="w-round">관리코드 · 올린 날</th><th class="w-num">판매가</th><th class="w-status">상태</th></tr></thead><tbody id="l-rows"></tbody></table>
         <div class="pager" id="l-pager"></div>
       </div>
     </div>`;
@@ -39,6 +43,7 @@ App.page("listings", {
     $("#l-plan").innerHTML += plans.map((p) => `<option value="${p.id}">${esc(p.title)} · ${num(p.total)}건</option>`).join("");
     $("#l-store").value = this.f.store_id || "";
     $("#l-plan").value = this.f.plan_id || "";
+    $("#l-age").value = this.f.age_days || "";
     this.bind();
     this.onRun = (r) => this.renderRun(r);
     this.onDone = () => { this.estKey = ""; this.load(); };
@@ -53,6 +58,14 @@ App.page("listings", {
     clearInterval(this.timer);
   },
 
+  /* 시작·예상 시간은 스토어·계획 범위만 따른다 (상태·올린 날·검색어 거르기와 무관하게 대기·실패 건 전부) */
+  runScope() {
+    const f = {};
+    if (this.f.store_id) f.store_id = this.f.store_id;
+    if (this.f.plan_id) f.plan_id = this.f.plan_id;
+    return f;
+  },
+
   query() {
     const f = { ...this.f };
     Object.keys(f).forEach((k) => (f[k] === "" || f[k] == null) && delete f[k]);
@@ -64,12 +77,16 @@ App.page("listings", {
     const qs = new URLSearchParams({ ...this.query(), page: this.page, size: this.size });
     const res = await App.api(`/api/listings?${qs}`);
     this.counts = res.counts || {};
+    this.rows = res.rows;
+    this.total = res.total;
     $("#l-tiles").innerHTML = tilesHtml(LST_TILES, { ...this.counts, all: this.counts.all_ }, this.f.status);
     $("#l-rows").innerHTML = res.rows.length ? res.rows.map((l) => this.rowHtml(l)).join("")
-      : `<tr class="empty-row"><td colspan="5">${this.counts.all_ ? "조건에 맞는 건이 없습니다."
+      : `<tr class="empty-row"><td colspan="7">${this.counts.all_ ? "조건에 맞는 건이 없습니다."
         : '아직 등록 계획이 없습니다. <a href="#inventory">원본 상품</a>에서 상품을 고르고 <b>스토어에 올리기 계획</b>을 만드세요.'}</td></tr>`;
     App.pager($("#l-pager"), { page: this.page, size: this.size, total: res.total, onPage: (p) => { this.page = p; this.load(); } });
     $("#l-export").href = `/api/listings/export.csv?${new URLSearchParams(this.query())}`;
+    $("#l-check-all").checked = res.rows.length > 0 && res.rows.every((l) => this.sel.has(l.id));
+    this.renderActions();
     if (!App.run?.running) this.renderIdle();
   },
 
@@ -77,37 +94,75 @@ App.page("listings", {
     const diff = l.source_price ? ((l.price - l.source_price) / l.source_price) * 100 : 0;
     let msg = "", cls = "";
     if (l.status === "fail") { msg = l.message; cls = "err"; }
-    else if (l.status === "success") msg = `상품번호 ${l.channel_no}${l.seconds ? ` · ${l.seconds.toFixed(1)}초` : ""}`;
+    else if (l.status === "success") msg = `상품번호 ${l.channel_no}`;
     else if (l.status === "running") msg = l.stage;
-    return `<tr data-id="${l.id}">
+    else if (l.status === "deleted") msg = `${ymd(l.deleted_at)}에 내림`;
+    const on = this.selAll || this.sel.has(l.id);
+    const others = l.source_copies > 1 ? `<span class="flag" title="같은 원본이 다른 스토어에도 있음">같은 원본 ${l.source_copies}곳</span>` : "";
+    return `<tr data-id="${l.id}" class="${on ? "sel" : ""} ${l.status === "deleted" ? "off" : ""}">
+      <td class="w-check" data-stop><input type="checkbox" ${on ? "checked" : ""} ${this.selAll ? "disabled" : ""}></td>
       <td>${img(l.thumb)}</td>
-      <td><div class="p-name">${esc(l.name)}</div><div class="p-sub"><span>원본: ${esc(l.source_name)}</span></div></td>
-      <td>${esc(l.store_name)}</td>
+      <td><div class="p-name">${esc(l.name)}</div><div class="p-sub"><span>원본 #${l.source_id}</span>${others}</div></td>
+      <td><b class="code">${esc(l.store_code)}</b> ${esc(l.store_name)}</td>
+      <td>${esc(l.seller_code || "-")}<div class="p-sub">${l.round}회차${l.registered_at && l.origin_no ? ` · ${ymd(l.registered_at)} (${age(l.registered_at)})` : ""}</div></td>
       <td class="num">${num(l.price)}원<div class="p-sub r">${diff ? (diff > 0 ? "+" : "") + diff.toFixed(1) + "%" : "원본가"}</div></td>
-      <td><span class="badge s-${l.status}">${STATUS[l.status]}</span>${msg ? `<div class="s-msg ${cls}" title="${esc(msg)}">${esc(msg)}</div>` : ""}</td></tr>`;
+      <td>${statusBadge(l.status, l.op)}${msg ? `<div class="s-msg ${cls}" title="${esc(msg)}">${esc(msg)}</div>` : ""}</td></tr>`;
+  },
+
+  renderActions() {
+    const n = this.selAll ? this.total : this.sel.size;
+    const target = this.selAll ? `조건에 맞는 <b>${num(this.total)}건 전체</b>` : n ? `<b>${num(n)}건</b> 선택` : "";
+    $("#l-actions").innerHTML = `<div class="ab-left">
+        ${target ? `<span>${target}</span><button class="link-btn" id="la-clear">선택 해제</button>` : `<span class="muted">건을 고르거나</span>`}
+        ${!this.selAll && this.total ? `<button class="link-btn" id="la-all">조건에 맞는 ${num(this.total)}건 모두 고르기</button>` : ""}
+      </div>
+      <div class="ab-right">
+        <button class="btn" id="la-refresh" ${n ? "" : "disabled"} title="판매 중인 건을 네이버에서 지우고 같은 내용으로 다시 올림 (회차 +1)">새로고침 예약</button>
+        <button class="btn" id="la-delete" ${n ? "" : "disabled"} title="판매 중인 건을 네이버에서 지움. 원본의 빈 칸이 생겨 다른 스토어에 올릴 수 있음">내리기 예약</button>
+        <button class="btn ghost danger-text" id="la-cancel" ${n ? "" : "disabled"} title="아직 처리 안 된 대기·실패 할 일을 취소">대기·실패 취소</button>
+      </div>`;
+  },
+
+  target() {
+    if (this.selAll) { const f = this.query(); return f; }
+    return { ids: [...this.sel] };
+  },
+
+  async schedule(op) {
+    const label = op === "refresh" ? "새로고침(지우고 다시 올리기)" : "내리기(네이버에서 지우기)";
+    if (!confirm(`고른 건 중 판매 중인 건에 ${label}를 예약할까요?\n예약만 하고, 위의 [시작]을 눌러야 실제로 처리합니다.`)) return;
+    try {
+      const r = await App.api("/api/listings/schedule", { json: { ...this.target(), op } });
+      App.toast(`${num(r.scheduled)}건 예약했습니다. 위에서 시작을 누르세요.`);
+      this.sel.clear(); this.selAll = false; this.estKey = "";
+      this.load();
+    } catch (e) { App.toast(e.message, true); }
   },
 
   // ── 실행 패널
 
   renderIdle() {
     const box = $("#l-run");
-    const n = (this.counts.pending || 0) + (this.counts.fail || 0);
+    const c = this.counts;
+    const n = (c.pending || 0) + (c.fail || 0);
     const scope = [this.f.store_id && $("#l-store").selectedOptions[0]?.text, this.f.plan_id && $("#l-plan").selectedOptions[0]?.text.split(" · ")[0]]
       .filter(Boolean).join(" · ");
     box.innerHTML = `<div class="run-idle">
         <div class="run-actions">
-          <button class="btn primary big" id="l-start" ${n ? "" : "disabled"}>▶ 등록 시작 · ${num(n)}건</button>
+          <button class="btn primary big" id="l-start" ${n ? "" : "disabled"}>▶ 시작 · ${num(n)}건</button>
           <button class="btn big" id="l-one" ${n ? "" : "disabled"}>1건만 시험</button>
         </div>
-        <div class="run-est"><div>${scope ? `<b>${esc(scope)}</b>의 ` : "모든 스토어의 "}대기·실패 건을 등록합니다.</div><div id="l-est" class="muted small"></div></div>
+        <div class="run-est"><div>${scope ? `<b>${esc(scope)}</b>의 ` : "모든 스토어의 "}대기·실패 건을 처리합니다:
+          등록 ${num(c.pending_create)} · 새로고침 ${num(c.pending_refresh)} · 내리기 ${num(c.pending_delete)} · 실패 재시도 ${num(c.fail)}</div>
+          <div id="l-est" class="muted small"></div></div>
       </div>`;
     $("#l-start").addEventListener("click", () => this.start());
     $("#l-one").addEventListener("click", () => this.start(1));
     if (!n) return;
-    const key = JSON.stringify(this.query()) + n;
+    const key = JSON.stringify(this.runScope()) + n;
     if (key === this.estKey) { $("#l-est").innerHTML = this.estHtml || ""; return; }
     this.estKey = key;
-    App.api("/api/run/estimate", { json: { ...this.query(), status: undefined } }).then((e) => {
+    App.api("/api/run/estimate", { json: this.runScope() }).then((e) => {
       this.estHtml = `예상 <b>약 ${dur(e.seconds)}</b> · 스토어 ${e.stores}곳을 ${e.parallel}곳씩 나란히, 스토어마다 ${e.workers}건씩 동시에 · ${esc(e.basis)}`;
       const el = $("#l-est");
       if (el) el.innerHTML = this.estHtml;
@@ -116,11 +171,9 @@ App.page("listings", {
 
   async start(limit) {
     const n = limit || (this.counts.pending || 0) + (this.counts.fail || 0);
-    if (!limit && !confirm(`${num(n)}건을 스마트스토어에 등록합니다. 계속할까요?`)) return;
-    const f = this.query();
-    delete f.status;
+    if (!limit && !confirm(`${num(n)}건을 처리합니다 (등록·새로고침·내리기). 계속할까요?`)) return;
     try {
-      App.run = await App.api("/api/run", { json: { ...f, limit: limit || null } });
+      App.run = await App.api("/api/run", { json: { ...this.runScope(), limit: limit || null } });
       this.renderRun(App.run);
       App.renderSideRun();
     } catch (e) { App.toast(e.message, true); }
@@ -195,33 +248,54 @@ App.page("listings", {
       .toLocaleTimeString("ko-KR", { hour12: false })}</time>${l.store ? `<span class="muted">${esc(l.store)}</span>` : ""}<span>${esc(l.msg)}</span></li>`).join("");
   },
 
+  clearSel() { this.sel.clear(); this.selAll = false; },
+
   bind() {
     $("#l-tiles").addEventListener("click", (e) => {
       const t = e.target.closest("[data-filter]");
-      if (t) { this.f.status = t.dataset.filter; this.page = 0; this.load(); }
+      if (t) { this.f.status = t.dataset.filter; this.page = 0; this.clearSel(); this.load(); }
     });
-    $("#l-store").addEventListener("change", (e) => { this.f.store_id = e.target.value; this.page = 0; this.load(); });
-    $("#l-plan").addEventListener("change", (e) => { this.f.plan_id = e.target.value; this.page = 0; this.load(); });
+    $("#l-store").addEventListener("change", (e) => { this.f.store_id = e.target.value; this.page = 0; this.clearSel(); this.load(); });
+    $("#l-plan").addEventListener("change", (e) => { this.f.plan_id = e.target.value; this.page = 0; this.clearSel(); this.load(); });
     let timer;
     $("#l-q").addEventListener("input", (e) => {
       clearTimeout(timer);
       timer = setTimeout(() => { this.f.q = e.target.value.trim(); this.page = 0; this.load(); }, 300);
     });
-    $("#l-cancel").addEventListener("click", async () => {
-      const f = this.query();
-      delete f.status;
-      delete f.q;
-      const scope = f.store_id || f.plan_id ? "지금 고른 스토어·계획의" : "모든";
-      if (!confirm(`${scope} 등록 대기·실패 건의 계획을 취소할까요?\n쓰던 상품명은 다시 후보로 돌아갑니다. 등록 완료된 건은 그대로입니다.`)) return;
-      try {
-        const r = await App.api("/api/listings/cancel", { json: f });
-        App.toast(`${num(r.cancelled)}건을 취소했습니다.`);
-        this.load();
-      } catch (e) { App.toast(e.message, true); }
+    $("#l-age").addEventListener("change", (e) => { this.f.age_days = e.target.value; this.page = 0; this.clearSel(); this.load(); });
+    $("#l-check-all").addEventListener("change", (e) => {
+      this.selAll = false;
+      this.rows.forEach((l) => (e.target.checked ? this.sel.add(l.id) : this.sel.delete(l.id)));
+      this.load();
+    });
+    $("#l-actions").addEventListener("click", async (e) => {
+      const id = e.target.closest("button")?.id;
+      if (id === "la-clear") { this.clearSel(); this.load(); }
+      if (id === "la-all") { this.selAll = true; this.sel.clear(); this.load(); }
+      if (id === "la-refresh") this.schedule("refresh");
+      if (id === "la-delete") this.schedule("delete");
+      if (id === "la-cancel") {
+        if (!confirm("고른 건 중 대기·실패 할 일을 취소할까요?\n새 등록이면 계획을 지우고 이름을 후보로 돌립니다. 새로고침·내리기면 판매 중으로 되돌립니다.")) return;
+        try {
+          const r = await App.api("/api/listings/cancel", { json: this.target() });
+          App.toast(`${num(r.cancelled)}건을 취소했습니다.`);
+          this.clearSel(); this.estKey = ""; this.load();
+        } catch (err) { App.toast(err.message, true); }
+      }
     });
     $("#l-rows").addEventListener("click", (e) => {
       const tr = e.target.closest("tr[data-id]");
-      if (tr) this.openListing(+tr.dataset.id);
+      if (!tr) return;
+      const id = +tr.dataset.id;
+      if (e.target.closest("[data-stop]")) {
+        if (this.selAll) return;
+        this.sel.has(id) ? this.sel.delete(id) : this.sel.add(id);
+        tr.classList.toggle("sel", this.sel.has(id));
+        $("input", tr).checked = this.sel.has(id);
+        this.renderActions();
+        return;
+      }
+      this.openListing(id);
     });
   },
 
@@ -230,16 +304,22 @@ App.page("listings", {
     try { l = await App.api(`/api/listings/${id}`); } catch (e) { return App.toast(e.message, true); }
     const url = l.store_url && l.channel_no ? `${l.store_url.replace(/\/$/, "")}/products/${l.channel_no}` : "";
     App.openDrawer({
-      title: l.name, sub: `${l.store_name} · ${STATUS[l.status]}`,
+      title: l.name, sub: `${l.store_name} · ${statusLabel(l.status, l.op)} · ${l.round}회차`,
       tabs: [
         { key: "info", label: "정보", render: (b) => {
-          b.innerHTML = (l.status === "fail" ? `<div class="notice err"><b>등록 실패</b><br>${esc(l.message)}</div>` : "")
-            + (l.status === "success" ? `<div class="notice ok"><b>등록 완료</b> · 상품번호 ${esc(l.channel_no)}<br>
+          b.innerHTML = (l.status === "fail" ? `<div class="notice err"><b>${esc(statusLabel(l.status, l.op))}</b><br>${esc(l.message)}</div>` : "")
+            + (l.origin_no ? `<div class="notice ok"><b>판매 중</b> · 상품번호 ${esc(l.channel_no)} · ${ymd(l.registered_at)}에 올림 (${age(l.registered_at)})<br>
                 ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">스토어에서 보기</a> · ` : ""}
                 <a href="https://sell.smartstore.naver.com/#/products/edit/${esc(l.origin_no)}" target="_blank" rel="noopener">스마트스토어센터에서 수정</a></div>` : "")
             + `<div class="gallery">${img(l.thumb, "g-main")}</div>
               <dl class="kv"><dt>스토어</dt><dd>${esc(l.store_name)}</dd><dt>등록 상품명</dt><dd>${esc(l.name)}</dd>
-              <dt>원본 상품명</dt><dd>${esc(l.source_name)}</dd><dt>판매가</dt><dd>${num(l.price)}원 <span class="muted">(원본가 ${num(l.source_price)}원)</span></dd></dl>`;
+              <dt>판매자 관리코드</dt><dd>${esc(l.seller_code || l.next_seller_code)} <span class="muted">(${l.round}회차${l.seller_code ? "" : ", 등록하면 붙음"})</span></dd>
+              <dt>원본</dt><dd>#${l.source_id} ${esc(l.source_name)}</dd>
+              <dt>판매가</dt><dd>${num(l.price)}원 <span class="muted">(원본가 ${num(l.source_price)}원)</span></dd>
+              <dt>같은 원본</dt><dd>${l.siblings.length ? l.siblings.map((x) => `${esc(x.store_name)} · ${esc(x.name)} <span class="muted">(${STATUS[x.status] || x.status})</span>`).join("<br>") : "다른 스토어에는 없음"}</dd></dl>`
+            + (l.history.length ? `<div><h3 class="sec-title">지난 회차</h3><table class="opt-table"><tr><th>회차</th><th>관리코드</th><th>상품번호</th><th>올린 날</th><th>지운 날</th></tr>
+              ${l.history.map((h) => `<tr><td>${h.round}</td><td>${esc(h.seller_code)}</td><td>${esc(h.channel_no)}</td><td>${ymd(h.registered_at)}</td>
+              <td>${ymd(h.deleted_at)} <span class="muted">${h.reason === "refresh" ? "새로고침" : "내리기"}</span></td></tr>`).join("")}</table></div>` : "");
         } },
         { key: "json", label: "보낼 데이터", render: (b) => {
           const body = JSON.parse(JSON.stringify(l.body));
@@ -250,7 +330,7 @@ App.page("listings", {
         } },
       ],
       foot: ["planned", "fail"].includes(l.status) && !App.run?.running
-        ? `<span class="muted"></span><button class="btn primary" id="d-run">이 건만 등록</button>` : "",
+        ? `<span class="muted"></span><button class="btn primary" id="d-run">이 건만 지금 처리</button>` : "",
     });
     $("#d-run")?.addEventListener("click", async () => {
       try { App.run = await App.api("/api/run", { json: { ids: [id] } }); App.closeDrawer(); this.renderRun(App.run); }

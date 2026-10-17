@@ -26,8 +26,8 @@ App.page("home", {
     const s = st.stats;
     $("#h-tiles").innerHTML = [
       ["원본 상품", s.sources, "var(--text-2)"], ["등록 가능 원본", s.sources_valid, "var(--idle)"],
-      ["안 쓴 이름 후보", s.names_free, "var(--info)"], ["등록 완료", s.registered, "var(--ok)"],
-      ["등록 대기", s.pending, "var(--warn)"], ["실패", s.failed, "var(--err)"],
+      ["안 쓴 이름 후보", s.names_free, "var(--info)"], ["판매 중", s.registered, "var(--ok)"],
+      ["할 일 대기", s.pending, "var(--warn)"], ["실패", s.failed, "var(--err)"],
     ].map(([l, n, c]) => `<div class="tile static" style="--dot:${c}"><div class="t-label">${l}</div><div class="t-num">${num(n)}</div></div>`).join("");
 
     const steps = [
@@ -44,10 +44,11 @@ App.page("home", {
 
     $("#h-stores").innerHTML = stores.length ? stores.map((x) => `
       <a class="store-card ${x.enabled ? "" : "off"}" href="#listings?store_id=${x.id}">
-        <div class="sc-top"><b>${esc(x.name)}</b>${x.has_keys ? "" : '<span class="flag warn">키 없음</span>'}</div>
+        <div class="sc-top"><b><span class="code">${esc(x.code)}</span> ${esc(x.name)}</b>${x.has_keys ? "" : '<span class="flag warn">키 없음</span>'}</div>
         ${usageBar(x.used, x.capacity)}
         <div class="sc-num"><span>${num(x.used)}</span><span class="muted">/ ${num(x.capacity)}</span></div>
-        <div class="sc-sub muted small">완료 ${num(x.n_success)} · 대기 ${num(x.n_pending)}${x.n_fail ? ` · <span class="c-err">실패 ${num(x.n_fail)}</span>` : ""}</div>
+        <div class="sc-sub muted small">판매 중 ${num(x.n_live)} · 대기 ${num(x.n_pending + x.n_ops)}${x.n_fail ? ` · <span class="c-err">실패 ${num(x.n_fail)}</span>` : ""}
+          ${x.oldest_at ? `<br>가장 오래된 것 ${age(x.oldest_at)}` : ""}</div>
       </a>`).join("") : `<p class="muted">아직 스토어가 없습니다. <a href="#stores">스토어 추가</a></p>`;
   },
 });

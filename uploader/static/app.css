@@ -352,3 +352,15 @@ label.check input { margin-top: 3px; }
   .w-store, .w-usage { width: auto; }
   .filters .search { width: 100%; }
 }
+
+/* ── 스토어 칸 (원본이 어느 스토어에 있는지) */
+.w-copies { width: 170px; } .w-round { width: 190px; } .w-code { width: 70px; }
+.slots { display: flex; gap: 4px; }
+.slot { min-width: 40px; height: 24px; padding: 0 6px; border-radius: 6px; display: inline-grid; place-items: center; font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.slot.empty { background: transparent; border: 1px dashed var(--line); color: var(--muted); font-weight: 400; }
+.code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px; padding: 0 5px; font-weight: 700; }
+.s-refresh { background: var(--info-soft); color: var(--info); }
+.s-delete { background: var(--warn-soft); color: var(--warn); }
+.s-deleted { background: var(--dup-soft); color: var(--dup); }
+.opt-table th { white-space: nowrap; }
+.opt-table td:first-child { white-space: nowrap; }

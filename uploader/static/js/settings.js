@@ -13,6 +13,11 @@ const SETTING_SECTIONS = [
       ["EPOST", "우체국택배"], ["LOGEN", "로젠택배"], ["KDEXP", "경동택배"]] }],
     ["return_fee", "반품 배송비", "number"], ["exchange_fee", "교환 배송비", "number"],
   ] },
+  { title: "복사·구분", note: "같은 원본이 여러 스토어에 있을 때 구분하는 방법입니다. 판매자 관리코드는 스마트스토어센터에서 검색할 수 있어 어느 원본의 몇 번째 등록인지 바로 알 수 있습니다.", fields: [
+    ["max_copies", "원본 하나를 올릴 수 있는 최대 스토어 수 (내린 것은 세지 않음)", "number"],
+    ["seller_code_format", "판매자 관리코드 형식", "text", { hint: "{store}=스토어 코드, {source:07d}=원본 번호, {round}=회차" }],
+    ["refresh_new_name", "새로고침·다시 올리기 때 상품명을 새 후보로 바꿈 (끄면 같은 이름 그대로)", "check"],
+  ] },
   { title: "스토어별 가격", note: "같은 상품도 스토어마다 원본가에서 조금씩 다르게 정합니다. 같은 상품·같은 스토어는 언제 계획해도 같은 가격입니다.", fields: [
     ["price_jitter_pct", "조정 범위 (± %)", "number", { step: 0.5 }],
     ["price_round", "단위 (원)", "number", { step: 10 }],

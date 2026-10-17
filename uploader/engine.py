@@ -20,12 +20,13 @@ GUESS_PER_IMAGE_SEC = 0.35
 
 
 def listing_targets(db, f):
-    """등록할 건: 조건에 맞는 계획·실패 건."""
+    """처리할 건: 조건에 맞는 대기·실패 건 (새 등록 / 새로고침 / 내리기)."""
     from .inventory import listing_where
     where, args = listing_where({**f, "status": "all"})
     cond = "l.status IN ('planned','fail')"
     where = (where + f" AND {cond}") if where else f" WHERE {cond}"
-    return db.q(f"""SELECT l.id, l.store_id, l.source_id, l.name, l.price, l.status, l.message, s.image_count
+    return db.q(f"""SELECT l.id, l.store_id, l.source_id, l.name, l.price, l.status, l.message, l.op, l.round,
+        l.origin_no, l.channel_no, l.seller_code, l.registered_at, CASE WHEN l.op='delete' THEN 0 ELSE s.image_count END AS image_count
         FROM listings l JOIN sources s ON s.id=l.source_id{where} ORDER BY l.id""", args)
 
 
@@ -52,6 +53,15 @@ def estimate(db, targets, cfg):
         lanes[i] += sec
     return {"seconds": max(lanes) if store_sec else 0, "basis": basis, "count": len(targets),
             "stores": len(per_store), "workers": workers, "parallel": min(parallel, len(per_store) or 1)}
+
+
+def seller_code(cfg, store, t):
+    """스토어에 등록하는 판매자 관리코드. 기본 '스토어코드-원본번호-회차' (예: S07-0012345-2)."""
+    fmt = cfg.get("seller_code_format") or "{store}-{source:07d}-{round}"
+    try:
+        return fmt.format(store=store.get("code") or f"S{store['id']:02d}", source=t["source_id"], round=t["round"])
+    except (KeyError, ValueError, IndexError):
+        return f"{store.get('code')}-{t['source_id']:07d}-{t['round']}"
 
 
 class Stopped(Exception):
@@ -243,22 +253,45 @@ class Runner:
             self.state["current"][lid] = {"name": label, "stage": stage}
 
     def _one(self, cfg, store, client, categories, pool, cache, t):
-        lid, sid = t["id"], store["id"]
+        """한 건 처리. op: create(새로 등록) / refresh(지우고 다시 등록) / delete(내리기)."""
+        lid, sid, op = t["id"], store["id"], t["op"]
         label = f"[{store['name']}] {t['name']}"
         t0 = time.time()
         self.db.set_listing(lid, "running", stage="준비")
         self._stage(lid, label, "준비")
+        on_wait = lambda m: self._stage(lid, label, m)  # noqa: E731
         notes = []
         try:
+            if op in ("refresh", "delete") and t["origin_no"]:
+                self._stage(lid, label, "네이버에서 지우는 중")
+                client.delete_product(t["origin_no"], on_wait=on_wait)
+                self._archive(t, "refresh" if op == "refresh" else "delete")
+                if op == "delete":
+                    self.db.set_listing(lid, "deleted", op="create", stage="", message="", origin_no="",
+                                        channel_no="", deleted_at=time.time(), seconds=time.time() - t0)
+                    self._log("ok", f"내림 · {t['name'][:40]}", store["name"])
+                    self._count(sid, lid, True)
+                    return
+                # 지웠으니 이제부터는 다음 회차 '새 등록'. 여기서 실패해도 다시 시도하면 등록만 한다.
+                t = {**t, "round": t["round"] + 1, "origin_no": ""}
+                self.db.set_listing(lid, None, op="create", round=t["round"], origin_no="", channel_no="",
+                                    deleted_at=time.time())
+                if cfg.get("refresh_new_name"):
+                    t["name"] = self._new_name(cfg, t) or t["name"]
+            elif op == "delete":
+                self.db.set_listing(lid, "deleted", op="create", stage="", deleted_at=time.time())
+                self._count(sid, lid, True)
+                return
+
             row = self.db.source_row(t["source_id"])
             cat_id = categories.get(str(row.get("카테고리") or "").strip())
             if not cat_id:
                 raise convert.ConvertError(f"카테고리 '{row.get('카테고리')}'를 스마트스토어에서 찾지 못했습니다.")
-            phone = store.get("as_phone") or cfg.get("as_phone")
-            kw = dict(name=t["name"], price=t["price"], as_phone=phone)
+            code = seller_code(cfg, store, t)
+            kw = dict(name=t["name"], price=t["price"], as_phone=store.get("as_phone") or cfg.get("as_phone"),
+                      seller_code=code)
             convert.build_body(row, cfg, cat_id, **kw)  # 이미지 올리기 전에 빠진 값부터 확인
 
-            on_wait = lambda m: self._stage(lid, label, m)  # noqa: E731
             thumbs = convert.thumbnails(row)[:10]
             url_map, n1, _ = self._images(client, pool, cache, sid, thumbs, True, lid, label, on_wait)
             details = convert.detail_images_to_upload(row, cfg)
@@ -270,15 +303,19 @@ class Runner:
             self._stage(lid, label, "상품 등록 중")
             res = client.create_product(convert.build_body(row, cfg, cat_id, url_map, **kw), on_wait=on_wait)
             sec = time.time() - t0
-            self.db.set_listing(lid, "success", stage="", message=" / ".join(notes), seconds=sec,
+            self.db.set_listing(lid, "success", op="create", stage="", message=" / ".join(notes), seconds=sec,
+                                seller_code=code, registered_at=time.time(),
                                 origin_no=str(res.get("originProductNo", "")),
                                 channel_no=str(res.get("smartstoreChannelProductNo", "")))
-            ok = True
-            self._log("ok", f"등록 완료 · {t['name'][:40]} ({sec:.1f}초, 새 이미지 {n1 + n2}장)", store["name"])
+            what = "새로고침" if op == "refresh" else "등록"
+            self._log("ok", f"{what} 완료 · {t['name'][:40]} ({sec:.1f}초, 새 이미지 {n1 + n2}장)", store["name"])
+            self._count(sid, lid, True)
         except Exception as e:  # noqa: BLE001 - 한 건의 실패는 기록하고 다음으로
             self.db.set_listing(lid, "fail", stage="", message=str(e)[:1000], seconds=time.time() - t0)
-            ok = False
             self._log("err", f"실패 · {t['name'][:40]} · {e}", store["name"])
+            self._count(sid, lid, False)
+
+    def _count(self, sid, lid, ok):
         with self.lock:
             s, ss = self.state, self.state["stores"][sid]
             s["done"] += 1
@@ -286,6 +323,26 @@ class Runner:
             s["ok" if ok else "fail"] += 1
             ss["ok" if ok else "fail"] += 1
             s["current"].pop(lid, None)
+
+    def _archive(self, t, reason):
+        """지운 회차를 기록에 남긴다."""
+        self.db.x("""INSERT INTO listing_history(listing_id, round, name, price, seller_code, origin_no, channel_no,
+            registered_at, deleted_at, reason) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                  (t["id"], t["round"], t["name"], t["price"], t["seller_code"] or "", t["origin_no"],
+                   t["channel_no"] or "", t["registered_at"], time.time(), reason))
+
+    def _new_name(self, cfg, t):
+        """새로고침 때 새 이름을 쓰는 설정이면 안 쓴 후보로 바꾼다."""
+        from .inventory import _fill_names
+        src = self.db.one("SELECT id, name, tags FROM sources WHERE id=?", (t["source_id"],))
+        with self.db.tx() as c:
+            pool = _fill_names(c, src, 1, cfg, time.time())
+            if not pool:
+                return None
+            nm = pool[0]
+            c.execute("UPDATE names SET listing_id=? WHERE id=?", (t["id"], nm["id"]))
+            c.execute("UPDATE listings SET name_id=?, name=? WHERE id=?", (nm["id"], nm["name"], t["id"]))
+        return nm["name"]
 
     def _images(self, client, pool, cache, scope, srcs, required, lid, label, on_wait):
         """(원본→네이버 주소, 새로 올린 수, 못 받은 주소). required면 하나라도 못 받으면 실패."""

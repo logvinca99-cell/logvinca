@@ -272,6 +272,13 @@ class Client:
             raise ApiError(f"상품 등록 실패: {explain_error(r)}")
         return r.json()
 
+    def delete_product(self, origin_no, on_wait=None):
+        """원상품 삭제. 이미 없는 상품(404)이면 지운 것으로 본다."""
+        r = self.request("DELETE", f"/v2/products/origin-products/{origin_no}", on_wait=on_wait)
+        if r.status_code not in (200, 204, 404):
+            raise ApiError(f"상품 삭제 실패: {explain_error(r)}")
+        return True
+
 
 class FakeClient:
     """네이버에 접속하지 않고 그럴듯한 지연과 가끔의 실패를 흉내 낸다. 이미지 내려받기도 흉내 낸다."""
@@ -290,6 +297,10 @@ class FakeClient:
 
     def product_count(self):
         return random.randint(0, 300)
+
+    def delete_product(self, origin_no, on_wait=None):
+        time.sleep(random.uniform(0.2, 0.5))
+        return True
 
     def upload_images(self, items, on_wait=None):
         time.sleep(random.uniform(0.3, 0.8))

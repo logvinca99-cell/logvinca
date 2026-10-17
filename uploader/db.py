@@ -1,22 +1,26 @@
 """기록 저장소 (data/inventory.db, SQLite).
 
-sources   원본 상품 (인벤토리). 판매자코드로 구분하고, 다시 불러오면 내용을 갱신한다.
+sources   원본 상품 (인벤토리). 대표 썸네일 주소로 구분하고(source_key), 다시 불러오면 내용을 갱신한다.
+          엑셀의 판매자코드는 seller_code에 참고로만 둔다 (스토어마다 바뀌므로 구분에 쓰지 않음).
           엑셀 한 줄 전체는 압축해서 data에 둔다 (상품 하나 약 2~3KB).
 names     상품명 후보. norm(정규화한 이름)이 표 전체에서 UNIQUE → 모든 스토어에서 이름이 겹치지 않음.
           listing_id가 있으면 그 등록에 쓰인 이름.
-stores    스마트스토어 (API 키, 한도)
-listings  어떤 원본을 어느 스토어에 어떤 이름·가격으로 올리는지 (스토어+원본은 한 번만)
+stores    스마트스토어 (API 키, 한도, 짧은 코드)
+listings  어떤 원본을 어느 스토어에 어떤 이름·가격으로 올리는지 (스토어+원본은 한 줄)
+          내렸다가 다시 올리면 같은 줄의 회차(round)가 올라가고, 지난 회차는 listing_history에 남는다.
+          스토어에 등록하는 판매자 관리코드는 '스토어코드-원본번호-회차' (예: S07-0012345-2)
 plans     한 번에 만든 등록 묶음
 runs      [등록 시작]을 누를 때마다 한 줄
 images    원본 이미지 주소 → 네이버 이미지 주소. scope는 스토어 번호 (상세 이미지는 0: 모든 스토어 공용)
 imports   엑셀 불러오기 기록
 
-등록 상태(listings.status)
-    planned  계획됨 (등록 대기)
-    queued   이번 실행에서 차례를 기다림
-    running  등록 중
-    success  등록 완료
+등록 상태(listings.status)            할 일(listings.op, planned·fail일 때 의미)
+    planned  할 일이 있음 (대기)          create   새로 등록
+    queued   이번 실행에서 차례를 기다림    refresh  네이버에서 지우고 같은 내용으로 다시 등록 (최신화)
+    running  처리 중                      delete   네이버에서 지움 (내리기)
+    success  네이버에 올라가 있음 (판매 중)
     fail     실패 (다시 시도 가능)
+    deleted  내림 (네이버에서 지움). 다시 계획하면 같은 줄이 다음 회차로 살아난다.
 """
 
 import json
@@ -45,6 +49,7 @@ CREATE TABLE IF NOT EXISTS imports (
 CREATE TABLE IF NOT EXISTS sources (
     id INTEGER PRIMARY KEY,
     source_key TEXT NOT NULL UNIQUE,
+    seller_code TEXT NOT NULL DEFAULT '',
     name TEXT NOT NULL,
     price INTEGER NOT NULL,
     category TEXT NOT NULL,
@@ -57,8 +62,8 @@ CREATE TABLE IF NOT EXISTS sources (
     errors TEXT NOT NULL DEFAULT '[]',
     warnings TEXT NOT NULL DEFAULT '[]',
     valid INTEGER NOT NULL,
-    n_listings INTEGER NOT NULL DEFAULT 0,   -- 이 원본으로 만든 등록 수
-    n_success INTEGER NOT NULL DEFAULT 0,
+    n_listings INTEGER NOT NULL DEFAULT 0,   -- 이 원본이 차지한 스토어 수 (내린 것 제외)
+    n_success INTEGER NOT NULL DEFAULT 0,    -- 그중 네이버에 올라가 있는 수
     n_free_names INTEGER NOT NULL DEFAULT 0, -- 아직 안 쓴 이름 후보 수
     import_id INTEGER,
     created_at REAL NOT NULL,
@@ -79,6 +84,7 @@ CREATE INDEX IF NOT EXISTS names_source ON names(source_id, listing_id);
 CREATE TABLE IF NOT EXISTS stores (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
+    code TEXT NOT NULL DEFAULT '',          -- 판매자 관리코드 앞자리 (비우면 S + 번호)
     client_id TEXT NOT NULL DEFAULT '',
     client_secret TEXT NOT NULL DEFAULT '',
     store_url TEXT NOT NULL DEFAULT '',
@@ -105,10 +111,15 @@ CREATE TABLE IF NOT EXISTS listings (
     name TEXT NOT NULL,
     price INTEGER NOT NULL,
     status TEXT NOT NULL,
+    op TEXT NOT NULL DEFAULT 'create',
+    round INTEGER NOT NULL DEFAULT 1,
+    seller_code TEXT NOT NULL DEFAULT '',
     stage TEXT NOT NULL DEFAULT '',
     message TEXT NOT NULL DEFAULT '',
-    origin_no TEXT NOT NULL DEFAULT '',
+    origin_no TEXT NOT NULL DEFAULT '',     -- 비어 있지 않으면 지금 네이버에 올라가 있음
     channel_no TEXT NOT NULL DEFAULT '',
+    registered_at REAL,                     -- 이번 회차를 올린 때
+    deleted_at REAL,
     seconds REAL,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
@@ -117,6 +128,20 @@ CREATE TABLE IF NOT EXISTS listings (
 CREATE INDEX IF NOT EXISTS listings_status ON listings(status, store_id);
 CREATE INDEX IF NOT EXISTS listings_plan ON listings(plan_id);
 CREATE INDEX IF NOT EXISTS listings_source ON listings(source_id);
+CREATE TABLE IF NOT EXISTS listing_history (
+    id INTEGER PRIMARY KEY,
+    listing_id INTEGER NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+    round INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    price INTEGER NOT NULL,
+    seller_code TEXT NOT NULL,
+    origin_no TEXT NOT NULL,
+    channel_no TEXT NOT NULL,
+    registered_at REAL,
+    deleted_at REAL NOT NULL,
+    reason TEXT NOT NULL            -- refresh / delete
+);
+CREATE INDEX IF NOT EXISTS history_listing ON listing_history(listing_id);
 CREATE TABLE IF NOT EXISTS runs (
     id INTEGER PRIMARY KEY,
     started_at REAL NOT NULL,
@@ -156,12 +181,50 @@ class DB:
         self.c.execute("PRAGMA synchronous=NORMAL")
         self.c.execute("PRAGMA foreign_keys=ON")
         self.c.execute("PRAGMA cache_size=-65536")  # 64MB
+        self._migrate_columns()
         self.c.executescript(SCHEMA)
+        self._migrate_data()
         # 프로그램이 등록 도중 꺼졌으면 남은 상태를 되돌린다.
         self.c.execute("UPDATE listings SET status='fail', stage='', message='프로그램이 등록 도중 종료됨' "
                        "WHERE status='running'")
         self.c.execute("UPDATE listings SET status='planned', stage='' WHERE status='queued'")
         self.c.execute("UPDATE runs SET ended_at=started_at WHERE ended_at IS NULL")
+        self.c.commit()
+
+    # 예전 버전의 db에 새 열을 더한다 (SCHEMA의 CREATE는 이미 있는 표를 바꾸지 않으므로).
+    NEW_COLUMNS = {
+        "sources": [("seller_code", "TEXT NOT NULL DEFAULT ''")],
+        "stores": [("code", "TEXT NOT NULL DEFAULT ''")],
+        "listings": [("op", "TEXT NOT NULL DEFAULT 'create'"), ("round", "INTEGER NOT NULL DEFAULT 1"),
+                     ("seller_code", "TEXT NOT NULL DEFAULT ''"), ("registered_at", "REAL"), ("deleted_at", "REAL")],
+    }
+
+    def _migrate_columns(self):
+        for table, cols in self.NEW_COLUMNS.items():
+            have = {r[1] for r in self.c.execute(f"PRAGMA table_info({table})")}
+            if not have:
+                continue
+            for name, decl in cols:
+                if name not in have:
+                    self.c.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+
+    def _migrate_data(self):
+        ver = self.c.execute("PRAGMA user_version").fetchone()[0]
+        if ver < 2:
+            # 원본 구분을 판매자코드 → 대표 썸네일로 바꾼다.
+            from .convert import source_fingerprint
+            rows = self.c.execute("SELECT id, source_key, data FROM sources").fetchall()
+            seen = set()
+            for r in rows:
+                row = unpack(r["data"])
+                key = source_fingerprint(row)
+                if key in seen:
+                    key = f"{key}#{r['id']}"  # 같은 썸네일이 둘이면 따로 둔다
+                seen.add(key)
+                self.c.execute("UPDATE sources SET source_key=?, seller_code=? WHERE id=?",
+                               (key, str(row.get("판매자코드") or ""), r["id"]))
+            self.c.execute("UPDATE listings SET registered_at=updated_at WHERE status='success' AND registered_at IS NULL")
+            self.c.execute("PRAGMA user_version=2")
         self.c.commit()
 
     def q(self, sql, args=()):
@@ -203,8 +266,8 @@ class DB:
 
     def _recount(self, where, args):
         self.x(f"""UPDATE sources SET
-            n_listings=(SELECT COUNT(*) FROM listings l WHERE l.source_id=sources.id),
-            n_success=(SELECT COUNT(*) FROM listings l WHERE l.source_id=sources.id AND l.status='success'),
+            n_listings=(SELECT COUNT(*) FROM listings l WHERE l.source_id=sources.id AND l.status!='deleted'),
+            n_success=(SELECT COUNT(*) FROM listings l WHERE l.source_id=sources.id AND l.origin_no!=''),
             n_free_names=(SELECT COUNT(*) FROM names n WHERE n.source_id=sources.id AND n.listing_id IS NULL
                           AND (n.origin!='original' OR ?))
             {where}""", (int(bool(config.load().get("use_original_name"))), *args))
@@ -214,17 +277,29 @@ class DB:
     def stores(self, with_secret=False):
         rows = self.q("""
             SELECT s.*,
-              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.status='success') AS n_success,
-              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.status IN ('planned','queued','running')) AS n_pending,
+              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.origin_no!='') AS n_live,
+              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.origin_no=''
+                 AND l.status IN ('planned','queued','running')) AS n_pending,
+              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.origin_no!=''
+                 AND l.status IN ('planned','queued','running')) AS n_ops,
               (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.status='fail') AS n_fail,
-              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.status='success'
-                 AND s.naver_count_at IS NOT NULL AND l.updated_at > s.naver_count_at) AS n_success_since
+              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.status='deleted') AS n_deleted,
+              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.registered_at > s.naver_count_at) AS n_added_since,
+              (SELECT COUNT(*) FROM listing_history h JOIN listings l ON l.id=h.listing_id
+                 WHERE l.store_id=s.id AND h.deleted_at > s.naver_count_at) AS n_removed_since,
+              (SELECT MIN(l.registered_at) FROM listings l WHERE l.store_id=s.id AND l.origin_no!='') AS oldest_at
             FROM stores s ORDER BY s.id""")
         for r in rows:
             r["has_keys"] = bool(r["client_id"] and r["client_secret"])
-            # 사용량 = 네이버에 있던 수(확인했다면) + 그 뒤 우리가 올린 수 + 대기 중
-            base = (r["naver_count"] + r["n_success_since"]) if r["naver_count"] is not None else r["n_success"]
-            r["used"] = base + r["n_pending"]
+            r["code"] = r["code"] or f"S{r['id']:02d}"
+            r["n_success"] = r["n_live"]
+            # 사용량 = 네이버에 있는 수 + 새로 올릴 대기 수
+            #   네이버 수를 확인했다면: 확인 때 수 + 그 뒤 올린 수 - 그 뒤 지운 수 (다른 데서 올린 상품 포함)
+            if r["naver_count"] is not None:
+                live = max(0, r["naver_count"] + r["n_added_since"] - r["n_removed_since"])
+            else:
+                live = r["n_live"]
+            r["used"] = live + r["n_pending"]
             r["free"] = max(0, r["capacity"] - r["used"])
             if not with_secret:
                 r.pop("client_secret")
@@ -279,8 +354,9 @@ class DB:
             (SELECT COUNT(*) FROM sources WHERE valid=1) AS sources_valid,
             (SELECT COUNT(*) FROM names) AS names,
             (SELECT COUNT(*) FROM names WHERE listing_id IS NULL) AS names_free,
-            (SELECT COUNT(*) FROM listings WHERE status='success') AS registered,
+            (SELECT COUNT(*) FROM listings WHERE origin_no!='') AS registered,
             (SELECT COUNT(*) FROM listings WHERE status IN ('planned','queued','running')) AS pending,
+            (SELECT COUNT(*) FROM listings WHERE status='deleted') AS deleted,
             (SELECT COUNT(*) FROM listings WHERE status='fail') AS failed,
             (SELECT COUNT(*) FROM images) AS images,
             (SELECT COUNT(*) FROM stores) AS stores""")
