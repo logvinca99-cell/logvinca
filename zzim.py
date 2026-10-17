@@ -58,7 +58,10 @@ SCAN_JS = r"""
     const r = card.getBoundingClientRect();
     const name = (card.innerText || '').split('\n').map(s => s.trim())
       .find(s => s && s !== 'NEW' && s !== '상품 상세보기' && !s.includes('찜') && !/^[\d,.%원\s]+$/.test(s)) || '';
-    out.push({ id: m[1], y: Math.round(r.top + scrollY), x: Math.round(r.left), name: name.slice(0, 40) });
+    // 찜 상태: true(찜함) / false(안 함) / null(판별 불가) — STATE_JS와 같은 기준
+    const p = btn.getAttribute('aria-pressed'), t = btn.innerText || '';
+    const zz = p !== null ? p === 'true' : (t.includes('취소') ? true : (t.includes('찜하기') ? false : null));
+    out.push({ id: m[1], y: Math.round(r.top + scrollY), x: Math.round(r.left), name: name.slice(0, 40), zz });
   });
   return out;
 }
@@ -225,9 +228,9 @@ class Controller:
 
 
 class Stats:
-    def __init__(self, store, total, prior_done):
+    def __init__(self, store, total):
         self.store, self.total = store, total
-        self.done = prior_done          # 누적 완료(이전 실행 포함)
+        self.done = 0                   # 이번 실행에서 화면으로 찜 상태를 확인한 개수(성공+이미 찜)
         self.clicked = self.already = self.failed = 0
         self.page, self.pos, self.name = 0, "", ""
         self.started = time.time()
@@ -294,15 +297,11 @@ def list_url(store, page_no, sort):
 
 
 class Log:
+    """상품별 기록. 기록만 하고, 건너뛸지 여부는 항상 실제 화면의 찜 상태로 정한다."""
     FIELDS = ["page", "row", "col", "id", "name", "status"]
 
     def __init__(self, path):
         self.path = path
-        self.done = set()
-        if os.path.exists(path):
-            with open(path, encoding="utf-8-sig") as f:
-                self.done = {r["id"] for r in csv.DictReader(f)
-                             if r["status"] in ("clicked", "already")}
 
     def write(self, **row):
         new = not os.path.exists(self.path)
@@ -311,8 +310,6 @@ class Log:
             if new:
                 w.writeheader()
             w.writerow(row)
-        if row["status"] in ("clicked", "already"):
-            self.done.add(row["id"])
 
 
 def wait_for_login(context, page, ctl, timeout_min=10):
@@ -472,9 +469,9 @@ def run_store(page, store, args, alerts, ctl, pacer=None, account=""):
         ctl.log(f"[{name}] 상품 목록을 찾지 못했습니다. 주소를 확인하세요.", "err")
         return
     choose_sort(page, args.sort_label, ctl)
-    st = Stats(name, total, len(log.done))
+    st = Stats(name, total)
     ctl.emit("stats", st.snapshot())
-    ctl.log(f"[{name}] 총 {total}개 / 이전 진행 {len(log.done)}개")
+    ctl.log(f"[{name}] 총 {total}개 — 이전 기록과 상관없이 화면의 찜 상태로 판단합니다")
     ctl.status("진행 중")
 
     rejects_before = pacer.rejects
@@ -482,7 +479,7 @@ def run_store(page, store, args, alerts, ctl, pacer=None, account=""):
 
     def report(result, reason=""):
         s_ = st.snapshot()
-        done, tot = len(log.done), total
+        done, tot = st.done, total
         path = append_report({
             "시작": started, "종료": time.strftime("%Y-%m-%d %H:%M:%S"),
             "소요(분)": round(s_["elapsed"] / 60, 1), "네이버ID": account or "(알 수 없음)",
@@ -510,7 +507,11 @@ def run_store(page, store, args, alerts, ctl, pacer=None, account=""):
             rows = [cards[i:i + COLS] for i in range(0, len(cards), COLS)]
             for r, row in enumerate(rows, 1):
                 for c, it in enumerate(row, 1):
-                    if it["id"] in log.done:
+                    if it["zz"] is True:  # 화면에 이미 찜으로 표시됨 → 누르지 않음
+                        st.already += 1
+                        st.done += 1
+                        log.write(page=pno, row=r, col=c, id=it["id"], name=it["name"], status="already")
+                        ctl.emit("stats", st.snapshot())
                         continue
                     ctl.check()
                     st.pos, st.name = f"{pno}페이지 {r}행 {c}열", it["name"]
@@ -536,7 +537,8 @@ def run_store(page, store, args, alerts, ctl, pacer=None, account=""):
                         st.already += 1
                     else:
                         st.failed += 1
-                    st.done = len(log.done)
+                    if status in ("clicked", "already"):
+                        st.done += 1
                     st.pace_ms, st.rejects = pacer.ms, pacer.rejects
                     ctl.emit("stats", st.snapshot())
                     level = {"clicked": "ok", "already": "info", "clicked?": "warn"}.get(status, "err")
@@ -552,8 +554,8 @@ def run_store(page, store, args, alerts, ctl, pacer=None, account=""):
                 break
             pno += 1
 
-        missing = total - len(log.done)
-        ctl.log(f"[{name}] 완료: {len(log.done)}/{total}개"
+        missing = total - st.done
+        ctl.log(f"[{name}] 화면 확인 결과 찜 {st.done}/{total}개 (이번 성공 {st.clicked} · 이미 찜 {st.already})"
                 + (f" — {missing}개 남음. 다시 실행하면 남은 것만 처리합니다." if missing > 0 else ""),
                 "ok" if missing <= 0 else "warn")
     except StopRun as e:
