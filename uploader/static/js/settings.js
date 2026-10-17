@@ -42,7 +42,7 @@ const SETTING_SECTIONS = [
     ["recombine_use_tags", "재조합에 엑셀 상품태그 단어도 섞기 (태그가 상품과 맞을 때만 켜세요)", "check"],
     ["recombine_max_overlap", "재조합: 같은 원본의 다른 이름과 단어가 이 비율 이상 겹치면 버림 (0~1)", "number", { step: 0.05 }],
   ] },
-  { title: "우리말샘 (단어 사전 유의어)", note: "국립국어원 우리말샘 오픈 API 키(무료, opendict.korean.go.kr 에서 신청)를 넣으면 단어 사전에서 유의어를 받을 수 있습니다. 한 번 찾아본 단어는 다시 묻지 않습니다.", fields: [
+  { title: "우리말샘 API (선택)", note: "보통은 필요 없습니다 — 단어 사전 화면에서 '사전 파일 넣기'(우리말샘·표준국어대사전 사전 내려받기 파일)를 쓰세요. API 키는 신청할 때 서비스 주소(외부 URL)가 필요합니다. 키가 있으면 사전 파일에 없는 새 단어도 확인합니다(하루 50,000건).", fields: [
     ["opendict_key", "우리말샘 오픈 API 키", "secret"],
     ["opendict_daily_limit", "한 번에 찾아볼 단어 수", "number"],
   ] },

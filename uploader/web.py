@@ -533,6 +533,29 @@ def create_app(db=None):
             "names": [{"name": n, "len": len(n), "new": [w for w in n.split() if w not in orig]} for n in out],
         })
 
+    @app.post("/api/lexicon/dictfile")
+    def lexicon_dictfile():
+        """우리말샘·표준국어대사전 '사전 내려받기' 파일 (zip / xml / json)."""
+        f = request.files.get("file")
+        if not f or not f.filename:
+            return fail("파일을 골라 주세요.")
+        if not f.filename.lower().endswith((".zip", ".xml", ".json")):
+            return fail("사전 내려받기 파일(zip, xml, json)만 넣을 수 있습니다.")
+        path = _save_upload(f)
+        name = f.filename
+
+        def job(progress, should_stop):
+            try:
+                with open(path, "rb") as fh:
+                    return lexicon.import_dictionary(db, fh, name, progress=progress, should_stop=should_stop)
+            finally:
+                os.remove(path)
+        try:
+            return jsonify({"task": tasks.start("dictfile", f"사전 파일 넣기 · {name}", job)})
+        except RuntimeError as e:
+            os.remove(path)
+            return fail(str(e))
+
     @app.post("/api/lexicon/fetch")
     def lexicon_fetch():
         cfg = config.load()
@@ -550,17 +573,17 @@ def create_app(db=None):
         cfg = config.load()
         st = db.one("""SELECT COUNT(*) AS checked, SUM(verdict='registered') AS registered, SUM(verdict='pending') AS pending,
             SUM(verdict='error') AS errors, SUM(allowed) AS allowed FROM trademark_check""")
-        generic = kipris._generic(db)
+        generic, dict_words = kipris._generic(db), kipris._dict_words(db)
         rows = [r for r in db.q("""SELECT word, verdict, allowed, marks, classes, titles, message, checked_at FROM trademark_check
             WHERE verdict IN ('registered','pending','error') ORDER BY allowed, verdict DESC, checked_at DESC LIMIT 2000""")
-                if len(r["word"]) >= 3 and r["word"] not in generic][:500]
+                if len(r["word"]) >= 3 and r["word"] not in generic and not lexicon.is_dict_word(r["word"], dict_words)][:500]
         fake = os.environ.get("UPLOADER_FAKE_API") == "1"
         return jsonify({
             "stats": {k: st[k] or 0 for k in ("checked", "registered", "pending", "errors", "allowed")},
             "in_dict": db.one("SELECT COUNT(*) AS n FROM word_dict WHERE in_dict=1")["n"],
             "todo": len(kipris.words_to_check(db, "all", 10 ** 6)),
             "has_key": bool(cfg.get("kipris_key")) or fake,
-            "has_opendict": bool(cfg.get("opendict_key")) or fake,
+            "has_opendict": bool(cfg.get("opendict_key")) or bool(dict_words),
             "rows": rows,
         })
 

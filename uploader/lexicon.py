@@ -216,6 +216,10 @@ CREATE TABLE IF NOT EXISTS word_groups (
 );
 CREATE TABLE IF NOT EXISTS word_block (word TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS word_attr (word TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS dict_syn (            -- 사전 파일의 비슷한말 (명사)
+    word TEXT PRIMARY KEY,
+    syns TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS word_dict (           -- 우리말샘 표제어인지 (일반명사 판정, 키프리스 확인 전에)
     word TEXT PRIMARY KEY,
     in_dict INTEGER NOT NULL,
@@ -263,9 +267,10 @@ def _bump(c):
 
 
 class Lexicon:
-    def __init__(self, groups, blocked, marks=None, attrs=()):
+    def __init__(self, groups, blocked, marks=None, attrs=(), dict_syn=None):
         self.blocked = {w.lower() for w in blocked}
         self.attrs = {w for w in attrs if w}
+        self.dsyn = dict_syn or {}   # 사전 파일 비슷한말 (상품명에 실제로 쓰이는 말만 남긴 것)
         # 키프리스에서 상표로 확인된 단어 {단어: 등록/출원} — 단어 전체가 같을 때만 (붙여 쓴 '수납'+'함' 등은 따로 확인)
         self.marks = {w.lower(): v for w, v in (marks or {}).items()}
         self.syn = {}
@@ -296,11 +301,11 @@ class Lexicon:
 
     def synonyms(self, token):
         """단어의 유의어. '수리용'이면 '수리'의 유의어에 '용'을 붙여 '보수용·수선용'."""
-        out = list(self.syn.get(token, ()))
+        out = list(self.syn.get(token, ())) + list(self.dsyn.get(token, ()))
         for suf in SUFFIXES:
             if token.endswith(suf) and len(token) > len(suf) + 1:
                 base = token[: -len(suf)]
-                out += [s + suf for s in self.syn.get(base, ())]
+                out += [s + suf for s in list(self.syn.get(base, ())) + list(self.dsyn.get(base, ()))]
         return [w for w in dict.fromkeys(out) if self.ok_new_word(w)]
 
 
@@ -372,8 +377,170 @@ def get(db):
             # 사전 단어(유의어 묶음·속성 단어·우리말샘 표제어)와 두 글자 이하는 일반명사로 보고 상표로 막지 않는다
             generic = {w for g in groups for w in g} | set(attrs)
             marks = {w: v for w, v in marks.items() if len(w) >= 3 and w not in generic}
-            _cache.update(lex=Lexicon(groups, blocked, marks, attrs), version=ver)
+            _cache.update(lex=Lexicon(groups, blocked, marks, attrs, _dict_syn(db, groups)), version=ver)
         return _cache["lex"]
+
+
+def _dict_syn(db, groups):
+    """사전 파일의 비슷한말 중, 원본 상품명·네이버 키워드·유의어 묶음에 실제로 나오는 말끼리만 쓴다
+    (사전에는 옛말·전문어 같은 비슷한말이 많아서 상품명에 어색한 말이 들어가지 않게)."""
+    rows = db.q("SELECT word, syns FROM dict_syn")
+    if not rows:
+        return {}
+    corpus = {w for g in groups for w in g}
+    for r in db.q("SELECT name FROM sources"):
+        for t in r["name"].split():
+            corpus.add(t)
+            for suf in SUFFIXES:
+                if t.endswith(suf) and len(t) > len(suf) + 1:
+                    corpus.add(t[: -len(suf)])
+    corpus |= {r["word"] for r in db.q("SELECT DISTINCT word FROM source_kw")} if _has_table(db, "source_kw") else set()
+    out = {}
+    for r in rows:
+        if r["word"] not in corpus:
+            continue
+        syns = [x for x in r["syns"].split(",") if x in corpus and x != r["word"]]
+        if syns:
+            out[r["word"]] = syns
+    return out
+
+
+def _has_table(db, name):
+    return bool(db.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)))
+
+
+def is_dict_word(word, dict_words):
+    """사전 표제어인가. '수리용'처럼 용·형·식이 붙은 말은 '수리'가 있으면 사전 단어로 본다."""
+    if word in dict_words:
+        return True
+    return any(word.endswith(suf) and len(word) > len(suf) + 1 and word[: -len(suf)] in dict_words for suf in SUFFIXES)
+
+
+# ───────────────────────── 사전 파일 넣기 (우리말샘·표준국어대사전 '사전 내려받기' 파일)
+
+_REL_TYPES = ("비슷", "동의", "유의")
+
+
+def _clean_word(w):
+    w = re.sub(r"[^가-힣]", "", str(w or ""))
+    return w if 1 <= len(w) <= 10 else ""
+
+
+def _entry_from_json(item):
+    """사전 파일 JSON 항목 하나 → (단어, 명사인가, 비슷한말들, 단어 단위). 두 사전의 모양을 다 받는다."""
+    info = item.get("wordinfo") or item.get("word_info") or {}
+    word = info.get("word") or item.get("word") or ""
+    unit = info.get("word_unit") or item.get("word_unit") or ""
+    pos, rels = [], []
+
+    def walk(o):
+        if isinstance(o, dict):
+            if isinstance(o.get("pos"), str):
+                pos.append(o["pos"])
+            t = str(o.get("type") or o.get("relation_type") or "")
+            if o.get("word") and any(k in t for k in _REL_TYPES) and o is not info:
+                rels.append(o["word"])
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    walk(item)
+    return word, any("명사" in p for p in pos), rels, unit
+
+
+def _entry_from_xml(el):
+    w = el.find("wordinfo/word")
+    if w is None:
+        w = el.find("word_info/word")
+    if w is None:
+        w = el.find("word")
+    unit = el.findtext("wordinfo/word_unit") or el.findtext("word_info/word_unit") or ""
+    pos = [x.text or "" for x in el.iter("pos")]
+    rels = []
+    for x in el.iter():
+        t = x.findtext("type") or x.findtext("relation_type") or ""
+        rw = x.findtext("word")
+        if rw and x is not el and x.tag not in ("wordinfo", "word_info") and any(k in t for k in _REL_TYPES):
+            rels.append(rw)
+    return (w.text if w is not None else ""), any("명사" in p for p in pos), rels, unit
+
+
+def _iter_entries(fh, name):
+    import xml.etree.ElementTree as ET
+    low = name.lower()
+    if low.endswith(".json"):
+        data = json.load(fh)
+        items = []
+
+        def find(o):
+            if isinstance(o, dict):
+                if "wordinfo" in o or "word_info" in o:
+                    items.append(o)
+                    return
+                for v in o.values():
+                    find(v)
+            elif isinstance(o, list):
+                for v in o:
+                    find(v)
+        find(data)
+        for it in items:
+            yield _entry_from_json(it)
+    elif low.endswith(".xml"):
+        for _, el in ET.iterparse(fh, events=("end",)):
+            if el.tag == "item":
+                yield _entry_from_xml(el)
+                el.clear()
+
+
+def import_dictionary(db, fh, filename, progress=None, should_stop=None):
+    """사전 파일(zip 안의 xml/json 여러 개, 또는 xml/json 하나)을 넣는다.
+    명사 표제어 → word_dict (일반명사 판정: 키프리스 확인에서 빼는 데 씀)
+    명사의 비슷한말·동의어 → dict_syn (재조합 유의어, 상품명에 실제로 쓰이는 말만)"""
+    import zipfile
+    files = []
+    if filename.lower().endswith(".zip"):
+        z = zipfile.ZipFile(fh)
+        files = [(n, (lambda n=n: z.open(n))) for n in z.namelist() if n.lower().endswith((".xml", ".json"))]
+    else:
+        files = [(filename, lambda: fh)]
+    if not files:
+        raise RuntimeError("zip 안에 xml이나 json 사전 파일이 없습니다.")
+    nouns, syn = set(), {}
+    stats = {"files": 0, "entries": 0, "nouns": 0, "syn_words": 0}
+    for i, (name, opener) in enumerate(files, 1):
+        if should_stop and should_stop():
+            break
+        with opener() as f:
+            for word, is_noun, rels, unit in _iter_entries(f, name):
+                stats["entries"] += 1
+                if unit and unit != "단어":
+                    continue
+                w = _clean_word(word)
+                if not w or not is_noun:
+                    continue
+                nouns.add(w)
+                rs = [r for r in (_clean_word(x) for x in rels) if _HANGUL_WORD.match(r) and r != w]
+                if rs and _HANGUL_WORD.match(w):
+                    syn.setdefault(w, set()).update(rs)
+                    for r in rs:
+                        syn.setdefault(r, set()).add(w)
+        stats["files"] += 1
+        if progress:
+            progress(i, len(files), f"{name} · 명사 {len(nouns):,}개")
+    if not nouns:
+        raise RuntimeError("명사 표제어를 찾지 못했습니다. 우리말샘·표준국어대사전 '사전 내려받기'의 xml 또는 json 파일인지 확인하세요.")
+    now = time.time()
+    with db.tx() as c:
+        c.executemany("INSERT OR REPLACE INTO word_dict(word, in_dict, checked_at) VALUES(?,1,?)", [(w, now) for w in nouns])
+        c.executemany("""INSERT INTO dict_syn(word, syns) VALUES(?,?)
+            ON CONFLICT(word) DO UPDATE SET syns=excluded.syns""",
+                      [(w, ",".join(sorted(v))[:2000]) for w, v in syn.items()])
+        c.execute("INSERT OR REPLACE INTO meta(k, v) VALUES('dict_file', ?)", (json.dumps(
+            {"name": filename, "at": now, "nouns": len(nouns), "syn": len(syn)}, ensure_ascii=False),))
+        _bump(c)
+    stats.update(nouns=len(nouns), syn_words=len(syn))
+    return stats
 
 
 # ───────────────────────── 반복 검사
@@ -414,7 +581,9 @@ def export_text(db):
         "stats": db.one("""SELECT (SELECT COUNT(*) FROM word_groups WHERE enabled=1) AS groups,
             (SELECT COUNT(*) FROM word_groups WHERE enabled=1 AND source='opendict') AS opendict,
             (SELECT COUNT(*) FROM word_block) AS blocked, (SELECT COUNT(*) FROM word_lookup) AS looked,
-            (SELECT COUNT(*) FROM word_attr) AS attrs"""),
+            (SELECT COUNT(*) FROM word_attr) AS attrs, (SELECT COUNT(*) FROM word_dict WHERE in_dict=1) AS dict_words,
+            (SELECT COUNT(*) FROM dict_syn) AS dict_syn"""),
+        "dict_file": json.loads((db.one("SELECT v FROM meta WHERE k='dict_file'") or {"v": "null"})["v"]),
     }
 
 

@@ -99,13 +99,6 @@ def check_word(word, key, session):
     return parse(r.text, word)
 
 
-def _fake_dict(word):
-    """시연 모드: 조어 예시는 사전에 없고, 나머지는 대부분 있다고 본다."""
-    if word in ("효도의자", "왕자행거"):
-        return False
-    return int(hashlib.md5(word.encode()).hexdigest()[:4], 16) % 4 != 0
-
-
 def _fake(word):
     """시연 모드: 네이버 접속 없이 그럴듯한 결과 (단어마다 항상 같은 결과)."""
     h = int(hashlib.md5(word.encode()).hexdigest()[:6], 16)
@@ -120,8 +113,11 @@ def _generic(db):
     """일반명사로 보는 단어: 유의어 묶음·속성 단어·우리말샘 표제어. 키프리스에 묻지 않는다."""
     out = {w for r in db.q("SELECT words FROM word_groups WHERE enabled=1") for w in r["words"].split(",")}
     out |= {r["word"] for r in db.q("SELECT word FROM word_attr")}
-    out |= {r["word"] for r in db.q("SELECT word FROM word_dict WHERE in_dict=1")}
     return out
+
+
+def _dict_words(db):
+    return {r["word"] for r in db.q("SELECT word FROM word_dict WHERE in_dict=1")}
 
 
 def candidates(db, scope):
@@ -138,8 +134,10 @@ def candidates(db, scope):
     if scope in ("names", "all"):
         for r in db.q("SELECT name FROM names WHERE listing_id IS NULL AND origin IN ('ai','import')"):
             cnt.update(set(r["name"].split()))
-    generic = _generic(db)
-    return [w for w, _ in cnt.most_common() if re.fullmatch(r"[가-힣]{3,10}", w) and w not in generic]
+    from . import lexicon
+    generic, dict_words = _generic(db), _dict_words(db)
+    return [w for w, _ in cnt.most_common() if re.fullmatch(r"[가-힣]{3,10}", w) and w not in generic
+            and not lexicon.is_dict_word(w, dict_words)]
 
 
 def words_to_check(db, scope, limit):
@@ -165,11 +163,11 @@ def check_words(db, cfg, scope="all", progress=None, should_stop=None):
         if should_stop and should_stop():
             break
         # 먼저 우리말샘: 표제어로 있으면 일반명사 → 키프리스에 묻지 않음 (예: '수납함'). 붙여 만든 조어만 남는다.
-        if od_key or fake:
+        if od_key:
             known = db.one("SELECT in_dict FROM word_dict WHERE word=?", (w,))
             if known is None:
                 try:
-                    in_dict = _fake_dict(w) if fake else lexicon.in_dictionary(w, od_key, s)
+                    in_dict = lexicon.in_dictionary(w, od_key, s)
                     db.x("INSERT OR REPLACE INTO word_dict(word, in_dict, checked_at) VALUES(?,?,?)",
                          (w, int(in_dict), time.time()))
                 except Exception:  # noqa: BLE001 - 사전을 못 보면 키프리스로 확인

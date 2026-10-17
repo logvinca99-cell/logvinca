@@ -289,6 +289,9 @@ def collect(db, cfg, ids=None, progress=None, should_stop=None):
         stats["words"] += len(words)
         if progress:
             progress(i, len(todo), f"{src['name'][:20]} → 핵심 '{core}', 단어 {len(words)}개")
+    if stats["sources"] and db.one("SELECT 1 FROM dict_syn LIMIT 1"):
+        with db.tx() as c:
+            lexicon._bump(c)
     if (cfg.get("searchad_api_key") and cfg.get("searchad_secret") and cfg.get("searchad_customer_id")) or fake:
         try:
             stats["volumes"] = fetch_volumes(db, cfg, should_stop=should_stop)

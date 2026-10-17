@@ -112,6 +112,9 @@ def import_products(db, fileobj, filename, progress=None, should_stop=None):
          (stats["total"], stats["added"], stats["updated"], stats["invalid"],
           f"원본 상품명 중복 {stats['name_dup']}개", iid))
     stats["import_id"] = iid
+    if db.one("SELECT 1 FROM dict_syn LIMIT 1"):
+        with db.tx() as c:
+            lexicon._bump(c)  # 사전 비슷한말은 원본 상품명에 나오는 말만 쓰므로 다시 읽게
     return stats
 
 

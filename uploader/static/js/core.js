@@ -175,6 +175,7 @@ const App = {
           : `상품명 만들기 끝: 새 이름 ${num(r.added)}개` + (r.short ? ` · 단어가 적어 다 못 채운 상품 ${num(r.short)}개` : "")
             + (r.rejected ? ` · 반복·금지 단어로 버림 ${num(r.rejected)}개` : "")
             + (r.failed ? ` · 실패 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : ""),
+        dictfile: () => `사전 파일 넣기 끝: 명사 ${num(r.nouns)}개 · 비슷한말 있는 단어 ${num(r.syn_words)}개 (파일 ${num(r.files)}개)`,
         keywords: () => `네이버 키워드 끝: 원본 ${num(r.sources)}개 · 검색 ${num(r.api_calls)}번 (저장한 결과 ${num(r.cached)}번) · 단어 ${num(r.words)}개`
           + (r.volumes ? ` · 검색량 ${num(r.volumes)}개` : "") + (r.errors ? ` · 실패 ${r.errors} (${r.error})` : "") + (r.volume_error ? ` · 검색량 실패 (${r.volume_error})` : ""),
         kipris: () => `상표 확인 끝: 조어 ${num(r.checked)}개 확인 · 등록 상표 ${num(r.registered)}개 · 출원 중 ${num(r.pending)}개`

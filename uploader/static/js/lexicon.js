@@ -8,7 +8,8 @@ App.page("lexicon", {
     el.innerHTML = `<div class="page">
       <header class="page-head"><h1>단어 사전</h1>
         <div class="head-actions"><span class="muted" id="lx-msg"></span>
-          <button class="btn" id="lx-fetch" title="원본 상품명에 자주 나오는 단어의 비슷한말을 국립국어원 우리말샘에서 받아 묶음으로 저장">우리말샘에서 유의어 받기</button>
+          <label class="btn" title="우리말샘·표준국어대사전 '사전 내려받기' 파일(zip/xml/json). API 키 없이 사전 단어 확인과 비슷한말에 씀"><input type="file" id="lx-dictfile" accept=".zip,.xml,.json" hidden>사전 파일 넣기</label>
+          ${s.has_opendict_key ? `<button class="btn" id="lx-fetch" title="원본 상품명에 자주 나오는 단어의 비슷한말을 국립국어원 우리말샘 API에서 받아 묶음으로 저장">우리말샘 API로 유의어 받기</button>` : ""}
           <button class="btn primary" id="lx-save">저장</button></div></header>
 
       <section class="card pad">
@@ -19,6 +20,13 @@ App.page("lexicon", {
           <button class="btn primary" id="lx-try">만들어 보기</button>
         </div>
         <div id="lx-out"></div>
+      </section>
+
+      <section class="card pad lx-dict">
+        <div class="sec-head"><h2>국어사전</h2>
+          <span class="muted small">${d.stats.dict_words ? `명사 ${num(d.stats.dict_words)}개 · 비슷한말 있는 단어 ${num(d.stats.dict_syn)}개${d.dict_file ? ` · ${esc(d.dict_file.name)} (${ymd(d.dict_file.at)})` : ""}` : "아직 안 넣음"}</span></div>
+        <p class="muted small">${d.stats.dict_words ? "" : `<b>사전 파일을 넣어 주세요.</b> `}우리말샘(opendict.korean.go.kr) 또는 표준국어대사전(stdict.korean.go.kr)에 로그인 → <b>사전 내려받기</b>에서 받은 파일(zip 그대로, 또는 xml/json)을 위의 '사전 파일 넣기'로 넣습니다. API 키·외부 주소가 필요 없고 한 번만 넣으면 됩니다.
+          ① 사전에 있는 명사는 일반명사로 보고 키프리스 확인에서 뺍니다(조어만 확인). ② 명사의 비슷한말을 재조합 유의어로 씁니다 — 단, 원본 상품명·네이버 키워드에 실제로 나오는 말끼리만(옛말·전문어가 들어가지 않게).</p>
       </section>
 
       <section class="card pad lx-rules">
@@ -46,7 +54,7 @@ App.page("lexicon", {
             <button class="btn" id="tm-all" ${tm.has_key ? "" : "disabled"} title="원본 상품명·네이버 키워드·AI/가져온 이름에 나오는 조어 중 아직 확인 안 한 것">조어 상표 확인 (${num(tm.todo)}개 남음)</button>
           </div></div>
         ${tm.has_key ? "" : `<p class="flag warn">키프리스 키가 없습니다. <a href="#settings">설정 → 상표 확인</a>에 KIPRIS Plus 키를 넣으세요.</p>`}
-        ${tm.has_key && !tm.has_opendict ? `<p class="flag warn">우리말샘 키가 없으면 사전에 있는 일반명사도 키프리스로 확인해 걸릴 수 있습니다. <a href="#settings">설정 → 우리말샘</a>에 키를 넣는 걸 권합니다.</p>` : ""}
+        ${tm.has_key && !tm.has_opendict ? `<p class="flag warn">국어사전이 없으면 사전에 있는 일반명사도 키프리스로 확인해 걸릴 수 있습니다. 위의 '국어사전'에 사전 파일을 먼저 넣으세요.</p>` : ""}
         <p class="muted small">사전에 있는 일반명사(의자·행거·수납함)는 상표가 있어도 그 상품의 보통 명칭이라 <b>확인하지 않습니다</b>.
           '효도의자'·'왕자행거'처럼 <b>일반명사를 붙여 만든 조어</b>만 확인합니다: 3글자 이상 한글 단어 중 유의어 묶음·속성 단어에 없고 우리말샘 표제어도 아닌 것.
           상표명이 정확히 같은 등록·출원 상표가 있으면 새 단어로 넣지 않고, AI·가져온 이름에 있으면(띄어 쓴 '효도 의자'도) 버리고, 원본 상품명에 있으면 경고합니다.</p>
@@ -61,7 +69,7 @@ App.page("lexicon", {
         <section class="card pad">
           <div class="sec-head"><h2>유의어 묶음</h2><span class="muted small">한 줄에 한 묶음 · 쉼표로 구분 · 같은 줄의 단어끼리 서로 바꿔 씀</span></div>
           <textarea id="lx-groups" rows="18" spellcheck="false">${esc(d.groups)}</textarea>
-          <div class="sec-head" style="margin-top:14px"><h2>우리말샘에서 받은 묶음</h2><span class="muted small">${num(d.stats.opendict)}묶음 · 찾아본 단어 ${num(d.stats.looked)}개 · 이상한 건 지우고 저장</span></div>
+          <div class="sec-head" style="margin-top:14px"><h2>우리말샘에서 받은 묶음</h2><span class="muted small">${num(d.stats.opendict)}묶음 · 찾아본 단어 ${num(d.stats.looked)}개 · 우리말샘 API 키가 있을 때만 · 이상한 건 지우고 저장</span></div>
           <textarea id="lx-opendict" rows="6" spellcheck="false">${esc(d.opendict)}</textarea>
         </section>
         <section class="card pad">
@@ -81,7 +89,8 @@ App.page("lexicon", {
     $("#lx-save").addEventListener("click", () => this.save());
     $("#lx-try").addEventListener("click", () => this.preview());
     $("#lx-name").addEventListener("keydown", (e) => { if (e.key === "Enter") this.preview(); });
-    $("#lx-fetch").addEventListener("click", () => App.startTask(App.api("/api/lexicon/fetch", { json: {} })));
+    $("#lx-fetch")?.addEventListener("click", () => App.startTask(App.api("/api/lexicon/fetch", { json: {} })));
+    $("#lx-dictfile").addEventListener("change", (e) => { if (e.target.files[0]) App.upload("/api/lexicon/dictfile", e.target.files[0]); e.target.value = ""; });
     $("#tm-all").addEventListener("click", () => App.startTask(App.api("/api/trademark/check", { json: { scope: "all" } })));
     $("#tm-sec").addEventListener("click", async (e) => {
       const b = e.target.closest("[data-allow]");
@@ -89,7 +98,7 @@ App.page("lexicon", {
       try { await App.api("/api/trademark/allow", { json: { word: b.dataset.allow, allowed: b.dataset.v === "1" } }); App.route(); }
       catch (err) { App.toast(err.message, true); }
     });
-    this.onDone = async (t) => { if (t.kind === "lexicon" || t.kind === "kipris") { App.route(); } };
+    this.onDone = async (t) => { if (["lexicon", "kipris", "dictfile"].includes(t.kind)) { App.route(); } };
     App.on("task-done", this.onDone);
   },
   unmount() { App.off("task-done", this.onDone); },
