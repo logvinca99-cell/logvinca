@@ -9,14 +9,15 @@ import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import config, convert, engine, inventory, keywords, lexicon, naver, orders
+from . import bait, config, convert, engine, inventory, keywords, lexicon, naver, orders, watermark
 from .db import DB
 from .tasks import Tasks
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 FILTER_KEYS = ("q", "status", "category", "store_missing", "store_has", "import_id", "max_listings",
                "min_names", "store_id", "plan_id", "op", "age_days", "sold", "locked")
-STORE_FIELDS = ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "capacity", "enabled", "memo")
+STORE_FIELDS = ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "capacity", "enabled", "memo",
+                "mall_name", "wm_text")
 
 
 def _filter_from(src):
@@ -117,9 +118,9 @@ def create_app(db=None):
     @app.post("/api/settings")
     def save_settings():
         v = body()
-        ints = ("recombine_fixed_prefix", "recombine_new_min", "recombine_new_max", "max_word_repeat", "opendict_daily_limit", "kipris_limit", "kw_daily_limit", "kw_results", "kw_min_malls", "kw_refresh_days", "kw_max_words", "core_scan_words", "orders_auto_sync_minutes", "orders_initial_days", "max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
+        ints = ("recombine_fixed_prefix", "recombine_new_min", "recombine_new_max", "max_word_repeat", "opendict_daily_limit", "kipris_limit", "bait_amount", "bait_watch_limit", "kw_daily_limit", "kw_results", "kw_min_malls", "kw_refresh_days", "kw_max_words", "core_scan_words", "orders_auto_sync_minutes", "orders_initial_days", "max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
                 "name_max_len", "ai_names_per_product", "ai_products_per_call", "ai_workers")
-        floats = ("kw_min_share", "recombine_replace_ratio", "delay_sec", "price_jitter_pct", "recombine_max_overlap", "image_cache_gb")
+        floats = ("bait_copy_match", "bait_watch_hours", "bait_days", "wm_size_pct", "wm_opacity", "wm_margin_pct", "kw_min_share", "recombine_replace_ratio", "delay_sec", "price_jitter_pct", "recombine_max_overlap", "image_cache_gb")
         for k in ints:
             if k in v:
                 v[k] = convert.to_int(v[k], config.DEFAULTS[k])
@@ -164,7 +165,7 @@ def create_app(db=None):
             v["capacity"] = max(0, convert.to_int(v["capacity"], 10000))
         if "enabled" in v:
             v["enabled"] = int(bool(v["enabled"]))
-        for k in ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "memo"):
+        for k in ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "memo", "mall_name", "wm_text"):
             if k in v:
                 v[k] = str(v[k] or "").strip()
         if sid:
@@ -425,6 +426,7 @@ def create_app(db=None):
         l["next_seller_code"] = engine.seller_code(cfg, store, nxt)
         l["history"] = db.q("SELECT * FROM listing_history WHERE listing_id=? ORDER BY round DESC", (lid,))
         l["orders"] = db.q("SELECT * FROM orders WHERE listing_id=? ORDER BY ordered_at DESC LIMIT 50", (lid,))
+        l["copycats"] = db.q("SELECT * FROM copycats WHERE listing_id=? ORDER BY found_at DESC LIMIT 30", (lid,))
         l["siblings"] = db.q("""SELECT l.id, l.name, l.status, l.round, t.name AS store_name FROM listings l
             JOIN stores t ON t.id=l.store_id WHERE l.source_id=? AND l.id!=? AND l.status!='deleted'""",
                              (l["source_id"], lid))
@@ -610,6 +612,101 @@ def create_app(db=None):
             lexicon._bump(c)
         return jsonify({"ok": True})
 
+    # ── 도둑방지
+
+    @app.get("/api/bait")
+    def bait_info():
+        cfg = config.load()
+        rows = db.q("""SELECT c.*, l.name AS my_name, l.price AS my_base, l.channel_no, l.bait_state, st.name AS store_name,
+            st.store_url FROM copycats c JOIN listings l ON l.id=c.listing_id JOIN stores st ON st.id=l.store_id
+            ORDER BY c.found_at DESC LIMIT 300""")
+        on = db.q("""SELECT l.id, l.name, l.price, l.bait, l.bait_until, l.bait_checked_at, l.registered_at, l.channel_no,
+            st.name AS store_name, st.store_url FROM listings l JOIN stores st ON st.id=l.store_id
+            WHERE l.bait_state IN ('on','fail') ORDER BY l.bait_until LIMIT 300""")
+        fake = os.environ.get("UPLOADER_FAKE_API") == "1"
+        return jsonify({"stats": bait.stats(db), "copycats": rows, "on": on,
+                        "has_search_key": bool(cfg.get("naver_client_id") and cfg.get("naver_client_secret")) or fake,
+                        "auto": {k: v for k, v in bait_auto.items()}})
+
+    @app.post("/api/bait/watch")
+    def bait_watch():
+        cfg = config.load()
+        ids = [int(i) for i in body().get("ids") or []] or None
+        try:
+            tid = tasks.start("bait", "베낀 상품 찾기", lambda **kw: bait.watch(db, cfg, ids, **kw))
+        except RuntimeError as e:
+            return fail(str(e))
+        return jsonify({"task": tid})
+
+    @app.post("/api/bait/restore")
+    def bait_restore():
+        b = body()
+        if b.get("filter"):
+            ids = inventory.listing_ids(db, {**b["filter"], "status": "bait"})
+        else:
+            ids = [int(i) for i in b.get("ids") or []]
+        reason = "직접 되돌림"
+        if b.get("due"):
+            ids = [r["id"] for r in bait.due(db)]
+            reason = f"{config.load().get('bait_days')}일 지남"
+        if not ids:
+            return fail("원래 가격으로 되돌릴 복사본이 없습니다.")
+        try:
+            tid = tasks.start("bait", f"원래 가격으로 {len(ids)}건",
+                              lambda **kw: bait.restore(db, ids, reason, **kw))
+        except RuntimeError as e:
+            return fail(str(e))
+        return jsonify({"task": tid})
+
+    @app.post("/api/stores/<int:sid>/watermark")
+    def store_watermark(sid):
+        f = request.files.get("file")
+        if not f or not f.filename.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+            return fail("로고 이미지(PNG 권장, 투명 배경)를 골라 주세요.")
+        from PIL import Image
+        os.makedirs(watermark.WM_DIR, exist_ok=True)
+        try:
+            Image.open(f.stream).convert("RGBA").save(watermark.logo_path(sid), "PNG")
+        except Exception as e:  # noqa: BLE001
+            return fail(f"이미지를 읽지 못했습니다: {e}")
+        return jsonify({"ok": True})
+
+    @app.delete("/api/stores/<int:sid>/watermark")
+    def store_watermark_del(sid):
+        p = watermark.logo_path(sid)
+        if os.path.exists(p):
+            os.remove(p)
+        return jsonify({"ok": True})
+
+    @app.get("/api/watermark/preview")
+    def watermark_preview():
+        """워터마크 미리보기: 원본 번호가 있으면 그 대표 이미지, 없으면 w×h 예시 이미지 (초록 테두리 = 잘려 보이는 정사각형)."""
+        from flask import Response
+        a = request.args
+        cfg = {**config.load(), **{k: a[k] for k in ("wm_position", "wm_square") if a.get(k)}}
+        for k in ("wm_size_pct", "wm_opacity", "wm_margin_pct"):
+            if a.get(k):
+                cfg[k] = float(a[k])
+        st = db.store(int(a["store_id"])) if a.get("store_id") else (db.stores() or [{"id": 0, "name": "내 스토어"}])[0]
+        if a.get("wm_text") is not None and a.get("wm_text") != "":
+            st = {**st, "wm_text": a["wm_text"]}
+        data = None
+        if a.get("source_id"):
+            row = db.source_row(int(a["source_id"]))
+            thumbs = convert.thumbnails(row or {})
+            if thumbs:
+                try:
+                    data, _ = naver.downloader()(thumbs[0], naver.image_cache())
+                except Exception:  # noqa: BLE001
+                    data = None
+        if not data or data == b"fake":
+            data = watermark.sample(int(a.get("w") or 1000), int(a.get("h") or 1000))
+        try:
+            out = watermark.apply(data, st, cfg)
+        except Exception as e:  # noqa: BLE001
+            return fail(f"워터마크를 넣지 못했습니다: {e}")
+        return Response(out, mimetype="image/jpeg", headers={"Cache-Control": "no-store"})
+
     # ── 네이버 키워드
 
     @app.get("/api/keywords")
@@ -783,8 +880,36 @@ def create_app(db=None):
 
     auto = {"minutes": 0, "last_at": None, "next_at": None, "last_result": ""}
 
+    bait_auto = {"last_watch": None, "last_result": ""}
+
+    def bait_tick(cfg, now):
+        """도둑방지: 기한 지난 것 되돌리기(10분마다 확인) + 베낀 상품 찾기(설정한 시간마다)."""
+        has_on = db.one("SELECT 1 FROM listings WHERE bait_state='on' LIMIT 1")
+        if not has_on:
+            return
+        hours = float(cfg.get("bait_watch_hours") or 12)
+        watch_due = cfg.get("bait_watch", True) and (bait_auto["last_watch"] is None
+                                                     or now - bait_auto["last_watch"] >= hours * 3600)
+        if watch_due or bait.due(db, now):
+            if watch_due:
+                bait_auto["last_watch"] = now
+                tasks.start("bait", "도둑방지 자동 (베낀 상품 찾기·되돌리기)", lambda **kw: bait.run_auto(db, cfg, **kw))
+            else:
+                ids = [r["id"] for r in bait.due(db, now)]
+                tasks.start("bait", f"도둑방지 기한 지남 · 원래 가격으로 {len(ids)}건",
+                            lambda **kw: bait.restore(db, ids, f"{cfg.get('bait_days')}일 지남", **kw))
+
     def auto_sync_loop():
+        last_bait = 0
         while True:
+            try:
+                if time.time() - last_bait >= 600:
+                    last_bait = time.time()
+                    bait_tick(config.load(), last_bait)
+            except RuntimeError:
+                pass
+            except Exception as e:  # noqa: BLE001
+                bait_auto["last_result"] = str(e)
             try:
                 cfg = config.load()
                 minutes = int(cfg.get("orders_auto_sync_minutes") or 0)

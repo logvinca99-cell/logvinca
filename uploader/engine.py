@@ -11,7 +11,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import config, convert, naver, orders
+from . import bait, config, convert, naver, orders, watermark
 
 IMAGE_DOWNLOAD_THREADS = 16
 DETAIL_SCOPE = 0
@@ -317,12 +317,18 @@ class Runner:
             if not cat_id:
                 raise convert.ConvertError(f"카테고리 '{row.get('카테고리')}'를 스마트스토어에서 찾지 못했습니다.")
             code = seller_code(cfg, store, t)
-            kw = dict(name=t["name"], price=t["price"], as_phone=store.get("as_phone") or cfg.get("as_phone"),
+            # 도둑방지: 처음 올릴 때 가격을 높여 둠 (나중에 원래 가격으로)
+            bait_amt = bait.applies(cfg, t, op)
+            kw = dict(name=t["name"], price=t["price"] + bait_amt, as_phone=store.get("as_phone") or cfg.get("as_phone"),
                       seller_code=code)
             convert.build_body(row, cfg, cat_id, **kw)  # 이미지 올리기 전에 빠진 값부터 확인
 
             thumbs = convert.thumbnails(row)[:10]
-            url_map, n1, _ = self._images(client, pool, cache, sid, thumbs, True, lid, label, on_wait)
+            wm = None
+            if watermark.enabled(cfg) and thumbs:
+                marked = set(thumbs if cfg.get("wm_scope") == "all" else thumbs[:1])
+                wm = (marked, lambda data: watermark.apply(data, store, cfg), watermark.signature(cfg, store))
+            url_map, n1, _ = self._images(client, pool, cache, sid, thumbs, True, lid, label, on_wait, wm=wm)
             details = convert.detail_images_to_upload(row, cfg)
             dmap, n2, failed = self._images(client, pool, cache, DETAIL_SCOPE, details, False, lid, label, on_wait)
             url_map.update(dmap)
@@ -334,10 +340,14 @@ class Runner:
             sec = time.time() - t0
             self.db.set_listing(lid, "success", op="create", stage="", message=" / ".join(notes), seconds=sec,
                                 seller_code=code, registered_at=time.time(),
+                                bait=bait_amt, bait_state="on" if bait_amt else "", bait_note="", bait_restored_at=None,
+                                bait_checked_at=None,
+                                bait_until=time.time() + float(cfg.get("bait_days") or 7) * 86400 if bait_amt else None,
                                 origin_no=str(res.get("originProductNo", "")),
                                 channel_no=str(res.get("smartstoreChannelProductNo", "")))
             what = "최신화" if op == "refresh" else "등록"
-            self._log("ok", f"{what} 완료 · {t['name'][:40]} ({sec:.1f}초, 새 이미지 {n1 + n2}장)", store["name"])
+            extra = f", 도둑방지 +{bait_amt:,}원" if bait_amt else ""
+            self._log("ok", f"{what} 완료 · {t['name'][:40]} ({sec:.1f}초, 새 이미지 {n1 + n2}장{extra})", store["name"])
             self._count(sid, lid, True)
         except Exception as e:  # noqa: BLE001 - 한 건의 실패는 기록하고 다음으로
             self.db.set_listing(lid, "fail", stage="", message=str(e)[:1000], seconds=time.time() - t0)
@@ -377,11 +387,15 @@ class Runner:
             c.execute("UPDATE listings SET name_id=?, name=? WHERE id=?", (nm["id"], nm["name"], t["id"]))
         return nm["name"]
 
-    def _images(self, client, pool, cache, scope, srcs, required, lid, label, on_wait):
-        """(원본→네이버 주소, 새로 올린 수, 못 받은 주소). required면 하나라도 못 받으면 실패."""
+    def _images(self, client, pool, cache, scope, srcs, required, lid, label, on_wait, wm=None):
+        """(원본→네이버 주소, 새로 올린 수, 못 받은 주소). required면 하나라도 못 받으면 실패.
+        wm=(워터마크 넣을 원본 주소들, 변환 함수, 서명): 그 이미지는 워터마크를 넣어 따로 올리고 따로 기억한다."""
         if not srcs:
             return {}, 0, []
-        url_map = self.db.image_map(scope, srcs)
+        marked, fn, sig = wm or (set(), None, "")
+        key = {u: (f"{u}#wm{sig}" if u in marked else u) for u in srcs}
+        saved = self.db.image_map(scope, list(key.values()))
+        url_map = {u: saved[k] for u, k in key.items() if k in saved}
         need = [u for u in srcs if u not in url_map]
         with self.lock:
             self.state["images_reused"] += len(srcs) - len(need)
@@ -395,6 +409,11 @@ class Runner:
         for i, (u, fut) in enumerate(futures, 1):
             try:
                 data, ctype = fut.result()
+                if u in marked and fn:
+                    try:
+                        data, ctype = fn(data), "image/jpeg"
+                    except Exception as e:  # noqa: BLE001 - 그림이 아니면(시연 모드 등) 워터마크 없이
+                        self._log("warn", f"워터마크 못 넣음 · {e}")
                 got.append((u, data, ctype))
             except Exception as e:  # noqa: BLE001
                 if required:
@@ -408,7 +427,7 @@ class Runner:
             self._stage(lid, label, f"{kind} 이미지 올리는 중 {sent}/{len(got)}")
             new_urls = client.upload_images(chunk, on_wait=on_wait)
             pairs = list(zip([u for u, _, _ in chunk], new_urls))
-            self.db.save_images(scope, pairs)
+            self.db.save_images(scope, [(key[u], n) for u, n in pairs])
             url_map.update(pairs)
             sent += len(chunk)
             with self.lock:

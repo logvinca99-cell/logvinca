@@ -10,10 +10,10 @@ if errorlevel 1 (
   exit /b
 )
 
-python -c "import flask, openpyxl, requests, bcrypt, anthropic" > nul 2>&1
+python -c "import flask, openpyxl, requests, bcrypt, anthropic, PIL" > nul 2>&1
 if errorlevel 1 (
   echo 필요한 프로그램을 설치합니다...
-  python -m pip install flask openpyxl requests bcrypt anthropic
+  python -m pip install flask openpyxl requests bcrypt anthropic pillow
 )
 
 python -m uploader %*

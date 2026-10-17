@@ -93,6 +93,27 @@ DEFAULTS = {
     # 한 번에 확인할 단어 수
     "kipris_limit": 500,
 
+    # ── 도둑방지
+    # 처음 올릴 때 가격을 bait_amount만큼 높여 두고, 베낀 상품이 보이거나 bait_days가 지나면 원래 가격으로
+    "bait_enabled": False,
+    "bait_amount": 30000,
+    "bait_days": 7,
+    "bait_on_refresh": False,        # 최신화(다시 등록) 때도 높여서 올릴지
+    "bait_watch": True,              # 내 상품명으로 네이버 쇼핑을 검색해 베낀 상품 찾기 (네이버 검색 API 키 필요)
+    "bait_watch_hours": 12,          # 몇 시간마다 찾아볼지
+    "bait_watch_limit": 500,         # 한 번에 찾아볼 복사본 수
+    "bait_copy_match": 0.8,          # 상품명이 이만큼 이상 같으면 베낀 것으로 봄 (0~1)
+    "bait_restore_on_copy": True,    # 베낀 상품을 찾으면 기한 전이라도 바로 원래 가격으로
+    # 대표 이미지 워터마크 (스토어마다: 스토어 화면에서 로고 PNG 또는 글자)
+    "wm_enabled": False,
+    "wm_scope": "main",              # main(대표 이미지만) / all(대표+추가 이미지)
+    "wm_position": "bottom-right",   # top-left / top-right / bottom-left / bottom-right / top-center / bottom-center
+    "wm_size_pct": 22,               # 워터마크 너비 (정사각형 한 변의 %)
+    "wm_opacity": 0.85,
+    "wm_margin_pct": 3,
+    "wm_square": "safe",             # safe(가운데 정사각형 안쪽) / pad(흰 여백으로 정사각형) / full(이미지 전체 기준)
+    "wm_font": "",                   # 글자 워터마크 글꼴 파일 (비우면 맑은 고딕 등)
+
     # ── AI 상품명 (Claude API)
     "anthropic_api_key": "",
     "ai_model": "claude-opus-5-5",

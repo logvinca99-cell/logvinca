@@ -289,6 +289,19 @@ class Client:
             raise ApiError(f"상품 등록 실패: {explain_error(r)}")
         return r.json()
 
+    def update_sale_price(self, origin_no, price, on_wait=None):
+        """판매가만 바꾼다: 원상품을 읽어 salePrice만 고쳐 그대로 다시 보냄 (도둑방지 원래 가격으로)."""
+        r = self.request("GET", f"/v2/products/origin-products/{origin_no}", on_wait=on_wait)
+        if r.status_code != 200:
+            raise ApiError(f"상품 읽기 실패: {explain_error(r)}")
+        body = r.json()
+        body["originProduct"]["salePrice"] = int(price)
+        body = {k: v for k, v in body.items() if k in ("originProduct", "smartstoreChannelProduct")}
+        r = self.request("PUT", f"/v2/products/origin-products/{origin_no}", json=body, on_wait=on_wait)
+        if r.status_code != 200:
+            raise ApiError(f"가격 바꾸기 실패: {explain_error(r)}")
+        return True
+
     # ── 주문 (판매 이력)
 
     def changed_product_order_ids(self, since_ts, until_ts, change_type=None, on_progress=None):
@@ -366,6 +379,10 @@ class FakeClient:
 
     def delete_product(self, origin_no, on_wait=None):
         time.sleep(random.uniform(0.2, 0.5))
+        return True
+
+    def update_sale_price(self, origin_no, price, on_wait=None):
+        time.sleep(random.uniform(0.1, 0.3))
         return True
 
     def upload_images(self, items, on_wait=None):

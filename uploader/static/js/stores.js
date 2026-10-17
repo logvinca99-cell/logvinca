@@ -70,6 +70,12 @@ App.page("stores", {
         </div>
         <div class="two">
           <label class="field">A/S 전화번호 <span class="muted">(비우면 설정의 기본값)</span><input name="as_phone" value="${esc(s.as_phone || "")}"></label>
+          <label class="field">쇼핑 노출 이름 <span class="muted">(네이버 쇼핑에 보이는 스토어 이름이 위 이름과 다르면 · 베낀 상품 찾기에서 내 것 빼기)</span><input name="mall_name" value="${esc(s.mall_name || "")}"></label>
+          <label class="field">워터마크 글자 <span class="muted">(비우면 스토어 이름 · 아래 로고를 올리면 로고를 씀)</span><input name="wm_text" value="${esc(s.wm_text || "")}"></label>
+          ${s.id ? `<div class="field">워터마크 로고 <span class="muted">(PNG 투명 배경 권장)</span>
+            <div class="wm-store"><img id="wm-prev" src="/api/watermark/preview?store_id=${s.id}&w=1000&h=1000&_=${Date.now()}" alt="워터마크 미리보기">
+              <div><label class="btn"><input type="file" id="wm-file" accept=".png,.jpg,.jpeg,.webp" hidden>로고 올리기</label>
+              <button type="button" class="btn ghost" id="wm-del">로고 지우기</button></div></div></div>` : ""}
           <label class="field">상품 수 한도<input name="capacity" type="number" min="0" value="${s.capacity ?? 10000}"></label>
         </div>
         <label class="field">메모<input name="memo" value="${esc(s.memo || "")}"></label>
@@ -89,6 +95,18 @@ App.page("stores", {
           catch (e) { App.toast(e.message, true); return false; }
         } },
       ],
+    });
+    const prev = () => { const im = $("#wm-prev"); if (im) im.src = `/api/watermark/preview?store_id=${s.id}&w=1000&h=1000&_=${Date.now()}`; };
+    $("#wm-file")?.addEventListener("change", async (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      const fd = new FormData(); fd.append("file", f);
+      try { await App.api(`/api/stores/${s.id}/watermark`, { method: "POST", body: fd }); prev(); App.toast("로고를 올렸습니다"); }
+      catch (err) { App.toast(err.message, true); }
+      e.target.value = "";
+    });
+    $("#wm-del")?.addEventListener("click", async () => {
+      try { await App.api(`/api/stores/${s.id}/watermark`, { method: "DELETE" }); prev(); } catch (err) { App.toast(err.message, true); }
     });
   },
 

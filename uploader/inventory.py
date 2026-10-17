@@ -656,6 +656,8 @@ def listing_where(f):
         w.append("l.sold_count>0")
     elif st == "locked":
         w.append("l.locked=1 AND l.status!='deleted'")
+    elif st == "bait":
+        w.append("l.bait_state IN ('on','fail') AND l.origin_no!=''")
     elif st != "all":
         w.append("l.status=?")
         a.append(st)
@@ -721,6 +723,7 @@ def listing_counts(db, store_id=None, plan_id=None):
         SUM(status IN ('planned','queued','running') AND op='delete') AS pending_delete,
         SUM(origin_no!='' AND status='success') AS live, SUM(status='fail') AS fail, SUM(status='deleted') AS deleted,
         SUM(sold_count>0) AS sold, SUM(locked=1 AND status!='deleted') AS locked,
+        SUM(bait_state IN ('on','fail') AND origin_no!='') AS bait,
         SUM(origin_no!='' AND registered_at<=?) AS age30, SUM(origin_no!='' AND registered_at<=?) AS age60,
         SUM(origin_no!='' AND registered_at<=?) AS age90
         FROM listings{where}""", (now - 30 * day, now - 60 * day, now - 90 * day, *a))

@@ -93,8 +93,8 @@ def query_for(name, n=5):
 
 # ───────────────────────── 네이버 쇼핑 검색
 
-def search_shop(query, cid, secret, session, n=100):
-    r = session.get(SHOP_API, params={"query": query, "display": min(100, n), "start": 1, "sort": "sim"},
+def search_shop(query, cid, secret, session, n=100, sort="sim"):
+    r = session.get(SHOP_API, params={"query": query, "display": min(100, n), "start": 1, "sort": sort},
                     headers={"X-Naver-Client-Id": cid, "X-Naver-Client-Secret": secret}, timeout=15)
     if r.status_code == 401:
         raise RuntimeError("네이버 검색 API 키가 맞지 않습니다 (developers.naver.com 애플리케이션의 Client ID/Secret).")
@@ -109,6 +109,10 @@ def search_shop(query, cid, secret, session, n=100):
             "b": it.get("brand") or "",
             "k": it.get("maker") or "",
             "c": [it.get(f"category{i}") or "" for i in (3, 4)],
+            "p": int(it.get("lprice") or 0),
+            "l": it.get("link") or "",
+            "i": it.get("image") or "",
+            "id": str(it.get("productId") or ""),
         })
     return out
 

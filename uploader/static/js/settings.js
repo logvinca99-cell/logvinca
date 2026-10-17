@@ -42,7 +42,7 @@ const SETTING_SECTIONS = [
     ["recombine_use_tags", "재조합에 엑셀 상품태그 단어도 섞기 (태그가 상품과 맞을 때만 켜세요)", "check"],
     ["recombine_max_overlap", "재조합: 같은 원본의 다른 이름과 단어가 이 비율 이상 겹치면 버림 (0~1)", "number", { step: 0.05 }],
   ] },
-  { title: "우리말샘 API (선택)", note: "보통은 필요 없습니다 — 단어 사전 화면에서 '사전 파일 넣기'(우리말샘·표준국어대사전 사전 내려받기 파일)를 쓰세요. API 키는 신청할 때 서비스 주소(외부 URL)가 필요합니다. 키가 있으면 사전 파일에 없는 새 단어도 확인합니다(하루 50,000건).", fields: [
+  { title: "우리말샘 API", note: "국립국어원 우리말샘 오픈 API 키(opendict.korean.go.kr). 단어 사전 화면의 '우리말샘 API로 유의어 받기'와, 상표 확인 때 사전 단어인지 확인하는 데 씁니다(하루 50,000건). 한 번 찾아본 단어는 저장해 다시 묻지 않습니다. 사전 내려받기 파일도 함께 넣을 수 있습니다(선택).", fields: [
     ["opendict_key", "우리말샘 오픈 API 키", "secret"],
     ["opendict_daily_limit", "한 번에 찾아볼 단어 수", "number"],
   ] },
@@ -64,6 +64,27 @@ const SETTING_SECTIONS = [
     ["kipris_key", "키프리스 API 키 (ServiceKey)", "secret"],
     ["kipris_block_pending", "출원·공고 중(등록 전) 상표 단어도 쓰지 않음", "check"],
     ["kipris_limit", "한 번에 확인할 단어 수", "number"],
+  ] },
+  { title: "도둑방지", note: "처음 올릴 때 가격을 높여 두었다가, 베낀 상품이 보이거나 정한 날이 지나면 원래 가격으로 되돌립니다. 베낀 상품 찾기에는 네이버 검색 API 키(위 '네이버 키워드')가 필요합니다. 결과는 도둑방지 화면에서 봅니다.", fields: [
+    ["bait_enabled", "도둑방지 가격 켜기 (이후 새로 올리는 상품부터)", "check"],
+    ["bait_amount", "처음 올릴 때 더할 금액 (원)", "number"],
+    ["bait_days", "베낀 상품이 안 보여도 이 날 수가 지나면 원래 가격으로", "number", { step: 0.5 }],
+    ["bait_on_refresh", "최신화(다시 등록) 때도 높여서 올림", "check"],
+    ["bait_watch", "내 상품명으로 네이버 쇼핑을 검색해 베낀 상품 찾기", "check"],
+    ["bait_restore_on_copy", "베낀 상품을 찾으면 기한 전이라도 바로 원래 가격으로", "check"],
+    ["bait_watch_hours", "몇 시간마다 찾아볼지", "number", { step: 1 }],
+    ["bait_copy_match", "상품명이 이 비율 이상 같으면 베낀 것으로 봄 (0~1)", "number", { step: 0.05 }],
+    ["bait_watch_limit", "한 번에 찾아볼 복사본 수 (검색 API 하루 25,000회)", "number"],
+  ] },
+  { title: "워터마크 (대표 이미지)", note: "스토어마다 로고 PNG(투명 배경 권장)나 글자를 스토어 화면에서 정합니다. 직사각형 이미지는 네이버 목록에서 가운데 정사각형으로 잘려 보이므로 그 안쪽에 넣습니다. 미리보기는 도둑방지 화면에 있습니다.", fields: [
+    ["wm_enabled", "워터마크 넣기 (이후 올리는 상품부터)", "check"],
+    ["wm_scope", "넣을 이미지", "select", { options: [["main", "대표 이미지만"], ["all", "대표 + 추가 이미지"]] }],
+    ["wm_position", "위치", "select", { options: [["bottom-right", "아래 오른쪽"], ["bottom-left", "아래 왼쪽"], ["top-right", "위 오른쪽"], ["top-left", "위 왼쪽"], ["bottom-center", "아래 가운데"], ["top-center", "위 가운데"]] }],
+    ["wm_square", "직사각형 이미지", "select", { options: [["safe", "가운데 정사각형 안쪽에 넣기 (잘려도 보임)"], ["pad", "흰 여백을 붙여 정사각형으로 만든 뒤 넣기"], ["full", "이미지 전체 기준 (잘리면 안 보일 수 있음)"]] }],
+    ["wm_size_pct", "크기 (정사각형 한 변의 %)", "number", { step: 1 }],
+    ["wm_opacity", "불투명도 (0~1)", "number", { step: 0.05 }],
+    ["wm_margin_pct", "가장자리 여백 (%)", "number", { step: 1 }],
+    ["wm_font", "글자 워터마크 글꼴 파일 (비우면 맑은 고딕)", "text"],
   ] },
   { title: "AI 상품명 (Claude API)", note: "console.anthropic.com에서 API 키를 만들어 넣습니다. 사용한 만큼 요금이 나옵니다.", fields: [
     ["anthropic_api_key", "Anthropic API 키", "secret"],
