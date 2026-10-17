@@ -15,7 +15,7 @@ from .tasks import Tasks
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 FILTER_KEYS = ("q", "status", "category", "store_missing", "store_has", "import_id", "max_listings",
-               "min_names", "store_id", "plan_id", "op", "age_days", "sold")
+               "min_names", "store_id", "plan_id", "op", "age_days", "sold", "locked")
 STORE_FIELDS = ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "capacity", "enabled", "memo")
 
 

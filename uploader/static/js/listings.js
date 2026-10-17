@@ -213,7 +213,7 @@ App.page("listings", {
           <div class="run-meta">
             <div><span class="muted">성공</span><b class="c-ok" id="r-ok">0</b></div>
             <div><span class="muted">실패</span><b class="c-err" id="r-fail">0</b></div>
-            <div><span class="muted">판매 이력으로 건너뜀</span><b id="r-skip">0</b></div>
+            <div><span class="muted">잠금으로 건너뜀</span><b id="r-skip">0</b></div>
             <div><span class="muted">속도</span><b id="r-rate">-</b></div>
             <div><span class="muted">남은 시간</span><b id="r-eta">-</b></div>
             <div><span class="muted">새로 올린 이미지</span><b id="r-img">0</b></div>

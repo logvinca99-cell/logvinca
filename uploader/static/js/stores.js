@@ -13,7 +13,7 @@ App.page("stores", {
       <p class="muted small" style="margin:0">스토어마다 커머스API센터에서 애플리케이션을 만들고, 이 PC의 IP를 호출 허용 IP로 등록해야 합니다.
         <b>연결 확인</b>을 누르면 네이버에 이미 있는 상품 수를 받아 와서 남은 자리를 정확히 계산합니다.</p>
       <div class="card table-card"><table class="grid"><thead><tr>
-        <th class="w-code">코드</th><th>스토어</th><th class="w-usage">사용량 (대기 포함)</th><th class="w-num">남은 자리</th>
+        <th class="w-code">코드</th><th class="w-sname">스토어</th><th class="w-usage">사용량 (대기 포함)</th><th class="w-num">남은 자리</th>
         <th class="w-num">판매 중</th><th class="w-num">대기</th><th class="w-num">실패</th><th class="w-num">내림</th>
         <th class="w-num">판매 이력</th><th class="w-num">가장 오래된 것</th><th class="w-num">네이버 상품 수</th><th class="w-num">주문 가져온 때</th><th class="w-act"></th>
       </tr></thead><tbody id="s-rows"></tbody></table></div>
@@ -27,6 +27,7 @@ App.page("stores", {
       const s = this.rows.find((x) => x.id === +b.dataset.id);
       if (b.dataset.act === "edit") this.edit(s);
       if (b.dataset.act === "test") this.test(s, b);
+      if (b.dataset.act === "refresh") this.refresh(s);
     });
     await this.load();
   },
@@ -47,7 +48,8 @@ App.page("stores", {
       <td class="num">${s.oldest_at ? age(s.oldest_at) : "-"}</td>
       <td class="num">${s.naver_count != null ? `${num(s.naver_count)}<div class="p-sub r">${when(s.naver_count_at)}</div>` : '<span class="muted">확인 전</span>'}</td>
       <td class="num">${s.orders_synced_to ? when(s.orders_synced_to) : '<span class="muted">-</span>'}</td>
-      <td class="r nowrap"><button class="link-btn" data-act="test" data-id="${s.id}">연결 확인</button> ·
+      <td class="r nowrap"><button class="link-btn" data-act="refresh" data-id="${s.id}" ${s.n_live ? "" : "disabled"}>새로고침</button> ·
+        <button class="link-btn" data-act="test" data-id="${s.id}">연결 확인</button> ·
         <button class="link-btn" data-act="edit" data-id="${s.id}">수정</button></td></tr>`).join("")
       : `<tr class="empty-row"><td colspan="13">아직 스토어가 없습니다. <b>스토어 추가</b> 또는 <b>여러 개 한 번에 추가</b>를 누르세요.</td></tr>`;
   },
@@ -88,6 +90,48 @@ App.page("stores", {
         } },
       ],
     });
+  },
+
+  /* 스토어 하나 최신화: 올린 지 N일 넘은 판매 중 복사본(잠금 제외)을 지우고 다시 올린다 */
+  refresh(s) {
+    const count = async (days) => {
+      const base = { store_id: s.id, status: "live", size: 1, ...(days ? { age_days: days } : {}) };
+      const [all, open] = await Promise.all([
+        App.api(`/api/listings?${new URLSearchParams(base)}`),
+        App.api(`/api/listings?${new URLSearchParams({ ...base, locked: 0 })}`),
+      ]);
+      return { all: all.total, open: open.total };
+    };
+    App.openModal({
+      title: `${s.name} 새로고침 (최신화)`,
+      body: `<p class="muted small">이 스토어의 판매 중 복사본을 네이버에서 지우고 같은 내용으로 다시 올립니다. 회차가 1 오르고 관리코드 끝 숫자가 바뀝니다.
+        <b>잠긴 복사본(판매 이력·직접 잠금)은 빠집니다.</b> 실행 직전에 이 스토어 주문을 한 번 더 가져와 확인합니다.</p>
+        <label class="field">대상<select id="rf-days">
+          <option value="30">올린 지 30일 넘은 것</option><option value="60">60일 넘은 것</option>
+          <option value="90">90일 넘은 것</option><option value="7">7일 넘은 것</option><option value="">판매 중 전체</option></select></label>
+        <div class="plan-sum" id="rf-sum">세는 중…</div>`,
+      buttons: [{ label: "취소" }, { label: "예약하고 바로 시작", primary: true, onClick: async (b) => {
+        const days = $("#rf-days", b).value;
+        try {
+          const r = await App.api("/api/listings/schedule", { json: { store_id: s.id, op: "refresh", ...(days ? { age_days: days } : {}) } });
+          if (!r.scheduled) { App.toast("새로고침할 건이 없습니다."); return; }
+          if (App.run?.running) {
+            App.toast(`${num(r.scheduled)}건 예약했습니다. 지금 다른 작업이 진행 중이라, 끝난 뒤 복사본 화면에서 시작하세요.`);
+          } else {
+            App.run = await App.api("/api/run", { json: { store_id: s.id } });
+            App.toast(`${s.name}: ${num(r.scheduled)}건 새로고침을 시작했습니다.`);
+          }
+          App.go(`#listings?store_id=${s.id}`);
+        } catch (e) { App.toast(e.message, true); return false; }
+      } }],
+    });
+    const upd = async () => {
+      const days = $("#rf-days").value;
+      const c = await count(days);
+      $("#rf-sum").innerHTML = `새로고침 <b>${num(c.open)}건</b>` + (c.all - c.open ? ` · 잠금으로 빠지는 것 ${num(c.all - c.open)}건` : "");
+    };
+    $("#rf-days").addEventListener("change", upd);
+    upd();
   },
 
   bulk() {

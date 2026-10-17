@@ -605,6 +605,9 @@ def listing_where(f):
     if f.get("op"):
         w.append("l.op=?")
         a.append(f["op"])
+    if f.get("locked") in ("0", "1", 0, 1):
+        w.append("l.locked=?")
+        a.append(int(f["locked"]))
     if f.get("sold") == "1":
         w.append("l.sold_count>0")
     elif f.get("sold") == "0":

@@ -386,3 +386,4 @@ input[type=date].sel { padding: 0 8px; }
 .lock-box { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: var(--panel-2); color: var(--text-2); }
 .ab-sep { width: 1px; background: var(--line); margin: 0 4px; }
 td.num .flag { display: inline-block; margin: 1px 0; }
+.w-sname { min-width: 170px; }
