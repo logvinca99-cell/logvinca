@@ -20,7 +20,7 @@ GUESS_PER_IMAGE_SEC = 0.35
 
 
 def listing_targets(db, f):
-    """처리할 건: 조건에 맞는 대기·실패 건 (새 등록 / 새로고침 / 내리기)."""
+    """처리할 건: 조건에 맞는 대기·실패 건 (새 등록 / 최신화 / 내리기)."""
     from .inventory import listing_where
     where, args = listing_where({**f, "status": "all"})
     cond = "l.status IN ('planned','fail')"
@@ -223,7 +223,7 @@ class Runner:
             q = queue.Queue()
             for t in by_store[sid]:
                 q.put(t)
-            # 지우는 일(새로고침·내리기)이 있으면 먼저 이 스토어의 주문을 가져와 판매 이력을 최신으로 만든다.
+            # 지우는 일(최신화·내리기)이 있으면 먼저 이 스토어의 주문을 가져와 판매 이력을 최신으로 만든다.
             sales_ok = True
             if any(t["op"] in ("refresh", "delete") and t["origin_no"] for t in by_store[sid]):
                 with self.lock:
@@ -234,7 +234,7 @@ class Runner:
                         self._log("info", f"새 주문 {r['new']}건을 가져왔습니다", store["name"])
                 except Exception as e:  # noqa: BLE001
                     sales_ok = False
-                    self._log("err", f"주문을 가져오지 못해 이 스토어의 새로고침·내리기는 하지 않습니다: {e}", store["name"])
+                    self._log("err", f"주문을 가져오지 못해 이 스토어의 최신화·내리기는 하지 않습니다: {e}", store["name"])
             store = {**store, "_sales_ok": sales_ok}
             with self.lock:
                 self.state["stores"][sid]["status"] = "처리 중"
@@ -336,7 +336,7 @@ class Runner:
                                 seller_code=code, registered_at=time.time(),
                                 origin_no=str(res.get("originProductNo", "")),
                                 channel_no=str(res.get("smartstoreChannelProductNo", "")))
-            what = "새로고침" if op == "refresh" else "등록"
+            what = "최신화" if op == "refresh" else "등록"
             self._log("ok", f"{what} 완료 · {t['name'][:40]} ({sec:.1f}초, 새 이미지 {n1 + n2}장)", store["name"])
             self._count(sid, lid, True)
         except Exception as e:  # noqa: BLE001 - 한 건의 실패는 기록하고 다음으로
@@ -363,9 +363,11 @@ class Runner:
                    t["channel_no"] or "", t["registered_at"], time.time(), reason))
 
     def _new_name(self, cfg, t):
-        """새로고침 때 새 이름을 쓰는 설정이면 안 쓴 후보로 바꾼다."""
+        """최신화 때 새 이름을 쓰는 설정이면 안 쓴 후보로 바꾼다."""
         from .inventory import _fill_names
-        src = self.db.one("SELECT id, name, tags FROM sources WHERE id=?", (t["source_id"],))
+        from . import lexicon
+        cfg = {**cfg, "_lex": lexicon.get(self.db)}
+        src = self.db.one("SELECT id, name, tags, category FROM sources WHERE id=?", (t["source_id"],))
         with self.db.tx() as c:
             pool = _fill_names(c, src, 1, cfg, time.time())
             if not pool:

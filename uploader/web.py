@@ -9,7 +9,7 @@ import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import config, convert, engine, inventory, naver, orders
+from . import config, convert, engine, inventory, lexicon, naver, orders
 from .db import DB
 from .tasks import Tasks
 
@@ -117,7 +117,7 @@ def create_app(db=None):
     @app.post("/api/settings")
     def save_settings():
         v = body()
-        ints = ("orders_auto_sync_minutes", "orders_initial_days", "max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
+        ints = ("recombine_new_min", "recombine_new_max", "max_word_repeat", "opendict_daily_limit", "orders_auto_sync_minutes", "orders_initial_days", "max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
                 "name_max_len", "ai_names_per_product", "ai_products_per_call", "ai_workers")
         floats = ("delay_sec", "price_jitter_pct", "recombine_max_overlap", "image_cache_gb")
         for k in ints:
@@ -311,10 +311,14 @@ def create_app(db=None):
     @app.post("/api/names")
     def add_name():
         b = body()
+        cfg = {**config.load(), "_lex": lexicon.get(db)}
+        rejected = []
         with db.tx() as c:
-            added, dup = inventory.add_names(c, int(b["source_id"]), [b.get("name", "")], "manual")
+            added, dup = inventory.add_names(c, int(b["source_id"]), [b.get("name", "")], "manual", cfg=cfg, rejected=rejected)
         db.recount_sources([int(b["source_id"])])
         if not added:
+            if rejected:
+                return fail(f"쓸 수 없는 이름입니다: {rejected[0]}")
             return fail("이미 다른 상품이나 스토어에서 쓰는(또는 후보에 있는) 이름입니다." if dup else "이름을 넣어 주세요.")
         return jsonify({"ok": True})
 
@@ -401,7 +405,7 @@ def create_app(db=None):
 
     @app.post("/api/listings/schedule")
     def schedule():
-        """올라가 있는 건에 새로고침(지우고 다시 올리기) 또는 내리기를 예약한다."""
+        """올라가 있는 건에 최신화(지우고 다시 올리기) 또는 내리기를 예약한다."""
         b = body()
         op = b.get("op")
         if op not in ("refresh", "delete"):
@@ -450,6 +454,52 @@ def create_app(db=None):
         ids = inventory.listing_ids(db, _filter_from(b))
         n, still = orders.set_manual_lock(db, ids, bool(b.get("lock")))
         return jsonify({"count": n, "still_locked": still})
+
+    # ── 단어 사전 (재조합 새 단어, 금지 단어)
+
+    @app.get("/api/lexicon")
+    def lexicon_get():
+        return jsonify(lexicon.export_text(db))
+
+    @app.post("/api/lexicon")
+    def lexicon_save():
+        b = body()
+        lexicon.save_text(db, b.get("groups", ""), b.get("blocked", ""), b.get("opendict"))
+        return jsonify(lexicon.export_text(db))
+
+    @app.post("/api/lexicon/preview")
+    def lexicon_preview():
+        """재조합 미리보기: 상품명(또는 원본 번호)으로 이름 몇 개를 만들어 본다. 저장하지 않음."""
+        from . import namegen
+        b = body()
+        name, category = (b.get("name") or "").strip(), (b.get("category") or "").strip()
+        if b.get("source_id"):
+            s = db.one("SELECT name, category FROM sources WHERE id=?", (int(b["source_id"]),))
+            if s:
+                name, category = s["name"], s["category"]
+        if not name:
+            return fail("상품명을 넣어 주세요.")
+        cfg = config.load()
+        lex = lexicon.get(db)
+        out = namegen.recombine(name, int(b.get("count") or 5), set(), [name], cfg, seed=f"preview:{time.time()}",
+                                lex=lex, category=category)
+        orig = name.split()
+        return jsonify({
+            "original": name, "category": category, "original_len": len(name),
+            "original_repeat": lexicon.repeated_word(orig, lex, int(cfg.get("max_word_repeat") or 2)),
+            "pool": {"synonyms": list(dict.fromkeys(w for t in orig for w in lex.synonyms(t)))[:30],
+                     "category": lexicon.category_words(category)},
+            "names": [{"name": n, "len": len(n), "new": [w for w in n.split() if w not in orig]} for n in out],
+        })
+
+    @app.post("/api/lexicon/fetch")
+    def lexicon_fetch():
+        cfg = config.load()
+        try:
+            tid = tasks.start("lexicon", "우리말샘에서 유의어 받기", lambda **kw: lexicon.fetch_opendict(db, cfg, **kw))
+        except RuntimeError as e:
+            return fail(str(e))
+        return jsonify({"task": tid})
 
     @app.get("/api/orders/list")
     def order_rows():

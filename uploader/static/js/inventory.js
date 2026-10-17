@@ -372,6 +372,6 @@ App.page("inventory", {
         : `<p class="muted">아직 어느 스토어에도 계획되지 않았습니다.</p>`) +
       (d.history.length ? `<h3 class="sec-title">지난 회차 (지운 기록)</h3><table class="opt-table"><tr><th>스토어</th><th>관리코드</th><th>상품명</th><th>올린 날</th><th>지운 날</th><th>이유</th></tr>
         ${d.history.map((h) => `<tr><td>${esc(h.store_name)}</td><td>${esc(h.seller_code)}</td><td>${esc(h.name)}</td>
-        <td>${ymd(h.registered_at)}</td><td>${ymd(h.deleted_at)}</td><td>${h.reason === "refresh" ? "새로고침" : "내리기"}</td></tr>`).join("")}</table>` : "");
+        <td>${ymd(h.registered_at)}</td><td>${ymd(h.deleted_at)}</td><td>${h.reason === "refresh" ? "최신화" : "내리기"}</td></tr>`).join("")}</table>` : "");
   },
 });

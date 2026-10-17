@@ -27,7 +27,7 @@ DEFAULTS = {
     "max_copies": 3,
     # 스토어에 등록하는 판매자 관리코드. {store}=스토어 코드, {source}=원본 번호, {round}=회차
     "seller_code_format": "{store}-{source:07d}-{round}",
-    # 새로고침(지우고 다시 올리기)·다시 올리기 때 상품명을 새 후보로 바꿀지 (끄면 같은 이름)
+    # 최신화(지우고 다시 올리기)·다시 올리기 때 상품명을 새 후보로 바꿀지 (끄면 같은 이름)
     "refresh_new_name": False,
 
     # ── 주문(판매 이력): 판매자센터 주문을 커머스API로 가져온다
@@ -35,7 +35,7 @@ DEFAULTS = {
     "orders_auto_sync_minutes": 60,
     # 처음 가져올 때 며칠 전부터
     "orders_initial_days": 30,
-    # 판매 이력이 있는 복사본은 자동으로 잠금 (새로고침·내리기로 지우지 않음)
+    # 판매 이력이 있는 복사본은 자동으로 잠금 (최신화·내리기로 지우지 않음)
     "lock_sold": True,
     # 취소·반품만 있는 복사본도 잠글지 (끄면 실제 판매가 1건이라도 있어야 잠금)
     "lock_canceled_too": False,
@@ -53,6 +53,18 @@ DEFAULTS = {
     "name_max_len": 50,
     # 재조합에 상품태그 단어를 섞을지 (엑셀 태그가 상품과 안 맞는 경우가 있어 기본 꺼짐)
     "recombine_use_tags": False,
+    # 재조합 때 새로 넣을 단어 수 (단어 사전의 유의어·카테고리 단어, 한글 일반명사만)
+    "recombine_new_min": 1,
+    "recombine_new_max": 2,
+    # 남는 칸을 최대 글자 수까지 채움 (노출에 유리)
+    "recombine_fill": True,
+    # 카테고리 이름의 단어를 새 단어로 쓸지
+    "use_category_words": True,
+    # 한 상품명 안에서 같은 단어를 몇 번까지 허용할지 (다른 단어 안에 들어간 것도 셈)
+    "max_word_repeat": 2,
+    # 우리말샘 오픈 API 키 (opendict.korean.go.kr, 무료) — 단어 사전에서 유의어 받기
+    "opendict_key": "",
+    "opendict_daily_limit": 1000,
     # 같은 원본의 다른 이름과 단어가 이만큼 이상 겹치면 너무 비슷하다고 보고 버림 (0~1)
     "recombine_max_overlap": 0.85,
 
@@ -82,7 +94,7 @@ DEFAULTS = {
     "extra": {},
 }
 
-SECRET_KEYS = ("anthropic_api_key",)
+SECRET_KEYS = ("anthropic_api_key", "opendict_key")
 _lock = threading.Lock()
 
 

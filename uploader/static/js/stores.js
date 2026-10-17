@@ -48,7 +48,7 @@ App.page("stores", {
       <td class="num">${s.oldest_at ? age(s.oldest_at) : "-"}</td>
       <td class="num">${s.naver_count != null ? `${num(s.naver_count)}<div class="p-sub r">${when(s.naver_count_at)}</div>` : '<span class="muted">확인 전</span>'}</td>
       <td class="num">${s.orders_synced_to ? when(s.orders_synced_to) : '<span class="muted">-</span>'}</td>
-      <td class="r nowrap"><button class="link-btn" data-act="refresh" data-id="${s.id}" ${s.n_live ? "" : "disabled"}>새로고침</button> ·
+      <td class="r nowrap"><button class="link-btn" data-act="refresh" data-id="${s.id}" ${s.n_live ? "" : "disabled"}>최신화</button> ·
         <button class="link-btn" data-act="test" data-id="${s.id}">연결 확인</button> ·
         <button class="link-btn" data-act="edit" data-id="${s.id}">수정</button></td></tr>`).join("")
       : `<tr class="empty-row"><td colspan="13">아직 스토어가 없습니다. <b>스토어 추가</b> 또는 <b>여러 개 한 번에 추가</b>를 누르세요.</td></tr>`;
@@ -103,7 +103,7 @@ App.page("stores", {
       return { all: all.total, open: open.total };
     };
     App.openModal({
-      title: `${s.name} 새로고침 (최신화)`,
+      title: `${s.name} 최신화`,
       body: `<p class="muted small">이 스토어의 판매 중 복사본을 네이버에서 지우고 같은 내용으로 다시 올립니다. 회차가 1 오르고 관리코드 끝 숫자가 바뀝니다.
         <b>잠긴 복사본(판매 이력·직접 잠금)은 빠집니다.</b> 실행 직전에 이 스토어 주문을 한 번 더 가져와 확인합니다.</p>
         <label class="field">대상<select id="rf-days">
@@ -114,12 +114,12 @@ App.page("stores", {
         const days = $("#rf-days", b).value;
         try {
           const r = await App.api("/api/listings/schedule", { json: { store_id: s.id, op: "refresh", ...(days ? { age_days: days } : {}) } });
-          if (!r.scheduled) { App.toast("새로고침할 건이 없습니다."); return; }
+          if (!r.scheduled) { App.toast("최신화할 건이 없습니다."); return; }
           if (App.run?.running) {
             App.toast(`${num(r.scheduled)}건 예약했습니다. 지금 다른 작업이 진행 중이라, 끝난 뒤 복사본 화면에서 시작하세요.`);
           } else {
             App.run = await App.api("/api/run", { json: { store_id: s.id } });
-            App.toast(`${s.name}: ${num(r.scheduled)}건 새로고침을 시작했습니다.`);
+            App.toast(`${s.name}: ${num(r.scheduled)}건 최신화를 시작했습니다.`);
           }
           App.go(`#listings?store_id=${s.id}`);
         } catch (e) { App.toast(e.message, true); return false; }
@@ -128,7 +128,7 @@ App.page("stores", {
     const upd = async () => {
       const days = $("#rf-days").value;
       const c = await count(days);
-      $("#rf-sum").innerHTML = `새로고침 <b>${num(c.open)}건</b>` + (c.all - c.open ? ` · 잠금으로 빠지는 것 ${num(c.all - c.open)}건` : "");
+      $("#rf-sum").innerHTML = `최신화 <b>${num(c.open)}건</b>` + (c.all - c.open ? ` · 잠금으로 빠지는 것 ${num(c.all - c.open)}건` : "");
     };
     $("#rf-days").addEventListener("change", upd);
     upd();

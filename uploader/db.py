@@ -14,10 +14,10 @@ runs      [등록 시작]을 누를 때마다 한 줄
 images    원본 이미지 주소 → 네이버 이미지 주소. scope는 스토어 번호 (상세 이미지는 0: 모든 스토어 공용)
 imports   엑셀 불러오기 기록
 orders    판매 이력 (네이버 주문 가져오기 / 주문 파일 가져오기). 복사본(listing)과 맞춰 sold_count를 센다.
-잠금      listings.locked=1이면 새로고침·내리기로 지우지 않는다.
+잠금      listings.locked=1이면 최신화·내리기로 지우지 않는다.
           locked = 직접 잠금(manual_lock) 또는 (설정 lock_sold이고 실제 판매 > 0)
           실제 판매 = 취소·반품을 뺀 주문 (설정 lock_canceled_too면 취소·반품만 있어도 잠금)
-          판매 이력이 있는 복사본은 새로고침·내리기로 지우지 않는다.
+          판매 이력이 있는 복사본은 최신화·내리기로 지우지 않는다.
 
 등록 상태(listings.status)            할 일(listings.op, planned·fail일 때 의미)
     planned  할 일이 있음 (대기)          create   새로 등록
@@ -212,6 +212,8 @@ class DB:
         self._migrate_columns()
         self.c.executescript(SCHEMA)
         self._migrate_data()
+        from . import lexicon
+        lexicon.ensure(self)
         # 프로그램이 등록 도중 꺼졌으면 남은 상태를 되돌린다.
         self.c.execute("UPDATE listings SET status='fail', stage='', message='프로그램이 등록 도중 종료됨' "
                        "WHERE status='running'")

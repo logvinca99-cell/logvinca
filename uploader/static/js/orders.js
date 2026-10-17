@@ -81,7 +81,7 @@ App.page("orders", {
         ${a.minutes && a.next_at ? ` · 다음 ${when(a.next_at)}` : ""} <span class="muted">(설정에서 바꿈 · 프로그램이 켜져 있을 때만)</span></div>
       <div class="muted small">판매자센터의 주문을 커머스API로 가져옵니다. ${synced.length
         ? `가장 오래 전에 가져온 스토어: ${when(Math.min(...synced))}` : "아직 가져온 적 없음"}${never ? ` · 한 번도 안 가져온 스토어 ${never}곳` : ""}
-        · 판매 이력이 있는 복사본은 새로고침·내리기에서 빠집니다.</div>`;
+        · 판매 이력이 있는 복사본은 최신화·내리기에서 빠집니다.</div>`;
 
     $("#o-rows").innerHTML = res.rows.length ? res.rows.map((o) => `<tr data-lid="${o.listing_id || ""}">
       <td>${o.ordered_at ? ymd(o.ordered_at) : "-"}<div class="p-sub">${o.source === "naver" ? "네이버" : "파일"}</div></td>

@@ -16,12 +16,12 @@ const SETTING_SECTIONS = [
   { title: "복사·구분", note: "같은 원본이 여러 스토어에 있을 때 구분하는 방법입니다. 판매자 관리코드는 스마트스토어센터에서 검색할 수 있어 어느 원본의 몇 번째 등록인지 바로 알 수 있습니다.", fields: [
     ["max_copies", "원본 하나를 올릴 수 있는 최대 스토어 수 (내린 것은 세지 않음)", "number"],
     ["seller_code_format", "판매자 관리코드 형식", "text", { hint: "{store}=스토어 코드, {source:07d}=원본 번호, {round}=회차" }],
-    ["refresh_new_name", "새로고침·다시 올리기 때 상품명을 새 후보로 바꿈 (끄면 같은 이름 그대로)", "check"],
+    ["refresh_new_name", "최신화·다시 올리기 때 상품명을 새 후보로 바꿈 (끄면 같은 이름 그대로)", "check"],
   ] },
-  { title: "주문 (판매 이력)", note: "판매자센터의 주문을 커머스API로 가져옵니다. 판매 이력이 있는 복사본은 새로고침·내리기에서 빠집니다.", fields: [
+  { title: "주문 (판매 이력)", note: "판매자센터의 주문을 커머스API로 가져옵니다. 판매 이력이 있는 복사본은 최신화·내리기에서 빠집니다.", fields: [
     ["orders_auto_sync_minutes", "자동 가져오기 간격 (분, 0이면 끔 · 프로그램이 켜져 있을 때만)", "number"],
     ["orders_initial_days", "처음 가져올 때 며칠 전부터", "number"],
-    ["lock_sold", "판매 이력이 있는 복사본은 자동으로 잠금 (새로고침·내리기로 지우지 않음)", "check"],
+    ["lock_sold", "판매 이력이 있는 복사본은 자동으로 잠금 (최신화·내리기로 지우지 않음)", "check"],
     ["lock_canceled_too", "취소·반품만 있는 복사본도 잠금 (끄면 실제 판매가 1건이라도 있어야 잠금)", "check"],
   ] },
   { title: "스토어별 가격", note: "같은 상품도 스토어마다 원본가에서 조금씩 다르게 정합니다. 같은 상품·같은 스토어는 언제 계획해도 같은 가격입니다.", fields: [
@@ -32,8 +32,17 @@ const SETTING_SECTIONS = [
     ["use_original_name", "원본 상품명도 한 스토어에 쓸 수 있음 (원본 스토어와 이름이 같아짐)", "check"],
     ["auto_recombine", "계획 만들 때 이름 후보가 모자라면 재조합으로 자동으로 채움", "check"],
     ["name_max_len", "상품명 최대 글자 수", "number"],
+    ["recombine_new_min", "재조합: 새로 넣을 단어 최소 개수 (단어 사전의 유의어·카테고리 단어)", "number"],
+    ["recombine_new_max", "재조합: 새로 넣을 단어 최대 개수", "number"],
+    ["recombine_fill", "재조합: 남는 칸을 최대 글자 수까지 채움 (노출에 유리)", "check"],
+    ["use_category_words", "재조합: 카테고리 이름의 단어를 새 단어로 씀", "check"],
+    ["max_word_repeat", "한 상품명 안에서 같은 단어 허용 횟수 (다른 단어 안에 든 것도 셈, 넘으면 버림)", "number"],
     ["recombine_use_tags", "재조합에 엑셀 상품태그 단어도 섞기 (태그가 상품과 맞을 때만 켜세요)", "check"],
     ["recombine_max_overlap", "재조합: 같은 원본의 다른 이름과 단어가 이 비율 이상 겹치면 버림 (0~1)", "number", { step: 0.05 }],
+  ] },
+  { title: "우리말샘 (단어 사전 유의어)", note: "국립국어원 우리말샘 오픈 API 키(무료, opendict.korean.go.kr 에서 신청)를 넣으면 단어 사전에서 유의어를 받을 수 있습니다. 한 번 찾아본 단어는 다시 묻지 않습니다.", fields: [
+    ["opendict_key", "우리말샘 오픈 API 키", "secret"],
+    ["opendict_daily_limit", "한 번에 찾아볼 단어 수", "number"],
   ] },
   { title: "AI 상품명 (Claude API)", note: "console.anthropic.com에서 API 키를 만들어 넣습니다. 사용한 만큼 요금이 나옵니다.", fields: [
     ["anthropic_api_key", "Anthropic API 키", "secret"],

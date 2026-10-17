@@ -12,7 +12,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from . import config, convert, excel, namegen, naver
+from . import config, convert, excel, lexicon, namegen, naver
 from .db import pack, unpack
 
 CHUNK = 500
@@ -25,15 +25,22 @@ def source_key(row):
     return convert.source_fingerprint(row)
 
 
-def add_names(c, source_id, names, origin, now=None):
-    """이름 후보를 넣는다. 모든 스토어 통틀어 정규화 이름이 같은 것은 버린다. (넣은 수, 버린 수)"""
+def add_names(c, source_id, names, origin, now=None, cfg=None, rejected=None):
+    """이름 후보를 넣는다. 모든 스토어 통틀어 정규화 이름이 같은 것은 버린다. (넣은 수, 버린 수)
+    cfg를 주면 AI·가져온 이름도 검사해서(같은 단어 3번 이상, 금지 단어) 걸리면 버리고 rejected에 이유를 담는다."""
     now = now or time.time()
     added = dup = 0
     for n in names:
-        n = namegen.clean(n)
+        n = namegen.clean(n, int((cfg or {}).get("name_max_len") or 100) if origin == "ai" else 100)
         norm = namegen.normalize(n)
         if not norm:
             continue
+        if cfg is not None and origin in ("ai", "import", "manual"):
+            why = namegen.check_name(n, cfg, cfg.get("_lex"))
+            if why:
+                if rejected is not None:
+                    rejected.append(f"{n} ({why})")
+                continue
         cur = c.execute("INSERT OR IGNORE INTO names(source_id, name, norm, origin, created_at) VALUES(?,?,?,?,?)",
                         (source_id, n, norm, origin, now))
         if cur.rowcount:
@@ -228,13 +235,14 @@ def _siblings(c, sid):
 def generate_recombine(db, ids, per_source, progress=None, should_stop=None):
     """원본마다 안 쓴 이름 후보가 per_source개가 되도록 재조합으로 채운다."""
     cfg = config.load()
+    cfg["_lex"] = lexicon.get(db)
     use_orig = int(bool(cfg.get("use_original_name")))
     stats = {"sources": 0, "added": 0, "short": 0}
     for i in range(0, len(ids), CHUNK):
         if should_stop and should_stop():
             break
         chunk = ids[i:i + CHUNK]
-        rows = db.q(f"SELECT id, name, tags, n_free_names FROM sources WHERE id IN ({','.join('?' * len(chunk))})",
+        rows = db.q(f"SELECT id, name, tags, category, n_free_names FROM sources WHERE id IN ({','.join('?' * len(chunk))})",
                     chunk)
         with db.tx() as c:
             for r in rows:
@@ -249,7 +257,7 @@ def generate_recombine(db, ids, per_source, progress=None, should_stop=None):
                     sibs = _siblings(c, r["id"])
                     cands = namegen.recombine(r["name"], need - got, set(), sibs, cfg,
                                               seed=f"{r['id']}:{len(sibs)}:{attempt}",
-                                              tag_words=[t for t in r["tags"].split(",") if t])
+                                              tag_words=[t for t in r["tags"].split(",") if t], category=r["category"])
                     if not cands:
                         break
                     added, _ = add_names(c, r["id"], cands, "recombine")
@@ -268,6 +276,8 @@ def generate_recombine(db, ids, per_source, progress=None, should_stop=None):
 def generate_ai(db, ids, per_source, progress=None, should_stop=None):
     """AI로 원본마다 이름 per_source개를 더 만든다."""
     cfg = config.load()
+    cfg["_lex"] = lexicon.get(db)
+    rejected = []
     namer = namegen.FakeAiNamer(cfg) if os.environ.get("UPLOADER_FAKE_API") == "1" else namegen.AiNamer(cfg)
     per_call = max(1, min(int(cfg.get("ai_products_per_call") or 20), 50))
     workers = max(1, min(int(cfg.get("ai_workers") or 4), 16))
@@ -295,7 +305,7 @@ def generate_ai(db, ids, per_source, progress=None, should_stop=None):
                 result = fut.result()
                 with db.tx() as c:
                     for sid in g:
-                        added, dup = add_names(c, sid, result.get(str(sid), []), "ai")
+                        added, dup = add_names(c, sid, result.get(str(sid), []), "ai", cfg=cfg, rejected=rejected)
                         stats["added"] += added
                         stats["dup"] += dup
                 db.recount_sources(g)
@@ -315,6 +325,8 @@ def generate_ai(db, ids, per_source, progress=None, should_stop=None):
                 if nxt:
                     futs[pool.submit(work, nxt)] = nxt
     stats["usage"] = namer.usage
+    stats["rejected"] = len(rejected)
+    stats["rejected_examples"] = rejected[:5]
     return stats
 
 
@@ -329,6 +341,9 @@ def import_names(db, fileobj, filename, progress=None, should_stop=None):
     한 칸에 여러 이름을 줄바꿈이나 | 로 넣어도 된다.
     """
     now = time.time()
+    cfg = config.load()
+    cfg["_lex"] = lexicon.get(db)
+    rejected = []
     iid = db.x("INSERT INTO imports(kind, file_name, created_at) VALUES('names', ?, ?)", (filename, now))
     stats = {"rows": 0, "added": 0, "dup": 0, "not_found": 0, "same_as_original": 0}
     key_col = name_cols = None
@@ -352,7 +367,7 @@ def import_names(db, fileobj, filename, progress=None, should_stop=None):
                 orig = namegen.normalize(src["name"])
                 fresh = [n for n in names if namegen.normalize(n) != orig]
                 stats["same_as_original"] += len(names) - len(fresh)
-                added, dup = add_names(c, src["id"], fresh, "import", now)
+                added, dup = add_names(c, src["id"], fresh, "import", now, cfg=cfg, rejected=rejected)
                 stats["added"] += added
                 stats["dup"] += dup
         batch.clear()
@@ -392,6 +407,8 @@ def import_names(db, fileobj, filename, progress=None, should_stop=None):
          (stats["rows"], stats["added"], stats["dup"] + stats["not_found"],
           f"원본 못 찾음 {stats['not_found']} · 다른 이름과 중복 {stats['dup']}", iid))
     stats["key_col"], stats["name_cols"] = key_col, name_cols
+    stats["rejected"] = len(rejected)
+    stats["rejected_examples"] = rejected[:5]
     return stats
 
 
@@ -434,7 +451,8 @@ def _fill_names(c, s, need, cfg, now):
         sibs = _siblings(c, s["id"])
         cands = namegen.recombine(s["name"], need - len(pool), set(), sibs, cfg,
                                   seed=f"{s['id']}:{len(sibs)}:plan",
-                                  tag_words=[t for t in (s.get("tags") or "").split(",") if t])
+                                  tag_words=[t for t in (s.get("tags") or "").split(",") if t],
+                                  category=s.get("category") or "")
         add_names(c, s["id"], cands, "recombine", now)
         pool = _free_names(c, s["id"], use_orig)
     return pool
@@ -449,6 +467,7 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
     전에 내렸던 스토어에 다시 계획하면 같은 줄을 다음 회차로 살린다 (이름·가격 그대로, 설정으로 새 이름).
     """
     cfg = config.load()
+    cfg["_lex"] = lexicon.get(db)
     max_copies = max(1, int(cfg.get("max_copies") or 3))
     stores = {s["id"]: s for s in db.stores() if s["id"] in set(store_ids) and s["enabled"]}
     if not stores:
@@ -465,7 +484,7 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
             break
         chunk = ids[i:i + CHUNK]
         marks = ",".join("?" * len(chunk))
-        srcs = db.q(f"SELECT id, source_key, name, price, tags, valid FROM sources WHERE id IN ({marks})", chunk)
+        srcs = db.q(f"SELECT id, source_key, name, price, tags, category, valid FROM sources WHERE id IN ({marks})", chunk)
         active, dead = {}, {}
         for r in db.q(f"SELECT id, source_id, store_id, status, name_id, round FROM listings WHERE source_id IN ({marks})",
                       chunk):
@@ -558,7 +577,7 @@ def schedule_op(db, f, op):
 def cancel_listings(db, where_sql, args):
     """아직 처리 안 된(대기·실패) 할 일을 취소한다.
     새 등록이면 줄을 지우고 이름을 후보로 돌린다 (다시 살린 줄이면 '내림'으로 되돌림).
-    새로고침·내리기면 할 일만 지우고 '판매 중'으로 되돌린다."""
+    최신화·내리기면 할 일만 지우고 '판매 중'으로 되돌린다."""
     rows = db.q(f"SELECT id, source_id, op, round, origin_no FROM listings "
                 f"WHERE status IN ('planned','fail') AND ({where_sql})", args)
     if not rows:

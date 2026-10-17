@@ -387,3 +387,20 @@ input[type=date].sel { padding: 0 8px; }
 .ab-sep { width: 1px; background: var(--line); margin: 0 4px; }
 td.num .flag { display: inline-block; margin: 1px 0; }
 .w-sname { min-width: 170px; }
+
+/* ── 단어 사전 */
+.lx-form { display: flex; gap: 8px; flex-wrap: wrap; }
+.lx-input { flex: 1; min-width: 240px; height: 38px; border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; background: var(--panel); }
+.lx-orig { margin-top: 14px; font-size: 14px; }
+.lx-names { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.lx-names li { display: flex; gap: 12px; align-items: baseline; padding: 8px 12px; background: var(--panel-2); border-radius: 8px; font-size: 14.5px; }
+.lx-names li > span:first-child { flex: 1; }
+.lx-names mark { background: var(--accent-soft); color: var(--accent-strong); padding: 0 3px; border-radius: 4px; font-weight: 600; }
+.lx-len { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+.lx-len.full { color: var(--ok); font-weight: 700; }
+.lx-rules h2 { margin: 0 0 6px; font-size: 15px; }
+.lx-rules ol { margin: 0; padding-left: 20px; font-size: 13.5px; line-height: 1.8; }
+.lx-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px; align-items: start; }
+.lx-grid textarea { width: 100%; font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: var(--panel); line-height: 1.6; }
+@media (max-width: 1000px) { .lx-grid { grid-template-columns: 1fr; } }
+.sec-head h2 { white-space: nowrap; }

@@ -124,7 +124,7 @@ App.page("listings", {
         ${!this.selAll && this.total ? `<button class="link-btn" id="la-all">조건에 맞는 ${num(this.total)}건 모두 고르기</button>` : ""}
       </div>
       <div class="ab-right">
-        <button class="btn" id="la-refresh" ${n ? "" : "disabled"} title="판매 중인 건을 네이버에서 지우고 같은 내용으로 다시 올림 (회차 +1)">새로고침 예약</button>
+        <button class="btn" id="la-refresh" ${n ? "" : "disabled"} title="판매 중인 건을 네이버에서 지우고 같은 내용으로 다시 올림 (회차 +1)">최신화 예약</button>
         <button class="btn" id="la-delete" ${n ? "" : "disabled"} title="판매 중인 건을 네이버에서 지움. 원본의 빈 칸이 생겨 다른 스토어에 올릴 수 있음">내리기 예약</button>
         <button class="btn ghost danger-text" id="la-cancel" ${n ? "" : "disabled"} title="아직 처리 안 된 대기·실패 할 일을 취소">대기·실패 취소</button>
         <span class="ab-sep"></span>
@@ -141,7 +141,7 @@ App.page("listings", {
   async lock(on, ids) {
     try {
       const r = await App.api("/api/listings/lock", { json: { ...(ids ? { ids } : this.target()), lock: on } });
-      App.toast(on ? `${num(r.count)}건을 잠갔습니다. 새로고침·내리기로 지우지 않습니다.`
+      App.toast(on ? `${num(r.count)}건을 잠갔습니다. 최신화·내리기로 지우지 않습니다.`
         : `${num(r.count)}건의 직접 잠금을 풀었습니다.` + (r.still_locked ? ` ${num(r.still_locked)}건은 판매 이력이 있어 잠금이 유지됩니다.` : ""));
       if (!ids) { this.clearSel(); this.load(); }
       return r;
@@ -149,7 +149,7 @@ App.page("listings", {
   },
 
   async schedule(op) {
-    const label = op === "refresh" ? "새로고침(지우고 다시 올리기)" : "내리기(네이버에서 지우기)";
+    const label = op === "refresh" ? "최신화(지우고 다시 올리기)" : "내리기(네이버에서 지우기)";
     if (!confirm(`고른 건 중 판매 중인 건에 ${label}를 예약할까요?\n잠긴 건(판매 이력·직접 잠금)은 빠집니다. 시작할 때 주문을 한 번 더 확인합니다.\n예약만 하고, 위의 [시작]을 눌러야 실제로 처리합니다.`)) return;
     try {
       const r = await App.api("/api/listings/schedule", { json: { ...this.target(), op } });
@@ -173,7 +173,7 @@ App.page("listings", {
           <button class="btn big" id="l-one" ${n ? "" : "disabled"}>1건만 시험</button>
         </div>
         <div class="run-est"><div>${scope ? `<b>${esc(scope)}</b>의 ` : "모든 스토어의 "}대기·실패 건을 처리합니다:
-          등록 ${num(c.pending_create)} · 새로고침 ${num(c.pending_refresh)} · 내리기 ${num(c.pending_delete)} · 실패 재시도 ${num(c.fail)}</div>
+          등록 ${num(c.pending_create)} · 최신화 ${num(c.pending_refresh)} · 내리기 ${num(c.pending_delete)} · 실패 재시도 ${num(c.fail)}</div>
           <div id="l-est" class="muted small"></div></div>
       </div>`;
     $("#l-start").addEventListener("click", () => this.start());
@@ -191,7 +191,7 @@ App.page("listings", {
 
   async start(limit) {
     const n = limit || (this.counts.pending || 0) + (this.counts.fail || 0);
-    if (!limit && !confirm(`${num(n)}건을 처리합니다 (등록·새로고침·내리기). 계속할까요?`)) return;
+    if (!limit && !confirm(`${num(n)}건을 처리합니다 (등록·최신화·내리기). 계속할까요?`)) return;
     try {
       App.run = await App.api("/api/run", { json: { ...this.runScope(), limit: limit || null } });
       this.renderRun(App.run);
@@ -300,7 +300,7 @@ App.page("listings", {
       if (id === "la-lock" || id === "la-unlock") this.lock(id === "la-lock");
       if (id === "la-delete") this.schedule("delete");
       if (id === "la-cancel") {
-        if (!confirm("고른 건 중 대기·실패 할 일을 취소할까요?\n새 등록이면 계획을 지우고 이름을 후보로 돌립니다. 새로고침·내리기면 판매 중으로 되돌립니다.")) return;
+        if (!confirm("고른 건 중 대기·실패 할 일을 취소할까요?\n새 등록이면 계획을 지우고 이름을 후보로 돌립니다. 최신화·내리기면 판매 중으로 되돌립니다.")) return;
         try {
           const r = await App.api("/api/listings/cancel", { json: this.target() });
           App.toast(`${num(r.cancelled)}건을 취소했습니다.`);
@@ -342,7 +342,7 @@ App.page("listings", {
               <dt>원본</dt><dd>#${l.source_id} ${esc(l.source_name)}</dd>
               <dt>판매가</dt><dd>${num(l.price)}원 <span class="muted">(원본가 ${num(l.source_price)}원)</span></dd>
               <dt>같은 원본</dt><dd>${l.siblings.length ? l.siblings.map((x) => `${esc(x.store_name)} · ${esc(x.name)} <span class="muted">(${STATUS[x.status] || x.status})</span>`).join("<br>") : "다른 스토어에는 없음"}</dd></dl>`
-            + `<div class="notice ${l.locked ? "info" : ""} lock-box"><div><b>${l.locked ? "잠금" : "잠금 아님"}</b>${l.locked ? ` · ${esc(l.lock_note)} · 새로고침·내리기로 지우지 않습니다` : " · 새로고침·내리기 가능"}
+            + `<div class="notice ${l.locked ? "info" : ""} lock-box"><div><b>${l.locked ? "잠금" : "잠금 아님"}</b>${l.locked ? ` · ${esc(l.lock_note)} · 최신화·내리기로 지우지 않습니다` : " · 최신화·내리기 가능"}
                 ${l.cancel_count ? `<br><span class="muted">취소·반품 ${num(l.cancel_count)}개는 판매로 세지 않음 (설정에서 바꿈)</span>` : ""}</div>
                 <button class="btn" id="d-lock">${l.manual_lock ? "직접 잠금 풀기" : "직접 잠금"}</button></div>`
             + (l.orders.length ? `<div><h3 class="sec-title">주문 (판매 ${num(l.sold_count)}개${l.cancel_count ? ` · 취소·반품 ${num(l.cancel_count)}개` : ""})</h3><table class="opt-table"><tr><th>주문</th><th>수량</th><th>결제일</th><th>가져온 곳</th></tr>
@@ -350,7 +350,7 @@ App.page("listings", {
               <td>${o.source === "naver" ? "네이버 주문" : "주문 파일"}</td></tr>`).join("")}</table></div>` : "")
             + (l.history.length ? `<div><h3 class="sec-title">지난 회차</h3><table class="opt-table"><tr><th>회차</th><th>관리코드</th><th>상품번호</th><th>올린 날</th><th>지운 날</th></tr>
               ${l.history.map((h) => `<tr><td>${h.round}</td><td>${esc(h.seller_code)}</td><td>${esc(h.channel_no)}</td><td>${ymd(h.registered_at)}</td>
-              <td>${ymd(h.deleted_at)} <span class="muted">${h.reason === "refresh" ? "새로고침" : "내리기"}</span></td></tr>`).join("")}</table></div>` : "");
+              <td>${ymd(h.deleted_at)} <span class="muted">${h.reason === "refresh" ? "최신화" : "내리기"}</span></td></tr>`).join("")}</table></div>` : "");
           $("#d-lock", b)?.addEventListener("click", async () => {
             const r = await this.lock(!l.manual_lock, [id]);
             if (r) { if ($("#l-rows")) this.load(); this.openListing(id); }

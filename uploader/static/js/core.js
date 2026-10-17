@@ -35,9 +35,9 @@ const img = (url, cls = "thumb") =>
 const STATUS = {
   planned: "등록 대기", queued: "순서 대기", running: "처리 중", success: "판매 중", fail: "실패", deleted: "내림",
 };
-const OP = { create: "등록", refresh: "새로고침", delete: "내리기" };
+const OP = { create: "등록", refresh: "최신화", delete: "내리기" };
 
-/* 상태 + 할 일을 한 낱말로: "새로고침 대기", "내리기 실패" … */
+/* 상태 + 할 일을 한 낱말로: "최신화 대기", "내리기 실패" … */
 function statusLabel(status, op = "create") {
   if (status === "planned") return `${OP[op] || "등록"} 대기`;
   if (status === "fail") return `${OP[op] || "등록"} 실패`;
@@ -48,10 +48,10 @@ function statusBadge(status, op) {
   const cls = status === "planned" && op !== "create" ? `s-${op}` : `s-${status}`;
   return `<span class="badge ${cls}">${esc(statusLabel(status, op))}</span>`;
 }
-/* 잠금 표시: 판매 이력으로 자동 잠금이거나 직접 잠금 → 새로고침·내리기로 지우지 않음 */
+/* 잠금 표시: 판매 이력으로 자동 잠금이거나 직접 잠금 → 최신화·내리기로 지우지 않음 */
 function lockFlag(x) {
   if (!x.locked) return "";
-  return `<span class="flag lock" title="잠금: ${esc(x.lock_note || "")} · 새로고침·내리기로 지우지 않습니다">잠금${x.lock_note ? " · " + esc(x.lock_note) : ""}</span>`;
+  return `<span class="flag lock" title="잠금: ${esc(x.lock_note || "")} · 최신화·내리기로 지우지 않습니다">잠금${x.lock_note ? " · " + esc(x.lock_note) : ""}</span>`;
 }
 function salesFlag(x) {
   return (x.sold_count ? `<span class="flag sold" title="취소·반품을 뺀 판매 수량">판매 ${num(x.sold_count)}</span>` : "")
@@ -171,8 +171,11 @@ const App = {
         import: () => `원본 불러오기 끝: 새로 ${num(r.added)}개 · 갱신 ${num(r.updated)}개 · 오류 ${num(r.invalid)}개`,
         names: () => r.not_found !== undefined
           ? `상품명 가져오기 끝: 새 이름 ${num(r.added)}개 · 다른 이름과 중복 ${num(r.dup)}개 · 원본 못 찾음 ${num(r.not_found)}줄`
+            + (r.rejected ? ` · 반복·금지 단어로 버림 ${num(r.rejected)}개 (예: ${r.rejected_examples?.[0] || ""})` : "")
           : `상품명 만들기 끝: 새 이름 ${num(r.added)}개` + (r.short ? ` · 단어가 적어 다 못 채운 상품 ${num(r.short)}개` : "")
+            + (r.rejected ? ` · 반복·금지 단어로 버림 ${num(r.rejected)}개` : "")
             + (r.failed ? ` · 실패 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : ""),
+        lexicon: () => `우리말샘: ${num(r.looked)}개 단어를 찾아 ${num(r.found)}개에 유의어가 있었습니다` + (r.errors ? ` · 오류 ${r.errors}` : ""),
         plan: () => `복사 계획 끝: 새로 ${num(r.created)}건${r.revived ? ` · 다시 살림 ${num(r.revived)}건` : ""}` + (r.no_name ? ` · 이름 부족 ${num(r.no_name)}` : "")
           + (r.capacity ? ` · 자리 부족 ${num(r.capacity)}` : "") + (r.exists ? ` · 이미 있음 ${num(r.exists)}` : ""),
         revalidate: () => `다시 검사 끝: ${num(r.total)}개`,
@@ -306,7 +309,7 @@ const App = {
       body: `<p><b>${esc(file.name)}</b> 파일을 무엇으로 불러올까요?</p>
         <p class="muted small">원본 상품: 수집한 상품 엑셀. 같은 판매자코드는 새로 추가하지 않고 내용만 갱신합니다.<br>
         상품명: 외부 AI 도구 등에서 만든 새 상품명 파일. 판매자코드(또는 원본상품명) 열과 상품명 열이 있어야 합니다.<br>
-        판매 이력: 아바닛 등 주문 수집 웹에서 내려받은 주문 파일. 판매된 복사본은 새로고침·내리기에서 빠집니다.</p>`,
+        판매 이력: 아바닛 등 주문 수집 웹에서 내려받은 주문 파일. 판매된 복사본은 최신화·내리기에서 빠집니다.</p>`,
       buttons: [
         { label: "취소" },
         { label: "판매 이력으로", onClick: () => this.upload("/api/orders/import", file) },
