@@ -364,3 +364,10 @@ label.check input { margin-top: 3px; }
 .s-deleted { background: var(--dup-soft); color: var(--dup); }
 .opt-table th { white-space: nowrap; }
 .opt-table td:first-child { white-space: nowrap; }
+
+/* ── 원본 아래 복사본 줄 */
+tr.copy-row td { background: var(--panel-2); border-bottom: 1px solid var(--line-2); padding-top: 6px; padding-bottom: 6px; font-size: 13px; }
+tr.copy-row:hover td { background: var(--accent-soft); }
+.copy-arrow { color: var(--muted); text-align: right; font-size: 16px; }
+.copy-name { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.flag.sold { background: var(--warn-soft); color: var(--warn); }

@@ -6,6 +6,7 @@ const LST_TILES = [
   { key: "live", label: "판매 중", dot: "var(--ok)" },
   { key: "pending", label: "할 일 대기", dot: "var(--idle)" },
   { key: "fail", label: "실패", dot: "var(--err)" },
+  { key: "sold", label: "판매 이력 있음", dot: "var(--warn)" },
   { key: "deleted", label: "내림", dot: "var(--dup)" },
 ];
 
@@ -18,8 +19,12 @@ App.page("listings", {
     this.sel = new Set();
     this.selAll = false;
     el.innerHTML = `<div class="page">
-      <header class="page-head"><h1>등록</h1>
-        <div class="head-actions"><a class="btn ghost" id="l-export">결과 CSV</a></div></header>
+      <header class="page-head"><h1>복사본</h1>
+        <div class="head-actions">
+          <a class="btn ghost" id="l-export">결과 CSV</a>
+          <label class="btn" title="아바닛 등 주문 수집 웹에서 내려받은 주문 파일"><input type="file" id="l-sales-file" accept=".xlsx,.xlsm,.csv" hidden>판매 이력 파일 가져오기</label>
+          <button class="btn" id="l-sync" title="스토어마다 네이버 주문(결제)을 가져와 판매된 복사본을 표시">네이버 주문 가져오기</button>
+        </div></header>
       <div class="card run" id="l-run"></div>
       <div class="toolbar"><div class="filters">
         <select id="l-store" class="sel"><option value="">모든 스토어</option></select>
@@ -98,7 +103,8 @@ App.page("listings", {
     else if (l.status === "running") msg = l.stage;
     else if (l.status === "deleted") msg = `${ymd(l.deleted_at)}에 내림`;
     const on = this.selAll || this.sel.has(l.id);
-    const others = l.source_copies > 1 ? `<span class="flag" title="같은 원본이 다른 스토어에도 있음">같은 원본 ${l.source_copies}곳</span>` : "";
+    const others = (l.source_copies > 1 ? `<span class="flag" title="같은 원본이 다른 스토어에도 있음">같은 원본 ${l.source_copies}곳</span>` : "")
+      + (l.sold_count ? `<span class="flag sold" title="판매된 복사본은 새로고침·내리기에서 빠집니다">판매 ${num(l.sold_count)}</span>` : "");
     return `<tr data-id="${l.id}" class="${on ? "sel" : ""} ${l.status === "deleted" ? "off" : ""}">
       <td class="w-check" data-stop><input type="checkbox" ${on ? "checked" : ""} ${this.selAll ? "disabled" : ""}></td>
       <td>${img(l.thumb)}</td>
@@ -130,10 +136,10 @@ App.page("listings", {
 
   async schedule(op) {
     const label = op === "refresh" ? "새로고침(지우고 다시 올리기)" : "내리기(네이버에서 지우기)";
-    if (!confirm(`고른 건 중 판매 중인 건에 ${label}를 예약할까요?\n예약만 하고, 위의 [시작]을 눌러야 실제로 처리합니다.`)) return;
+    if (!confirm(`고른 건 중 판매 중인 건에 ${label}를 예약할까요?\n판매 이력이 있는 건은 빠집니다. 시작할 때 주문을 한 번 더 확인합니다.\n예약만 하고, 위의 [시작]을 눌러야 실제로 처리합니다.`)) return;
     try {
       const r = await App.api("/api/listings/schedule", { json: { ...this.target(), op } });
-      App.toast(`${num(r.scheduled)}건 예약했습니다. 위에서 시작을 누르세요.`);
+      App.toast(`${num(r.scheduled)}건 예약했습니다.` + (r.skipped_sold ? ` 판매 이력이 있는 ${num(r.skipped_sold)}건은 뺐습니다.` : "") + " 위에서 시작을 누르세요.");
       this.sel.clear(); this.selAll = false; this.estKey = "";
       this.load();
     } catch (e) { App.toast(e.message, true); }
@@ -193,6 +199,7 @@ App.page("listings", {
           <div class="run-meta">
             <div><span class="muted">성공</span><b class="c-ok" id="r-ok">0</b></div>
             <div><span class="muted">실패</span><b class="c-err" id="r-fail">0</b></div>
+            <div><span class="muted">판매 이력으로 건너뜀</span><b id="r-skip">0</b></div>
             <div><span class="muted">속도</span><b id="r-rate">-</b></div>
             <div><span class="muted">남은 시간</span><b id="r-eta">-</b></div>
             <div><span class="muted">새로 올린 이미지</span><b id="r-img">0</b></div>
@@ -218,6 +225,7 @@ App.page("listings", {
     $("#r-total").textContent = num(r.total);
     $("#r-ok").textContent = num(r.ok);
     $("#r-fail").textContent = num(r.fail);
+    $("#r-skip").textContent = num(r.skipped || 0);
     $("#r-rate").textContent = r.rate_per_min ? `분당 ${num(Math.round(r.rate_per_min))}건` : "재는 중";
     $("#r-eta").textContent = r.paused ? "일시정지" : r.eta != null ? dur(r.eta) : "재는 중";
     $("#r-img").textContent = num(r.images) + (r.images_reused ? ` (+${num(r.images_reused)} 재사용)` : "");
@@ -251,6 +259,8 @@ App.page("listings", {
   clearSel() { this.sel.clear(); this.selAll = false; },
 
   bind() {
+    $("#l-sales-file").addEventListener("change", (e) => { if (e.target.files[0]) App.upload("/api/orders/import", e.target.files[0]); e.target.value = ""; });
+    $("#l-sync").addEventListener("click", () => App.startTask(App.api("/api/orders/sync", { json: this.f.store_id ? { store_ids: [+this.f.store_id] } : {} })));
     $("#l-tiles").addEventListener("click", (e) => {
       const t = e.target.closest("[data-filter]");
       if (t) { this.f.status = t.dataset.filter; this.page = 0; this.clearSel(); this.load(); }
@@ -317,6 +327,9 @@ App.page("listings", {
               <dt>원본</dt><dd>#${l.source_id} ${esc(l.source_name)}</dd>
               <dt>판매가</dt><dd>${num(l.price)}원 <span class="muted">(원본가 ${num(l.source_price)}원)</span></dd>
               <dt>같은 원본</dt><dd>${l.siblings.length ? l.siblings.map((x) => `${esc(x.store_name)} · ${esc(x.name)} <span class="muted">(${STATUS[x.status] || x.status})</span>`).join("<br>") : "다른 스토어에는 없음"}</dd></dl>`
+            + (l.orders.length ? `<div><h3 class="sec-title">판매 이력 (${num(l.sold_count)}개) · 새로고침·내리기에서 빠집니다</h3><table class="opt-table"><tr><th>주문</th><th>수량</th><th>결제일</th><th>가져온 곳</th></tr>
+              ${l.orders.map((o) => `<tr><td>${esc(o.order_key.replace(/^file:/, ""))}</td><td>${num(o.quantity)}</td><td>${ymd(o.ordered_at)}</td>
+              <td>${o.source === "naver" ? "네이버 주문" : "주문 파일"}</td></tr>`).join("")}</table></div>` : "")
             + (l.history.length ? `<div><h3 class="sec-title">지난 회차</h3><table class="opt-table"><tr><th>회차</th><th>관리코드</th><th>상품번호</th><th>올린 날</th><th>지운 날</th></tr>
               ${l.history.map((h) => `<tr><td>${h.round}</td><td>${esc(h.seller_code)}</td><td>${esc(h.channel_no)}</td><td>${ymd(h.registered_at)}</td>
               <td>${ymd(h.deleted_at)} <span class="muted">${h.reason === "refresh" ? "새로고침" : "내리기"}</span></td></tr>`).join("")}</table></div>` : "");
@@ -333,7 +346,10 @@ App.page("listings", {
         ? `<span class="muted"></span><button class="btn primary" id="d-run">이 건만 지금 처리</button>` : "",
     });
     $("#d-run")?.addEventListener("click", async () => {
-      try { App.run = await App.api("/api/run", { json: { ids: [id] } }); App.closeDrawer(); this.renderRun(App.run); }
+      try {
+        App.run = await App.api("/api/run", { json: { ids: [id] } }); App.closeDrawer();
+        if ($("#l-run")) this.renderRun(App.run); else App.renderSideRun();
+      }
       catch (e) { App.toast(e.message, true); }
     });
   },

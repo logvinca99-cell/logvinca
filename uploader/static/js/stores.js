@@ -15,7 +15,7 @@ App.page("stores", {
       <div class="card table-card"><table class="grid"><thead><tr>
         <th class="w-code">코드</th><th>스토어</th><th class="w-usage">사용량 (대기 포함)</th><th class="w-num">남은 자리</th>
         <th class="w-num">판매 중</th><th class="w-num">대기</th><th class="w-num">실패</th><th class="w-num">내림</th>
-        <th class="w-num">가장 오래된 것</th><th class="w-num">네이버 상품 수</th><th class="w-act"></th>
+        <th class="w-num">판매 이력</th><th class="w-num">가장 오래된 것</th><th class="w-num">네이버 상품 수</th><th class="w-num">주문 가져온 때</th><th class="w-act"></th>
       </tr></thead><tbody id="s-rows"></tbody></table></div>
     </div>`;
     $("#s-add").addEventListener("click", () => this.edit({ capacity: 10000, enabled: 1 }));
@@ -43,11 +43,13 @@ App.page("stores", {
       <td class="num"><a href="#listings?store_id=${s.id}&status=live">${num(s.n_live)}</a></td>
       <td class="num">${num(s.n_pending + s.n_ops)}</td>
       <td class="num ${s.n_fail ? "c-err" : ""}">${num(s.n_fail)}</td><td class="num">${num(s.n_deleted)}</td>
+      <td class="num"><a href="#listings?store_id=${s.id}&status=sold">${num(s.n_sold)}</a></td>
       <td class="num">${s.oldest_at ? age(s.oldest_at) : "-"}</td>
       <td class="num">${s.naver_count != null ? `${num(s.naver_count)}<div class="p-sub r">${when(s.naver_count_at)}</div>` : '<span class="muted">확인 전</span>'}</td>
+      <td class="num">${s.orders_synced_to ? when(s.orders_synced_to) : '<span class="muted">-</span>'}</td>
       <td class="r nowrap"><button class="link-btn" data-act="test" data-id="${s.id}">연결 확인</button> ·
         <button class="link-btn" data-act="edit" data-id="${s.id}">수정</button></td></tr>`).join("")
-      : `<tr class="empty-row"><td colspan="11">아직 스토어가 없습니다. <b>스토어 추가</b> 또는 <b>여러 개 한 번에 추가</b>를 누르세요.</td></tr>`;
+      : `<tr class="empty-row"><td colspan="13">아직 스토어가 없습니다. <b>스토어 추가</b> 또는 <b>여러 개 한 번에 추가</b>를 누르세요.</td></tr>`;
   },
 
   edit(s) {

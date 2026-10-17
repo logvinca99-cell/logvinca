@@ -8,13 +8,13 @@ import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import config, convert, engine, inventory, naver
+from . import config, convert, engine, inventory, naver, orders
 from .db import DB
 from .tasks import Tasks
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 FILTER_KEYS = ("q", "status", "category", "store_missing", "store_has", "import_id", "max_listings",
-               "min_names", "store_id", "plan_id", "op", "age_days")
+               "min_names", "store_id", "plan_id", "op", "age_days", "sold")
 STORE_FIELDS = ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "capacity", "enabled", "memo")
 
 
@@ -376,6 +376,7 @@ def create_app(db=None):
         nxt = {**l, "round": l["round"] + (1 if l["op"] == "refresh" and l["origin_no"] else 0)}
         l["next_seller_code"] = engine.seller_code(cfg, store, nxt)
         l["history"] = db.q("SELECT * FROM listing_history WHERE listing_id=? ORDER BY round DESC", (lid,))
+        l["orders"] = db.q("SELECT * FROM orders WHERE listing_id=? ORDER BY ordered_at DESC LIMIT 50", (lid,))
         l["siblings"] = db.q("""SELECT l.id, l.name, l.status, l.round, t.name AS store_name FROM listings l
             JOIN stores t ON t.id=l.store_id WHERE l.source_id=? AND l.id!=? AND l.status!='deleted'""",
                              (l["source_id"], lid))
@@ -401,8 +402,43 @@ def create_app(db=None):
             return fail("등록이 끝난 뒤에 예약할 수 있습니다.")
         f = _filter_from(b)
         f.pop("op", None)  # 'op'는 여기서 거르기 조건이 아니라 걸 작업
-        n = inventory.schedule_op(db, f, op)
-        return jsonify({"scheduled": n})
+        n, skipped = inventory.schedule_op(db, f, op)
+        return jsonify({"scheduled": n, "skipped_sold": skipped})
+
+    # ── 판매 이력
+
+    @app.post("/api/orders/sync")
+    def orders_sync():
+        """네이버에서 결제된 주문을 가져온다 (스토어마다 마지막으로 가져온 때부터)."""
+        ids = set(int(i) for i in body().get("store_ids") or [])
+        pairs = []
+        for s in db.stores(with_secret=True):
+            if (ids and s["id"] not in ids) or not s["enabled"]:
+                continue
+            if not s["has_keys"] and os.environ.get("UPLOADER_FAKE_API") != "1":
+                continue
+            pairs.append((s, naver.make_client(s)))
+        if not pairs:
+            return fail("주문을 가져올 스토어가 없습니다 (API 키가 있는 사용 중 스토어).")
+        days = body().get("days")
+        try:
+            tid = tasks.start("orders", f"주문 가져오기 · 스토어 {len(pairs)}곳",
+                              lambda **kw: orders.sync_stores(db, pairs, days=days, **kw))
+        except RuntimeError as e:
+            return fail(str(e))
+        return jsonify({"task": tid})
+
+    @app.post("/api/orders/import")
+    def orders_import():
+        return file_task("orders", "판매 이력 파일 가져오기", orders.import_sales_file)
+
+    @app.get("/api/orders")
+    def order_list():
+        lid = request.args.get("listing_id")
+        if lid:
+            return jsonify(db.q("SELECT * FROM orders WHERE listing_id=? ORDER BY ordered_at DESC LIMIT 200", (int(lid),)))
+        return jsonify(db.one("""SELECT COUNT(*) AS orders, SUM(listing_id IS NOT NULL) AS matched,
+            SUM(listing_id IS NULL) AS unmatched, MAX(created_at) AS last_at FROM orders"""))
 
     @app.post("/api/listings/cancel")
     def cancel():

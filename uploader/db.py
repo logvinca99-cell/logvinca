@@ -13,6 +13,8 @@ plans     한 번에 만든 등록 묶음
 runs      [등록 시작]을 누를 때마다 한 줄
 images    원본 이미지 주소 → 네이버 이미지 주소. scope는 스토어 번호 (상세 이미지는 0: 모든 스토어 공용)
 imports   엑셀 불러오기 기록
+orders    판매 이력 (네이버 주문 가져오기 / 주문 파일 가져오기). 복사본(listing)과 맞춰 sold_count를 센다.
+          판매 이력이 있는 복사본은 새로고침·내리기로 지우지 않는다.
 
 등록 상태(listings.status)            할 일(listings.op, planned·fail일 때 의미)
     planned  할 일이 있음 (대기)          create   새로 등록
@@ -92,6 +94,7 @@ CREATE TABLE IF NOT EXISTS stores (
     capacity INTEGER NOT NULL DEFAULT 10000,
     naver_count INTEGER,             -- 마지막 확인 때 네이버에 있던 상품 수
     naver_count_at REAL,
+    orders_synced_to REAL,               -- 네이버 주문을 여기까지 가져왔음
     enabled INTEGER NOT NULL DEFAULT 1,
     memo TEXT NOT NULL DEFAULT '',
     created_at REAL NOT NULL
@@ -120,6 +123,8 @@ CREATE TABLE IF NOT EXISTS listings (
     channel_no TEXT NOT NULL DEFAULT '',
     registered_at REAL,                     -- 이번 회차를 올린 때
     deleted_at REAL,
+    sold_count INTEGER NOT NULL DEFAULT 0,  -- 판매 수량 (모든 회차 합)
+    last_sold_at REAL,
     seconds REAL,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
@@ -142,6 +147,22 @@ CREATE TABLE IF NOT EXISTS listing_history (
     reason TEXT NOT NULL            -- refresh / delete
 );
 CREATE INDEX IF NOT EXISTS history_listing ON listing_history(listing_id);
+CREATE INDEX IF NOT EXISTS history_channel ON listing_history(channel_no);
+CREATE TABLE IF NOT EXISTS orders (
+    order_key TEXT PRIMARY KEY,          -- 상품주문번호 (파일이면 파일 기준으로 만든 값)
+    store_id INTEGER,
+    listing_id INTEGER,
+    channel_no TEXT NOT NULL DEFAULT '',
+    origin_no TEXT NOT NULL DEFAULT '',
+    seller_code TEXT NOT NULL DEFAULT '',
+    product_name TEXT NOT NULL DEFAULT '',
+    quantity INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT '',
+    ordered_at REAL,
+    source TEXT NOT NULL,                -- naver / file
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS orders_listing ON orders(listing_id);
 CREATE TABLE IF NOT EXISTS runs (
     id INTEGER PRIMARY KEY,
     started_at REAL NOT NULL,
@@ -194,8 +215,8 @@ class DB:
     # 예전 버전의 db에 새 열을 더한다 (SCHEMA의 CREATE는 이미 있는 표를 바꾸지 않으므로).
     NEW_COLUMNS = {
         "sources": [("seller_code", "TEXT NOT NULL DEFAULT ''")],
-        "stores": [("code", "TEXT NOT NULL DEFAULT ''")],
-        "listings": [("op", "TEXT NOT NULL DEFAULT 'create'"), ("round", "INTEGER NOT NULL DEFAULT 1"),
+        "stores": [("code", "TEXT NOT NULL DEFAULT ''"), ("orders_synced_to", "REAL")],
+        "listings": [("sold_count", "INTEGER NOT NULL DEFAULT 0"), ("last_sold_at", "REAL"),("op", "TEXT NOT NULL DEFAULT 'create'"), ("round", "INTEGER NOT NULL DEFAULT 1"),
                      ("seller_code", "TEXT NOT NULL DEFAULT ''"), ("registered_at", "REAL"), ("deleted_at", "REAL")],
     }
 
@@ -287,7 +308,8 @@ class DB:
               (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.registered_at > s.naver_count_at) AS n_added_since,
               (SELECT COUNT(*) FROM listing_history h JOIN listings l ON l.id=h.listing_id
                  WHERE l.store_id=s.id AND h.deleted_at > s.naver_count_at) AS n_removed_since,
-              (SELECT MIN(l.registered_at) FROM listings l WHERE l.store_id=s.id AND l.origin_no!='') AS oldest_at
+              (SELECT MIN(l.registered_at) FROM listings l WHERE l.store_id=s.id AND l.origin_no!='') AS oldest_at,
+              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.sold_count>0) AS n_sold
             FROM stores s ORDER BY s.id""")
         for r in rows:
             r["has_keys"] = bool(r["client_id"] and r["client_secret"])
@@ -357,6 +379,7 @@ class DB:
             (SELECT COUNT(*) FROM listings WHERE origin_no!='') AS registered,
             (SELECT COUNT(*) FROM listings WHERE status IN ('planned','queued','running')) AS pending,
             (SELECT COUNT(*) FROM listings WHERE status='deleted') AS deleted,
+            (SELECT COUNT(*) FROM listings WHERE sold_count>0) AS sold,
             (SELECT COUNT(*) FROM listings WHERE status='fail') AS failed,
             (SELECT COUNT(*) FROM images) AS images,
             (SELECT COUNT(*) FROM stores) AS stores""")

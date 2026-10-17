@@ -42,7 +42,7 @@ App.page("inventory", {
           <th class="w-check"><input type="checkbox" id="i-check-all" aria-label="이 쪽 모두 선택"></th>
           <th class="w-thumb"></th><th>원본 상품</th><th class="w-cat">카테고리</th>
           <th class="w-num">원본가</th><th class="w-small" title="아직 안 쓴 상품명 후보">이름 후보</th>
-          <th class="w-copies" title="이 원본이 올라간(또는 올라갈) 스토어. 원본당 최대 칸 수까지">스토어 칸</th>
+          <th class="w-copies" title="이 원본을 복사한 스토어. 원본당 최대 칸 수까지. 복사본은 원본 바로 아래 줄에 보입니다">복사</th>
         </tr></thead><tbody id="i-rows"></tbody></table>
         <div class="pager" id="i-pager"></div>
       </div>
@@ -101,7 +101,23 @@ App.page("inventory", {
       <td class="cat-td"><div class="cat">${cat.length > 2 ? `<div class="cat-top">${esc(cat.slice(0, -2).join(" › "))}</div>` : ""}${esc(cat.slice(-2).join(" › "))}</div></td>
       <td class="num">${num(p.price)}원</td>
       <td class="num small-td ${p.valid && p.n_free_names < 3 ? "c-warn" : ""}">${num(p.n_free_names)}</td>
-      <td>${slots}</td></tr>`;
+      <td>${slots}${p.deleted_copies ? `<div class="p-sub">내림 ${p.deleted_copies}</div>` : ""}</td></tr>`
+      + p.copies.map((c) => this.copyRowHtml(c, p)).join("");
+  },
+
+  /* 원본 바로 아래에 붙는 복사본 한 줄: 어느 스토어에, 무슨 이름·가격으로, 지금 상태, 올린 날, 판매 */
+  copyRowHtml(c, p) {
+    const diff = p.price ? ((c.price - p.price) / p.price) * 100 : 0;
+    const link = c.store_url && c.channel_no && c.status !== "deleted"
+      ? ` · <a href="${esc(c.store_url.replace(/\/$/, ""))}/products/${esc(c.channel_no)}" target="_blank" rel="noopener" data-stop>스토어에서 보기</a>` : "";
+    const msg = c.status === "fail" || (c.status === "success" && c.message) ? c.message : "";
+    return `<tr class="copy-row" data-copy="${c.id}">
+      <td></td><td class="copy-arrow">↳</td>
+      <td colspan="2"><div class="copy-name"><span class="code">${esc(c.code)}</span> <span class="muted">${esc(c.store)}</span> ${esc(c.name)}</div>
+        <div class="p-sub">${esc(c.seller_code || "관리코드는 등록할 때 붙음")} · ${c.round}회차${c.registered_at && c.channel_no ? ` · ${ymd(c.registered_at)} 올림 (${age(c.registered_at)})` : ""}${link}</div></td>
+      <td class="num">${num(c.price)}원<div class="p-sub r">${diff ? (diff > 0 ? "+" : "") + diff.toFixed(1) + "%" : "원본가"}</div></td>
+      <td class="num">${c.sold_count ? `<span class="flag sold" title="판매된 복사본은 새로고침·내리기에서 빠집니다">판매 ${num(c.sold_count)}</span>` : ""}</td>
+      <td>${statusBadge(c.status, c.op)}${msg ? `<div class="s-msg ${c.status === "fail" ? "err" : ""}" title="${esc(msg)}">${esc(msg)}</div>` : ""}</td></tr>`;
   },
 
   renderActions() {
@@ -114,7 +130,7 @@ App.page("inventory", {
       </div>
       <div class="ab-right">
         <button class="btn" id="i-names" ${n ? "" : "disabled"}>상품명 후보 만들기…</button>
-        <button class="btn primary" id="i-plan" ${n ? "" : "disabled"}>스토어에 올리기 계획…</button>
+        <button class="btn primary" id="i-plan" ${n ? "" : "disabled"}>다른 스토어로 복사…</button>
       </div>`;
     $("#i-info").textContent = this.total ? `${num(this.total)}개` : "";
   },
@@ -145,6 +161,11 @@ App.page("inventory", {
       this.load();
     });
     $("#i-rows").addEventListener("click", (e) => {
+      const cr = e.target.closest("tr[data-copy]");
+      if (cr) {
+        if (!e.target.closest("a")) App.pages.listings.openListing(+cr.dataset.copy);
+        return;
+      }
       const tr = e.target.closest("tr[data-id]");
       if (!tr) return;
       const id = +tr.dataset.id;
@@ -219,11 +240,11 @@ App.page("inventory", {
     const stores = await App.loadStores();
     const n = this.targetCount();
     App.openModal({
-      title: `스토어에 올리기 계획 · 원본 ${num(n)}개`,
+      title: `다른 스토어로 복사 · 원본 ${num(n)}개`,
       wide: true,
       body: `<div class="plan">
         <div>
-          <div class="sec-head"><h3>올릴 스토어</h3>
+          <div class="sec-head"><h3>복사할 스토어</h3>
             <span><button class="link-btn" id="p-all">모두</button> · <button class="link-btn" id="p-none">해제</button></span></div>
           <div class="store-pick">${stores.filter((s) => s.enabled).map((s) => `
             <label class="sp-row"><input type="checkbox" value="${s.id}" ${s.free > 0 ? "checked" : ""}>
@@ -249,7 +270,7 @@ App.page("inventory", {
             · 스토어 한도를 넘는 건은 만들지 않습니다.</p>
         </div></div>`,
       buttons: [{ label: "취소" }, {
-        label: "계획 만들기", primary: true, onClick: async (b) => {
+        label: "복사 계획 만들기", primary: true, onClick: async (b) => {
           const store_ids = $$(".store-pick input:checked", b).map((x) => +x.value);
           if (!store_ids.length) { App.toast("스토어를 하나 이상 고르세요.", true); return false; }
           const r = await App.startTask(App.api("/api/plans", {

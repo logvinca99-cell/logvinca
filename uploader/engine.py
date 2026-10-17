@@ -11,7 +11,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import config, convert, naver
+from . import config, convert, naver, orders
 
 IMAGE_DOWNLOAD_THREADS = 16
 DETAIL_SCOPE = 0
@@ -80,7 +80,7 @@ class Runner:
     def _reset(self, total):
         self.state = {
             "running": False, "paused": False, "stopping": False, "total": total, "done": 0, "ok": 0,
-            "fail": 0, "images": 0, "images_reused": 0, "started_at": None, "ended_at": None,
+            "fail": 0, "skipped": 0, "images": 0, "images_reused": 0, "started_at": None, "ended_at": None,
             "paused_sec": 0.0, "paused_at": None, "current": {}, "stores": {}, "error": "",
         }
 
@@ -115,7 +115,7 @@ class Runner:
             self._reset(len(targets))
             self.state.update(running=True, started_at=time.time())
             self.state["stores"] = {sid: {"name": stores[sid][0]["name"], "total": len(v), "done": 0, "ok": 0,
-                                          "fail": 0, "status": "대기"} for sid, v in by_store.items()}
+                                          "fail": 0, "skipped": 0, "status": "대기"} for sid, v in by_store.items()}
             self.pause_ev.clear()
             self.stop_ev.clear()
             self.log.clear()
@@ -196,6 +196,10 @@ class Runner:
             self.db.x("UPDATE listings SET status='planned' WHERE status='queued'")
             touched = {t["source_id"] for v in by_store.values() for t in v}
             self.db.recount_sources(touched)
+            try:
+                orders.rematch(self.db)  # 새로 올린 복사본에 이미 받아 둔 주문이 맞는지
+            except Exception:  # noqa: BLE001
+                pass
             with self.lock:
                 s = self.state
                 if s["paused_at"]:
@@ -204,7 +208,9 @@ class Runner:
                          ended_at=time.time(), current={})
                 self.db.end_run(run_id, s["ok"], s["fail"], s["images"])
                 self._log("ok" if not s["fail"] else "info",
-                          f"끝: 성공 {s['ok']:,}건, 실패 {s['fail']:,}건, 새로 올린 이미지 {s['images']:,}장")
+                          f"끝: 성공 {s['ok']:,}건, 실패 {s['fail']:,}건"
+                          + (f", 판매 이력으로 건너뜀 {s['skipped']:,}건" if s["skipped"] else "")
+                          + f", 새로 올린 이미지 {s['images']:,}장")
 
     def _lane(self, cfg, stores, by_store, store_q, categories, pool, cache):
         """스토어 하나씩 맡아 끝까지 등록하고 다음 스토어로."""
@@ -217,8 +223,21 @@ class Runner:
             q = queue.Queue()
             for t in by_store[sid]:
                 q.put(t)
+            # 지우는 일(새로고침·내리기)이 있으면 먼저 이 스토어의 주문을 가져와 판매 이력을 최신으로 만든다.
+            sales_ok = True
+            if any(t["op"] in ("refresh", "delete") and t["origin_no"] for t in by_store[sid]):
+                with self.lock:
+                    self.state["stores"][sid]["status"] = "판매 이력 확인 중"
+                try:
+                    r = orders.sync_store(self.db, self.db.store(sid), client)
+                    if r["new"]:
+                        self._log("info", f"새 주문 {r['new']}건을 가져왔습니다", store["name"])
+                except Exception as e:  # noqa: BLE001
+                    sales_ok = False
+                    self._log("err", f"주문을 가져오지 못해 이 스토어의 새로고침·내리기는 하지 않습니다: {e}", store["name"])
+            store = {**store, "_sales_ok": sales_ok}
             with self.lock:
-                self.state["stores"][sid]["status"] = "등록 중"
+                self.state["stores"][sid]["status"] = "처리 중"
             workers = max(1, min(int(cfg.get("workers_per_store") or 1), 8))
             ths = [threading.Thread(target=self._worker, daemon=True,
                                     args=(cfg, store, client, categories, q, pool, cache)) for _ in range(workers)]
@@ -263,6 +282,16 @@ class Runner:
         notes = []
         try:
             if op in ("refresh", "delete") and t["origin_no"]:
+                # 판매된 상품은 지우지 않는다 (예약 뒤에 팔렸을 수 있으니 실행 직전에 다시 확인).
+                if not store.get("_sales_ok", True):
+                    raise naver.ApiError("주문(판매 이력)을 확인하지 못해 지우지 않았습니다. 다시 시도하세요.")
+                sold = self.db.one("SELECT sold_count FROM listings WHERE id=?", (lid,))["sold_count"]
+                if sold:
+                    self.db.set_listing(lid, "success", op="create", stage="",
+                                        message=f"판매 이력이 있어 지우지 않음 (판매 {sold}개)")
+                    self._log("info", f"건너뜀 · {t['name'][:40]} · 판매 이력 {sold}개", store["name"])
+                    self._count(sid, lid, None)
+                    return
                 self._stage(lid, label, "네이버에서 지우는 중")
                 client.delete_product(t["origin_no"], on_wait=on_wait)
                 self._archive(t, "refresh" if op == "refresh" else "delete")
@@ -316,12 +345,14 @@ class Runner:
             self._count(sid, lid, False)
 
     def _count(self, sid, lid, ok):
+        """ok: True 성공 / False 실패 / None 건너뜀"""
+        key = "skipped" if ok is None else "ok" if ok else "fail"
         with self.lock:
             s, ss = self.state, self.state["stores"][sid]
             s["done"] += 1
             ss["done"] += 1
-            s["ok" if ok else "fail"] += 1
-            ss["ok" if ok else "fail"] += 1
+            s[key] += 1
+            ss[key] += 1
             s["current"].pop(lid, None)
 
     def _archive(self, t, reason):

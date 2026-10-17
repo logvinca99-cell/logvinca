@@ -66,6 +66,23 @@ def cached_categories():
     return _load_category_cache()
 
 
+def kst_iso(ts):
+    """네이버 API용 시각 (한국 시간, 예: 2026-10-17T09:00:00.000+09:00)"""
+    import datetime
+    kst = datetime.timezone(datetime.timedelta(hours=9))
+    return datetime.datetime.fromtimestamp(ts, kst).strftime("%Y-%m-%dT%H:%M:%S.000+09:00")
+
+
+def parse_time(v):
+    if not v:
+        return None
+    import datetime
+    try:
+        return datetime.datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
 class ImageCache:
     """내려받은 이미지를 디스크에 보관한다. 같은 이미지를 여러 스토어에 올릴 때 다시 받지 않는다.
     용량이 max_gb를 넘으면 오래된 것부터 지운다."""
@@ -271,6 +288,50 @@ class Client:
         if r.status_code != 200:
             raise ApiError(f"상품 등록 실패: {explain_error(r)}")
         return r.json()
+
+    # ── 주문 (판매 이력)
+
+    def paid_product_order_ids(self, since_ts, until_ts, on_progress=None):
+        """since~until 사이에 결제된 상품주문번호들. 네이버는 한 번에 24시간까지만 조회된다."""
+        ids, t = [], since_ts
+        while t < until_ts:
+            end = min(t + 86400 - 1, until_ts)
+            params = {"lastChangedFrom": kst_iso(t), "lastChangedTo": kst_iso(end), "lastChangedType": "PAYED"}
+            while True:
+                r = self.request("GET", "/v1/pay-order/seller/product-orders/last-changed-statuses", params=params)
+                if r.status_code != 200:
+                    raise ApiError(f"주문 조회 실패: {explain_error(r)}")
+                data = (r.json() or {}).get("data") or {}
+                ids += [x["productOrderId"] for x in data.get("lastChangeStatuses") or [] if x.get("productOrderId")]
+                more = data.get("more") or {}
+                if not more.get("moreFrom"):
+                    break
+                params = {**params, "lastChangedFrom": more["moreFrom"], "moreSequence": more.get("moreSequence")}
+            t = end + 1
+            if on_progress:
+                on_progress(t)
+        return list(dict.fromkeys(ids))
+
+    def product_order_details(self, ids):
+        """상품주문번호 → [{order_key, channel_no, origin_no, seller_code, product_name, quantity, status, ordered_at}]"""
+        out = []
+        for i in range(0, len(ids), 300):
+            r = self.request("POST", "/v1/pay-order/seller/product-orders/query", json={"productOrderIds": ids[i:i + 300]})
+            if r.status_code != 200:
+                raise ApiError(f"주문 상세 조회 실패: {explain_error(r)}")
+            for d in (r.json() or {}).get("data") or []:
+                po, od = d.get("productOrder") or d, d.get("order") or {}
+                out.append({
+                    "order_key": str(po.get("productOrderId") or ""),
+                    "channel_no": str(po.get("productId") or po.get("channelProductNo") or ""),
+                    "origin_no": str(po.get("originalProductId") or po.get("originProductNo") or ""),
+                    "seller_code": str(po.get("sellerProductCode") or po.get("sellerManagementCode") or ""),
+                    "product_name": str(po.get("productName") or ""),
+                    "quantity": int(po.get("quantity") or 1),
+                    "status": str(po.get("productOrderStatus") or ""),
+                    "ordered_at": parse_time(od.get("paymentDate") or od.get("orderDate")),
+                })
+        return out
 
     def delete_product(self, origin_no, on_wait=None):
         """원상품 삭제. 이미 없는 상품(404)이면 지운 것으로 본다."""
