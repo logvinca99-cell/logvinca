@@ -48,6 +48,16 @@ function statusBadge(status, op) {
   const cls = status === "planned" && op !== "create" ? `s-${op}` : `s-${status}`;
   return `<span class="badge ${cls}">${esc(statusLabel(status, op))}</span>`;
 }
+/* 잠금 표시: 판매 이력으로 자동 잠금이거나 직접 잠금 → 새로고침·내리기로 지우지 않음 */
+function lockFlag(x) {
+  if (!x.locked) return "";
+  return `<span class="flag lock" title="잠금: ${esc(x.lock_note || "")} · 새로고침·내리기로 지우지 않습니다">잠금${x.lock_note ? " · " + esc(x.lock_note) : ""}</span>`;
+}
+function salesFlag(x) {
+  return (x.sold_count ? `<span class="flag sold" title="취소·반품을 뺀 판매 수량">판매 ${num(x.sold_count)}</span>` : "")
+    + (x.cancel_count ? `<span class="flag" title="취소·반품 수량">취소·반품 ${num(x.cancel_count)}</span>` : "");
+}
+
 /* 올린 지 며칠 */
 function age(ts) {
   if (!ts) return "";

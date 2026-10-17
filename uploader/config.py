@@ -35,6 +35,10 @@ DEFAULTS = {
     "orders_auto_sync_minutes": 60,
     # 처음 가져올 때 며칠 전부터
     "orders_initial_days": 30,
+    # 판매 이력이 있는 복사본은 자동으로 잠금 (새로고침·내리기로 지우지 않음)
+    "lock_sold": True,
+    # 취소·반품만 있는 복사본도 잠글지 (끄면 실제 판매가 1건이라도 있어야 잠금)
+    "lock_canceled_too": False,
 
     # ── 가격: 스토어마다 원본가에서 ±price_jitter_pct% 안에서 정하고 price_round 단위로 맞춤.
     #    같은 상품·같은 스토어는 언제 계획해도 같은 가격이 나온다.

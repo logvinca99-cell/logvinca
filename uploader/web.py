@@ -41,6 +41,9 @@ def create_app(db=None):
     os.makedirs(config.DATA_DIR, exist_ok=True)
     db = db or DB()
     runner = engine.Runner(db)
+    if getattr(db, "_v3", False):
+        orders.recount_sold(db)
+        db.x("PRAGMA user_version=3")
     tasks = Tasks()
 
     def fail(msg, code=400):
@@ -126,7 +129,11 @@ def create_app(db=None):
                     v[k] = max(0.0, float(v[k]))
                 except (TypeError, ValueError):
                     v[k] = config.DEFAULTS[k]
-        return jsonify({"settings": config.public(config.save(v))})
+        before = config.load()
+        cfg = config.save(v)
+        if any(before.get(k) != cfg.get(k) for k in ("lock_sold", "lock_canceled_too")):
+            orders.recount_sold(db)  # 잠금 기준이 바뀌었으면 전체 다시 계산
+        return jsonify({"settings": config.public(cfg)})
 
     @app.post("/api/categories/refresh")
     def refresh_categories():
@@ -435,6 +442,14 @@ def create_app(db=None):
     @app.post("/api/orders/import")
     def orders_import():
         return file_task("orders", "판매 이력 파일 가져오기", orders.import_sales_file)
+
+    @app.post("/api/listings/lock")
+    def lock():
+        """직접 잠금/풀기 (판매 이력과 상관없이). 판매 이력으로 걸린 잠금은 풀리지 않는다."""
+        b = body()
+        ids = inventory.listing_ids(db, _filter_from(b))
+        n, still = orders.set_manual_lock(db, ids, bool(b.get("lock")))
+        return jsonify({"count": n, "still_locked": still})
 
     @app.get("/api/orders/list")
     def order_rows():

@@ -27,7 +27,7 @@ App.page("home", {
     $("#h-tiles").innerHTML = [
       ["원본 상품", s.sources, "var(--text-2)"], ["등록 가능 원본", s.sources_valid, "var(--idle)"],
       ["안 쓴 이름 후보", s.names_free, "var(--info)"], ["판매 중", s.registered, "var(--ok)"],
-      ["할 일 대기", s.pending, "var(--warn)"], ["판매 이력 있는 복사본", s.sold, "var(--warn)"], ["실패", s.failed, "var(--err)"],
+      ["할 일 대기", s.pending, "var(--warn)"], ["판매 이력 있는 복사본", s.sold, "var(--warn)"], ["잠금", s.locked, "var(--info)"], ["실패", s.failed, "var(--err)"],
     ].map(([l, n, c]) => `<div class="tile static" style="--dot:${c}"><div class="t-label">${l}</div><div class="t-num">${num(n)}</div></div>`).join("");
 
     const steps = [

@@ -285,11 +285,11 @@ class Runner:
                 # 판매된 상품은 지우지 않는다 (예약 뒤에 팔렸을 수 있으니 실행 직전에 다시 확인).
                 if not store.get("_sales_ok", True):
                     raise naver.ApiError("주문(판매 이력)을 확인하지 못해 지우지 않았습니다. 다시 시도하세요.")
-                sold = self.db.one("SELECT sold_count FROM listings WHERE id=?", (lid,))["sold_count"]
-                if sold:
+                lk = self.db.one("SELECT locked, lock_note FROM listings WHERE id=?", (lid,))
+                if lk["locked"]:
                     self.db.set_listing(lid, "success", op="create", stage="",
-                                        message=f"판매 이력이 있어 지우지 않음 (판매 {sold}개)")
-                    self._log("info", f"건너뜀 · {t['name'][:40]} · 판매 이력 {sold}개", store["name"])
+                                        message=f"잠금이라 지우지 않음 ({lk['lock_note']})")
+                    self._log("info", f"건너뜀 · {t['name'][:40]} · 잠금 ({lk['lock_note']})", store["name"])
                     self._count(sid, lid, None)
                     return
                 self._stage(lid, label, "네이버에서 지우는 중")

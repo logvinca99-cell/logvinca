@@ -7,6 +7,7 @@ const LST_TILES = [
   { key: "pending", label: "할 일 대기", dot: "var(--idle)" },
   { key: "fail", label: "실패", dot: "var(--err)" },
   { key: "sold", label: "판매 이력 있음", dot: "var(--warn)" },
+  { key: "locked", label: "잠금", dot: "var(--info)" },
   { key: "deleted", label: "내림", dot: "var(--dup)" },
 ];
 
@@ -104,7 +105,7 @@ App.page("listings", {
     else if (l.status === "deleted") msg = `${ymd(l.deleted_at)}에 내림`;
     const on = this.selAll || this.sel.has(l.id);
     const others = (l.source_copies > 1 ? `<span class="flag" title="같은 원본이 다른 스토어에도 있음">같은 원본 ${l.source_copies}곳</span>` : "")
-      + (l.sold_count ? `<span class="flag sold" title="판매된 복사본은 새로고침·내리기에서 빠집니다">판매 ${num(l.sold_count)}</span>` : "");
+      + lockFlag(l) + salesFlag(l);
     return `<tr data-id="${l.id}" class="${on ? "sel" : ""} ${l.status === "deleted" ? "off" : ""}">
       <td class="w-check" data-stop><input type="checkbox" ${on ? "checked" : ""} ${this.selAll ? "disabled" : ""}></td>
       <td>${img(l.thumb)}</td>
@@ -126,6 +127,9 @@ App.page("listings", {
         <button class="btn" id="la-refresh" ${n ? "" : "disabled"} title="판매 중인 건을 네이버에서 지우고 같은 내용으로 다시 올림 (회차 +1)">새로고침 예약</button>
         <button class="btn" id="la-delete" ${n ? "" : "disabled"} title="판매 중인 건을 네이버에서 지움. 원본의 빈 칸이 생겨 다른 스토어에 올릴 수 있음">내리기 예약</button>
         <button class="btn ghost danger-text" id="la-cancel" ${n ? "" : "disabled"} title="아직 처리 안 된 대기·실패 할 일을 취소">대기·실패 취소</button>
+        <span class="ab-sep"></span>
+        <button class="btn" id="la-lock" ${n ? "" : "disabled"} title="판매 이력과 상관없이 지우지 못하게 잠금">잠금</button>
+        <button class="btn ghost" id="la-unlock" ${n ? "" : "disabled"} title="직접 건 잠금을 풂 (판매 이력으로 걸린 잠금은 그대로)">잠금 풀기</button>
       </div>`;
   },
 
@@ -134,12 +138,22 @@ App.page("listings", {
     return { ids: [...this.sel] };
   },
 
+  async lock(on, ids) {
+    try {
+      const r = await App.api("/api/listings/lock", { json: { ...(ids ? { ids } : this.target()), lock: on } });
+      App.toast(on ? `${num(r.count)}건을 잠갔습니다. 새로고침·내리기로 지우지 않습니다.`
+        : `${num(r.count)}건의 직접 잠금을 풀었습니다.` + (r.still_locked ? ` ${num(r.still_locked)}건은 판매 이력이 있어 잠금이 유지됩니다.` : ""));
+      if (!ids) { this.clearSel(); this.load(); }
+      return r;
+    } catch (e) { App.toast(e.message, true); }
+  },
+
   async schedule(op) {
     const label = op === "refresh" ? "새로고침(지우고 다시 올리기)" : "내리기(네이버에서 지우기)";
-    if (!confirm(`고른 건 중 판매 중인 건에 ${label}를 예약할까요?\n판매 이력이 있는 건은 빠집니다. 시작할 때 주문을 한 번 더 확인합니다.\n예약만 하고, 위의 [시작]을 눌러야 실제로 처리합니다.`)) return;
+    if (!confirm(`고른 건 중 판매 중인 건에 ${label}를 예약할까요?\n잠긴 건(판매 이력·직접 잠금)은 빠집니다. 시작할 때 주문을 한 번 더 확인합니다.\n예약만 하고, 위의 [시작]을 눌러야 실제로 처리합니다.`)) return;
     try {
       const r = await App.api("/api/listings/schedule", { json: { ...this.target(), op } });
-      App.toast(`${num(r.scheduled)}건 예약했습니다.` + (r.skipped_sold ? ` 판매 이력이 있는 ${num(r.skipped_sold)}건은 뺐습니다.` : "") + " 위에서 시작을 누르세요.");
+      App.toast(`${num(r.scheduled)}건 예약했습니다.` + (r.skipped_sold ? ` 잠긴 ${num(r.skipped_sold)}건(판매 이력·직접 잠금)은 뺐습니다.` : "") + " 위에서 시작을 누르세요.");
       this.sel.clear(); this.selAll = false; this.estKey = "";
       this.load();
     } catch (e) { App.toast(e.message, true); }
@@ -283,6 +297,7 @@ App.page("listings", {
       if (id === "la-clear") { this.clearSel(); this.load(); }
       if (id === "la-all") { this.selAll = true; this.sel.clear(); this.load(); }
       if (id === "la-refresh") this.schedule("refresh");
+      if (id === "la-lock" || id === "la-unlock") this.lock(id === "la-lock");
       if (id === "la-delete") this.schedule("delete");
       if (id === "la-cancel") {
         if (!confirm("고른 건 중 대기·실패 할 일을 취소할까요?\n새 등록이면 계획을 지우고 이름을 후보로 돌립니다. 새로고침·내리기면 판매 중으로 되돌립니다.")) return;
@@ -327,12 +342,19 @@ App.page("listings", {
               <dt>원본</dt><dd>#${l.source_id} ${esc(l.source_name)}</dd>
               <dt>판매가</dt><dd>${num(l.price)}원 <span class="muted">(원본가 ${num(l.source_price)}원)</span></dd>
               <dt>같은 원본</dt><dd>${l.siblings.length ? l.siblings.map((x) => `${esc(x.store_name)} · ${esc(x.name)} <span class="muted">(${STATUS[x.status] || x.status})</span>`).join("<br>") : "다른 스토어에는 없음"}</dd></dl>`
-            + (l.orders.length ? `<div><h3 class="sec-title">판매 이력 (${num(l.sold_count)}개) · 새로고침·내리기에서 빠집니다</h3><table class="opt-table"><tr><th>주문</th><th>수량</th><th>결제일</th><th>가져온 곳</th></tr>
-              ${l.orders.map((o) => `<tr><td>${esc(o.order_key.replace(/^file:/, ""))}</td><td>${num(o.quantity)}</td><td>${ymd(o.ordered_at)}</td>
+            + `<div class="notice ${l.locked ? "info" : ""} lock-box"><div><b>${l.locked ? "잠금" : "잠금 아님"}</b>${l.locked ? ` · ${esc(l.lock_note)} · 새로고침·내리기로 지우지 않습니다` : " · 새로고침·내리기 가능"}
+                ${l.cancel_count ? `<br><span class="muted">취소·반품 ${num(l.cancel_count)}개는 판매로 세지 않음 (설정에서 바꿈)</span>` : ""}</div>
+                <button class="btn" id="d-lock">${l.manual_lock ? "직접 잠금 풀기" : "직접 잠금"}</button></div>`
+            + (l.orders.length ? `<div><h3 class="sec-title">주문 (판매 ${num(l.sold_count)}개${l.cancel_count ? ` · 취소·반품 ${num(l.cancel_count)}개` : ""})</h3><table class="opt-table"><tr><th>주문</th><th>수량</th><th>결제일</th><th>가져온 곳</th></tr>
+              ${l.orders.map((o) => `<tr><td>${esc(o.order_key.replace(/^file:/, ""))}<div class="p-sub">${esc(o.status)}</div></td><td>${num(o.quantity)}</td><td>${ymd(o.ordered_at)}</td>
               <td>${o.source === "naver" ? "네이버 주문" : "주문 파일"}</td></tr>`).join("")}</table></div>` : "")
             + (l.history.length ? `<div><h3 class="sec-title">지난 회차</h3><table class="opt-table"><tr><th>회차</th><th>관리코드</th><th>상품번호</th><th>올린 날</th><th>지운 날</th></tr>
               ${l.history.map((h) => `<tr><td>${h.round}</td><td>${esc(h.seller_code)}</td><td>${esc(h.channel_no)}</td><td>${ymd(h.registered_at)}</td>
               <td>${ymd(h.deleted_at)} <span class="muted">${h.reason === "refresh" ? "새로고침" : "내리기"}</span></td></tr>`).join("")}</table></div>` : "");
+          $("#d-lock", b)?.addEventListener("click", async () => {
+            const r = await this.lock(!l.manual_lock, [id]);
+            if (r) { if ($("#l-rows")) this.load(); this.openListing(id); }
+          });
         } },
         { key: "json", label: "보낼 데이터", render: (b) => {
           const body = JSON.parse(JSON.stringify(l.body));

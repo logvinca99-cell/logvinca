@@ -43,7 +43,7 @@ App.page("stores", {
       <td class="num"><a href="#listings?store_id=${s.id}&status=live">${num(s.n_live)}</a></td>
       <td class="num">${num(s.n_pending + s.n_ops)}</td>
       <td class="num ${s.n_fail ? "c-err" : ""}">${num(s.n_fail)}</td><td class="num">${num(s.n_deleted)}</td>
-      <td class="num"><a href="#listings?store_id=${s.id}&status=sold">${num(s.n_sold)}</a></td>
+      <td class="num"><a href="#listings?store_id=${s.id}&status=sold">${num(s.n_sold)}</a>${s.n_locked ? `<div class="p-sub r"><a href="#listings?store_id=${s.id}&status=locked">잠금 ${num(s.n_locked)}</a></div>` : ""}</td>
       <td class="num">${s.oldest_at ? age(s.oldest_at) : "-"}</td>
       <td class="num">${s.naver_count != null ? `${num(s.naver_count)}<div class="p-sub r">${when(s.naver_count_at)}</div>` : '<span class="muted">확인 전</span>'}</td>
       <td class="num">${s.orders_synced_to ? when(s.orders_synced_to) : '<span class="muted">-</span>'}</td>

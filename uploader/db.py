@@ -14,6 +14,9 @@ runs      [등록 시작]을 누를 때마다 한 줄
 images    원본 이미지 주소 → 네이버 이미지 주소. scope는 스토어 번호 (상세 이미지는 0: 모든 스토어 공용)
 imports   엑셀 불러오기 기록
 orders    판매 이력 (네이버 주문 가져오기 / 주문 파일 가져오기). 복사본(listing)과 맞춰 sold_count를 센다.
+잠금      listings.locked=1이면 새로고침·내리기로 지우지 않는다.
+          locked = 직접 잠금(manual_lock) 또는 (설정 lock_sold이고 실제 판매 > 0)
+          실제 판매 = 취소·반품을 뺀 주문 (설정 lock_canceled_too면 취소·반품만 있어도 잠금)
           판매 이력이 있는 복사본은 새로고침·내리기로 지우지 않는다.
 
 등록 상태(listings.status)            할 일(listings.op, planned·fail일 때 의미)
@@ -123,8 +126,12 @@ CREATE TABLE IF NOT EXISTS listings (
     channel_no TEXT NOT NULL DEFAULT '',
     registered_at REAL,                     -- 이번 회차를 올린 때
     deleted_at REAL,
-    sold_count INTEGER NOT NULL DEFAULT 0,  -- 판매 수량 (모든 회차 합)
+    sold_count INTEGER NOT NULL DEFAULT 0,  -- 판매 수량 (취소·반품 뺀 실제 판매, 모든 회차 합)
+    cancel_count INTEGER NOT NULL DEFAULT 0, -- 취소·반품 수량
     last_sold_at REAL,
+    manual_lock INTEGER NOT NULL DEFAULT 0, -- 직접 잠금
+    locked INTEGER NOT NULL DEFAULT 0,      -- 지금 잠김 (직접 잠금 또는 판매 이력으로 자동 잠금) → 지우지 않음
+    lock_note TEXT NOT NULL DEFAULT '',
     seconds REAL,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
@@ -216,7 +223,9 @@ class DB:
     NEW_COLUMNS = {
         "sources": [("seller_code", "TEXT NOT NULL DEFAULT ''")],
         "stores": [("code", "TEXT NOT NULL DEFAULT ''"), ("orders_synced_to", "REAL")],
-        "listings": [("sold_count", "INTEGER NOT NULL DEFAULT 0"), ("last_sold_at", "REAL"),("op", "TEXT NOT NULL DEFAULT 'create'"), ("round", "INTEGER NOT NULL DEFAULT 1"),
+        "listings": [("sold_count", "INTEGER NOT NULL DEFAULT 0"), ("last_sold_at", "REAL"),
+                     ("cancel_count", "INTEGER NOT NULL DEFAULT 0"), ("manual_lock", "INTEGER NOT NULL DEFAULT 0"),
+                     ("locked", "INTEGER NOT NULL DEFAULT 0"), ("lock_note", "TEXT NOT NULL DEFAULT ''"),("op", "TEXT NOT NULL DEFAULT 'create'"), ("round", "INTEGER NOT NULL DEFAULT 1"),
                      ("seller_code", "TEXT NOT NULL DEFAULT ''"), ("registered_at", "REAL"), ("deleted_at", "REAL")],
     }
 
@@ -246,6 +255,8 @@ class DB:
                                (key, str(row.get("판매자코드") or ""), r["id"]))
             self.c.execute("UPDATE listings SET registered_at=updated_at WHERE status='success' AND registered_at IS NULL")
             self.c.execute("PRAGMA user_version=2")
+        if ver < 3:
+            self._v3 = True  # 잠금 열이 새로 생김 → 웹 시작 때 판매 수·잠금을 다시 계산
         self.c.commit()
 
     def q(self, sql, args=()):
@@ -309,7 +320,8 @@ class DB:
               (SELECT COUNT(*) FROM listing_history h JOIN listings l ON l.id=h.listing_id
                  WHERE l.store_id=s.id AND h.deleted_at > s.naver_count_at) AS n_removed_since,
               (SELECT MIN(l.registered_at) FROM listings l WHERE l.store_id=s.id AND l.origin_no!='') AS oldest_at,
-              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.sold_count>0) AS n_sold
+              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.sold_count>0) AS n_sold,
+              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.locked=1 AND l.status!='deleted') AS n_locked
             FROM stores s ORDER BY s.id""")
         for r in rows:
             r["has_keys"] = bool(r["client_id"] and r["client_secret"])
@@ -380,6 +392,7 @@ class DB:
             (SELECT COUNT(*) FROM listings WHERE status IN ('planned','queued','running')) AS pending,
             (SELECT COUNT(*) FROM listings WHERE status='deleted') AS deleted,
             (SELECT COUNT(*) FROM listings WHERE sold_count>0) AS sold,
+            (SELECT COUNT(*) FROM listings WHERE locked=1 AND status!='deleted') AS locked,
             (SELECT COUNT(*) FROM listings WHERE status='fail') AS failed,
             (SELECT COUNT(*) FROM images) AS images,
             (SELECT COUNT(*) FROM stores) AS stores""")

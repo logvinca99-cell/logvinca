@@ -193,7 +193,8 @@ def query_sources(db, f, page=0, size=100):
     by_id = {r["id"]: r for r in rows}
     if by_id:
         for c in db.q(f"""SELECT l.id, l.source_id, l.name, l.price, l.status, l.op, l.round, l.seller_code,
-                l.channel_no, l.registered_at, l.deleted_at, l.sold_count, l.message, t.name AS store,
+                l.channel_no, l.registered_at, l.deleted_at, l.sold_count, l.cancel_count, l.locked, l.lock_note,
+                l.message, t.name AS store,
                 t.store_url, COALESCE(NULLIF(t.code,''), 'S'||printf('%02d', t.id)) AS code
                 FROM listings l JOIN stores t ON t.id=l.store_id
                 WHERE l.source_id IN ({','.join('?' * len(by_id))}) ORDER BY l.status='deleted', l.id""", list(by_id)):
@@ -541,9 +542,9 @@ def schedule_op(db, f, op):
     """올라가 있는 건에 할 일을 건다. op: refresh(지우고 다시 올리기) / delete(내리기).
     판매 이력이 있는 건은 건너뛴다. (예약한 수, 판매 이력으로 건너뛴 수)"""
     where, args = listing_where({**f, "status": "live"})
-    rows = db.q(f"SELECT l.id, l.source_id, l.sold_count FROM listings l JOIN sources s ON s.id=l.source_id{where}", args)
-    # 판매 이력이 있는 복사본은 지우지 않는다.
-    ids = [r["id"] for r in rows if not r["sold_count"]]
+    rows = db.q(f"SELECT l.id, l.source_id, l.locked FROM listings l JOIN sources s ON s.id=l.source_id{where}", args)
+    # 잠긴 복사본(판매 이력 또는 직접 잠금)은 지우지 않는다.
+    ids = [r["id"] for r in rows if not r["locked"]]
     skipped = len(rows) - len(ids)
     now = time.time()
     with db.tx() as c:
@@ -596,6 +597,8 @@ def listing_where(f):
         w.append("l.status!='deleted'")
     elif st == "sold":
         w.append("l.sold_count>0")
+    elif st == "locked":
+        w.append("l.locked=1 AND l.status!='deleted'")
     elif st != "all":
         w.append("l.status=?")
         a.append(st)
@@ -625,6 +628,7 @@ def query_listings(db, f, page=0, size=100):
     base = "FROM listings l JOIN sources s ON s.id=l.source_id JOIN stores t ON t.id=l.store_id"
     total = db.one(f"SELECT COUNT(*) AS n {base}{where}", args)["n"]
     rows = db.q(f"""SELECT l.id, l.name, l.price, l.status, l.op, l.round, l.stage, l.message, l.origin_no, l.sold_count,
+        l.cancel_count, l.locked, l.lock_note, l.manual_lock,
         l.channel_no, l.seller_code, l.registered_at, l.deleted_at, l.seconds, l.plan_id, l.updated_at,
         s.id AS source_id, s.source_key, s.seller_code AS source_code, s.name AS source_name,
         s.price AS source_price, s.thumb, s.category, s.n_listings AS source_copies,
@@ -656,7 +660,7 @@ def listing_counts(db, store_id=None, plan_id=None):
         SUM(status IN ('planned','queued','running') AND op='refresh') AS pending_refresh,
         SUM(status IN ('planned','queued','running') AND op='delete') AS pending_delete,
         SUM(origin_no!='' AND status='success') AS live, SUM(status='fail') AS fail, SUM(status='deleted') AS deleted,
-        SUM(sold_count>0) AS sold,
+        SUM(sold_count>0) AS sold, SUM(locked=1 AND status!='deleted') AS locked,
         SUM(origin_no!='' AND registered_at<=?) AS age30, SUM(origin_no!='' AND registered_at<=?) AS age60,
         SUM(origin_no!='' AND registered_at<=?) AS age90
         FROM listings{where}""", (now - 30 * day, now - 60 * day, now - 90 * day, *a))

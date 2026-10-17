@@ -116,7 +116,7 @@ App.page("inventory", {
       <td colspan="2"><div class="copy-name"><span class="code">${esc(c.code)}</span> <span class="muted">${esc(c.store)}</span> ${esc(c.name)}</div>
         <div class="p-sub">${esc(c.seller_code || "관리코드는 등록할 때 붙음")} · ${c.round}회차${c.registered_at && c.channel_no ? ` · ${ymd(c.registered_at)} 올림 (${age(c.registered_at)})` : ""}${link}</div></td>
       <td class="num">${num(c.price)}원<div class="p-sub r">${diff ? (diff > 0 ? "+" : "") + diff.toFixed(1) + "%" : "원본가"}</div></td>
-      <td class="num">${c.sold_count ? `<span class="flag sold" title="판매된 복사본은 새로고침·내리기에서 빠집니다">판매 ${num(c.sold_count)}</span>` : ""}</td>
+      <td class="num">${lockFlag(c)}${c.sold_count && !c.locked ? salesFlag(c) : ""}</td>
       <td>${statusBadge(c.status, c.op)}${msg ? `<div class="s-msg ${c.status === "fail" ? "err" : ""}" title="${esc(msg)}">${esc(msg)}</div>` : ""}</td></tr>`;
   },
 

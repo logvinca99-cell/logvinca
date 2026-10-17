@@ -379,3 +379,10 @@ tr.copy-row:hover td { background: var(--accent-soft); }
 .thin-usage { height: 5px; margin-top: 4px; }
 input[type=date].sel { padding: 0 8px; }
 @media (max-width: 1100px) { .order-grid { grid-template-columns: 1fr; } }
+
+/* ── 잠금 */
+.flag.lock { background: var(--info-soft); color: var(--info); }
+.notice.info { background: var(--info-soft); color: var(--info); }
+.lock-box { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: var(--panel-2); color: var(--text-2); }
+.ab-sep { width: 1px; background: var(--line); margin: 0 4px; }
+td.num .flag { display: inline-block; margin: 1px 0; }

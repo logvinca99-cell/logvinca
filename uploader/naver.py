@@ -348,6 +348,8 @@ class FakeClient:
     """네이버에 접속하지 않고 그럴듯한 지연과 가끔의 실패를 흉내 낸다. 이미지 내려받기도 흉내 낸다."""
 
     fake = True
+    _seq = 0
+    _class_lock = threading.Lock()
 
     def __init__(self, *_):
         self._n = 0
@@ -375,9 +377,11 @@ class FakeClient:
         if random.random() < 0.08:
             raise ApiError("상품 등록 실패: 400 BAD_REQUEST 입력값이 올바르지 않습니다. / "
                            "originProduct.detailAttribute.optionInfo: 옵션가는 판매가의 -50%~+50% 범위여야 합니다")
-        with self._lock:
-            self._n += 1
-            return {"originProductNo": 9000000000 + self._n, "smartstoreChannelProductNo": 8000000000 + self._n}
+        with FakeClient._class_lock:
+            # 실제 네이버처럼 모든 스토어에서 겹치지 않는 번호
+            FakeClient._seq = max(FakeClient._seq + 1, int(time.time() * 1000) % 10**9)
+            n = FakeClient._seq
+        return {"originProductNo": 9000000000 + n, "smartstoreChannelProductNo": 8000000000 + n}
 
 
 def make_client(store):

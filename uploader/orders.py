@@ -83,22 +83,55 @@ def save_orders(db, orders, source, store_id=None):
     return new, matched
 
 
+CANCEL_STATUSES = ("CANCELED", "RETURNED", "CANCELED_BY_NOPAYMENT")
+_CANCEL_SQL = "('" + "','".join(CANCEL_STATUSES) + "')"
+
+
 def recount_sold(db, listing_ids=None):
-    where, args = "", ()
-    if listing_ids is not None:
-        ids = list(listing_ids)
-        if not ids:
-            return
+    """판매 수(취소·반품 뺌)·취소 수를 세고 잠금을 다시 정한다. listing_ids가 없으면 전체."""
+    if listing_ids is None:
+        _recount(db, "", ())
+        return
+    ids = list(listing_ids)
+    for i in range(0, len(ids), 900):
+        chunk = ids[i:i + 900]
+        _recount(db, f" WHERE id IN ({','.join('?' * len(chunk))})", chunk)
+
+
+def _recount(db, where, args):
+    from . import config
+    cfg = config.load()
+    db.x(f"""UPDATE listings SET
+        sold_count=(SELECT COALESCE(SUM(quantity),0) FROM orders o WHERE o.listing_id=listings.id
+                    AND o.status NOT IN {_CANCEL_SQL}),
+        cancel_count=(SELECT COALESCE(SUM(quantity),0) FROM orders o WHERE o.listing_id=listings.id
+                      AND o.status IN {_CANCEL_SQL}),
+        last_sold_at=(SELECT MAX(ordered_at) FROM orders o WHERE o.listing_id=listings.id){where}""", args)
+    lock_sold = 1 if cfg.get("lock_sold", True) else 0
+    canceled_too = 1 if cfg.get("lock_canceled_too") else 0
+    db.x(f"""UPDATE listings SET
+        locked=CASE WHEN manual_lock=1 THEN 1
+                    WHEN ?=1 AND (sold_count>0 OR (?=1 AND cancel_count>0)) THEN 1 ELSE 0 END,
+        lock_note=CASE WHEN manual_lock=1 THEN '직접 잠금'
+                       WHEN ?=1 AND sold_count>0 THEN '판매 이력 ' || sold_count || '개'
+                       WHEN ?=1 AND ?=1 AND cancel_count>0 THEN '취소·반품 이력 ' || cancel_count || '개'
+                       ELSE '' END{where}""", (lock_sold, canceled_too, lock_sold, lock_sold, canceled_too, *args))
+
+
+def set_manual_lock(db, ids, on):
+    """직접 잠금/풀기. 판매 이력으로 걸린 자동 잠금은 직접 풀 수 없다 (설정에서 자동 잠금을 꺼야 풀림)."""
+    ids = list(ids)
+    for i in range(0, len(ids), 900):
+        chunk = ids[i:i + 900]
+        db.x(f"UPDATE listings SET manual_lock=? WHERE id IN ({','.join('?' * len(chunk))})", (1 if on else 0, *chunk))
+    recount_sold(db, ids)
+    still = 0
+    if not on and ids:
         for i in range(0, len(ids), 900):
             chunk = ids[i:i + 900]
-            db.x(f"""UPDATE listings SET
-                sold_count=(SELECT COALESCE(SUM(quantity),0) FROM orders o WHERE o.listing_id=listings.id),
-                last_sold_at=(SELECT MAX(ordered_at) FROM orders o WHERE o.listing_id=listings.id)
-                WHERE id IN ({','.join('?' * len(chunk))})""", chunk)
-        return
-    db.x(f"""UPDATE listings SET
-        sold_count=(SELECT COALESCE(SUM(quantity),0) FROM orders o WHERE o.listing_id=listings.id),
-        last_sold_at=(SELECT MAX(ordered_at) FROM orders o WHERE o.listing_id=listings.id){where}""", args)
+            still += db.one(f"SELECT COUNT(*) AS n FROM listings WHERE locked=1 AND id IN ({','.join('?' * len(chunk))})",
+                            chunk)["n"]
+    return len(ids), still
 
 
 def rematch(db):

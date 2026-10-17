@@ -21,6 +21,8 @@ const SETTING_SECTIONS = [
   { title: "주문 (판매 이력)", note: "판매자센터의 주문을 커머스API로 가져옵니다. 판매 이력이 있는 복사본은 새로고침·내리기에서 빠집니다.", fields: [
     ["orders_auto_sync_minutes", "자동 가져오기 간격 (분, 0이면 끔 · 프로그램이 켜져 있을 때만)", "number"],
     ["orders_initial_days", "처음 가져올 때 며칠 전부터", "number"],
+    ["lock_sold", "판매 이력이 있는 복사본은 자동으로 잠금 (새로고침·내리기로 지우지 않음)", "check"],
+    ["lock_canceled_too", "취소·반품만 있는 복사본도 잠금 (끄면 실제 판매가 1건이라도 있어야 잠금)", "check"],
   ] },
   { title: "스토어별 가격", note: "같은 상품도 스토어마다 원본가에서 조금씩 다르게 정합니다. 같은 상품·같은 스토어는 언제 계획해도 같은 가격입니다.", fields: [
     ["price_jitter_pct", "조정 범위 (± %)", "number", { step: 0.5 }],
