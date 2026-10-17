@@ -54,6 +54,7 @@ def add_names(c, source_id, names, origin, now=None, cfg=None, rejected=None):
 
 def import_products(db, fileobj, filename, progress=None, should_stop=None):
     cfg = config.load()
+    lex = lexicon.get(db)
     categories = naver.cached_categories()
     total_hint = excel.count_rows(fileobj, filename)
     now = time.time()
@@ -68,6 +69,7 @@ def import_products(db, fileobj, filename, progress=None, should_stop=None):
                 key = source_key(row)
                 s = convert.summary(row, cfg)
                 errors, warnings = convert.validate(row, cfg, categories)
+                warnings += _name_warnings(s["name"], lex)
                 tags = ",".join(convert.tags(row))
                 vals = (s["name"], s["price"], s["category"], s["thumb"], s["option_count"], s["image_count"],
                         int(s["has_video"]), tags, pack(row), json.dumps(errors, ensure_ascii=False),
@@ -113,9 +115,22 @@ def import_products(db, fileobj, filename, progress=None, should_stop=None):
     return stats
 
 
+def _name_warnings(name, lex):
+    """원본 상품명 자체의 문제 (원본 단어는 재조합해도 그대로 남으므로 미리 알린다)."""
+    out = []
+    bad = lexicon.blocked_in(name, lex)
+    if bad:
+        out.append(f"원본 상품명에 금지 단어가 있습니다: {', '.join(bad[:5])} (상표·효능·인증·원산지 표현인지 확인하세요)")
+    rep = lexicon.repeated_word(namegen.tokens(name), lex, 2)
+    if rep:
+        out.append(f"원본 상품명에 '{rep}'가 3번 이상 나옵니다")
+    return out
+
+
 def revalidate(db, progress=None):
-    """카테고리 목록이나 설정이 바뀐 뒤 전체 원본을 다시 검사한다."""
+    """카테고리 목록이나 설정·단어 사전이 바뀐 뒤 전체 원본을 다시 검사한다."""
     cfg = config.load()
+    lex = lexicon.get(db)
     categories = naver.cached_categories()
     ids = [r["id"] for r in db.q("SELECT id FROM sources")]
     for i in range(0, len(ids), CHUNK):
@@ -125,6 +140,7 @@ def revalidate(db, progress=None):
             for r in rows:
                 row = unpack(r["data"])
                 errors, warnings = convert.validate(row, cfg, categories)
+                warnings += _name_warnings(str(row.get("상품명") or ""), lex)
                 c.execute("UPDATE sources SET errors=?, warnings=?, valid=?, image_count=? WHERE id=?",
                           (json.dumps(errors, ensure_ascii=False), json.dumps(warnings, ensure_ascii=False),
                            int(not errors), len(convert.images_to_upload(row, cfg)), r["id"]))

@@ -118,7 +118,6 @@ SEED_GROUPS = """
 반려동물,펫
 강아지,애견
 고양이,반려묘
-장식품,오브제
 장식,데코
 인테리어,데코
 액자,프레임
@@ -181,6 +180,12 @@ DEFAULT_BLOCK = """
 정품,명품,가품,짝퉁,레플리카,스타일,호환,st,ST,최고,최저가,1위,특가,무료배송,할인
 """
 
+# 일반명사라도 표시·광고 규정(효능·인증·원산지·과장)에 걸릴 수 있는 말. 근거 없이 쓰면 안 되므로 새로 넣지 않는다.
+CLAIM_BLOCK = """
+치료,완치,의료용,의료기기,의약,처방,통증완화,질병,예방,무독성,무해,친환경,유기농,천연,항균,살균,멸균,소독,
+인증,KC인증,특허,국산,국내산,국내생산,국내제작,한국산,공식,공식판매,독점,최초,유일,살충,방역,FDA,
+"""
+
 SUFFIXES = ("용", "형", "식")
 _HANGUL_WORD = re.compile(r"^[가-힣]{2,10}$")   # 새로 넣을 수 있는 단어
 _GROUP_WORD = re.compile(r"^[가-힣]{1,10}$")    # 묶음 안의 단어 (컵·칼처럼 한 글자도 원본 단어로는 찾게)
@@ -217,6 +222,13 @@ def ensure(db):
                     c.execute("INSERT OR IGNORE INTO word_block(word) VALUES(?)", (w.strip(),))
             c.execute("INSERT INTO meta(k, v) VALUES('lexicon_seeded', '1')")
             _bump(c)
+        if not c.execute("SELECT 1 FROM meta WHERE k='block_v2'").fetchone():
+            # 효능·인증·원산지·과장 표현을 금지 단어에 더한다 (이미 쓰던 db에도)
+            for w in CLAIM_BLOCK.replace("\n", ",").split(","):
+                if w.strip():
+                    c.execute("INSERT OR IGNORE INTO word_block(word) VALUES(?)", (w.strip(),))
+            c.execute("INSERT OR REPLACE INTO meta(k, v) VALUES('block_v2', '1')")
+            _bump(c)
 
 
 def _bump(c):
@@ -248,6 +260,15 @@ class Lexicon:
                 base = token[: -len(suf)]
                 out += [s + suf for s in self.syn.get(base, ())]
         return [w for w in dict.fromkeys(out) if self.ok_new_word(w)]
+
+
+def blocked_in(name, lex):
+    """원본 상품명에 들어 있는 금지 단어 (경고용). 영문은 단어 전체가 같을 때만."""
+    if not lex:
+        return []
+    low = str(name or "").lower()
+    words = {t.lower() for t in low.split()}
+    return [b for b in sorted(lex.blocked) if (b in words if b.isascii() else (len(b) >= 2 and b in low))]
 
 
 def category_words(category):

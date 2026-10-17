@@ -51,13 +51,16 @@ def clean(name, max_len=100):
 def recombine(original, count, taken_norms, siblings, cfg, seed, tag_words=(), lex=None, category=""):
     """새 이름 count개. 토큰(비용) 없이 만든다.
 
-    1. 원본 단어 중 0~3개를 빼고 순서를 섞는다.
-    2. 새 단어 1~2개를 넣는다: 원본 단어의 유의어(단어 사전) → 카테고리 단어 → (설정 시) 엑셀 태그.
-       새 단어는 한글 일반명사만, 금지 단어(상표·사칭 표현)는 넣지 않는다.
-    3. 남는 칸을 최대 글자 수(기본 50자)까지 채운다: 뺐던 원본 단어 → 그래도 남으면 새 단어.
-    4. 버리는 경우: 같은 단어가 3번 이상(설정) 나옴 / 33개 스토어의 다른 이름과 같음 /
-       같은 원본의 다른 이름(원본 포함)과 단어가 85% 이상 겹치거나 앞 두 단어가 같음.
-    단어가 적고 새 단어도 없으면 count보다 적게 나올 수 있다.
+    1. 원본의 앞 N단어(기본 3)는 그대로 맨 앞에 둔다 (보통 가장 중요한 키워드).
+    2. 나머지 단어 중 0~3개를 빼고 순서를 섞는다.
+    3. 새 단어 1~2개: 핵심 키워드의 유의어를 먼저 고른다.
+         우선순위  ① 앞 N단어의 유의어  ② 카테고리 맨 아래 단계 이름
+                   ③ 카테고리와 겹치는 단어(핵심)의 유의어  ④ 나머지 단어의 유의어  ⑤ (설정 시) 엑셀 태그
+       유의어는 덧붙이거나, 일정 확률로 원래 단어 자리에 바꿔 넣는다 (예: 수리용 → 수선용).
+       새 단어는 한글 일반명사만, 금지 단어가 들어간 말은 넣지 않는다.
+    4. 남는 칸을 최대 글자 수(기본 50자)까지 채운다: 뺐던 원본 단어 → 그래도 남으면 우선순위 높은 새 단어.
+    5. 버리는 경우: 같은 단어가 3번 이상 / 33개 스토어의 다른 이름과 같음 /
+       같은 원본의 다른 이름과 (앞 N단어 뒤 부분이) 85% 이상 겹치거나 그 첫 두 단어가 같음.
     """
     from . import lexicon as lx
     lex = lex or cfg.get("_lex")
@@ -68,22 +71,49 @@ def recombine(original, count, taken_norms, siblings, cfg, seed, tag_words=(), l
     new_min = int(cfg.get("recombine_new_min", 1) or 0)
     new_max = max(new_min, int(cfg.get("recombine_new_max", 2) or 0))
     fill = cfg.get("recombine_fill", True)
+    fixed_n = max(0, int(cfg.get("recombine_fixed_prefix", 3) or 0))
+    replace_ratio = float(cfg.get("recombine_replace_ratio", 0.4) or 0)
 
+    prefix, tail = words[:fixed_n], words[fixed_n:]
     have = {w.lower() for w in words}
+    cat_words = lx.category_words(category) if (lex and cfg.get("use_category_words", True)) else []
+    cat_text = "".join(cat_words)
+    core_tail = [w for w in tail if any(c in w or w in c for c in cat_words) or (cat_text and w in cat_text)]
+
+    # (새 단어, 바꿀 수 있는 원래 단어, 우선순위)
     pool = []
     if lex:
-        for w in words:
-            pool += lex.synonyms(w)
-        if cfg.get("use_category_words", True):
-            pool += lx.category_words(category)
+        for w in prefix:
+            pool += [(x, None, 0) for x in lex.synonyms(w)]   # 앞 단어는 고정이라 바꾸지 않고 덧붙이기만
+        pool += [(x, None, 1) for x in cat_words]
+        for w in core_tail:
+            pool += [(x, w, 2) for x in lex.synonyms(w)]
+        for w in tail:
+            if w not in core_tail:
+                pool += [(x, w, 3) for x in lex.synonyms(w)]
         if cfg.get("recombine_use_tags"):
-            pool += [t for t in tag_words if lex.ok_new_word(t)]
-    pool = [w for w in dict.fromkeys(pool) if w.lower() not in have and (not lex or lex.ok_new_word(w))]
+            pool += [(t, None, 4) for t in tag_words if lex.ok_new_word(t)]
+    seen, cand = set(), []
+    for w, src, pr in pool:
+        if w.lower() in have or w in seen or (lex and not lex.ok_new_word(w)):
+            continue
+        seen.add(w)
+        cand.append((w, src, pr))
+    weight = {0: 8, 1: 5, 2: 4, 3: 2, 4: 1}
 
     rnd = random.Random(seed)
     out, sibs = [], list(siblings)
-    if len(words) < 2 and not pool:
+    if len(words) < 2 and not cand:
         return out
+
+    def tail_of(name):
+        return " ".join(tokens(name)[len(prefix):])
+
+    sib_tails = [tail_of(x) for x in sibs]
+
+    def too_close(name):
+        t = tail_of(name)
+        return any(overlap(t, x) >= max_overlap or _same_start(t, x) for x in sib_tails if x)
 
     def can_add(cur, w, check_overlap=False):
         if any(w.lower() == x.lower() for x in cur):
@@ -92,35 +122,60 @@ def recombine(original, count, taken_norms, siblings, cfg, seed, tag_words=(), l
             return False
         if lx.repeated_word(cur + [w], lex, max_repeat):
             return False
-        if check_overlap and any(overlap(" ".join(cur + [w]), x) >= max_overlap for x in sibs):
+        if check_overlap and any(overlap(" ".join((cur + [w])[len(prefix):]), x) >= max_overlap for x in sib_tails if x):
             return False
         return True
+
+    def pick(n, exclude=()):
+        """우선순위 가중치로 새 단어 n개 고르기 (같은 원래 단어의 유의어는 하나만)."""
+        left = [c for c in cand if c[0] not in exclude]
+        chosen, used_src = [], set()
+        while left and len(chosen) < n:
+            total = sum(weight[c[2]] for c in left)
+            r = rnd.uniform(0, total)
+            for i, c in enumerate(left):
+                r -= weight[c[2]]
+                if r <= 0:
+                    break
+            c = left.pop(i)
+            if c[1] and c[1] in used_src:
+                continue
+            chosen.append(c)
+            if c[1]:
+                used_src.add(c[1])
+        return chosen
 
     for _ in range(count * 40):
         if len(out) >= count:
             break
-        keep_n = rnd.randint(max(1, len(words) - 3), len(words)) if words else 0
-        kept = rnd.sample(words, keep_n)
+        keep_n = rnd.randint(max(0, len(tail) - 3), len(tail)) if tail else 0
+        kept = rnd.sample(tail, keep_n)
         rnd.shuffle(kept)
-        k = min(len(pool), rnd.randint(new_min, new_max)) if pool else 0
-        news = rnd.sample(pool, k) if k else []
-        seq = list(kept)
-        for w in news:  # 새 단어는 아무 자리에나 (맨 앞은 원본 단어가 오도록 1번째 이후)
-            seq.insert(rnd.randint(1, len(seq)) if seq else 0, w)
+        k = min(len(cand), rnd.randint(new_min, new_max)) if cand else 0
+        news = pick(k)
+        replaced = set()
+        for w, src, _ in news:
+            if src and src in kept and rnd.random() < replace_ratio:
+                kept[kept.index(src)] = w          # 원래 단어 자리에 유의어로 바꿔 넣기
+                replaced.add(src)
+            else:
+                kept.insert(rnd.randint(0, len(kept)), w)
 
         cur = []
-        for w in seq:
+        for w in prefix:                            # 앞 N단어는 무조건 그대로
+            if not any(w.lower() == x.lower() for x in cur):
+                cur.append(w)
+        for w in kept:
             if can_add(cur, w):
                 cur.append(w)
-        added_new = sum(1 for w in cur if w in news)
-        if pool and added_new < min(new_min, len(pool)):
+        new_words = {w for w, _, _ in news}
+        if cand and sum(1 for w in cur if w in new_words) < min(new_min, len(cand)):
             continue
         if fill:
-            # 남는 칸: 뺐던 원본 단어(상품과 가장 잘 맞음) → 그래도 남으면 새 단어
-            dropped = [w for w in words if w not in cur]
+            # 남는 칸: 뺐던 원본 단어(바꿔 넣은 원래 단어는 제외) → 그래도 남으면 우선순위 높은 새 단어
+            dropped = [w for w in tail if w not in cur and w not in replaced]
             rnd.shuffle(dropped)
-            extra = [w for w in pool if w not in cur]
-            rnd.shuffle(extra)
+            extra = [c[0] for c in sorted(cand, key=lambda c: (c[2], rnd.random())) if c[0] not in cur]
             for w in dropped + extra:
                 if len(" ".join(cur)) >= max_len - 1:
                     break
@@ -129,13 +184,11 @@ def recombine(original, count, taken_norms, siblings, cfg, seed, tag_words=(), l
 
         name = " ".join(cur)
         n = normalize(name)
-        if len(cur) < 2 or not n or n in taken_norms:
-            continue
-        # 같은 원본의 다른 이름(원본 포함)과 단어 구성이 거의 같거나 앞 두 단어가 같으면 버린다.
-        if any(overlap(name, x) >= max_overlap or _same_start(name, x) for x in sibs):
+        if len(cur) < 2 or not n or n in taken_norms or too_close(name):
             continue
         taken_norms.add(n)
         sibs.append(name)
+        sib_tails.append(tail_of(name))
         out.append(name)
     return out
 

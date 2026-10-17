@@ -53,6 +53,10 @@ DEFAULTS = {
     "name_max_len": 50,
     # 재조합에 상품태그 단어를 섞을지 (엑셀 태그가 상품과 안 맞는 경우가 있어 기본 꺼짐)
     "recombine_use_tags": False,
+    # 재조합: 원본의 앞 몇 단어를 그대로 맨 앞에 고정할지
+    "recombine_fixed_prefix": 3,
+    # 재조합: 유의어를 덧붙이지 않고 원래 단어 자리에 바꿔 넣는 비율 (0~1)
+    "recombine_replace_ratio": 0.4,
     # 재조합 때 새로 넣을 단어 수 (단어 사전의 유의어·카테고리 단어, 한글 일반명사만)
     "recombine_new_min": 1,
     "recombine_new_max": 2,

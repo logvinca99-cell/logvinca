@@ -32,6 +32,8 @@ const SETTING_SECTIONS = [
     ["use_original_name", "원본 상품명도 한 스토어에 쓸 수 있음 (원본 스토어와 이름이 같아짐)", "check"],
     ["auto_recombine", "계획 만들 때 이름 후보가 모자라면 재조합으로 자동으로 채움", "check"],
     ["name_max_len", "상품명 최대 글자 수", "number"],
+    ["recombine_fixed_prefix", "재조합: 원본의 앞 몇 단어를 그대로 맨 앞에 고정할지", "number"],
+    ["recombine_replace_ratio", "재조합: 유의어를 덧붙이지 않고 원래 단어 자리에 바꿔 넣는 비율 (0~1)", "number", { step: 0.1 }],
     ["recombine_new_min", "재조합: 새로 넣을 단어 최소 개수 (단어 사전의 유의어·카테고리 단어)", "number"],
     ["recombine_new_max", "재조합: 새로 넣을 단어 최대 개수", "number"],
     ["recombine_fill", "재조합: 남는 칸을 최대 글자 수까지 채움 (노출에 유리)", "check"],
