@@ -1,9 +1,9 @@
 """오래 걸리는 일(엑셀 불러오기, 상품명 만들기, 계획 만들기)을 뒤에서 돌리고 진행률을 알려준다."""
 
 import itertools
+import logging
 import threading
 import time
-import traceback
 
 
 class Tasks:
@@ -34,7 +34,7 @@ class Tasks:
             except Exception as e:  # noqa: BLE001 - 화면에 보여준다
                 t["status"] = "error"
                 t["error"] = str(e)
-                traceback.print_exc()
+                logging.getLogger("uploader").exception("작업 실패: %s", title)
             t["ended_at"] = time.time()
 
         threading.Thread(target=run, daemon=True).start()

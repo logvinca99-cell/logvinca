@@ -1,5 +1,7 @@
 @echo off
 chcp 65001 > nul
+set PYTHONUTF8=1
+set PYTHONIOENCODING=utf-8
 cd /d "%~dp0"
 
 where python > nul 2>&1
@@ -17,4 +19,6 @@ if errorlevel 1 (
 )
 
 python -m uploader %*
-if errorlevel 1 pause
+echo.
+echo 등록기가 꺼졌습니다. 위의 메시지(또는 data\uploader.log)를 복사해 보내 주세요.
+pause
