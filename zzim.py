@@ -394,7 +394,7 @@ def choose_sort(page, label, ctl):
         ctl.log(f"'{label}' 정렬 버튼을 못 찾아 기본 정렬로 진행합니다.", "warn")
 
 
-def go_to_page(page, n):
+def go_to_page(page, n, store_name=None):
     """하단 페이지 번호를 눌러 n페이지로 이동. 상품 목록이 실제로 바뀌었는지 확인한다."""
     before = page.evaluate(IDS_JS)
     page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
@@ -407,6 +407,8 @@ def go_to_page(page, n):
         now = page.evaluate(IDS_JS)
         if now and now[:5] != before[:5]:
             page.wait_for_timeout(1000)
+            if store_name and f"/{store_name}" not in page.url:
+                raise StopRun(f"페이지 이동 중 스토어를 벗어났습니다({page.url}). 다른 스토어 상품을 누르지 않도록 멈췄습니다.")
             return True
     raise StopRun(f"{n}페이지로 넘어가지 않습니다. 화면 아래 페이지 번호를 확인해 주세요.")
 
@@ -429,13 +431,31 @@ def wait_state(btn, page, timeout_ms=4000):
     return state
 
 
+UNKNOWN_STATE = ("찜 상태를 화면에서 판별할 수 없어 멈췄습니다(상품 {pid}). 네이버 화면 구조가 바뀌었을 수 있습니다. "
+                 "판별 없이 누르면 이미 된 찜이 해제될 수 있습니다.")
+
+
 def click_zzim(page, pid, pacer, ctl, retries=3):
     btn = page.locator(f'li[data-pid="{pid}"] button', has_text="찜").first
+    if btn.count() == 0:  # 화면이 다시 그려져 꼬리표가 사라졌으면 다시 붙인다
+        page.evaluate(SCAN_JS)
+        if btn.count() == 0:
+            return "error", []
     btn.scroll_into_view_if_needed()
-    if btn.evaluate(STATE_JS) is True:
+    state = btn.evaluate(STATE_JS)
+    if state is True:
         return "already", []
+    if state is None:
+        raise StopRun(UNKNOWN_STATE.format(pid=pid))
     toasts = []
     for attempt in range(retries):
+        if attempt:  # 쉬는 동안 뒤늦게 반영됐을 수 있으므로 다시 누르기 전에 확인
+            state = btn.evaluate(STATE_JS)
+            if state is True:
+                pacer.on_success()
+                return "clicked", toasts
+            if state is None:
+                raise StopRun(UNKNOWN_STATE.format(pid=pid))
         read_toasts(page)
         btn.click()
         state = wait_state(btn, page)
@@ -447,7 +467,7 @@ def click_zzim(page, pid, pacer, ctl, retries=3):
             ctl.wait(page, pacer.next_wait())
             return "clicked", toasts
         if state is None:
-            return "clicked?", toasts  # 상태 판별 불가 → 로그에서 확인
+            raise StopRun(UNKNOWN_STATE.format(pid=pid))
         # 반영이 안 됨 = 너무 빨라서 네이버가 거절했을 가능성 → 간격을 늘리고, 점점 길게 쉬고 재시도
         why = f" ({' / '.join(toasts)})" if toasts else ""
         ctl.log(f"  반영 안 됨{why}  [누적 {pacer.rejects + 1}/{pacer.max_rejects or '∞'}]", "warn")
@@ -501,12 +521,22 @@ def run_store(page, store, args, alerts, ctl, pacer=None, account=""):
             ctl.log(f"── {pno}페이지: 카드 {len(cards)}개 (새 상품 {len(new)}개)")
             if cards and not new:
                 raise StopRun(f"{pno}페이지가 이전 페이지와 같습니다. 페이지 이동이 안 된 것 같습니다.")
+            prev_seen = set(seen)
             seen.update(c["id"] for c in cards)
             st.page = pno
 
-            rows = [cards[i:i + COLS] for i in range(0, len(cards), COLS)]
+            rows = []
+            for it in cards:  # 이미 y, x 순으로 정렬됨
+                if rows and abs(it["y"] - rows[-1][0]["y"]) < 20:
+                    rows[-1].append(it)
+                else:
+                    rows.append([it])
+            if any(len(rw) != COLS for rw in rows[:-1]):
+                ctl.log(f"  한 줄 상품 수가 {COLS}개가 아닌 줄이 있습니다(창 크기 영향). 행/열 표시만 다를 뿐 동작에는 문제 없습니다.", "warn")
             for r, row in enumerate(rows, 1):
                 for c, it in enumerate(row, 1):
+                    if it["id"] in prev_seen:  # 목록이 밀려 이전 페이지에서 처리한 상품
+                        continue
                     if it["zz"] is True:  # 화면에 이미 찜으로 표시됨 → 누르지 않음
                         st.already += 1
                         st.done += 1
@@ -550,7 +580,7 @@ def run_store(page, store, args, alerts, ctl, pacer=None, account=""):
                         raise StopRun("네이버가 찜을 계속 거절합니다(차단 신호). 계정 보호를 위해 멈췄습니다. "
                                       "몇 시간 이상 쉰 뒤 다시 실행하세요.")
 
-            if len(seen) >= total or not go_to_page(page, pno + 1):
+            if len(seen) >= total or not go_to_page(page, pno + 1, name):
                 break
             pno += 1
 
