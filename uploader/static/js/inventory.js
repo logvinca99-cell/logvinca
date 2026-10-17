@@ -262,13 +262,15 @@ App.page("inventory", {
             <label><input type="radio" name="mode" value="all"><div><b>빈 칸을 모두 채우기</b>
               <span class="muted small">원본마다 남은 칸(최대 ${App.state.settings.max_copies}곳)을 고른 스토어로 채웁니다.</span></div></label>
           </div>
+          <label class="check bait-check"><input type="checkbox" id="p-bait" ${App.state.settings.bait_default ? "checked" : ""}>
+            <span><b>도둑방지로 올리기</b> — 처음 올릴 때 판매가 <b>+${num(App.state.settings.bait_amount)}원</b>. 원래 가격으로는 도둑방지·복사본 화면에서 직접 되돌립니다. 할인은 도둑방지 전 가격 기준.</span></label>
           <label class="field">계획 이름 <span class="muted">(나중에 등록 화면에서 이 이름으로 거를 수 있음)</span>
             <input id="p-title" placeholder="예: 10월 3주차 공구류"></label>
           <div class="plan-sum" id="p-sum"></div>
           <p class="muted small">· 원본 하나는 최대 <b>${App.state.settings.max_copies}곳</b>까지만 올라갑니다 (내린 스토어는 세지 않음).<br>
             · 전에 내렸던 스토어에 다시 계획하면 같은 이름·가격으로 다음 회차가 됩니다.<br>
             · 상품명: 원본마다 안 쓴 후보에서 하나씩 씁니다 (가져옴 → AI → 재조합 순). 모자라면 ${App.state.settings.auto_recombine ? "재조합으로 자동으로 채웁니다" : "건너뜁니다"}.<br>
-            · 가격: 스토어마다 원본가 ±${App.state.settings.price_jitter_pct}% 안에서 정하고 ${num(App.state.settings.price_round)}원 단위로 맞춥니다.<br>
+            · 가격: 스토어마다 원본가 ±${App.state.settings.price_jitter_pct}% 안에서 정하고 ${num(App.state.settings.price_round)}원 단위로 올림합니다.<br>
             · 스토어 한도를 넘는 건은 만들지 않습니다.</p>
         </div></div>`,
       buttons: [{ label: "취소" }, {
@@ -277,7 +279,7 @@ App.page("inventory", {
           if (!store_ids.length) { App.toast("스토어를 하나 이상 고르세요.", true); return false; }
           const r = await App.startTask(App.api("/api/plans", {
             json: { ...this.target(), store_ids, mode: $("input[name=mode]:checked", b).value,
-                    per_product: +$("#p-per", b).value || 1, title: $("#p-title", b).value.trim() },
+                    per_product: +$("#p-per", b).value || 1, title: $("#p-title", b).value.trim(), bait: $("#p-bait", b).checked },
           }));
           if (r) { this.clearSel(); }
           return !!r;

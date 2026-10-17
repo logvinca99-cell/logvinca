@@ -103,7 +103,6 @@ CREATE TABLE IF NOT EXISTS stores (
     orders_synced_to REAL,               -- 네이버 주문을 여기까지 가져왔음
     enabled INTEGER NOT NULL DEFAULT 1,
     memo TEXT NOT NULL DEFAULT '',
-    mall_name TEXT NOT NULL DEFAULT '',     -- 네이버 쇼핑에 보이는 스토어 이름 (베낀 상품 찾기에서 내 것 빼기)
     wm_text TEXT NOT NULL DEFAULT '',       -- 워터마크 글자 (비우면 스토어 이름, 로고 PNG가 있으면 로고)
     created_at REAL NOT NULL
 );
@@ -137,12 +136,11 @@ CREATE TABLE IF NOT EXISTS listings (
     manual_lock INTEGER NOT NULL DEFAULT 0, -- 직접 잠금
     locked INTEGER NOT NULL DEFAULT 0,      -- 지금 잠김 (직접 잠금 또는 판매 이력으로 자동 잠금) → 지우지 않음
     lock_note TEXT NOT NULL DEFAULT '',
+    bait_want INTEGER NOT NULL DEFAULT 1,   -- 도둑방지로 올릴지 (등록 계획 때 정함, 기본 켬)
     bait INTEGER NOT NULL DEFAULT 0,        -- 도둑방지로 지금 네이버 가격에 더해 둔 금액
     bait_state TEXT NOT NULL DEFAULT '',    -- on(높여 둠) / restored(원래 가격) / fail
-    bait_until REAL,                        -- 이때가 지나면 원래 가격으로
     bait_note TEXT NOT NULL DEFAULT '',
     bait_restored_at REAL,
-    bait_checked_at REAL,                   -- 마지막으로 베낀 상품을 찾아본 때
     seconds REAL,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
@@ -223,9 +221,8 @@ class DB:
         self._migrate_columns()
         self.c.executescript(SCHEMA)
         self._migrate_data()
-        from . import bait, keywords, kipris, lexicon
+        from . import keywords, kipris, lexicon
         lexicon.ensure(self)
-        bait.ensure(self)
         kipris.ensure(self)
         keywords.ensure(self)
         # 프로그램이 등록 도중 꺼졌으면 남은 상태를 되돌린다.
@@ -240,14 +237,14 @@ class DB:
         "sources": [("seller_code", "TEXT NOT NULL DEFAULT ''"), ("core_kw", "TEXT NOT NULL DEFAULT ''"),
                     ("core_manual", "INTEGER NOT NULL DEFAULT 0"), ("kw_at", "REAL")],
         "stores": [("code", "TEXT NOT NULL DEFAULT ''"), ("orders_synced_to", "REAL"),
-                   ("mall_name", "TEXT NOT NULL DEFAULT ''"), ("wm_text", "TEXT NOT NULL DEFAULT ''")],
+                   ("wm_text", "TEXT NOT NULL DEFAULT ''")],
         "listings": [("sold_count", "INTEGER NOT NULL DEFAULT 0"), ("last_sold_at", "REAL"),
                      ("cancel_count", "INTEGER NOT NULL DEFAULT 0"), ("manual_lock", "INTEGER NOT NULL DEFAULT 0"),
                      ("locked", "INTEGER NOT NULL DEFAULT 0"), ("lock_note", "TEXT NOT NULL DEFAULT ''"),("op", "TEXT NOT NULL DEFAULT 'create'"), ("round", "INTEGER NOT NULL DEFAULT 1"),
                      ("seller_code", "TEXT NOT NULL DEFAULT ''"), ("registered_at", "REAL"), ("deleted_at", "REAL"),
+                     ("bait_want", "INTEGER NOT NULL DEFAULT 1"),
                      ("bait", "INTEGER NOT NULL DEFAULT 0"), ("bait_state", "TEXT NOT NULL DEFAULT ''"),
-                     ("bait_until", "REAL"), ("bait_note", "TEXT NOT NULL DEFAULT ''"), ("bait_restored_at", "REAL"),
-                     ("bait_checked_at", "REAL")],
+                     ("bait_note", "TEXT NOT NULL DEFAULT ''"), ("bait_restored_at", "REAL")],
     }
 
     def _migrate_columns(self):

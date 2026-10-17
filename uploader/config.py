@@ -40,7 +40,7 @@ DEFAULTS = {
     # 취소·반품만 있는 복사본도 잠글지 (끄면 실제 판매가 1건이라도 있어야 잠금)
     "lock_canceled_too": False,
 
-    # ── 가격: 스토어마다 원본가에서 ±price_jitter_pct% 안에서 정하고 price_round 단위로 맞춤.
+    # ── 가격: 스토어마다 원본가에서 ±price_jitter_pct% 안에서 정하고 price_round(100원) 단위로 올림. 가격은 항상 100원 단위 올림.
     #    같은 상품·같은 스토어는 언제 계획해도 같은 가격이 나온다.
     "price_jitter_pct": 3.0,
     "price_round": 100,
@@ -94,16 +94,11 @@ DEFAULTS = {
     "kipris_limit": 500,
 
     # ── 도둑방지
-    # 처음 올릴 때 가격을 bait_amount만큼 높여 두고, 베낀 상품이 보이거나 bait_days가 지나면 원래 가격으로
-    "bait_enabled": False,
+    # 처음 올릴 때 판매가에 bait_amount를 더해 올리고, 원래 가격으로는 직접 되돌림 (복사본·도둑방지 화면의 버튼)
+    # 등록 계획 창의 '도둑방지로 올리기' 기본값. 할인 금액은 도둑방지 전 가격으로 계산.
+    "bait_default": True,
     "bait_amount": 30000,
-    "bait_days": 7,
     "bait_on_refresh": False,        # 최신화(다시 등록) 때도 높여서 올릴지
-    "bait_watch": True,              # 내 상품명으로 네이버 쇼핑을 검색해 베낀 상품 찾기 (네이버 검색 API 키 필요)
-    "bait_watch_hours": 12,          # 몇 시간마다 찾아볼지
-    "bait_watch_limit": 500,         # 한 번에 찾아볼 복사본 수
-    "bait_copy_match": 0.8,          # 상품명이 이만큼 이상 같으면 베낀 것으로 봄 (0~1)
-    "bait_restore_on_copy": True,    # 베낀 상품을 찾으면 기한 전이라도 바로 원래 가격으로
     # 대표 이미지 워터마크 (스토어마다: 스토어 화면에서 로고 PNG 또는 글자)
     "wm_enabled": False,
     "wm_scope": "main",              # main(대표 이미지만) / all(대표+추가 이미지)

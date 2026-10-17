@@ -455,3 +455,5 @@ span.kw-chip { cursor: default; }
 .wm-store { display: flex; gap: 12px; align-items: center; margin-top: 6px; }
 .wm-store img { width: 110px; height: 110px; border: 1px solid var(--line); border-radius: 6px; }
 .wm-store > div { display: flex; flex-direction: column; gap: 6px; }
+.bait-check { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); font-size: 13px; }
+.bait-check input { margin-top: 3px; }

@@ -5,6 +5,7 @@
 
 import copy
 import hashlib
+import math
 import re
 
 REF = "상세페이지 참조"
@@ -231,20 +232,27 @@ def certification_exclude(certs):
     return out
 
 
+def round_up(price, unit=100):
+    """가격은 항상 100원(unit) 단위로 올림. 음수(옵션 할인)는 0 쪽으로 (예: -1,550 → -1,500)."""
+    unit = max(1, int(unit or 100))
+    return -((-int(price)) // unit) * unit
+
+
 def adjusted_price(price, key, cfg):
-    """원본가를 ±price_jitter_pct% 안에서 바꾼다. key(상품+스토어)가 같으면 항상 같은 값."""
+    """원본가를 ±price_jitter_pct% 안에서 바꾼다. key(상품+스토어)가 같으면 항상 같은 값. 100원 단위 올림."""
     pct = float(cfg.get("price_jitter_pct") or 0)
     unit = max(1, to_int(cfg.get("price_round"), 100))
     if price <= 0:
         return price
     h = int(hashlib.sha1(str(key).encode()).hexdigest()[:8], 16) / 0xFFFFFFFF  # 0~1
     p = price * (1 + (h * 2 - 1) * pct / 100)
-    return max(unit, int(round(p / unit)) * unit)
+    return max(unit, round_up(math.ceil(p), unit))
 
 
-def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_phone=None, seller_code=None):
+def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_phone=None, seller_code=None, bait=0):
     """url_map: 원본 이미지 주소 → 네이버 이미지 주소. 없는 주소는 원본 그대로 쓴다.
-    name / price / as_phone / seller_code: 스토어별로 바꿔 쓸 값 (없으면 엑셀 값)."""
+    name / price / as_phone / seller_code: 스토어별로 바꿔 쓸 값 (없으면 엑셀 값).
+    bait: 도둑방지로 판매가에 더할 금액. 할인 금액·옵션가는 도둑방지 전 가격(price) 기준으로 정한다."""
     url_map = url_map or {}
     errors, _ = validate(row, cfg)
     if errors:
@@ -252,7 +260,8 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
 
     base_price = to_int(row.get("판매가"))
     name = str(name or row["상품명"]).strip()
-    sale_price = price or base_price
+    unit = to_int(cfg.get("price_round"), 100) or 100
+    sale_price = round_up(price or base_price, unit)   # 도둑방지 전 가격 (할인·옵션 계산 기준)
     images = [url_map.get(u, u) for u in thumbnails(row)[:10]]
 
     fee = to_int(row.get("배송비"))
@@ -284,6 +293,10 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
         detail["sellerCodeInfo"] = {"sellerManagementCode": str(code)}
     o = options(row)
     if o:
+        o = copy.deepcopy(o)
+        for c in o.get("optionCombinations") or []:
+            if c.get("price"):
+                c["price"] = round_up(to_int(c["price"]), unit)   # 옵션 추가금도 100원 단위 올림
         detail["optionInfo"] = _strip_empty(o)
     t = tags(row)
     if t:
@@ -299,7 +312,7 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
         "name": name[:100],
         "detailContent": detail_html(row, cfg, url_map),
         "images": {"representativeImage": {"url": images[0]}},
-        "salePrice": sale_price,
+        "salePrice": sale_price + round_up(bait or 0, unit),
         "stockQuantity": to_int(row.get("재고수"), 999),
         "deliveryInfo": {
             "deliveryType": "DELIVERY",
@@ -316,8 +329,10 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
 
     discount = to_int(row.get("할인가"))
     if 0 < discount < base_price:
-        # 엑셀의 할인가는 '할인된 판매가'로 본다. 가격을 바꿨으면 할인 금액도 같은 비율로.
-        off = round((base_price - discount) * sale_price / base_price)
+        # 엑셀의 할인가는 '할인된 판매가'로 본다. 가격을 바꿨으면 할인율이 같도록, 도둑방지 전 가격 기준으로.
+        # 할인된 가격도 100원 단위 올림 → 할인 금액도 100원 단위.
+        final = round_up(math.ceil(sale_price * discount / base_price), unit)
+        off = sale_price - final
         if 0 < off < sale_price:
             origin["customerBenefit"] = {"immediateDiscountPolicy": {
                 "discountMethod": {"value": off, "unitType": "WON"}}}

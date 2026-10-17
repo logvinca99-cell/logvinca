@@ -491,7 +491,7 @@ def _fill_names(c, s, need, cfg, now):
     return pool
 
 
-def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progress=None, should_stop=None):
+def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progress=None, should_stop=None, bait=None):
     """원본 × 스토어마다 등록 한 건(planned)을 만든다.
 
     원본 하나는 최대 max_copies곳(기본 3)까지만. 내린(deleted) 스토어는 세지 않는다.
@@ -502,6 +502,7 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
     cfg = config.load()
     cfg["_lex"] = lexicon.get(db)
     max_copies = max(1, int(cfg.get("max_copies") or 3))
+    bait_want = int(bool(cfg.get("bait_default", True) if bait is None else bait))  # 도둑방지로 올릴지
     stores = {s["id"]: s for s in db.stores() if s["id"] in set(store_ids) and s["enabled"]}
     if not stores:
         raise ValueError("등록할 스토어를 골라 주세요. (사용 중지된 스토어는 제외)")
@@ -563,7 +564,7 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
                     price = convert.adjusted_price(s["price"], f"{s['source_key']}|{sid}", cfg)
                     if old and not cfg.get("refresh_new_name"):
                         c.execute("""UPDATE listings SET status='planned', op='create', round=round+1, plan_id=?,
-                            message='', stage='', updated_at=? WHERE id=?""", (pid, now, old["id"]))
+                            message='', stage='', bait_want=?, updated_at=? WHERE id=?""", (pid, bait_want, now, old["id"]))
                         st["revived"] += 1
                     else:
                         if not pool:
@@ -572,14 +573,14 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
                         nm = pool.pop(0)
                         if old:
                             c.execute("""UPDATE listings SET status='planned', op='create', round=round+1, plan_id=?,
-                                name_id=?, name=?, message='', stage='', updated_at=? WHERE id=?""",
-                                      (pid, nm["id"], nm["name"], now, old["id"]))
+                                name_id=?, name=?, message='', stage='', bait_want=?, updated_at=? WHERE id=?""",
+                                      (pid, nm["id"], nm["name"], bait_want, now, old["id"]))
                             c.execute("UPDATE names SET listing_id=? WHERE id=?", (old["id"], nm["id"]))
                             st["revived"] += 1
                         else:
                             lid = c.execute("""INSERT INTO listings(store_id, source_id, plan_id, name_id, name, price,
-                                status, created_at, updated_at) VALUES(?,?,?,?,?,?,'planned',?,?)""",
-                                            (sid, s["id"], pid, nm["id"], nm["name"], price, now, now)).lastrowid
+                                bait_want, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,'planned',?,?)""",
+                                            (sid, s["id"], pid, nm["id"], nm["name"], price, bait_want, now, now)).lastrowid
                             c.execute("UPDATE names SET listing_id=? WHERE id=?", (lid, nm["id"]))
                             st["created"] += 1
                     free[sid] -= 1

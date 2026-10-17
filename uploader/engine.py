@@ -26,7 +26,7 @@ def listing_targets(db, f):
     cond = "l.status IN ('planned','fail')"
     where = (where + f" AND {cond}") if where else f" WHERE {cond}"
     return db.q(f"""SELECT l.id, l.store_id, l.source_id, l.name, l.price, l.status, l.message, l.op, l.round,
-        l.origin_no, l.channel_no, l.seller_code, l.registered_at, CASE WHEN l.op='delete' THEN 0 ELSE s.image_count END AS image_count
+        l.origin_no, l.channel_no, l.seller_code, l.registered_at, l.bait_want, CASE WHEN l.op='delete' THEN 0 ELSE s.image_count END AS image_count
         FROM listings l JOIN sources s ON s.id=l.source_id{where} ORDER BY l.id""", args)
 
 
@@ -319,8 +319,8 @@ class Runner:
             code = seller_code(cfg, store, t)
             # 도둑방지: 처음 올릴 때 가격을 높여 둠 (나중에 원래 가격으로)
             bait_amt = bait.applies(cfg, t, op)
-            kw = dict(name=t["name"], price=t["price"] + bait_amt, as_phone=store.get("as_phone") or cfg.get("as_phone"),
-                      seller_code=code)
+            kw = dict(name=t["name"], price=t["price"], bait=bait_amt,
+                      as_phone=store.get("as_phone") or cfg.get("as_phone"), seller_code=code)
             convert.build_body(row, cfg, cat_id, **kw)  # 이미지 올리기 전에 빠진 값부터 확인
 
             thumbs = convert.thumbnails(row)[:10]
@@ -341,8 +341,6 @@ class Runner:
             self.db.set_listing(lid, "success", op="create", stage="", message=" / ".join(notes), seconds=sec,
                                 seller_code=code, registered_at=time.time(),
                                 bait=bait_amt, bait_state="on" if bait_amt else "", bait_note="", bait_restored_at=None,
-                                bait_checked_at=None,
-                                bait_until=time.time() + float(cfg.get("bait_days") or 7) * 86400 if bait_amt else None,
                                 origin_no=str(res.get("originProductNo", "")),
                                 channel_no=str(res.get("smartstoreChannelProductNo", "")))
             what = "최신화" if op == "refresh" else "등록"

@@ -132,7 +132,6 @@ App.page("listings", {
         <button class="btn" id="la-lock" ${n ? "" : "disabled"} title="판매 이력과 상관없이 지우지 못하게 잠금">잠금</button>
         <button class="btn ghost" id="la-unlock" ${n ? "" : "disabled"} title="직접 건 잠금을 풂 (판매 이력으로 걸린 잠금은 그대로)">잠금 풀기</button>
         ${this.f.status === "bait" ? `<span class="ab-sep"></span>
-        <button class="btn" id="la-watch" ${n ? "" : "disabled"} title="고른 복사본의 상품명으로 네이버 쇼핑을 검색해 베낀 상품 찾기">베낀 상품 찾기</button>
         <button class="btn primary" id="la-restore" ${n ? "" : "disabled"} title="높여 둔 가격을 지금 원래 가격으로">원래 가격으로</button>` : ""}
       </div>`;
   },
@@ -303,7 +302,6 @@ App.page("listings", {
       if (id === "la-refresh") this.schedule("refresh");
       if (id === "la-lock" || id === "la-unlock") this.lock(id === "la-lock");
       if (id === "la-restore") App.startTask(App.api("/api/bait/restore", { json: this.selAll ? { filter: this.query() } : { ids: [...this.sel] } }));
-      if (id === "la-watch") App.startTask(App.api("/api/bait/watch", { json: this.selAll ? {} : { ids: [...this.sel] } }));
       if (id === "la-delete") this.schedule("delete");
       if (id === "la-cancel") {
         if (!confirm("고른 건 중 대기·실패 할 일을 취소할까요?\n새 등록이면 계획을 지우고 이름을 후보로 돌립니다. 최신화·내리기면 판매 중으로 되돌립니다.")) return;
@@ -347,22 +345,24 @@ App.page("listings", {
               <dt>판매자 관리코드</dt><dd>${esc(l.seller_code || l.next_seller_code)} <span class="muted">(${l.round}회차${l.seller_code ? "" : ", 등록하면 붙음"})</span></dd>
               <dt>원본</dt><dd>#${l.source_id} ${esc(l.source_name)}</dd>
               <dt>판매가</dt><dd>${num(l.price)}원 <span class="muted">(원본가 ${num(l.source_price)}원)</span>
-                ${l.bait_state === "on" ? `<br><span class="flag bad">도둑방지 중</span> 네이버에는 <b>${num(l.price + l.bait)}원</b> · ${ymd(l.bait_until)}에 원래 가격으로` : ""}
+                ${l.bait_state === "on" ? `<br><span class="flag bad">도둑방지 중</span> 네이버에는 <b>${num(l.price + l.bait)}원</b> <button class="btn" id="d-restore">원래 가격으로</button>` : ""}
+                ${!l.origin_no && l.status !== "deleted" ? `<br><span class="muted">${l.bait_want ? `도둑방지로 올림 (+${num(App.state.settings.bait_amount)}원, 처음 등록일 때)` : "도둑방지 없이 올림"}</span>` : ""}
                 ${l.bait_state === "restored" ? `<br><span class="muted">도둑방지 끝 · ${ymd(l.bait_restored_at)} 원래 가격으로 (${esc(l.bait_note)})</span>` : ""}
                 ${l.bait_state === "fail" ? `<br><span class="flag bad">${esc(l.bait_note)}</span>` : ""}</dd>
               <dt>같은 원본</dt><dd>${l.siblings.length ? l.siblings.map((x) => `${esc(x.store_name)} · ${esc(x.name)} <span class="muted">(${STATUS[x.status] || x.status})</span>`).join("<br>") : "다른 스토어에는 없음"}</dd></dl>`
             + `<div class="notice ${l.locked ? "info" : ""} lock-box"><div><b>${l.locked ? "잠금" : "잠금 아님"}</b>${l.locked ? ` · ${esc(l.lock_note)} · 최신화·내리기로 지우지 않습니다` : " · 최신화·내리기 가능"}
                 ${l.cancel_count ? `<br><span class="muted">취소·반품 ${num(l.cancel_count)}개는 판매로 세지 않음 (설정에서 바꿈)</span>` : ""}</div>
                 <button class="btn" id="d-lock">${l.manual_lock ? "직접 잠금 풀기" : "직접 잠금"}</button></div>`
-            + (l.copycats.length ? `<div><h3 class="sec-title">베낀 것으로 보이는 상품 ${l.copycats.length}개</h3><table class="opt-table"><tr><th>스토어</th><th>상품명</th><th class="r">가격</th><th>찾은 때</th></tr>
-              ${l.copycats.map((c) => `<tr><td>${esc(c.mall)}</td><td><a href="${esc(c.link)}" target="_blank" rel="noopener">${esc(c.title)}</a> <span class="muted">(${Math.round(c.similarity * 100)}% 같음)</span></td>
-              <td class="r">${num(c.price)}원</td><td>${ymd(c.found_at)}${c.registered_at ? ` <span class="muted">(올리고 ${((c.found_at - c.registered_at) / 86400).toFixed(1)}일)</span>` : ""}</td></tr>`).join("")}</table></div>` : "")
             + (l.orders.length ? `<div><h3 class="sec-title">주문 (판매 ${num(l.sold_count)}개${l.cancel_count ? ` · 취소·반품 ${num(l.cancel_count)}개` : ""})</h3><table class="opt-table"><tr><th>주문</th><th>수량</th><th>결제일</th><th>가져온 곳</th></tr>
               ${l.orders.map((o) => `<tr><td>${esc(o.order_key.replace(/^file:/, ""))}<div class="p-sub">${esc(o.status)}</div></td><td>${num(o.quantity)}</td><td>${ymd(o.ordered_at)}</td>
               <td>${o.source === "naver" ? "네이버 주문" : "주문 파일"}</td></tr>`).join("")}</table></div>` : "")
             + (l.history.length ? `<div><h3 class="sec-title">지난 회차</h3><table class="opt-table"><tr><th>회차</th><th>관리코드</th><th>상품번호</th><th>올린 날</th><th>지운 날</th></tr>
               ${l.history.map((h) => `<tr><td>${h.round}</td><td>${esc(h.seller_code)}</td><td>${esc(h.channel_no)}</td><td>${ymd(h.registered_at)}</td>
               <td>${ymd(h.deleted_at)} <span class="muted">${h.reason === "refresh" ? "최신화" : "내리기"}</span></td></tr>`).join("")}</table></div>` : "");
+          $("#d-restore", b)?.addEventListener("click", async () => {
+            const r = await App.startTask(App.api("/api/bait/restore", { json: { ids: [id] } }));
+            if (r) App.on("task-done", function h(t) { if (t.kind === "bait") { App.off("task-done", h); App.pages.listings.openListing(id); } });
+          });
           $("#d-lock", b)?.addEventListener("click", async () => {
             const r = await this.lock(!l.manual_lock, [id]);
             if (r) { if ($("#l-rows")) this.load(); this.openListing(id); }
