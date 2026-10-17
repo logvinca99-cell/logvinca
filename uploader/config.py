@@ -1,4 +1,7 @@
-"""설정. data/config.json에 저장하고, 없는 항목은 DEFAULTS로 채운다."""
+"""공통 설정. data/config.json에 저장하고, 없는 항목은 DEFAULTS로 채운다.
+
+스토어별 값(API 키, 스토어 주소, A/S 전화)은 설정이 아니라 db의 stores 표에 있다.
+"""
 
 import json
 import os
@@ -9,38 +12,59 @@ DATA_DIR = os.environ.get("UPLOADER_DATA_DIR") or os.path.join(ROOT, "data")
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
 
 DEFAULTS = {
-    # 커머스API센터에서 받은 값
-    "client_id": "",
-    "client_secret": "",
-    # 등록 후 '스토어에서 보기' 링크용. 예: https://smartstore.naver.com/mystore
-    "store_url": "",
-
+    # ── 상품 기본값 (스토어에 A/S 전화가 없으면 이 값)
     "as_phone": "",
     "as_guide": "상세페이지 참조",
     "importer": "상세페이지 참조",
     "origin_default": "중국",
     "origin_codes": {"중국": "0200037"},
-
     "delivery_company": "CJGLS",
     "return_fee": 5000,
     "exchange_fee": 10000,
 
-    # 이미지를 네이버 서버에 다시 올림. 대표/추가 이미지는 API가 요구하므로 항상 올린다.
-    "reupload_detail_images": True,
-    # 상세설명의 <video> 태그 처리: keep(그대로) / remove(지움)
-    "detail_video": "keep",
-    # 동시에 등록할 상품 수. 429(호출 초과)가 잦으면 줄인다.
-    "workers": 2,
-    # 상품 하나 등록 후 쉬는 시간(초)
-    "delay_sec": 0.5,
-    # 같은 판매자코드가 이미 등록돼 있으면 건너뜀
-    "skip_registered_code": True,
+    # ── 가격: 스토어마다 원본가에서 ±price_jitter_pct% 안에서 정하고 price_round 단위로 맞춤.
+    #    같은 상품·같은 스토어는 언제 계획해도 같은 가격이 나온다.
+    "price_jitter_pct": 3.0,
+    "price_round": 100,
 
-    # 모든 상품에 덧붙일 API 필드
+    # ── 상품명
+    # 원본 상품명을 그대로 쓰는 것도 허용할지 (원본 스토어와 이름이 같아짐)
+    "use_original_name": False,
+    # 재조합: 이름 후보가 모자라면 계획 만들 때 자동으로 만든다
+    "auto_recombine": True,
+    "name_max_len": 50,
+    # 재조합에 상품태그 단어를 섞을지 (엑셀 태그가 상품과 안 맞는 경우가 있어 기본 꺼짐)
+    "recombine_use_tags": False,
+    # 같은 원본의 다른 이름과 단어가 이만큼 이상 겹치면 너무 비슷하다고 보고 버림 (0~1)
+    "recombine_max_overlap": 0.85,
+
+    # ── AI 상품명 (Claude API)
+    "anthropic_api_key": "",
+    "ai_model": "claude-opus-5-5",
+    "ai_effort": "low",
+    "ai_names_per_product": 5,
+    "ai_products_per_call": 20,
+    "ai_workers": 4,
+    "ai_guide": "",
+
+    # ── 이미지
+    # 상세페이지 이미지를 네이버 서버에 올릴지
+    "reupload_detail_images": True,
+    # 상세 이미지 주소가 이미 네이버 이미지 서버(pstatic.net)면 그대로 둠 (시간·용량 크게 절약)
+    "keep_pstatic_detail_images": True,
+    "detail_video": "keep",
+    # 내려받은 이미지를 디스크에 보관해 여러 스토어에 올릴 때 다시 받지 않음 (GB)
+    "image_cache_gb": 5,
+
+    # ── 속도
+    "workers_per_store": 2,
+    "max_parallel_stores": 33,
+    "delay_sec": 0.3,
+
     "extra": {},
 }
 
-SECRET_KEYS = ("client_secret",)
+SECRET_KEYS = ("anthropic_api_key",)
 _lock = threading.Lock()
 
 
@@ -71,11 +95,7 @@ def save(values):
 
 
 def public(cfg):
-    """화면에 보낼 설정. 시크릿은 있는지 여부만 알린다."""
     out = {k: v for k, v in cfg.items() if k not in SECRET_KEYS}
-    out["has_secret"] = bool(cfg.get("client_secret"))
+    for k in SECRET_KEYS:
+        out["has_" + k] = bool(cfg.get(k))
     return out
-
-
-def has_keys(cfg):
-    return bool(cfg.get("client_id", "").strip() and cfg.get("client_secret", "").strip())

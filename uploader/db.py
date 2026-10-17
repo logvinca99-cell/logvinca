@@ -1,18 +1,22 @@
-"""작업 기록 (data/uploader.db, SQLite).
+"""기록 저장소 (data/inventory.db, SQLite).
 
-batches   불러온 엑셀 하나 = 작업 하나
-products  엑셀 한 줄 = 상품 하나. 상태와 등록 결과를 담는다
-runs      [등록 시작]을 누를 때마다 한 줄. 걸린 시간·성공/실패 수
-images    원본 이미지 주소 → 네이버 이미지 주소 (같은 이미지는 다시 올리지 않음)
+sources   원본 상품 (인벤토리). 판매자코드로 구분하고, 다시 불러오면 내용을 갱신한다.
+          엑셀 한 줄 전체는 압축해서 data에 둔다 (상품 하나 약 2~3KB).
+names     상품명 후보. norm(정규화한 이름)이 표 전체에서 UNIQUE → 모든 스토어에서 이름이 겹치지 않음.
+          listing_id가 있으면 그 등록에 쓰인 이름.
+stores    스마트스토어 (API 키, 한도)
+listings  어떤 원본을 어느 스토어에 어떤 이름·가격으로 올리는지 (스토어+원본은 한 번만)
+plans     한 번에 만든 등록 묶음
+runs      [등록 시작]을 누를 때마다 한 줄
+images    원본 이미지 주소 → 네이버 이미지 주소. scope는 스토어 번호 (상세 이미지는 0: 모든 스토어 공용)
+imports   엑셀 불러오기 기록
 
-상품 상태(status)
-    ready     검사 통과, 등록 대기
-    invalid   검사 오류 (등록 안 함)
-    duplicate 같은 판매자코드가 이미 등록됨
-    queued    이번 실행에서 등록 차례를 기다림
-    running   등록 중
-    success   등록 완료
-    fail      등록 실패 (다시 시도 가능)
+등록 상태(listings.status)
+    planned  계획됨 (등록 대기)
+    queued   이번 실행에서 차례를 기다림
+    running  등록 중
+    success  등록 완료
+    fail     실패 (다시 시도 가능)
 """
 
 import json
@@ -20,72 +24,143 @@ import os
 import sqlite3
 import threading
 import time
+import zlib
 
 from . import config
 
-DB_PATH = os.path.join(config.DATA_DIR, "uploader.db")
+DB_PATH = os.path.join(config.DATA_DIR, "inventory.db")
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS batches (
+CREATE TABLE IF NOT EXISTS imports (
     id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL,
-    created_at REAL NOT NULL
+    kind TEXT NOT NULL,              -- products / names
+    file_name TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    total INTEGER NOT NULL DEFAULT 0,
+    added INTEGER NOT NULL DEFAULT 0,
+    updated INTEGER NOT NULL DEFAULT 0,
+    skipped INTEGER NOT NULL DEFAULT 0,
+    note TEXT NOT NULL DEFAULT ''
 );
-CREATE TABLE IF NOT EXISTS products (
+CREATE TABLE IF NOT EXISTS sources (
     id INTEGER PRIMARY KEY,
-    batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
-    idx INTEGER NOT NULL,
-    row_key TEXT, seller_code TEXT, name TEXT, price INTEGER, category TEXT, thumb TEXT,
-    option_count INTEGER, image_count INTEGER, has_video INTEGER,
-    data TEXT NOT NULL,
+    source_key TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    price INTEGER NOT NULL,
+    category TEXT NOT NULL,
+    thumb TEXT NOT NULL,
+    option_count INTEGER NOT NULL,
+    image_count INTEGER NOT NULL,
+    has_video INTEGER NOT NULL,
+    tags TEXT NOT NULL DEFAULT '',
+    data BLOB NOT NULL,
     errors TEXT NOT NULL DEFAULT '[]',
     warnings TEXT NOT NULL DEFAULT '[]',
+    valid INTEGER NOT NULL,
+    n_listings INTEGER NOT NULL DEFAULT 0,   -- 이 원본으로 만든 등록 수
+    n_success INTEGER NOT NULL DEFAULT 0,
+    n_free_names INTEGER NOT NULL DEFAULT 0, -- 아직 안 쓴 이름 후보 수
+    import_id INTEGER,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sources_cat ON sources(category);
+CREATE INDEX IF NOT EXISTS sources_listings ON sources(n_listings);
+CREATE TABLE IF NOT EXISTS names (
+    id INTEGER PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    norm TEXT NOT NULL UNIQUE,
+    origin TEXT NOT NULL,            -- original / recombine / import / ai / manual
+    listing_id INTEGER,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS names_source ON names(source_id, listing_id);
+CREATE TABLE IF NOT EXISTS stores (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    client_id TEXT NOT NULL DEFAULT '',
+    client_secret TEXT NOT NULL DEFAULT '',
+    store_url TEXT NOT NULL DEFAULT '',
+    as_phone TEXT NOT NULL DEFAULT '',
+    capacity INTEGER NOT NULL DEFAULT 10000,
+    naver_count INTEGER,             -- 마지막 확인 때 네이버에 있던 상품 수
+    naver_count_at REAL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    memo TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS plans (
+    id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    note TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS listings (
+    id INTEGER PRIMARY KEY,
+    store_id INTEGER NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    plan_id INTEGER REFERENCES plans(id) ON DELETE SET NULL,
+    name_id INTEGER NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    price INTEGER NOT NULL,
     status TEXT NOT NULL,
     stage TEXT NOT NULL DEFAULT '',
     message TEXT NOT NULL DEFAULT '',
     origin_no TEXT NOT NULL DEFAULT '',
     channel_no TEXT NOT NULL DEFAULT '',
     seconds REAL,
-    updated_at REAL NOT NULL
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    UNIQUE(store_id, source_id)
 );
-CREATE INDEX IF NOT EXISTS products_batch ON products(batch_id, idx);
-CREATE INDEX IF NOT EXISTS products_code ON products(seller_code, status);
+CREATE INDEX IF NOT EXISTS listings_status ON listings(status, store_id);
+CREATE INDEX IF NOT EXISTS listings_plan ON listings(plan_id);
+CREATE INDEX IF NOT EXISTS listings_source ON listings(source_id);
 CREATE TABLE IF NOT EXISTS runs (
     id INTEGER PRIMARY KEY,
-    batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
     started_at REAL NOT NULL,
     ended_at REAL,
     total INTEGER NOT NULL,
+    stores INTEGER NOT NULL DEFAULT 0,
     ok INTEGER NOT NULL DEFAULT 0,
     fail INTEGER NOT NULL DEFAULT 0,
     images INTEGER NOT NULL DEFAULT 0,
     note TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS images (
-    src TEXT PRIMARY KEY,
+    scope INTEGER NOT NULL,
+    src TEXT NOT NULL,
     naver_url TEXT NOT NULL,
-    created_at REAL NOT NULL
+    created_at REAL NOT NULL,
+    PRIMARY KEY(scope, src)
 );
 """
 
-PRODUCT_LIST_COLS = ("id, idx, row_key, seller_code, name, price, category, thumb, option_count, "
-                     "image_count, has_video, errors, warnings, status, stage, message, origin_no, "
-                     "channel_no, seconds, updated_at")
+
+def pack(row):
+    return zlib.compress(json.dumps(row, ensure_ascii=False, default=str).encode(), 6)
+
+
+def unpack(blob):
+    return json.loads(zlib.decompress(blob).decode())
 
 
 class DB:
     def __init__(self, path=DB_PATH):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         self.lock = threading.RLock()
-        self.c = sqlite3.connect(path, check_same_thread=False)
+        self.c = sqlite3.connect(path, check_same_thread=False, timeout=30)
         self.c.row_factory = sqlite3.Row
         self.c.execute("PRAGMA journal_mode=WAL")
+        self.c.execute("PRAGMA synchronous=NORMAL")
         self.c.execute("PRAGMA foreign_keys=ON")
+        self.c.execute("PRAGMA cache_size=-65536")  # 64MB
         self.c.executescript(SCHEMA)
-        # 프로그램이 등록 도중 꺼졌으면 '등록 중'으로 남은 상품을 실패로 돌린다.
-        self.c.execute("UPDATE products SET status='fail', stage='', message='프로그램이 등록 도중 종료됨' "
-                       "WHERE status IN ('running')")
-        self.c.execute("UPDATE products SET status='ready', stage='' WHERE status='queued'")
+        # 프로그램이 등록 도중 꺼졌으면 남은 상태를 되돌린다.
+        self.c.execute("UPDATE listings SET status='fail', stage='', message='프로그램이 등록 도중 종료됨' "
+                       "WHERE status='running'")
+        self.c.execute("UPDATE listings SET status='planned', stage='' WHERE status='queued'")
         self.c.execute("UPDATE runs SET ended_at=started_at WHERE ended_at IS NULL")
         self.c.commit()
 
@@ -93,116 +168,137 @@ class DB:
         with self.lock:
             return [dict(r) for r in self.c.execute(sql, args).fetchall()]
 
+    def one(self, sql, args=()):
+        rows = self.q(sql, args)
+        return rows[0] if rows else None
+
     def x(self, sql, args=()):
         with self.lock:
             cur = self.c.execute(sql, args)
             self.c.commit()
             return cur.lastrowid
 
-    # ── 작업
+    def tx(self):
+        """with db.tx() as c: ... 여러 줄을 한 번에 쓴다."""
+        return _Tx(self)
 
-    def add_batch(self, name, items):
-        """items: [(summary, row, errors, warnings, status, message)]"""
-        now = time.time()
-        with self.lock:
-            bid = self.c.execute("INSERT INTO batches(name, created_at) VALUES(?, ?)", (name, now)).lastrowid
-            self.c.executemany(
-                "INSERT INTO products(batch_id, idx, row_key, seller_code, name, price, category, thumb, "
-                "option_count, image_count, has_video, data, errors, warnings, status, message, updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                [(bid, i, s["row_key"], s["seller_code"], s["name"], s["price"], s["category"], s["thumb"],
-                  s["option_count"], s["image_count"], int(s["has_video"]),
-                  json.dumps(row, ensure_ascii=False, default=str),
-                  json.dumps(err, ensure_ascii=False), json.dumps(warn, ensure_ascii=False), status, msg, now)
-                 for i, (s, row, err, warn, status, msg) in enumerate(items)])
-            self.c.commit()
-        return bid
+    # ── 원본
 
-    def batches(self):
-        return self.q("""
-            SELECT b.id, b.name, b.created_at, COUNT(p.id) AS total,
-                   SUM(p.status='success') AS success, SUM(p.status='fail') AS fail,
-                   SUM(p.status='invalid') AS invalid, SUM(p.status IN ('ready','queued','running')) AS ready,
-                   SUM(p.status='duplicate') AS duplicate,
-                   (SELECT MAX(started_at) FROM runs r WHERE r.batch_id=b.id) AS last_run
-            FROM batches b LEFT JOIN products p ON p.batch_id=b.id
-            GROUP BY b.id ORDER BY b.id DESC""")
+    def source_row(self, sid):
+        r = self.one("SELECT data FROM sources WHERE id=?", (sid,))
+        return unpack(r["data"]) if r else None
 
-    def delete_batch(self, bid):
-        self.x("DELETE FROM batches WHERE id=?", (bid,))
+    def recount_sources(self, ids=None):
+        """n_listings / n_success / n_free_names 다시 세기. ids가 없으면 전체."""
+        where, args = "", ()
+        if ids is not None:
+            ids = list(ids)
+            if not ids:
+                return
+            for i in range(0, len(ids), 900):
+                chunk = ids[i:i + 900]
+                self._recount(f"WHERE id IN ({','.join('?' * len(chunk))})", chunk)
+            return
+        self._recount(where, args)
 
-    # ── 상품
+    def _recount(self, where, args):
+        self.x(f"""UPDATE sources SET
+            n_listings=(SELECT COUNT(*) FROM listings l WHERE l.source_id=sources.id),
+            n_success=(SELECT COUNT(*) FROM listings l WHERE l.source_id=sources.id AND l.status='success'),
+            n_free_names=(SELECT COUNT(*) FROM names n WHERE n.source_id=sources.id AND n.listing_id IS NULL
+                          AND (n.origin!='original' OR ?))
+            {where}""", (int(bool(config.load().get("use_original_name"))), *args))
 
-    def products(self, bid):
-        rows = self.q(f"SELECT {PRODUCT_LIST_COLS} FROM products WHERE batch_id=? ORDER BY idx", (bid,))
+    # ── 스토어
+
+    def stores(self, with_secret=False):
+        rows = self.q("""
+            SELECT s.*,
+              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.status='success') AS n_success,
+              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.status IN ('planned','queued','running')) AS n_pending,
+              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.status='fail') AS n_fail,
+              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.status='success'
+                 AND s.naver_count_at IS NOT NULL AND l.updated_at > s.naver_count_at) AS n_success_since
+            FROM stores s ORDER BY s.id""")
         for r in rows:
-            r["errors"], r["warnings"] = json.loads(r["errors"]), json.loads(r["warnings"])
+            r["has_keys"] = bool(r["client_id"] and r["client_secret"])
+            # 사용량 = 네이버에 있던 수(확인했다면) + 그 뒤 우리가 올린 수 + 대기 중
+            base = (r["naver_count"] + r["n_success_since"]) if r["naver_count"] is not None else r["n_success"]
+            r["used"] = base + r["n_pending"]
+            r["free"] = max(0, r["capacity"] - r["used"])
+            if not with_secret:
+                r.pop("client_secret")
         return rows
 
-    def product(self, pid):
-        rows = self.q("SELECT * FROM products WHERE id=?", (pid,))
-        if not rows:
-            return None
-        r = rows[0]
-        for k in ("data", "errors", "warnings"):
-            r[k] = json.loads(r[k])
-        return r
+    def store(self, sid, with_secret=False):
+        return next((s for s in self.stores(with_secret) if s["id"] == sid), None)
 
-    def set_status(self, pid, status, **fields):
-        fields = {"status": status, "updated_at": time.time(), **fields}
+    # ── 이미지
+
+    def image_map(self, scope, srcs):
+        out, srcs = {}, list(srcs)
+        for i in range(0, len(srcs), 500):
+            chunk = srcs[i:i + 500]
+            for r in self.q(f"SELECT src, naver_url FROM images WHERE scope=? AND src IN ({','.join('?' * len(chunk))})",
+                            (scope, *chunk)):
+                out[r["src"]] = r["naver_url"]
+        return out
+
+    def save_images(self, scope, pairs):
+        now = time.time()
+        with self.lock:
+            self.c.executemany("INSERT OR REPLACE INTO images(scope, src, naver_url, created_at) VALUES(?,?,?,?)",
+                               [(scope, s, n, now) for s, n in pairs])
+            self.c.commit()
+
+    # ── 등록
+
+    def set_listing(self, lid, status=None, **fields):
+        if status:
+            fields["status"] = status
+        fields["updated_at"] = time.time()
         cols = ", ".join(f"{k}=?" for k in fields)
-        self.x(f"UPDATE products SET {cols} WHERE id=?", (*fields.values(), pid))
+        self.x(f"UPDATE listings SET {cols} WHERE id=?", (*fields.values(), lid))
 
-    def set_stage(self, pid, stage):
-        self.x("UPDATE products SET stage=? WHERE id=?", (stage, pid))
-
-    def registered_codes(self, exclude_batch=None):
-        rows = self.q("SELECT DISTINCT seller_code FROM products WHERE status='success' AND seller_code!='' "
-                      "AND batch_id IS NOT ?", (exclude_batch,))
-        return {r["seller_code"] for r in rows}
-
-    def recent_seconds(self, limit=50):
-        """최근 등록에 걸린 시간 (예상 시간 계산용)."""
-        rows = self.q("SELECT seconds FROM products WHERE status='success' AND seconds IS NOT NULL "
+    def recent_seconds(self, limit=200):
+        rows = self.q("SELECT seconds FROM listings WHERE status='success' AND seconds IS NOT NULL "
                       "ORDER BY updated_at DESC LIMIT ?", (limit,))
         return [r["seconds"] for r in rows]
 
-    # ── 실행 기록
-
-    def start_run(self, bid, total, note=""):
-        return self.x("INSERT INTO runs(batch_id, started_at, total, note) VALUES(?,?,?,?)",
-                      (bid, time.time(), total, note))
+    def start_run(self, total, stores, note=""):
+        return self.x("INSERT INTO runs(started_at, total, stores, note) VALUES(?,?,?,?)",
+                      (time.time(), total, stores, note))
 
     def end_run(self, rid, ok, fail, images):
         self.x("UPDATE runs SET ended_at=?, ok=?, fail=?, images=? WHERE id=?",
                (time.time(), ok, fail, images, rid))
 
-    def runs(self, limit=100):
-        return self.q("SELECT r.*, b.name AS batch_name FROM runs r JOIN batches b ON b.id=r.batch_id "
-                      "ORDER BY r.id DESC LIMIT ?", (limit,))
-
-    # ── 이미지
-
-    def image_map(self, srcs):
-        if not srcs:
-            return {}
-        out = {}
-        srcs = list(srcs)
-        for i in range(0, len(srcs), 500):
-            chunk = srcs[i:i + 500]
-            marks = ",".join("?" * len(chunk))
-            for r in self.q(f"SELECT src, naver_url FROM images WHERE src IN ({marks})", chunk):
-                out[r["src"]] = r["naver_url"]
-        return out
-
-    def save_images(self, pairs):
-        now = time.time()
-        with self.lock:
-            self.c.executemany("INSERT OR REPLACE INTO images(src, naver_url, created_at) VALUES(?,?,?)",
-                               [(s, n, now) for s, n in pairs])
-            self.c.commit()
-
     def stats(self):
-        r = self.q("SELECT COUNT(*) AS n FROM images")[0]
-        p = self.q("SELECT COUNT(*) AS n FROM products WHERE status='success'")[0]
-        return {"images": r["n"], "registered": p["n"]}
+        return self.one("""SELECT
+            (SELECT COUNT(*) FROM sources) AS sources,
+            (SELECT COUNT(*) FROM sources WHERE valid=1) AS sources_valid,
+            (SELECT COUNT(*) FROM names) AS names,
+            (SELECT COUNT(*) FROM names WHERE listing_id IS NULL) AS names_free,
+            (SELECT COUNT(*) FROM listings WHERE status='success') AS registered,
+            (SELECT COUNT(*) FROM listings WHERE status IN ('planned','queued','running')) AS pending,
+            (SELECT COUNT(*) FROM listings WHERE status='fail') AS failed,
+            (SELECT COUNT(*) FROM images) AS images,
+            (SELECT COUNT(*) FROM stores) AS stores""")
+
+
+class _Tx:
+    def __init__(self, db):
+        self.db = db
+
+    def __enter__(self):
+        self.db.lock.acquire()
+        return self.db.c
+
+    def __exit__(self, exc_type, *_):
+        try:
+            if exc_type:
+                self.db.c.rollback()
+            else:
+                self.db.c.commit()
+        finally:
+            self.db.lock.release()

@@ -4,6 +4,7 @@
 """
 
 import copy
+import hashlib
 import re
 
 REF = "상세페이지 참조"
@@ -82,12 +83,22 @@ def option_count(row):
         + len(o.get("optionStandards") or [])
 
 
+def is_naver_image(url):
+    return "pstatic.net/" in url
+
+
+def detail_images_to_upload(row, cfg):
+    """네이버 서버에 올릴 상세 이미지. 이미 네이버 이미지 서버 주소면 설정에 따라 그대로 둔다."""
+    if not cfg.get("reupload_detail_images", True):
+        return []
+    keep = cfg.get("keep_pstatic_detail_images", True)
+    thumbs = set(thumbnails(row)[:10])
+    return [u for u in detail_images(row) if u not in thumbs and not (keep and is_naver_image(u))]
+
+
 def images_to_upload(row, cfg):
     """네이버 서버에 올릴 원본 이미지 주소 목록 (썸네일 앞, 중복 없음)."""
-    urls = thumbnails(row)[:10]
-    if cfg.get("reupload_detail_images", True):
-        urls += [u for u in detail_images(row) if u not in urls]
-    return urls
+    return thumbnails(row)[:10] + detail_images_to_upload(row, cfg)
 
 
 def summary(row, cfg):
@@ -200,15 +211,28 @@ def certification_exclude(certs):
     return out
 
 
-def build_body(row, cfg, category_id, url_map=None):
-    """url_map: 원본 이미지 주소 → 네이버 이미지 주소. 없는 주소는 원본 그대로 쓴다."""
+def adjusted_price(price, key, cfg):
+    """원본가를 ±price_jitter_pct% 안에서 바꾼다. key(상품+스토어)가 같으면 항상 같은 값."""
+    pct = float(cfg.get("price_jitter_pct") or 0)
+    unit = max(1, to_int(cfg.get("price_round"), 100))
+    if price <= 0:
+        return price
+    h = int(hashlib.sha1(str(key).encode()).hexdigest()[:8], 16) / 0xFFFFFFFF  # 0~1
+    p = price * (1 + (h * 2 - 1) * pct / 100)
+    return max(unit, int(round(p / unit)) * unit)
+
+
+def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_phone=None):
+    """url_map: 원본 이미지 주소 → 네이버 이미지 주소. 없는 주소는 원본 그대로 쓴다.
+    name / price / as_phone: 스토어별로 바꿔 쓸 값 (없으면 엑셀 값)."""
     url_map = url_map or {}
     errors, _ = validate(row, cfg)
     if errors:
         raise ConvertError(" / ".join(errors))
 
-    name = str(row["상품명"]).strip()
-    sale_price = to_int(row.get("판매가"))
+    base_price = to_int(row.get("판매가"))
+    name = str(name or row["상품명"]).strip()
+    sale_price = price or base_price
     images = [url_map.get(u, u) for u in thumbnails(row)[:10]]
 
     fee = to_int(row.get("배송비"))
@@ -218,7 +242,7 @@ def build_body(row, cfg, category_id, url_map=None):
     model = row.get("모델명") or REF
     brand = row.get("브랜드") or ""
     maker = row.get("제조사") or brand or REF
-    phone = cfg.get("as_phone") or ""
+    phone = as_phone or cfg.get("as_phone") or ""
 
     detail = {
         "naverShoppingSearchInfo": _strip_empty({"modelName": model, "brandName": brand,
@@ -270,10 +294,12 @@ def build_body(row, cfg, category_id, url_map=None):
         origin["images"]["optionalImages"] = [{"url": u} for u in images[1:]]
 
     discount = to_int(row.get("할인가"))
-    if 0 < discount < sale_price:
-        # 엑셀의 할인가는 '할인된 판매가'로 본다.
-        origin["customerBenefit"] = {"immediateDiscountPolicy": {
-            "discountMethod": {"value": sale_price - discount, "unitType": "WON"}}}
+    if 0 < discount < base_price:
+        # 엑셀의 할인가는 '할인된 판매가'로 본다. 가격을 바꿨으면 할인 금액도 같은 비율로.
+        off = round((base_price - discount) * sale_price / base_price)
+        if 0 < off < sale_price:
+            origin["customerBenefit"] = {"immediateDiscountPolicy": {
+                "discountMethod": {"value": off, "unitType": "WON"}}}
 
     body = {
         "originProduct": origin,

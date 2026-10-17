@@ -5,6 +5,7 @@
 """
 
 import base64
+import hashlib
 import json
 import os
 import random
@@ -65,10 +66,111 @@ def cached_categories():
     return _load_category_cache()
 
 
+class ImageCache:
+    """내려받은 이미지를 디스크에 보관한다. 같은 이미지를 여러 스토어에 올릴 때 다시 받지 않는다.
+    용량이 max_gb를 넘으면 오래된 것부터 지운다."""
+
+    def __init__(self, max_gb):
+        self.dir = os.path.join(config.DATA_DIR, "imgcache")
+        self.max_bytes = int(float(max_gb or 0) * 1024 ** 3)
+        self.lock = threading.Lock()
+        self.size = None
+        self.writes = 0
+
+    def _path(self, url):
+        h = hashlib.sha1(url.encode()).hexdigest()
+        return os.path.join(self.dir, h[:2], h)
+
+    def get(self, url):
+        if not self.max_bytes:
+            return None
+        p = self._path(url)
+        try:
+            with open(p + ".type", encoding="utf-8") as f:
+                ctype = f.read()
+            with open(p, "rb") as f:
+                data = f.read()
+            os.utime(p)
+            return data, ctype
+        except OSError:
+            return None
+
+    def put(self, url, data, ctype):
+        if not self.max_bytes:
+            return
+        p = self._path(url)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "wb") as f:
+            f.write(data)
+        with open(p + ".type", "w", encoding="utf-8") as f:
+            f.write(ctype or "")
+        with self.lock:
+            if self.size is not None:
+                self.size += len(data)
+            self.writes += 1
+            if self.writes % 200 == 0:
+                self._trim()
+
+    def _trim(self):
+        files = []
+        for root, _, names in os.walk(self.dir):
+            for n in names:
+                if not n.endswith(".type"):
+                    fp = os.path.join(root, n)
+                    try:
+                        st = os.stat(fp)
+                        files.append((st.st_mtime, st.st_size, fp))
+                    except OSError:
+                        pass
+        self.size = sum(f[1] for f in files)
+        if self.size <= self.max_bytes:
+            return
+        files.sort()
+        for _, sz, fp in files:
+            if self.size <= self.max_bytes * 0.8:
+                break
+            for x in (fp, fp + ".type"):
+                try:
+                    os.remove(x)
+                except OSError:
+                    pass
+            self.size -= sz
+
+
+_image_cache = None
+
+
+def image_cache(cfg):
+    global _image_cache
+    if _image_cache is None or _image_cache.max_bytes != int(float(cfg.get("image_cache_gb") or 0) * 1024 ** 3):
+        _image_cache = ImageCache(cfg.get("image_cache_gb"))
+    return _image_cache
+
+
+_dl_local = threading.local()
+
+
+def download(url, cache=None):
+    """이미지 내려받기 (디스크 캐시 먼저)."""
+    if cache:
+        hit = cache.get(url)
+        if hit:
+            return hit
+    if not hasattr(_dl_local, "s"):
+        _dl_local.s = requests.Session()
+    r = _dl_local.s.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+    if r.status_code != 200 or not r.content:
+        raise ApiError(f"이미지 내려받기 실패({r.status_code}): {url}")
+    ctype = r.headers.get("Content-Type", "")
+    if cache:
+        cache.put(url, r.content, ctype)
+    return r.content, ctype
+
+
 class Client:
     def __init__(self, client_id, client_secret):
         if not client_id or not client_secret:
-            raise ApiError("설정에서 애플리케이션 ID / 시크릿을 먼저 넣어 주세요.")
+            raise ApiError("애플리케이션 ID / 시크릿이 없습니다.")
         self.client_id, self.client_secret = client_id.strip(), client_secret.strip()
         self._token, self._token_until = None, 0
         self._token_lock = threading.Lock()
@@ -146,11 +248,12 @@ class Client:
         _save_category_cache(table)
         return table
 
-    def download(self, url):
-        r = self.s.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
-        if r.status_code != 200 or not r.content:
-            raise ApiError(f"이미지 내려받기 실패({r.status_code}): {url}")
-        return r.content, r.headers.get("Content-Type", "")
+    def product_count(self):
+        """이 스토어에 등록된 상품 수 (판매중·중지 등 모두)."""
+        r = self.request("POST", "/v1/products/search", json={"page": 1, "size": 1})
+        if r.status_code != 200:
+            raise ApiError(f"상품 수 조회 실패: {explain_error(r)}")
+        return int(r.json().get("totalElements", 0))
 
     def upload_images(self, items, on_wait=None):
         """items: [(원본주소, 바이트, content-type)] 최대 10개 → 네이버 이미지 주소 목록."""
@@ -171,7 +274,9 @@ class Client:
 
 
 class FakeClient:
-    """네이버에 접속하지 않고 그럴듯한 지연과 가끔의 실패를 흉내 낸다."""
+    """네이버에 접속하지 않고 그럴듯한 지연과 가끔의 실패를 흉내 낸다. 이미지 내려받기도 흉내 낸다."""
+
+    fake = True
 
     def __init__(self, *_):
         self._n = 0
@@ -183,9 +288,8 @@ class FakeClient:
     def categories(self, refresh=False):
         return _load_category_cache() or {}
 
-    def download(self, url):
-        time.sleep(random.uniform(0.05, 0.2))
-        return b"fake", "image/jpeg"
+    def product_count(self):
+        return random.randint(0, 300)
 
     def upload_images(self, items, on_wait=None):
         time.sleep(random.uniform(0.3, 0.8))
@@ -201,7 +305,19 @@ class FakeClient:
             return {"originProductNo": 9000000000 + self._n, "smartstoreChannelProductNo": 8000000000 + self._n}
 
 
-def make_client(cfg):
+def make_client(store):
+    """store: db.store(..., with_secret=True)"""
     if os.environ.get("UPLOADER_FAKE_API") == "1":
         return FakeClient()
-    return Client(cfg.get("client_id", ""), cfg.get("client_secret", ""))
+    if not store.get("client_id") or not store.get("client_secret"):
+        raise ApiError(f"'{store.get('name')}' 스토어의 API 키가 없습니다. 스토어 화면에서 넣어 주세요.")
+    return Client(store["client_id"], store["client_secret"])
+
+
+def fake_download(url, cache=None):
+    time.sleep(random.uniform(0.05, 0.2))
+    return b"fake", "image/jpeg"
+
+
+def downloader():
+    return fake_download if os.environ.get("UPLOADER_FAKE_API") == "1" else download
