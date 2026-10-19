@@ -16,6 +16,7 @@
 """
 
 import json
+import os
 import re
 import threading
 import time
@@ -487,10 +488,57 @@ def _iter_entries(fh, name):
         for it in items:
             yield _entry_from_json(it)
     elif low.endswith(".xml"):
-        for _, el in ET.iterparse(fh, events=("end",)):
-            if el.tag == "item":
+        root = None
+        for ev, el in ET.iterparse(fh, events=("start", "end")):
+            if root is None:
+                root = el
+            if ev == "end" and el.tag == "item":
                 yield _entry_from_xml(el)
-                el.clear()
+                root.clear()  # 큰 파일(수십만 항목)도 메모리가 늘지 않게
+
+
+def dict_dir():
+    from . import config
+    d = os.path.join(config.DATA_DIR, "사전")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def dict_folder_new(db):
+    """사전 폴더에 있는데 아직 안 읽은(또는 바뀐) 파일들."""
+    done = json.loads((db.one("SELECT v FROM meta WHERE k='dict_folder_done'") or {"v": "{}"})["v"])
+    out = []
+    for n in sorted(os.listdir(dict_dir())):
+        if not n.lower().endswith((".zip", ".xml", ".json")):
+            continue
+        p = os.path.join(dict_dir(), n)
+        sig = f"{os.path.getsize(p)}:{int(os.path.getmtime(p))}"
+        if done.get(n) != sig:
+            out.append((n, p, sig))
+    return out
+
+
+def import_dict_folder(db, progress=None, should_stop=None):
+    """data/사전 폴더의 사전 파일(zip 그대로 둬도 됨)을 읽는다. 다 읽은 파일은 기억해 다시 읽지 않는다."""
+    files = dict_folder_new(db)
+    if not files:
+        raise RuntimeError(f"읽을 새 사전 파일이 없습니다. 받은 zip을 압축 풀지 말고 이 폴더에 넣으세요: {dict_dir()}")
+    total = {"files": 0, "entries": 0, "nouns": 0, "syn_words": 0, "names": []}
+    for name, path, sig in files:
+        if should_stop and should_stop():
+            break
+        with open(path, "rb") as fh:
+            st = import_dictionary(db, fh, name, progress=progress, should_stop=should_stop)
+        done = json.loads((db.one("SELECT v FROM meta WHERE k='dict_folder_done'") or {"v": "{}"})["v"])
+        done[name] = sig
+        db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('dict_folder_done', ?)", (json.dumps(done, ensure_ascii=False),))
+        for k in ("files", "entries"):
+            total[k] += st[k]
+        total["nouns"], total["syn_words"] = st["nouns"], st["syn_words"]
+        total["names"].append(name)
+    total["nouns"] = db.one("SELECT COUNT(*) AS n FROM word_dict WHERE in_dict=1")["n"]
+    total["syn_words"] = db.one("SELECT COUNT(*) AS n FROM dict_syn")["n"]
+    return total
 
 
 def import_dictionary(db, fh, filename, progress=None, should_stop=None):
@@ -514,7 +562,7 @@ def import_dictionary(db, fh, filename, progress=None, should_stop=None):
         with opener() as f:
             for word, is_noun, rels, unit in _iter_entries(f, name):
                 stats["entries"] += 1
-                if unit and unit != "단어":
+                if unit and unit not in ("단어", "어휘"):   # 표준국어대사전 '단어', 우리말샘 '어휘' (구·관용구·속담은 뺌)
                     continue
                 w = _clean_word(word)
                 if not w or not is_noun:
@@ -584,6 +632,8 @@ def export_text(db):
             (SELECT COUNT(*) FROM word_attr) AS attrs, (SELECT COUNT(*) FROM word_dict WHERE in_dict=1) AS dict_words,
             (SELECT COUNT(*) FROM dict_syn) AS dict_syn"""),
         "dict_file": json.loads((db.one("SELECT v FROM meta WHERE k='dict_file'") or {"v": "null"})["v"]),
+        "dict_dir": dict_dir(),
+        "dict_new": [n for n, _, _ in dict_folder_new(db)],
     }
 
 

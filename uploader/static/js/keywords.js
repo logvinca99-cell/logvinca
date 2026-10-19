@@ -1,4 +1,4 @@
-/* 네이버 키워드: 원본마다 네이버 쇼핑에서 다른 판매자들이 쓴 단어를 모아 재조합 새 단어로 씀 */
+/* 네이버 키워드: 검색광고 API로 핵심 키워드(검색량)와 연관 키워드를 받아 재조합 새 단어로 씀 */
 "use strict";
 
 App.page("keywords", {
@@ -36,25 +36,25 @@ App.page("keywords", {
     const st = d.stats;
     $("#kw-info").textContent = `원본 ${num(st.done)} / ${num(st.sources)}개 모음`;
     $("#kw-top").innerHTML = `
-      ${d.has_key ? "" : `<div class="notice warn"><b>네이버 검색 API 키가 없습니다.</b> developers.naver.com → 애플리케이션 등록(검색 API 선택) →
-        Client ID·Secret을 <a href="#settings">설정 → 네이버 키워드</a>에 넣으세요. 무료, 하루 25,000회.</div>`}
+      ${d.has_key ? "" : `<div class="notice warn"><b>검색광고 API 키가 없습니다.</b> searchad.naver.com 가입(광고비 없이 가능) → 도구 → API 사용 관리 →
+        고객 ID·액세스 라이선스·비밀키를 <a href="#settings">설정 → 네이버 키워드</a>에 넣으세요. 무료. (네이버 쇼핑 검색 API는 2026년 7월 종료)</div>`}
       ${d.enabled ? "" : `<div class="notice warn">설정에서 '재조합에 네이버 키워드 쓰기'가 꺼져 있어 모은 단어를 쓰지 않습니다.</div>`}
       <section class="card pad kw-how">
         <div class="kw-stats">
           <div><b>${num(st.done)}</b><span>키워드 모은 원본</span></div>
           <div><b>${num(d.total)}</b><span>핵심 키워드</span></div>
           <div><b>${num(st.words)}</b><span>모은 단어</span></div>
-          <div><b>${num(st.queries)}</b><span>저장한 검색 결과</span></div>
-          <div><b>${d.has_searchad ? num(st.volumes) : "—"}</b><span>${d.has_searchad ? "검색량 받은 단어" : "검색량 (검색광고 키 없음)"}</span></div>
+          <div><b>${num(st.queries)}</b><span>연관 키워드 받은 핵심 키워드</span></div>
+          <div><b>${num(st.volumes)}</b><span>검색량 받은 단어</span></div>
         </div>
         <ol class="muted small">
-          <li>원본 상품명 <b>앞 ${App.state.settings.core_scan_words}단어</b>로 네이버 쇼핑을 검색하고, 그중 결과 상품명에 가장 많이 나오는 단어를 <b>핵심 키워드</b>로 정합니다(원본 화면 → 키워드 탭에서 직접 바꿀 수 있음).</li>
-          <li>결과 상품명에서 판매자 <b>${App.state.settings.kw_min_malls}곳 이상</b>이 쓴 단어만 모읍니다. 브랜드·제조사·몰 이름, 판촉 문구, 숫자·영문은 뺍니다.</li>
+          <li><b>핵심 키워드</b> = 원본 상품명 앞 ${App.state.settings.core_scan_words}단어 중 <b>월간 검색량이 가장 큰 단어</b>(속성·판촉 단어 제외). 원본 화면 → 키워드 탭에서 고치면 그 단어를 기억해 같은 단어가 나오는 다른 원본에도 씁니다.</li>
+          <li>핵심 키워드의 <b>연관 키워드</b> 중 핵심 키워드가 들어간 것에서 핵심을 뺀 말을 새 단어로 씁니다(예: 책상 → 컴퓨터책상 → '컴퓨터'). 월 검색량 ${num(App.state.settings.kw_min_volume)} 미만, 판촉 문구, 금지·상표 단어${App.state.settings.kw_dict_only ? ", <b>국어사전에 없는 말(브랜드 등)</b>" : ""}은 뺍니다.</li>
           <li>재조합 때 <b>속성 단어</b>(우드·접이식·화이트·대형 등)는 원본 상품명·옵션·상세설명에 있을 때만 씁니다. <a href="#lexicon">단어 사전 → 속성 단어</a>에서 고칩니다.</li>
           <li>아래에서 단어를 누르면 그 핵심 키워드에서 <b>끕니다</b>(다시 누르면 켬). <span class="kw-chip attr">속성</span> 표시는 원본에 있을 때만 쓰는 단어입니다.</li>
         </ol>
       </section>`;
-    $("#kw-rows").innerHTML = d.cores.length ? `<table class="grid kw-grid"><thead><tr><th>핵심 키워드</th><th class="num">원본</th><th>다른 판매자들이 쓴 단어 (많이 쓴 순)</th></tr></thead><tbody>
+    $("#kw-rows").innerHTML = d.cores.length ? `<table class="grid kw-grid"><thead><tr><th>핵심 키워드</th><th class="num">원본</th><th>새 단어 후보 (연관 키워드 검색량 순)</th></tr></thead><tbody>
       ${d.cores.map((c) => `<tr data-core="${esc(c.core)}"><td><b>${esc(c.core || "(없음)")}</b></td><td class="num">${num(c.n)}</td>
         <td><div class="kw-chips">${c.words.map((w) => this.chip(w)).join("") || `<span class="muted small">모은 단어 없음</span>`}</div></td></tr>`).join("")}
       </tbody></table>` : `<p class="muted pad">아직 모은 키워드가 없습니다. 위의 버튼이나 원본 상품 화면에서 고른 상품으로 모으세요.</p>`;
@@ -63,10 +63,10 @@ App.page("keywords", {
 
   chip(w) {
     const cls = ["kw-chip", w.off ? "off" : "", w.attr ? "attr" : "", w.bad ? "bad" : ""].join(" ");
-    const tip = [`원본 ${w.n}개에서 · 판매자 최대 ${w.malls}곳`, w.volume != null ? `월 검색량 ${num(w.volume)}` : "",
+    const tip = [`원본 ${w.n}개에서 · 연관 키워드 월 검색량 ${num(w.malls)}`,
       w.attr ? "속성 단어: 원본에 있을 때만 씀" : "", w.bad ? `${w.bad} 단어라 안 씀` : "", w.off ? (w.all_off ? "모든 키워드에서 끔" : "끔 (누르면 켬)") : "누르면 끔"]
       .filter(Boolean).join("\n");
-    return `<button class="${cls}" data-word="${esc(w.word)}" data-off="${w.off ? 1 : 0}" data-all="${w.all_off ? 1 : 0}" title="${esc(tip)}">${esc(w.word)}${w.volume != null ? `<small>${short(w.volume)}</small>` : ""}${w.bad ? `<small>${w.bad}</small>` : ""}</button>`;
+    return `<button class="${cls}" data-word="${esc(w.word)}" data-off="${w.off ? 1 : 0}" data-all="${w.all_off ? 1 : 0}" title="${esc(tip)}">${esc(w.word)}<small>${short(w.malls)}</small>${w.bad ? `<small>${w.bad}</small>` : ""}</button>`;
   },
 
   async onChip(e) {

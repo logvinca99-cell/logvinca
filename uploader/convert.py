@@ -150,13 +150,31 @@ def option_price_range(price):
     return -price // 2, price // 2
 
 
-def origin_info(text, cfg):
-    text = text or cfg.get("origin_default") or "중국"
-    country = re.split(r"[(\s]", str(text))[0]
-    codes = ORIGIN_CODES | (cfg.get("origin_codes") or {})
-    if country not in codes:
-        raise ConvertError(f"원산지 '{text}'의 코드가 설정에 없습니다 (설정 → 원산지 코드).")
-    return {"originAreaCode": codes[country], "importer": cfg.get("importer") or REF}
+def importer_for(store, cfg):
+    """수입사 칸: 스토어에 따로 정했으면 그것, 아니면 설정 틀(기본 '{store}협력사')에 스토어 이름을 넣은 것."""
+    if store and str(store.get("importer") or "").strip():
+        return str(store["importer"]).strip()
+    tpl = str(cfg.get("importer_template") or "").strip()
+    if tpl:
+        return tpl.replace("{store}", str((store or {}).get("name") or "")).strip() or REF
+    return cfg.get("importer") or REF
+
+
+def origin_info(text, cfg, importer=None):
+    """원산지 → 네이버 원산지 정보.
+    origin_force(기본 켬)면 엑셀 값과 상관없이 설정의 원산지(기본 중국)로 등록한다.
+    아니면 엑셀 값 전체로 먼저 찾고(띄어쓰기 무시, 예: '상세페이지 참조'), 없으면 앞 단어로 찾는다(예: '중국(광동)')."""
+    if cfg.get("origin_force", True):
+        text = cfg.get("origin_country") or "중국"
+    else:
+        text = text or cfg.get("origin_default") or "중국"
+    codes = {re.sub(r"\s+", "", str(k)): v for k, v in (ORIGIN_CODES | (cfg.get("origin_codes") or {})).items()}
+    whole = re.sub(r"\s+", "", str(text))
+    first = re.sub(r"\s+", "", re.split(r"[(\s]", str(text).strip())[0])
+    code = codes.get(whole) or codes.get(first)
+    if not code:
+        raise ConvertError(f"원산지 '{text}'의 코드가 설정에 없습니다 (설정 → 상품 기본값 → 원산지 코드).")
+    return {"originAreaCode": code, "importer": importer or cfg.get("importer") or REF}
 
 
 def validate(row, cfg, categories=None):
@@ -249,7 +267,8 @@ def adjusted_price(price, key, cfg):
     return max(unit, round_up(math.ceil(p), unit))
 
 
-def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_phone=None, seller_code=None, bait=0):
+def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_phone=None, seller_code=None, bait=0,
+               importer=None):
     """url_map: 원본 이미지 주소 → 네이버 이미지 주소. 없는 주소는 원본 그대로 쓴다.
     name / price / as_phone / seller_code: 스토어별로 바꿔 쓸 값 (없으면 엑셀 값).
     bait: 도둑방지로 판매가에 더할 금액. 할인 금액·옵션가는 도둑방지 전 가격(price) 기준으로 정한다."""
@@ -278,7 +297,7 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
                                                  "manufacturerName": maker}),
         "afterServiceInfo": {"afterServiceTelephoneNumber": phone,
                              "afterServiceGuideContent": cfg.get("as_guide") or REF},
-        "originAreaInfo": origin_info(row.get("원산지"), cfg),
+        "originAreaInfo": origin_info(row.get("원산지"), cfg, importer),
         "minorPurchasable": True,
         "productInfoProvidedNotice": {
             "productInfoProvidedNoticeType": "ETC",

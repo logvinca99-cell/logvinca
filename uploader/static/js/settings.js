@@ -4,9 +4,12 @@
 const SETTING_SECTIONS = [
   { title: "상품 기본값", note: "스토어에 A/S 전화번호가 없으면 여기 값을 씁니다.", fields: [
     ["as_phone", "A/S 전화번호", "text", { req: true }],
-    ["as_guide", "A/S 안내"], ["importer", "수입자", "text", { hint: "원산지가 해외일 때" }],
-    ["origin_default", "원산지 기본값"],
-    ["origin_codes", "원산지 코드", "json", { hint: "나라 이름: 네이버 원산지 코드" }],
+    ["as_guide", "A/S 안내"],
+    ["origin_force", "원산지를 엑셀과 상관없이 일괄 지정 (아래 나라로)", "check"],
+    ["origin_country", "일괄 원산지", "text", { hint: "아래 원산지 코드에 있는 이름 (기본 중국 = 수입산 > 아시아 > 중국)" }],
+    ["importer_template", "수입사 (스토어별)", "text", { hint: "{store} 자리에 스토어 이름이 들어감. 예: {store}협력사 → 가나스토어협력사. 스토어 화면에서 따로 정할 수도 있음" }],
+    ["origin_codes", "원산지 코드", "json", { hint: "이름: 네이버 원산지 코드" }],
+    ["origin_default", "엑셀 원산지가 비었을 때 (일괄 지정을 끈 경우)"],
   ] },
   { title: "배송", fields: [
     ["delivery_company", "택배사", "select", { options: [["CJGLS", "CJ대한통운"], ["HANJIN", "한진택배"], ["LOTTE", "롯데택배"],
@@ -30,7 +33,6 @@ const SETTING_SECTIONS = [
   ] },
   { title: "상품명", note: "모든 상품명은 모든 스토어를 통틀어 겹치지 않습니다 (띄어쓰기·기호·대소문자 무시).", fields: [
     ["use_original_name", "원본 상품명도 한 스토어에 쓸 수 있음 (원본 스토어와 이름이 같아짐)", "check"],
-    ["auto_recombine", "계획 만들 때 이름 후보가 모자라면 재조합으로 자동으로 채움", "check"],
     ["name_max_len", "상품명 최대 글자 수", "number"],
     ["recombine_fixed_prefix", "재조합: 원본의 앞 몇 단어를 그대로 맨 앞에 고정할지", "number"],
     ["recombine_replace_ratio", "재조합: 유의어를 덧붙이지 않고 원래 단어 자리에 바꿔 넣는 비율 (0~1)", "number", { step: 0.1 }],
@@ -46,19 +48,18 @@ const SETTING_SECTIONS = [
     ["opendict_key", "우리말샘 오픈 API 키", "secret"],
     ["opendict_daily_limit", "한 번에 찾아볼 단어 수", "number"],
   ] },
-  { title: "네이버 키워드", note: "developers.naver.com → Application → 애플리케이션 등록 → 사용 API '검색' → Client ID·Secret을 넣습니다(무료, 하루 25,000회). 검색량은 선택: searchad.naver.com → 도구 → API 사용 관리에서 받은 고객 ID·액세스 라이선스·비밀키.", fields: [
+  { title: "네이버 키워드 (검색광고 API)", note: "searchad.naver.com 가입(광고비 없이 가능) → 도구 → API 사용 관리 → 고객 ID·액세스 라이선스·비밀키. 무료. (네이버 쇼핑 검색 API는 2026년 7월 종료돼 쓰지 않습니다.) 적용: 키워드를 모을 때, 그 뒤 새로 만드는 이름부터.", fields: [
     ["use_naver_keywords", "재조합에 네이버에서 모은 단어 쓰기", "check"],
-    ["naver_client_id", "검색 API Client ID", "text"],
-    ["naver_client_secret", "검색 API Client Secret", "secret"],
-    ["core_scan_words", "핵심 키워드를 찾을 앞 단어 수", "number"],
-    ["kw_min_malls", "판매자 몇 곳 이상이 쓴 단어만", "number"],
-    ["kw_min_share", "검색 결과 중 이 비율 이상에 나온 단어만 (0~1)", "number", { step: 0.01 }],
-    ["kw_max_words", "원본 하나에 쓸 단어 수 (많이 쓴 순)", "number"],
-    ["kw_daily_limit", "한 번에 검색할 횟수 (같은 검색어는 저장한 결과 재사용)", "number"],
+    ["searchad_customer_id", "고객 ID (CUSTOMER_ID)", "text"],
+    ["searchad_api_key", "액세스 라이선스 (API_KEY)", "text"],
+    ["searchad_secret", "비밀키 (SECRET_KEY)", "secret"],
+    ["core_scan_words", "핵심 키워드를 찾을 앞 단어 수 (검색량이 가장 큰 단어)", "number"],
+    ["kw_min_volume", "연관 키워드 월간 검색량이 이만큼 이상인 것만", "number"],
+    ["kw_dict_only", "국어사전에 있는 말만 쓰기 (브랜드·고유명사 거르기 · 우리말샘 API 키나 사전 파일 필요)", "check"],
+    ["kw_max_words", "원본 하나에 쓸 단어 수 (검색량 순)", "number"],
+    ["kw_related_max", "핵심 키워드마다 볼 연관 키워드 수", "number"],
+    ["kw_daily_limit", "한 번에 부를 API 횟수 (같은 핵심 키워드는 저장한 결과 재사용)", "number"],
     ["kw_refresh_days", "이 일수가 지나면 다시 모음", "number"],
-    ["searchad_customer_id", "검색광고 고객 ID (선택)", "text"],
-    ["searchad_api_key", "검색광고 액세스 라이선스 (선택)", "text"],
-    ["searchad_secret", "검색광고 비밀키 (선택)", "secret"],
   ] },
   { title: "상표 확인 (키프리스)", note: "KIPRIS Plus(plus.kipris.or.kr) 회원가입 → 상표 정보 검색 API 활용 신청 → 받은 키를 넣습니다. 사전에 있는 일반명사는 확인하지 않고, '효도의자'처럼 붙여 만든 조어만 확인합니다(우리말샘 키가 있으면 사전 단어인지 먼저 확인).", fields: [
     ["kipris_key", "키프리스 API 키 (ServiceKey)", "secret"],
@@ -103,6 +104,25 @@ const SETTING_SECTIONS = [
   { title: "고급", fields: [["extra", "모든 상품에 덧붙일 API 필드 (JSON)", "json"]] },
 ];
 
+/* 설정이 언제부터 적용되는지 (이미 만든 것에는 적용되지 않음) */
+const APPLY_WHEN = {
+  "상품 기본값": "다음 등록부터 · 원산지를 바꾸면 저장할 때 전체 원본을 다시 검사",
+  "배송": "다음 등록부터",
+  "복사·구분": "다음 복사·등록부터",
+  "주문 (판매 이력)": "다음 주문 가져오기부터 (잠금 기준은 저장 즉시 다시 계산)",
+  "스토어별 가격": "새로 만드는 복사본부터 · 이미 만든 복사본은 위 '대기 중인 복사본 가격 다시 계산'",
+  "상품명": "새로 만드는 이름부터 · 이미 만든 후보는 위 '안 쓴 이름 후보 지우기' 뒤 다시 만들기",
+  "우리말샘 API": "단어 사전에서 받을 때, 상표 확인 때",
+  "네이버 키워드 (검색광고 API)": "키워드를 모을 때, 그 뒤 새로 만드는 이름부터",
+  "상표 확인 (키프리스)": "확인할 때 · 출원 중 막기는 저장 즉시",
+  "도둑방지": "다음 복사 창·다음 등록부터 (이미 올라간 상품은 그대로)",
+  "워터마크 (대표 이미지)": "다음 등록부터 (이미 올라간 상품은 그대로)",
+  "AI 상품명 (Claude API)": "다음 AI 이름 만들기부터",
+  "이미지": "다음 등록부터",
+  "속도": "다음 [시작]부터 (실행 중에는 그 실행에 적용 안 됨)",
+  "고급": "다음 등록부터",
+};
+
 App.page("settings", {
   async mount(el) {
     const st = await App.refreshState();
@@ -123,8 +143,22 @@ App.page("settings", {
       <header class="page-head"><h1>설정</h1><div class="head-actions"><span class="muted" id="save-msg"></span>
         <button class="btn" id="cat-refresh">카테고리 새로 받기</button><button class="btn primary" id="save">저장</button></div></header>
       <form class="settings" id="set-form" autocomplete="off">${SETTING_SECTIONS.map((sec) => `<div class="card set">
-        <h2>${esc(sec.title)}</h2>${sec.note ? `<p class="muted">${esc(sec.note)}</p>` : ""}${sec.fields.map(field).join("")}</div>`).join("")}
+        <h2>${esc(sec.title)}</h2>${sec.note ? `<p class="muted">${esc(sec.note)}</p>` : ""}
+        ${APPLY_WHEN[sec.title] ? `<p class="apply-when">적용: ${esc(APPLY_WHEN[sec.title])}</p>` : ""}${sec.fields.map(field).join("")}</div>`).join("")}
       </form></div>`;
+    $(".settings", el).insertAdjacentHTML("beforebegin", `<div class="card pad reapply">
+      <div><b>설정은 저장한 뒤 새로 만드는 것부터 적용됩니다.</b> <span class="muted small">이미 만든 복사본 가격·이름 후보에 다시 적용하려면:</span></div>
+      <div class="reapply-btns"><button class="btn" data-reapply="prices" title="아직 안 올린(대기·실패) 복사본의 가격을 지금 설정(±%, 100원 올림)으로 다시 계산">대기 중인 복사본 가격 다시 계산</button>
+        <button class="btn" data-reapply="names" title="아직 아무 복사본에도 안 쓴 재조합·AI 이름 후보를 지움 → 새 설정으로 다시 만들 수 있음">안 쓴 이름 후보 지우기</button>
+        <a class="btn ghost" href="#listings?status=noname">이름 변경 필요 복사본 보기</a></div></div>`);
+    $$("[data-reapply]", el).forEach((b) => b.addEventListener("click", async () => {
+      const what = b.dataset.reapply;
+      if (what === "names" && !confirm("아직 안 쓴 재조합·AI 이름 후보를 모두 지울까요? (복사본에 쓴 이름·가져온 이름·직접 넣은 이름은 그대로)")) return;
+      try {
+        const r = await App.api("/api/settings/reapply", { json: { what } });
+        App.toast(what === "prices" ? `복사본 ${num(r.count)}건의 가격을 다시 계산했습니다` : `이름 후보 ${num(r.count)}개를 지웠습니다. 원본 상품·복사본 화면에서 다시 만드세요`);
+      } catch (e) { App.toast(e.message, true); }
+    }));
     $("#save").addEventListener("click", () => this.save());
     $("#cat-refresh").addEventListener("click", async () => {
       try {
@@ -147,6 +181,7 @@ App.page("settings", {
     try {
       await App.api("/api/settings", { json: out });
       $("#save-msg").textContent = "저장했습니다 ✓";
+      App.toast("저장했습니다. 새로 만드는 복사본·이름·다음 등록부터 적용됩니다 (각 칸의 '적용' 참고)");
       await App.refreshState();
     } catch (e) { App.toast(e.message, true); }
   },

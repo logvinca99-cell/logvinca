@@ -3,6 +3,7 @@
 
 const LST_TILES = [
   { key: "all", label: "전체", dot: "var(--text-2)", count: "all_" },
+  { key: "noname", label: "이름 변경 필요", dot: "var(--err)" },
   { key: "live", label: "판매 중", dot: "var(--ok)" },
   { key: "pending", label: "할 일 대기", dot: "var(--idle)" },
   { key: "fail", label: "실패", dot: "var(--err)" },
@@ -105,7 +106,9 @@ App.page("listings", {
     else if (l.status === "running") msg = l.stage;
     else if (l.status === "deleted") msg = `${ymd(l.deleted_at)}에 내림`;
     const on = this.selAll || this.sel.has(l.id);
-    const others = (l.source_copies > 1 ? `<span class="flag" title="같은 원본이 다른 스토어에도 있음">같은 원본 ${l.source_copies}곳</span>` : "")
+    const noname = !l.name_id && !l.origin_no && l.status !== "deleted";
+    const others = (noname ? `<span class="flag bad" title="원본 상품명 그대로라 올리지 않습니다. '상품명 바꾸기'로 바꾸세요">이름 변경 필요</span>` : "")
+      + (l.source_copies > 1 ? `<span class="flag" title="같은 원본이 다른 스토어에도 있음">같은 원본 ${l.source_copies}곳</span>` : "")
       + lockFlag(l) + salesFlag(l);
     return `<tr data-id="${l.id}" class="${on ? "sel" : ""} ${l.status === "deleted" ? "off" : ""}">
       <td class="w-check" data-stop><input type="checkbox" ${on ? "checked" : ""} ${this.selAll ? "disabled" : ""}></td>
@@ -125,6 +128,8 @@ App.page("listings", {
         ${!this.selAll && this.total ? `<button class="link-btn" id="la-all">조건에 맞는 ${num(this.total)}건 모두 고르기</button>` : ""}
       </div>
       <div class="ab-right">
+        <button class="btn primary" id="la-rename" ${n ? "" : "disabled"} title="아직 안 올린 복사본의 상품명을 재조합·AI·만들어 둔 후보로 바꿈">상품명 바꾸기…</button>
+        <span class="ab-sep"></span>
         <button class="btn" id="la-refresh" ${n ? "" : "disabled"} title="판매 중인 건을 네이버에서 지우고 같은 내용으로 다시 올림 (회차 +1)">최신화 예약</button>
         <button class="btn" id="la-delete" ${n ? "" : "disabled"} title="판매 중인 건을 네이버에서 지움. 원본의 빈 칸이 생겨 다른 스토어에 올릴 수 있음">내리기 예약</button>
         <button class="btn ghost danger-text" id="la-cancel" ${n ? "" : "disabled"} title="아직 처리 안 된 대기·실패 할 일을 취소">대기·실패 취소</button>
@@ -151,6 +156,27 @@ App.page("listings", {
     } catch (e) { App.toast(e.message, true); }
   },
 
+  renameModal() {
+    const s = App.state.settings;
+    const n = this.selAll ? this.total : this.sel.size;
+    App.openModal({
+      title: `상품명 바꾸기 · 복사본 ${num(n)}건`,
+      body: `<div class="form"><div class="radio-cards">
+          <label><input type="radio" name="rn" value="recombine" checked><div><b>재조합</b><span class="muted small">원본 상품명의 단어를 고르고 순서를 바꾸고 유의어를 넣어 새로 만듭니다. 무료·즉시.</span></div></label>
+          <label><input type="radio" name="rn" value="ai"><div><b>AI로 짓기</b><span class="muted small">Claude(${esc(s.ai_model)})가 원본을 보고 새로 짓습니다. 유료. 모자라면 재조합으로 채웁니다.
+            ${s.has_anthropic_api_key || App.state.fake_api ? "" : '<br><span class="c-err">설정에서 API 키를 먼저 넣어야 합니다.</span>'}</span></div></label>
+          <label><input type="radio" name="rn" value="pool"><div><b>만들어 둔 후보에서</b><span class="muted small">원본 상품 화면에서 미리 만들거나 파일로 가져온 후보를 씁니다. 후보가 없으면 그대로 둡니다.</span></div></label>
+        </div>
+        <p class="muted small">· 이미 올라간 복사본은 바꾸지 않습니다(최신화로 다시 올릴 때 바뀜).<br>
+          · 이미 바꾼 이름이 있으면 그 이름은 버리고 새로 고릅니다.<br>
+          · 모든 이름은 금지 단어·상표·같은 단어 반복과 33개 스토어 중복을 검사합니다. 한 건씩은 복사본을 눌러 직접 입력할 수 있습니다.</p></div>`,
+      buttons: [{ label: "취소" }, { label: "바꾸기", primary: true, onClick: async (b) => {
+        const r = await App.startTask(App.api("/api/listings/rename", { json: { ...this.target(), method: $("input[name=rn]:checked", b).value } }));
+        return !!r;
+      } }],
+    });
+  },
+
   async schedule(op) {
     const label = op === "refresh" ? "최신화(지우고 다시 올리기)" : "내리기(네이버에서 지우기)";
     if (!confirm(`고른 건 중 판매 중인 건에 ${label}를 예약할까요?\n잠긴 건(판매 이력·직접 잠금)은 빠집니다. 시작할 때 주문을 한 번 더 확인합니다.\n예약만 하고, 위의 [시작]을 눌러야 실제로 처리합니다.`)) return;
@@ -167,7 +193,7 @@ App.page("listings", {
   renderIdle() {
     const box = $("#l-run");
     const c = this.counts;
-    const n = (c.pending || 0) + (c.fail || 0);
+    const n = Math.max(0, (c.pending || 0) + (c.fail || 0) - (c.noname || 0));
     const scope = [this.f.store_id && $("#l-store").selectedOptions[0]?.text, this.f.plan_id && $("#l-plan").selectedOptions[0]?.text.split(" · ")[0]]
       .filter(Boolean).join(" · ");
     box.innerHTML = `<div class="run-idle">
@@ -176,10 +202,12 @@ App.page("listings", {
           <button class="btn big" id="l-one" ${n ? "" : "disabled"}>1건만 시험</button>
         </div>
         <div class="run-est"><div>${scope ? `<b>${esc(scope)}</b>의 ` : "모든 스토어의 "}대기·실패 건을 처리합니다:
-          등록 ${num(c.pending_create)} · 최신화 ${num(c.pending_refresh)} · 내리기 ${num(c.pending_delete)} · 실패 재시도 ${num(c.fail)}</div>
+          등록 ${num(Math.max(0, (c.pending_create || 0) - (c.noname || 0)))} · 최신화 ${num(c.pending_refresh)} · 내리기 ${num(c.pending_delete)} · 실패 재시도 ${num(c.fail)}</div>
+          ${c.noname ? `<div class="c-err small">상품명을 안 바꾼 복사본 <b>${num(c.noname)}건</b>은 올리지 않습니다 — <a href="#" id="l-noname">이름 변경 필요 보기</a> → 상품명 바꾸기</div>` : ""}
           <div id="l-est" class="muted small"></div></div>
       </div>`;
     $("#l-start").addEventListener("click", () => this.start());
+    $("#l-noname")?.addEventListener("click", (e) => { e.preventDefault(); this.f.status = "noname"; this.page = 0; this.clearSel(); this.load(); });
     $("#l-one").addEventListener("click", () => this.start(1));
     if (!n) return;
     const key = JSON.stringify(this.runScope()) + n;
@@ -193,7 +221,7 @@ App.page("listings", {
   },
 
   async start(limit) {
-    const n = limit || (this.counts.pending || 0) + (this.counts.fail || 0);
+    const n = limit || Math.max(0, (this.counts.pending || 0) + (this.counts.fail || 0) - (this.counts.noname || 0));
     if (!limit && !confirm(`${num(n)}건을 처리합니다 (등록·최신화·내리기). 계속할까요?`)) return;
     try {
       App.run = await App.api("/api/run", { json: { ...this.runScope(), limit: limit || null } });
@@ -301,6 +329,7 @@ App.page("listings", {
       if (id === "la-all") { this.selAll = true; this.sel.clear(); this.load(); }
       if (id === "la-refresh") this.schedule("refresh");
       if (id === "la-lock" || id === "la-unlock") this.lock(id === "la-lock");
+      if (id === "la-rename") this.renameModal();
       if (id === "la-restore") App.startTask(App.api("/api/bait/restore", { json: this.selAll ? { filter: this.query() } : { ids: [...this.sel] } }));
       if (id === "la-delete") this.schedule("delete");
       if (id === "la-cancel") {
@@ -341,7 +370,11 @@ App.page("listings", {
                 ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">스토어에서 보기</a> · ` : ""}
                 <a href="https://sell.smartstore.naver.com/#/products/edit/${esc(l.origin_no)}" target="_blank" rel="noopener">스마트스토어센터에서 수정</a></div>` : "")
             + `<div class="gallery">${img(l.thumb, "g-main")}</div>
-              <dl class="kv"><dt>스토어</dt><dd>${esc(l.store_name)}</dd><dt>등록 상품명</dt><dd>${esc(l.name)}</dd>
+              ${!l.origin_no && l.status !== "deleted" ? `<div class="notice ${l.name_id ? "" : "err"} name-edit">
+                <div><b>${l.name_id ? "바꾼 상품명" : "이름 변경 필요 — 원본 상품명 그대로라 올리지 않습니다"}</b></div>
+                <div class="add-name"><input id="d-name" value="${esc(l.name)}" maxlength="100"><button class="btn primary" id="d-name-save">이 이름으로</button></div>
+                <span class="muted small">직접 고쳐 저장하거나, 목록에서 고른 뒤 '상품명 바꾸기'로 재조합·AI를 씁니다. 금지 단어·상표·반복·33개 스토어 중복을 검사합니다.</span></div>` : ""}
+              <dl class="kv"><dt>스토어</dt><dd>${esc(l.store_name)}</dd><dt>등록 상품명</dt><dd>${esc(l.name)}${l.name_id ? "" : ` <span class="flag bad">원본 상품명</span>`}</dd>
               <dt>판매자 관리코드</dt><dd>${esc(l.seller_code || l.next_seller_code)} <span class="muted">(${l.round}회차${l.seller_code ? "" : ", 등록하면 붙음"})</span></dd>
               <dt>원본</dt><dd>#${l.source_id} ${esc(l.source_name)}</dd>
               <dt>판매가</dt><dd>${num(l.price)}원 <span class="muted">(원본가 ${num(l.source_price)}원)</span>
@@ -359,6 +392,14 @@ App.page("listings", {
             + (l.history.length ? `<div><h3 class="sec-title">지난 회차</h3><table class="opt-table"><tr><th>회차</th><th>관리코드</th><th>상품번호</th><th>올린 날</th><th>지운 날</th></tr>
               ${l.history.map((h) => `<tr><td>${h.round}</td><td>${esc(h.seller_code)}</td><td>${esc(h.channel_no)}</td><td>${ymd(h.registered_at)}</td>
               <td>${ymd(h.deleted_at)} <span class="muted">${h.reason === "refresh" ? "최신화" : "내리기"}</span></td></tr>`).join("")}</table></div>` : "");
+          $("#d-name-save", b)?.addEventListener("click", async () => {
+            try {
+              const r = await App.api(`/api/listings/${id}/name`, { json: { name: $("#d-name", b).value } });
+              App.toast(`상품명을 바꿨습니다: ${r.name}`);
+              if ($("#l-rows")) this.load();
+              this.openListing(id);
+            } catch (err) { App.toast(err.message, true); }
+          });
           $("#d-restore", b)?.addEventListener("click", async () => {
             const r = await App.startTask(App.api("/api/bait/restore", { json: { ids: [id] } }));
             if (r) App.on("task-done", function h(t) { if (t.kind === "bait") { App.off("task-done", h); App.pages.listings.openListing(id); } });

@@ -457,3 +457,10 @@ span.kw-chip { cursor: default; }
 .wm-store > div { display: flex; flex-direction: column; gap: 6px; }
 .bait-check { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); font-size: 13px; }
 .bait-check input { margin-top: 3px; }
+.apply-when { font-size: 12px; color: var(--info); margin: -4px 0 6px; }
+.reapply { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.reapply-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.name-edit { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.name-edit .add-name input { flex: 1; }
+.dict-folder { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 6px 0; font-size: 13px; }
+.dict-folder code { background: var(--panel-2); padding: 2px 6px; border-radius: 4px; }

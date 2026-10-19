@@ -173,19 +173,27 @@ const App = {
           ? `상품명 가져오기 끝: 새 이름 ${num(r.added)}개 · 다른 이름과 중복 ${num(r.dup)}개 · 원본 못 찾음 ${num(r.not_found)}줄`
             + (r.rejected ? ` · 반복·금지 단어로 버림 ${num(r.rejected)}개 (예: ${r.rejected_examples?.[0] || ""})` : "")
           : `상품명 만들기 끝: 새 이름 ${num(r.added)}개` + (r.short ? ` · 단어가 적어 다 못 채운 상품 ${num(r.short)}개` : "")
+            + (r.few_words ? ` · 새 단어 후보가 설정보다 적은 원본 ${num(r.few_words)}개 (단어 사전·우리말샘·네이버 키워드로 늘리세요)` : "")
             + (r.rejected ? ` · 반복·금지 단어로 버림 ${num(r.rejected)}개` : "")
             + (r.failed ? ` · 실패 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : ""),
+        rename: () => `상품명 바꾸기 끝: ${num(r.renamed)}건 바꿈` + (r.short ? ` · 후보를 못 만든 ${num(r.short)}건은 그대로 (단어가 적음 → 직접 입력이나 AI)` : "")
+          + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
+          + (r.few_words ? ` · 새 단어 후보가 설정보다 적은 원본 ${num(r.few_words)}개` : ""),
         bait: () => `원래 가격으로 ${num(r.restored)}건` + (r.failed ? ` · 실패 ${num(r.failed)}건 (${r.errors?.[0] || ""})` : ""),
         dictfile: () => `사전 파일 넣기 끝: 명사 ${num(r.nouns)}개 · 비슷한말 있는 단어 ${num(r.syn_words)}개 (파일 ${num(r.files)}개)`,
-        keywords: () => `네이버 키워드 끝: 원본 ${num(r.sources)}개 · 검색 ${num(r.api_calls)}번 (저장한 결과 ${num(r.cached)}번) · 단어 ${num(r.words)}개`
-          + (r.volumes ? ` · 검색량 ${num(r.volumes)}개` : "") + (r.errors ? ` · 실패 ${r.errors} (${r.error})` : "") + (r.volume_error ? ` · 검색량 실패 (${r.volume_error})` : ""),
+        keywords: () => `네이버 키워드 끝: 원본 ${num(r.sources)}개 · 새 단어 ${num(r.words)}개 · API ${num(r.api_calls)}번 (저장한 결과 ${num(r.cached)}번)`
+          + (r.not_in_dict ? ` · 사전에 없어 뺀 말 ${num(r.not_in_dict)}개` : "")
+          + (r.dict_unknown ? ` · 사전 확인 못 해 뺀 말 ${num(r.dict_unknown)}개 (우리말샘 API 키나 사전 파일 필요)` : "")
+          + (r.errors ? ` · 실패 ${r.errors} (${r.error})` : ""),
         kipris: () => `상표 확인 끝: 조어 ${num(r.checked)}개 확인 · 등록 상표 ${num(r.registered)}개 · 출원 중 ${num(r.pending)}개`
           + (r.in_dict ? ` · 사전 단어라 건너뜀 ${num(r.in_dict)}개` : "")
           + (r.examples?.length ? ` (예: ${r.examples.join(", ")})` : "") + (r.errors ? ` · 오류 ${r.errors}` : ""),
         lexicon: () => `우리말샘: ${num(r.looked)}개 단어를 찾아 ${num(r.found)}개에 유의어가 있었습니다` + (r.errors ? ` · 오류 ${r.errors}` : ""),
-        plan: () => `복사 계획 끝: 새로 ${num(r.created)}건${r.revived ? ` · 다시 살림 ${num(r.revived)}건` : ""}` + (r.no_name ? ` · 이름 부족 ${num(r.no_name)}` : "")
-          + (r.capacity ? ` · 자리 부족 ${num(r.capacity)}` : "") + (r.exists ? ` · 이미 있음 ${num(r.exists)}` : ""),
-        revalidate: () => `다시 검사 끝: ${num(r.total)}개`,
+        plan: () => `복사 끝: 새 복사본 ${num(r.created)}건${r.revived ? ` · 다시 살림 ${num(r.revived)}건` : ""}`
+          + (r.capacity ? ` · 자리 부족 ${num(r.capacity)}` : "") + (r.exists ? ` · 이미 있음 ${num(r.exists)}` : "")
+          + (r.invalid ? ` · 오류 원본 ${num(r.invalid)}개는 뺌` : "")
+          + (r.created ? " · 복사본 화면 '이름 변경 필요'에서 상품명을 바꾼 뒤 올리세요" : ""),
+        revalidate: () => `다시 검사 끝: ${num(r.total)}개` + (r.invalid !== undefined ? ` · 오류 ${num(r.invalid)}개` : ""),
         orders: () => r.rows !== undefined
           ? `판매 이력 파일 끝: ${num(r.rows)}줄 중 복사본과 맞춘 주문 ${num(r.matched)}건 · 못 맞춘 ${num(r.unmatched)}건`
           : `주문 가져오기 끝: 스토어 ${num(r.stores)}곳 · 새 주문 ${num(r.new)}건 · 복사본과 맞춤 ${num(r.matched)}건`

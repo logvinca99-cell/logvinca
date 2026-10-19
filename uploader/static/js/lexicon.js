@@ -25,7 +25,11 @@ App.page("lexicon", {
       <section class="card pad lx-dict">
         <div class="sec-head"><h2>국어사전</h2>
           <span class="muted small">${d.stats.dict_words ? `명사 ${num(d.stats.dict_words)}개 · 비슷한말 있는 단어 ${num(d.stats.dict_syn)}개${d.dict_file ? ` · ${esc(d.dict_file.name)} (${ymd(d.dict_file.at)})` : ""}` : "아직 안 넣음"}</span></div>
-        <p class="muted small">${d.stats.dict_words ? "" : `<b>사전 파일을 넣어 주세요.</b> `}우리말샘(opendict.korean.go.kr) 또는 표준국어대사전(stdict.korean.go.kr)에 로그인 → <b>사전 내려받기</b>에서 받은 파일(zip 그대로, 또는 xml/json)을 위의 '사전 파일 넣기'로 넣습니다. API 키·외부 주소가 필요 없고 한 번만 넣으면 됩니다.
+        <div class="dict-folder"><span>사전 폴더: <code>${esc(d.dict_dir)}</code></span>
+          ${d.dict_new.length ? `<span class="flag warn">새 파일 ${d.dict_new.length}개: ${d.dict_new.map(esc).join(", ")}</span>` : ""}
+          <button class="btn" id="lx-dictfolder">폴더에서 사전 읽기</button></div>
+        <p class="muted small">우리말샘(opendict.korean.go.kr) 또는 표준국어대사전에 로그인 → <b>사전 내려받기</b>로 받은 zip을 <b>압축 풀지 말고 위 폴더에 그대로</b> 넣으세요.
+          프로그램을 켤 때 새 파일이 있으면 자동으로 읽고, '폴더에서 사전 읽기'로 바로 읽을 수도 있습니다(용량이 커서 몇 분 걸림). 다 읽은 뒤엔 zip을 지워도 됩니다. 작은 파일은 위의 '사전 파일 넣기'로 올려도 됩니다.
           ① 사전에 있는 명사는 일반명사로 보고 키프리스 확인에서 뺍니다(조어만 확인). ② 명사의 비슷한말을 재조합 유의어로 씁니다 — 단, 원본 상품명·네이버 키워드에 실제로 나오는 말끼리만(옛말·전문어가 들어가지 않게).</p>
       </section>
 
@@ -90,6 +94,7 @@ App.page("lexicon", {
     $("#lx-try").addEventListener("click", () => this.preview());
     $("#lx-name").addEventListener("keydown", (e) => { if (e.key === "Enter") this.preview(); });
     $("#lx-fetch")?.addEventListener("click", () => App.startTask(App.api("/api/lexicon/fetch", { json: {} })));
+    $("#lx-dictfolder").addEventListener("click", () => App.startTask(App.api("/api/lexicon/dictfolder", { json: {} })));
     $("#lx-dictfile").addEventListener("change", (e) => { if (e.target.files[0]) App.upload("/api/lexicon/dictfile", e.target.files[0]); e.target.value = ""; });
     $("#tm-all").addEventListener("click", () => App.startTask(App.api("/api/trademark/check", { json: { scope: "all" } })));
     $("#tm-sec").addEventListener("click", async (e) => {
@@ -120,6 +125,7 @@ App.page("lexicon", {
       const hl = (n) => n.name.split(" ").map((w) => n.new.includes(w) ? `<mark>${esc(w)}</mark>` : esc(w)).join(" ");
       $("#lx-out").innerHTML = `<div class="lx-orig"><span class="muted">원본</span> ${esc(r.original)} <span class="muted">(${r.original_len}자)</span>
           <span class="flag">핵심 키워드: ${esc(r.core)}</span>
+          <span class="flag ${r.candidates.length < r.new_min ? "warn" : ""}" title="${esc(r.candidates.join(", "))}">넣을 수 있는 새 단어 후보 ${r.candidates.length}개${r.candidates.length < r.new_min ? ` — 설정(최소 ${r.new_min}개)보다 적어 ${r.candidates.length}개만 넣음` : ""}</span>
           ${r.original_repeat ? `<span class="flag warn">원본에 '${esc(r.original_repeat)}' 반복</span>` : ""}
           ${r.marks.map((x) => `<span class="flag bad">상표 단어 '${esc(x.word)}'(${x.verdict})</span>`).join("")}</div>
         <ul class="lx-names">${r.names.map((n) => `<li><span>${hl(n)}</span>

@@ -129,7 +129,7 @@ App.page("inventory", {
         ${!this.selAll && this.total ? `<button class="link-btn" id="i-all">조건에 맞는 ${num(this.total)}개 모두 고르기</button>` : ""}
       </div>
       <div class="ab-right">
-        <button class="btn" id="i-kw" ${n ? "" : "disabled"} title="고른 원본의 핵심 키워드와 다른 판매자들이 쓴 단어를 네이버에서 모읍니다">네이버 키워드 모으기</button>
+        <button class="btn" id="i-kw" ${n ? "" : "disabled"} title="고른 원본의 핵심 키워드(검색량)와 연관 키워드를 네이버 검색광고 API에서 받습니다">네이버 키워드 모으기</button>
         <button class="btn" id="i-names" ${n ? "" : "disabled"}>상품명 후보 만들기…</button>
         <button class="btn primary" id="i-plan" ${n ? "" : "disabled"}>다른 스토어로 복사…</button>
       </div>`;
@@ -269,7 +269,7 @@ App.page("inventory", {
           <div class="plan-sum" id="p-sum"></div>
           <p class="muted small">· 원본 하나는 최대 <b>${App.state.settings.max_copies}곳</b>까지만 올라갑니다 (내린 스토어는 세지 않음).<br>
             · 전에 내렸던 스토어에 다시 계획하면 같은 이름·가격으로 다음 회차가 됩니다.<br>
-            · 상품명: 원본마다 안 쓴 후보에서 하나씩 씁니다 (가져옴 → AI → 재조합 순). 모자라면 ${App.state.settings.auto_recombine ? "재조합으로 자동으로 채웁니다" : "건너뜁니다"}.<br>
+            · 상품명: 복사본은 <b>원본 상품명 그대로</b> 만들어집니다. 복사본 화면 '이름 변경 필요'에서 상품명을 바꿔야 올라갑니다 (원본 상품명·다른 스토어와 같은 이름은 올리지 않음).<br>
             · 가격: 스토어마다 원본가 ±${App.state.settings.price_jitter_pct}% 안에서 정하고 ${num(App.state.settings.price_round)}원 단위로 올림합니다.<br>
             · 스토어 한도를 넘는 건은 만들지 않습니다.</p>
         </div></div>`,
@@ -348,12 +348,12 @@ App.page("inventory", {
       <h3 class="sec-title">핵심 키워드</h3>
       <div class="core-edit"><input id="core-in" value="${esc(k.core)}" placeholder="예: 책상">
         <button class="btn" id="core-save">저장</button>
-        ${k.manual ? `<button class="link-btn" id="core-auto">자동으로 되돌리기</button>` : `<span class="muted small">${k.collected_at ? "네이버 검색으로 정함" : "아직 안 모음 → 앞 단어로 대충 정함"}</span>`}</div>
-      <p class="muted small">재조합 때 이 단어의 유의어를 가장 먼저 넣고, 4번째 이후에 있어도 빼지 않습니다.</p>
-      <h3 class="sec-title">다른 판매자들이 쓴 단어 ${k.collected_at ? `<span class="muted small">· ${ymd(k.collected_at)} 모음</span>` : ""}
+        ${k.manual ? `<button class="link-btn" id="core-auto">자동으로 되돌리기</button>` : `<span class="muted small">${k.collected_at ? "검색량으로 정함" : "아직 안 모음 → 앞 단어로 대충 정함 (키워드 모으기를 하면 검색량으로)"}</span>`}</div>
+      <p class="muted small">재조합 때 이 단어의 유의어를 가장 먼저 넣고, 4번째 이후에 있어도 빼지 않습니다. 고치면 이 단어를 기억해 다른 원본에도 씁니다.</p>
+      <h3 class="sec-title">연관 키워드에서 온 새 단어 ${k.collected_at ? `<span class="muted small">· ${ymd(k.collected_at)} 모음</span>` : ""}
         <button class="link-btn" id="kw-one">${k.collected_at ? "다시 모으기" : "지금 모으기"}</button></h3>
       ${k.words.length ? `<p class="muted small">재조합에 쓰는 단어 ${used.length}개 (초록). 회색은 쓰지 않는 단어 — 이유에 마우스를 올리세요.</p>
-        <div class="kw-chips">${k.words.map((w) => `<span class="kw-chip ${w.used ? "used" : "off"}" title="${esc(w.used ? `판매자 ${w.malls}곳` : w.why)}">${esc(w.word)}${w.volume != null ? `<small>${num(w.volume)}</small>` : ""}${w.used ? "" : `<small>${esc(w.why)}</small>`}</span>`).join("")}</div>`
+        <div class="kw-chips">${k.words.map((w) => `<span class="kw-chip ${w.used ? "used" : "off"}" title="${esc(w.used ? `연관 키워드 월 검색량 ${num(w.malls)}` : w.why)}">${esc(w.word)}<small>${num(w.malls)}</small>${w.used ? "" : `<small>${esc(w.why)}</small>`}</span>`).join("")}</div>`
         : `<p class="muted small">모은 단어가 없습니다.</p>`}
     </div>`;
     const reload = async () => { const nd = await App.api(`/api/sources/${d.id}`); Object.assign(d, nd); this.renderKw(b, d); };

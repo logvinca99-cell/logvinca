@@ -48,6 +48,38 @@ def clean(name, max_len=100):
 
 # ───────────────────────── 재조합
 
+def new_word_candidates(original, cfg, lex=None, category="", core="", kw_words=(), tag_words=()):
+    """재조합에 넣을 수 있는 새 단어 [(단어, 바꿀 수 있는 원래 단어, 우선순위)]. 이 수가 설정보다 적으면 그만큼만 들어간다."""
+    from . import lexicon as lx
+    lex = lex or cfg.get("_lex")
+    words = tokens(original)
+    fixed_n = max(0, int(cfg.get("recombine_fixed_prefix", 3) or 0))
+    prefix, tail = words[:fixed_n], words[fixed_n:]
+    tail = [w for w in tail if not (core and w.lower() == core.lower())]
+    have = {w.lower() for w in words}
+    cat_words = lx.category_words(category) if (lex and cfg.get("use_category_words", False)) else []
+    pool = []
+    if lex:
+        if core:
+            pool += [(x, None, 0) for x in lex.synonyms(core)]
+        pool += [(w, None, 1) for w in kw_words]
+        for w in prefix:
+            if w != core:
+                pool += [(x, None, 2) for x in lex.synonyms(w)]   # 앞 단어는 고정이라 바꾸지 않고 덧붙이기만
+        pool += [(x, None, 2) for x in cat_words]
+        for w in tail:
+            pool += [(x, w, 3) for x in lex.synonyms(w)]
+        if cfg.get("recombine_use_tags"):
+            pool += [(t, None, 4) for t in tag_words if lex.ok_new_word(t)]
+    seen, cand = set(), []
+    for w, src, pr in pool:
+        if w.lower() in have or w in seen or (lex and not lex.ok_new_word(w)):
+            continue
+        seen.add(w)
+        cand.append((w, src, pr))
+    return cand
+
+
 def recombine(original, count, taken_norms, siblings, cfg, seed, tag_words=(), lex=None, category="",
               core="", kw_words=()):
     """새 이름 count개. 토큰(비용) 없이 만든다.
@@ -79,29 +111,7 @@ def recombine(original, count, taken_norms, siblings, cfg, seed, tag_words=(), l
     prefix, tail = words[:fixed_n], words[fixed_n:]
     keep_core = [w for w in tail if core and w.lower() == core.lower()]   # 핵심 키워드는 빼지 않음
     tail = [w for w in tail if w not in keep_core]
-    have = {w.lower() for w in words}
-    cat_words = lx.category_words(category) if (lex and cfg.get("use_category_words", False)) else []
-
-    # (새 단어, 바꿀 수 있는 원래 단어, 우선순위)
-    pool = []
-    if lex:
-        if core:
-            pool += [(x, None, 0) for x in lex.synonyms(core)]
-        pool += [(w, None, 1) for w in kw_words]
-        for w in prefix:
-            if w != core:
-                pool += [(x, None, 2) for x in lex.synonyms(w)]   # 앞 단어는 고정이라 바꾸지 않고 덧붙이기만
-        pool += [(x, None, 2) for x in cat_words]
-        for w in tail:
-            pool += [(x, w, 3) for x in lex.synonyms(w)]
-        if cfg.get("recombine_use_tags"):
-            pool += [(t, None, 4) for t in tag_words if lex.ok_new_word(t)]
-    seen, cand = set(), []
-    for w, src, pr in pool:
-        if w.lower() in have or w in seen or (lex and not lex.ok_new_word(w)):
-            continue
-        seen.add(w)
-        cand.append((w, src, pr))
+    cand = new_word_candidates(original, cfg, lex, category, core, kw_words, tag_words)
     weight = {0: 8, 1: 6, 2: 4, 3: 2, 4: 1}
 
     rnd = random.Random(seed)

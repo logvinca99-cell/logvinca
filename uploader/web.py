@@ -16,7 +16,7 @@ from .tasks import Tasks
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 FILTER_KEYS = ("q", "status", "category", "store_missing", "store_has", "import_id", "max_listings",
                "min_names", "store_id", "plan_id", "op", "age_days", "sold", "locked")
-STORE_FIELDS = ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "capacity", "enabled", "memo", "wm_text")
+STORE_FIELDS = ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "capacity", "enabled", "memo", "wm_text", "importer")
 
 
 def _filter_from(src):
@@ -117,9 +117,9 @@ def create_app(db=None):
     @app.post("/api/settings")
     def save_settings():
         v = body()
-        ints = ("recombine_fixed_prefix", "recombine_new_min", "recombine_new_max", "max_word_repeat", "opendict_daily_limit", "kipris_limit", "bait_amount", "kw_daily_limit", "kw_results", "kw_min_malls", "kw_refresh_days", "kw_max_words", "core_scan_words", "orders_auto_sync_minutes", "orders_initial_days", "max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
+        ints = ("recombine_fixed_prefix", "recombine_new_min", "recombine_new_max", "max_word_repeat", "opendict_daily_limit", "kipris_limit", "bait_amount", "kw_daily_limit", "kw_min_volume", "kw_related_max", "kw_refresh_days", "kw_max_words", "core_scan_words", "orders_auto_sync_minutes", "orders_initial_days", "max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
                 "name_max_len", "ai_names_per_product", "ai_products_per_call", "ai_workers")
-        floats = ("wm_size_pct", "wm_opacity", "wm_margin_pct", "kw_min_share", "recombine_replace_ratio", "delay_sec", "price_jitter_pct", "recombine_max_overlap", "image_cache_gb")
+        floats = ("wm_size_pct", "wm_opacity", "wm_margin_pct", "recombine_replace_ratio", "delay_sec", "price_jitter_pct", "recombine_max_overlap", "image_cache_gb")
         for k in ints:
             if k in v:
                 v[k] = convert.to_int(v[k], config.DEFAULTS[k])
@@ -133,10 +133,35 @@ def create_app(db=None):
         cfg = config.save(v)
         if any(before.get(k) != cfg.get(k) for k in ("lock_sold", "lock_canceled_too")):
             orders.recount_sold(db)  # 잠금 기준이 바뀌었으면 전체 다시 계산
+        if any(before.get(k) != cfg.get(k) for k in ("origin_force", "origin_country", "origin_codes", "origin_default")):
+            try:  # 원산지 기준이 바뀌었으면 전체 원본을 다시 검사 (오류 표시가 바로 바뀌게)
+                tasks.start("revalidate", "원산지 설정이 바뀌어 전체 다시 검사", lambda **kw: inventory.revalidate(db, **kw))
+            except RuntimeError:
+                pass
         if before.get("kipris_block_pending") != cfg.get("kipris_block_pending"):
             with db.tx() as c:
                 lexicon._bump(c)  # 상표 단어 기준이 바뀌었으면 사전 다시 읽게
         return jsonify({"settings": config.public(cfg)})
+
+    @app.post("/api/settings/reapply")
+    def settings_reapply():
+        """바꾼 설정을 이미 만든 것에 다시 적용: prices(대기 중 복사본 가격) / names(안 쓴 이름 후보 지우기)."""
+        what = body().get("what")
+        cfg = config.load()
+        if what == "prices":
+            rows = db.q("""SELECT l.id, l.store_id, s.price, s.source_key FROM listings l JOIN sources s ON s.id=l.source_id
+                WHERE l.origin_no='' AND l.status IN ('planned','fail')""")
+            with db.tx() as c:
+                for r in rows:
+                    c.execute("UPDATE listings SET price=? WHERE id=?",
+                              (convert.adjusted_price(r["price"], f"{r['source_key']}|{r['store_id']}", cfg), r["id"]))
+            return jsonify({"count": len(rows)})
+        if what == "names":
+            n = db.one("SELECT COUNT(*) AS n FROM names WHERE listing_id IS NULL AND origin IN ('recombine','ai')")["n"]
+            db.x("DELETE FROM names WHERE listing_id IS NULL AND origin IN ('recombine','ai')")
+            db.recount_sources()
+            return jsonify({"count": n})
+        return fail("알 수 없는 작업입니다.")
 
     @app.post("/api/categories/refresh")
     def refresh_categories():
@@ -164,7 +189,7 @@ def create_app(db=None):
             v["capacity"] = max(0, convert.to_int(v["capacity"], 10000))
         if "enabled" in v:
             v["enabled"] = int(bool(v["enabled"]))
-        for k in ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "memo", "wm_text"):
+        for k in ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "memo", "wm_text", "importer"):
             if k in v:
                 v[k] = str(v[k] or "").strip()
         if sid:
@@ -292,8 +317,12 @@ def create_app(db=None):
 
     @app.post("/api/sources/<int:sid>/core")
     def source_core(sid):
+        """핵심 키워드 직접 정하기 → 이 원본에 쓰고, 단어를 기억해 같은 단어가 나오는 다른 원본에도 씀."""
         core = (body().get("core") or "").strip()
-        db.x("UPDATE sources SET core_kw=?, core_manual=? WHERE id=?", (core, 1 if core else 0, sid))
+        old = db.one("SELECT core_kw FROM sources WHERE id=?", (sid,))
+        db.x("UPDATE sources SET core_kw=?, core_manual=?, kw_at=NULL WHERE id=?", (core, 1 if core else 0, sid))
+        if core:
+            keywords.learn_core(db, core, other=(old or {}).get("core_kw"))
         return jsonify({"ok": True})
 
     @app.post("/api/sources/import")
@@ -431,7 +460,8 @@ def create_app(db=None):
         try:
             l["body"] = convert.build_body(row, cfg, cats.get(cat) or f"(카테고리 번호 확인 필요) {cat}", url_map,
                                            name=l["name"], price=l["price"], seller_code=l["next_seller_code"],
-                                           as_phone=l["as_phone"] or cfg.get("as_phone"))
+                                           as_phone=l["as_phone"] or cfg.get("as_phone"),
+                                           importer=convert.importer_for(store, cfg))
         except convert.ConvertError as e:
             l["body"] = {"검사 오류": str(e)}
         l["thumb"] = (convert.thumbnails(row) or [""])[0]
@@ -483,6 +513,34 @@ def create_app(db=None):
     def orders_import():
         return file_task("orders", "판매 이력 파일 가져오기", orders.import_sales_file)
 
+    @app.post("/api/listings/rename")
+    def listings_rename():
+        """고른 복사본(아직 안 올린 것)의 상품명을 재조합·AI·만들어 둔 후보로 바꾼다."""
+        b = body()
+        f = _filter_from(b)
+        f.pop("op", None)
+        ids = inventory.listing_ids(db, f)
+        if not ids:
+            return fail("고른 복사본이 없습니다.")
+        method = b.get("method") if b.get("method") in ("recombine", "ai", "pool") else "recombine"
+        if method == "ai" and not config.load().get("anthropic_api_key") and os.environ.get("UPLOADER_FAKE_API") != "1":
+            return fail("설정 → AI 상품명에서 Anthropic API 키를 먼저 넣어 주세요.")
+        label = {"recombine": "재조합", "ai": "AI", "pool": "만들어 둔 후보"}[method]
+        try:
+            tid = tasks.start("rename", f"상품명 바꾸기({label}) · 복사본 {len(ids):,}건",
+                              lambda **kw: inventory.rename_listings(db, ids, method, **kw))
+        except RuntimeError as e:
+            return fail(str(e))
+        return jsonify({"task": tid})
+
+    @app.post("/api/listings/<int:lid>/name")
+    def listing_set_name(lid):
+        try:
+            name = inventory.set_listing_name(db, lid, (body().get("name") or "").strip())
+        except ValueError as e:
+            return fail(str(e))
+        return jsonify({"ok": True, "name": name})
+
     @app.post("/api/listings/lock")
     def lock():
         """직접 잠금/풀기 (판매 이력과 상관없이). 판매 이력으로 걸린 잠금은 풀리지 않는다."""
@@ -519,12 +577,15 @@ def create_app(db=None):
                 core, kw = keywords.words_for(db, [src], cfg, lex)[src["id"]]
         if not name:
             return fail("상품명을 넣어 주세요.")
-        core = core or keywords.detect_core(name, None, lex)
+        core = core or keywords.detect_core(name, lex, None, keywords._learned(db))
         out = namegen.recombine(name, int(b.get("count") or 5), set(), [name], cfg, seed=f"preview:{time.time()}",
                                 lex=lex, category=category, core=core, kw_words=kw)
         orig = name.split()
+        cand = namegen.new_word_candidates(name, cfg, lex, category, core, kw)
         return jsonify({
             "original": name, "category": category, "original_len": len(name), "core": core,
+            "candidates": [w for w, _, _ in cand], "new_min": int(cfg.get("recombine_new_min") or 0),
+            "new_max": int(cfg.get("recombine_new_max") or 0),
             "original_repeat": lexicon.repeated_word(orig, lex, int(cfg.get("max_word_repeat") or 2)),
             "pool": {"synonyms": list(dict.fromkeys(w for t in orig for w in lex.synonyms(t)))[:30],
                      "keywords": kw,
@@ -532,6 +593,14 @@ def create_app(db=None):
             "marks": [{"word": w, "verdict": v} for w, v in lexicon.marks_in(name, lex)],
             "names": [{"name": n, "len": len(n), "new": [w for w in n.split() if w not in orig]} for n in out],
         })
+
+    @app.post("/api/lexicon/dictfolder")
+    def lexicon_dictfolder():
+        try:
+            tid = tasks.start("dictfile", "사전 폴더 읽기", lambda **kw: lexicon.import_dict_folder(db, **kw))
+        except RuntimeError as e:
+            return fail(str(e))
+        return jsonify({"task": tid})
 
     @app.post("/api/lexicon/dictfile")
     def lexicon_dictfile():
@@ -724,7 +793,7 @@ def create_app(db=None):
                       "queries": db.one("SELECT COUNT(*) AS n FROM kw_query")["n"],
                       "words": db.one("SELECT COUNT(DISTINCT word) AS n FROM source_kw")["n"],
                       "volumes": db.one("SELECT COUNT(*) AS n FROM kw_volume")["n"]},
-            "has_key": bool(cfg.get("naver_client_id") and cfg.get("naver_client_secret")) or fake,
+            "has_key": keywords.has_keys(cfg),
             "has_searchad": bool(cfg.get("searchad_api_key") and cfg.get("searchad_secret")
                                  and cfg.get("searchad_customer_id")) or fake,
             "enabled": bool(cfg.get("use_naver_keywords", True)),
@@ -827,8 +896,11 @@ def create_app(db=None):
 
     @app.post("/api/run/estimate")
     def run_estimate():
-        targets = engine.listing_targets(db, _filter_from(body()))
-        return jsonify(engine.estimate(db, targets, config.load()))
+        f = _filter_from(body())
+        targets = engine.listing_targets(db, f)
+        where, args = inventory.listing_where({**f, "status": "noname"})
+        noname = db.one(f"SELECT COUNT(*) AS n FROM listings l JOIN sources s ON s.id=l.source_id{where}", args)["n"]
+        return jsonify({**engine.estimate(db, targets, config.load()), "noname": noname})
 
     @app.post("/api/run")
     def run_start():
@@ -884,8 +956,25 @@ def create_app(db=None):
                 auto["last_result"] = str(e)
             time.sleep(30)
 
+    def dict_folder_check():
+        """켤 때 data/사전 폴더에 새 사전 파일이 있으면 뒤에서 읽는다."""
+        time.sleep(3)
+        try:  # 이번 업데이트에서 원산지 검사가 바뀜 → 한 번 전체 다시 검사
+            if not db.one("SELECT 1 FROM meta WHERE k='revalidate_origin_v2'") and db.one("SELECT 1 FROM sources LIMIT 1"):
+                tasks.start("revalidate", "원산지 검사 변경 · 전체 다시 검사", lambda **kw: inventory.revalidate(db, **kw))
+            db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('revalidate_origin_v2', '1')")
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(5)
+        try:
+            if lexicon.dict_folder_new(db):
+                tasks.start("dictfile", "사전 폴더 읽기 (새 파일)", lambda **kw: lexicon.import_dict_folder(db, **kw))
+        except Exception:  # noqa: BLE001
+            pass
+
     if not app.config.get("TESTING"):
         threading.Thread(target=auto_sync_loop, daemon=True).start()
+        threading.Thread(target=dict_folder_check, daemon=True).start()
 
     return app
 

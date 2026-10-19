@@ -30,6 +30,7 @@ orders    판매 이력 (네이버 주문 가져오기 / 주문 파일 가져오
 
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -103,6 +104,7 @@ CREATE TABLE IF NOT EXISTS stores (
     orders_synced_to REAL,               -- 네이버 주문을 여기까지 가져왔음
     enabled INTEGER NOT NULL DEFAULT 1,
     memo TEXT NOT NULL DEFAULT '',
+    importer TEXT NOT NULL DEFAULT '',      -- 원산지 수입사 (비우면 설정 틀 '{store}협력사')
     wm_text TEXT NOT NULL DEFAULT '',       -- 워터마크 글자 (비우면 스토어 이름, 로고 PNG가 있으면 로고)
     created_at REAL NOT NULL
 );
@@ -117,7 +119,7 @@ CREATE TABLE IF NOT EXISTS listings (
     store_id INTEGER NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
     source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
     plan_id INTEGER REFERENCES plans(id) ON DELETE SET NULL,
-    name_id INTEGER NOT NULL UNIQUE,
+    name_id INTEGER UNIQUE,                 -- 바꾼 상품명 (names). 비어 있으면 아직 원본 상품명 → '이름 변경 필요', 등록 안 함
     name TEXT NOT NULL,
     price INTEGER NOT NULL,
     status TEXT NOT NULL,
@@ -237,7 +239,7 @@ class DB:
         "sources": [("seller_code", "TEXT NOT NULL DEFAULT ''"), ("core_kw", "TEXT NOT NULL DEFAULT ''"),
                     ("core_manual", "INTEGER NOT NULL DEFAULT 0"), ("kw_at", "REAL")],
         "stores": [("code", "TEXT NOT NULL DEFAULT ''"), ("orders_synced_to", "REAL"),
-                   ("wm_text", "TEXT NOT NULL DEFAULT ''")],
+                   ("wm_text", "TEXT NOT NULL DEFAULT ''"), ("importer", "TEXT NOT NULL DEFAULT ''")],
         "listings": [("sold_count", "INTEGER NOT NULL DEFAULT 0"), ("last_sold_at", "REAL"),
                      ("cancel_count", "INTEGER NOT NULL DEFAULT 0"), ("manual_lock", "INTEGER NOT NULL DEFAULT 0"),
                      ("locked", "INTEGER NOT NULL DEFAULT 0"), ("lock_note", "TEXT NOT NULL DEFAULT ''"),("op", "TEXT NOT NULL DEFAULT 'create'"), ("round", "INTEGER NOT NULL DEFAULT 1"),
@@ -276,6 +278,31 @@ class DB:
         if ver < 3:
             self._v3 = True  # 잠금 열이 새로 생김 → 웹 시작 때 판매 수·잠금을 다시 계산
         self.c.commit()
+        self._listing_name_nullable()
+
+    def _listing_name_nullable(self):
+        """복사본은 원본 상품명 그대로 만들고 나중에 이름을 바꾸므로 name_id가 비어 있을 수 있게 표를 바꾼다."""
+        info = {r[1]: r for r in self.c.execute("PRAGMA table_info(listings)")}
+        if "name_id" not in info or not info["name_id"][3]:  # notnull
+            return
+        sql = self.c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='listings'").fetchone()[0]
+        new = re.sub(r"name_id\s+INTEGER\s+NOT\s+NULL\s+UNIQUE", "name_id INTEGER UNIQUE", sql, count=1)
+        new = re.sub(r"CREATE TABLE\s+(IF NOT EXISTS\s+)?\"?listings\"?", "CREATE TABLE listings_new", new, count=1)
+        self.c.commit()
+        self.c.execute("PRAGMA foreign_keys=OFF")
+        try:
+            self.c.execute("BEGIN")
+            self.c.execute(new)
+            self.c.execute("INSERT INTO listings_new SELECT * FROM listings")
+            self.c.execute("DROP TABLE listings")
+            self.c.execute("ALTER TABLE listings_new RENAME TO listings")
+            self.c.commit()
+        except Exception:
+            self.c.rollback()
+            raise
+        finally:
+            self.c.execute("PRAGMA foreign_keys=ON")
+        self.c.executescript(SCHEMA)  # 색인 다시
 
     def q(self, sql, args=()):
         with self.lock:

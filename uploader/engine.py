@@ -23,10 +23,11 @@ def listing_targets(db, f):
     """처리할 건: 조건에 맞는 대기·실패 건 (새 등록 / 최신화 / 내리기)."""
     from .inventory import listing_where
     where, args = listing_where({**f, "status": "all"})
-    cond = "l.status IN ('planned','fail')"
+    # 상품명을 아직 안 바꾼(원본 상품명 그대로인) 새 등록은 올리지 않는다 → 복사본 화면 '이름 변경 필요'
+    cond = "l.status IN ('planned','fail') AND NOT (l.op='create' AND l.name_id IS NULL)"
     where = (where + f" AND {cond}") if where else f" WHERE {cond}"
     return db.q(f"""SELECT l.id, l.store_id, l.source_id, l.name, l.price, l.status, l.message, l.op, l.round,
-        l.origin_no, l.channel_no, l.seller_code, l.registered_at, l.bait_want, CASE WHEN l.op='delete' THEN 0 ELSE s.image_count END AS image_count
+        l.origin_no, l.channel_no, l.seller_code, l.registered_at, l.bait_want, l.name_id, CASE WHEN l.op='delete' THEN 0 ELSE s.image_count END AS image_count
         FROM listings l JOIN sources s ON s.id=l.source_id{where} ORDER BY l.id""", args)
 
 
@@ -95,6 +96,12 @@ class Runner:
             if f.get("limit"):
                 targets = targets[:int(f["limit"])]
             if not targets:
+                from .inventory import listing_where
+                where, args = listing_where({**f, "status": "noname"})
+                n = self.db.one(f"SELECT COUNT(*) AS n FROM listings l JOIN sources s ON s.id=l.source_id{where}", args)["n"]
+                if n:
+                    raise RuntimeError(f"등록할 건이 없습니다. 상품명을 아직 안 바꾼 복사본 {n:,}건은 올리지 않습니다 "
+                                       "— 복사본 화면 '이름 변경 필요'에서 상품명을 바꾸세요.")
                 raise RuntimeError("등록할 건이 없습니다. (계획됨·실패 상태만 등록합니다)")
             by_store = collections.defaultdict(list)
             for t in targets:
@@ -281,6 +288,8 @@ class Runner:
         on_wait = lambda m: self._stage(lid, label, m)  # noqa: E731
         notes = []
         try:
+            if op == "create" and not t.get("name_id"):
+                raise naver.ApiError("이름 변경 필요 · 원본 상품명 그대로는 올리지 않습니다 (복사본 화면에서 상품명 바꾸기)")
             if op in ("refresh", "delete") and t["origin_no"]:
                 # 판매된 상품은 지우지 않는다 (예약 뒤에 팔렸을 수 있으니 실행 직전에 다시 확인).
                 if not store.get("_sales_ok", True):
@@ -319,7 +328,7 @@ class Runner:
             code = seller_code(cfg, store, t)
             # 도둑방지: 처음 올릴 때 가격을 높여 둠 (나중에 원래 가격으로)
             bait_amt = bait.applies(cfg, t, op)
-            kw = dict(name=t["name"], price=t["price"], bait=bait_amt,
+            kw = dict(name=t["name"], price=t["price"], bait=bait_amt, importer=convert.importer_for(store, cfg),
                       as_phone=store.get("as_phone") or cfg.get("as_phone"), seller_code=code)
             convert.build_body(row, cfg, cat_id, **kw)  # 이미지 올리기 전에 빠진 값부터 확인
 
