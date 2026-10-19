@@ -268,10 +268,11 @@ def _bump(c):
 
 
 class Lexicon:
-    def __init__(self, groups, blocked, marks=None, attrs=(), dict_syn=None):
+    def __init__(self, groups, blocked, marks=None, attrs=(), dict_syn=None, cat_corpus=None):
         self.blocked = {w.lower() for w in blocked}
         self.attrs = {w for w in attrs if w}
-        self.dsyn = dict_syn or {}   # 사전 파일 비슷한말 (상품명에 실제로 쓰이는 말만 남긴 것)
+        self.dsyn = dict_syn or {}          # 사전 파일 비슷한말 {단어: [비슷한말…]}
+        self.cat_corpus = cat_corpus or {}  # 카테고리(앞 2단계)별 상품명에 쓰인 단어 → 같은 쪽에서 쓰이는 비슷한말을 먼저
         # 키프리스에서 상표로 확인된 단어 {단어: 등록/출원} — 단어 전체가 같을 때만 (붙여 쓴 '수납'+'함' 등은 따로 확인)
         self.marks = {w.lower(): v for w, v in (marks or {}).items()}
         self.syn = {}
@@ -300,14 +301,34 @@ class Lexicon:
         lw = w.lower()
         return not any(b and b in lw for b in self.blocked) and not self.mark_of(w)
 
-    def synonyms(self, token):
-        """단어의 유의어. '수리용'이면 '수리'의 유의어에 '용'을 붙여 '보수용·수선용'."""
-        out = list(self.syn.get(token, ())) + list(self.dsyn.get(token, ()))
+    def synonyms_src(self, token, category=None):
+        """단어의 유의어 [(단어, 출처, 순위)]. 출처: 묶음(유의어 묶음) / 사전(국어사전 비슷한말).
+        순위 0 = 묶음, 또는 같은 카테고리 상품명에서도 쓰이는 사전 비슷한말. 1 = 그 밖의 사전 비슷한말
+        (동음이의어 때문에 뜻이 다를 수 있음 → 뒤로). '수리용'이면 '수리'의 유의어에 '용'을 붙여 '보수용·수선용'."""
+        scope = self.cat_corpus.get(cat_key(category)) if category else None
+        out = []
+
+        def add(words, origin, suf=""):
+            for w in words:
+                w = w + suf
+                rank = 0 if origin == "묶음" or (scope is not None and w in scope) else 1
+                out.append((w, origin, rank))
+        add(self.syn.get(token, ()), "묶음")
+        add(self.dsyn.get(token, ()), "사전")
         for suf in SUFFIXES:
             if token.endswith(suf) and len(token) > len(suf) + 1:
                 base = token[: -len(suf)]
-                out += [s + suf for s in list(self.syn.get(base, ())) + list(self.dsyn.get(base, ()))]
-        return [w for w in dict.fromkeys(out) if self.ok_new_word(w)]
+                add(self.syn.get(base, ()), "묶음", suf)
+                add(self.dsyn.get(base, ()), "사전", suf)
+        seen, res = set(), []
+        for w, o, r in sorted(out, key=lambda x: x[2]):
+            if w not in seen and w != token and self.ok_new_word(w):
+                seen.add(w)
+                res.append((w, o, r))
+        return res
+
+    def synonyms(self, token, category=None):
+        return [w for w, _, _ in self.synonyms_src(token, category)]
 
 
 def blocked_in(name, lex):
@@ -378,31 +399,36 @@ def get(db):
             # 사전 단어(유의어 묶음·속성 단어·우리말샘 표제어)와 두 글자 이하는 일반명사로 보고 상표로 막지 않는다
             generic = {w for g in groups for w in g} | set(attrs)
             marks = {w: v for w, v in marks.items() if len(w) >= 3 and w not in generic}
-            _cache.update(lex=Lexicon(groups, blocked, marks, attrs, _dict_syn(db, groups)), version=ver)
+            dsyn = _dict_syn(db, groups)
+            _cache.update(lex=Lexicon(groups, blocked, marks, attrs, dsyn, _cat_corpus(db) if dsyn else {}), version=ver)
         return _cache["lex"]
 
 
+def cat_key(category):
+    """카테고리 앞 2단계 (예: 가구/인테리어>커튼/블라인드)."""
+    return ">".join(p.strip() for p in str(category or "").split(">")[:2])
+
+
 def _dict_syn(db, groups):
-    """사전 파일의 비슷한말 중, 원본 상품명·네이버 키워드·유의어 묶음에 실제로 나오는 말끼리만 쓴다
-    (사전에는 옛말·전문어 같은 비슷한말이 많아서 상품명에 어색한 말이 들어가지 않게)."""
-    rows = db.q("SELECT word, syns FROM dict_syn")
-    if not rows:
-        return {}
-    corpus = {w for g in groups for w in g}
-    for r in db.q("SELECT name FROM sources"):
-        for t in r["name"].split():
-            corpus.add(t)
-            for suf in SUFFIXES:
-                if t.endswith(suf) and len(t) > len(suf) + 1:
-                    corpus.add(t[: -len(suf)])
-    corpus |= {r["word"] for r in db.q("SELECT DISTINCT word FROM source_kw")} if _has_table(db, "source_kw") else set()
+    """사전 파일 비슷한말 전부 (2~10자 한글). 상품명에 안 쓰인 말도 쓰되, 순위는 synonyms_src에서 정한다."""
     out = {}
-    for r in rows:
-        if r["word"] not in corpus:
-            continue
-        syns = [x for x in r["syns"].split(",") if x in corpus and x != r["word"]]
+    for r in db.q("SELECT word, syns FROM dict_syn"):
+        syns = [x for x in r["syns"].split(",") if x != r["word"] and 2 <= len(x) <= 10]
         if syns:
             out[r["word"]] = syns
+    return out
+
+
+def _cat_corpus(db):
+    """카테고리(앞 2단계)별로 상품명에 쓰인 단어 (사전 비슷한말의 뜻이 맞는지 가늠하는 데 씀)."""
+    out = {}
+    for r in db.q("SELECT name, category FROM sources"):
+        bag = out.setdefault(cat_key(r["category"]), set())
+        for t in r["name"].split():
+            bag.add(t)
+            for suf in SUFFIXES:
+                if t.endswith(suf) and len(t) > len(suf) + 1:
+                    bag.add(t[: -len(suf)])
     return out
 
 

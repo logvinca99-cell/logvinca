@@ -48,53 +48,54 @@ def clean(name, max_len=100):
 
 # ───────────────────────── 재조합
 
-def new_word_candidates(original, cfg, lex=None, category="", core="", kw_words=(), tag_words=()):
-    """재조합에 넣을 수 있는 새 단어 [(단어, 바꿀 수 있는 원래 단어, 우선순위)]. 이 수가 설정보다 적으면 그만큼만 들어간다."""
+def new_word_detail(original, cfg, lex=None, category="", kw_words=(), tag_words=()):
+    """재조합에 넣을 수 있는 새 단어 [(단어, 바꿀 수 있는 원래 단어, 우선순위, 출처)]. 출처: 묶음 / 사전 / 네이버 / 태그.
+    우선순위: 1 = 앞 단어의 유의어·네이버 연관 키워드, 2 = 나머지 단어의 유의어(바꿔 넣기 가능),
+              3 = 뜻이 다를 수 있는 사전 비슷한말(같은 카테고리 상품명에 안 쓰이는 말), 4 = 태그"""
     from . import lexicon as lx
     lex = lex or cfg.get("_lex")
     words = tokens(original)
     fixed_n = max(0, int(cfg.get("recombine_fixed_prefix", 3) or 0))
     prefix, tail = words[:fixed_n], words[fixed_n:]
-    tail = [w for w in tail if not (core and w.lower() == core.lower())]
     have = {w.lower() for w in words}
-    cat_words = lx.category_words(category) if (lex and cfg.get("use_category_words", False)) else []
     pool = []
     if lex:
-        if core:
-            pool += [(x, None, 0) for x in lex.synonyms(core)]
-        pool += [(w, None, 1) for w in kw_words]
-        for w in prefix:
-            if w != core:
-                pool += [(x, None, 2) for x in lex.synonyms(w)]   # 앞 단어는 고정이라 바꾸지 않고 덧붙이기만
-        pool += [(x, None, 2) for x in cat_words]
+        for w in prefix:   # 앞 단어는 고정이라 바꾸지 않고 덧붙이기만
+            pool += [(x, None, 1 if r == 0 else 3, o) for x, o, r in lex.synonyms_src(w, category)]
+        pool += [(w, None, 1, "네이버") for w in kw_words]
+        if cfg.get("use_category_words", False):
+            pool += [(x, None, 2, "카테고리") for x in lx.category_words(category)]
         for w in tail:
-            pool += [(x, w, 3) for x in lex.synonyms(w)]
+            pool += [(x, w, 2 if r == 0 else 3, o) for x, o, r in lex.synonyms_src(w, category)]
         if cfg.get("recombine_use_tags"):
-            pool += [(t, None, 4) for t in tag_words if lex.ok_new_word(t)]
+            pool += [(t, None, 4, "태그") for t in tag_words if lex.ok_new_word(t)]
     seen, cand = set(), []
-    for w, src, pr in pool:
+    for w, src, pr, o in sorted(pool, key=lambda x: x[2]):
         if w.lower() in have or w in seen or (lex and not lex.ok_new_word(w)):
             continue
         seen.add(w)
-        cand.append((w, src, pr))
+        cand.append((w, src, pr, o))
     return cand
+
+
+def new_word_candidates(original, cfg, lex=None, category="", core="", kw_words=(), tag_words=()):
+    """재조합에 넣을 수 있는 새 단어 [(단어, 바꿀 수 있는 원래 단어, 우선순위)]. 이 수가 설정보다 적으면 그만큼만 들어간다."""
+    return [c[:3] for c in new_word_detail(original, cfg, lex, category, kw_words, tag_words)]
 
 
 def recombine(original, count, taken_norms, siblings, cfg, seed, tag_words=(), lex=None, category="",
               core="", kw_words=()):
     """새 이름 count개. 토큰(비용) 없이 만든다.
 
-    1. 원본의 앞 N단어(기본 3)는 그대로 맨 앞에 둔다. 핵심 키워드(core)가 그 뒤에 있으면 그것도 빼지 않는다.
+    1. 원본의 앞 N단어(기본 3)는 그대로 맨 앞에 둔다.
     2. 나머지 단어 중 0~3개를 빼고 순서를 섞는다.
-    3. 새 단어 1~2개를 우선순위대로 고른다:
-         ① 핵심 키워드의 유의어  ② 네이버에서 다른 판매자들이 쓴 단어(kw_words, 속성은 이미 걸러 옴)
-         ③ 앞 N단어의 유의어  ④ 나머지 단어의 유의어  ⑤ (설정 시) 엑셀 태그
-         (설정 use_category_words를 켜면 카테고리 맨 아래 단계 이름도 ③에 들어감)
-       나머지 단어의 유의어는 일정 확률로 원래 단어 자리에 바꿔 넣는다 (예: 수리용 → 수선용).
-       새 단어는 한글 일반명사만, 금지 단어가 들어간 말과 상표로 확인된 단어는 넣지 않는다.
+    3. 새 단어를 new_word_detail의 우선순위대로 고른다: 앞 단어의 유의어·네이버 연관 키워드 → 나머지 단어의
+       유의어(일정 확률로 원래 단어 자리에 바꿔 넣음, 예: 수리용 → 수선용) → 뜻이 다를 수 있는 사전 비슷한말.
+       새 단어는 한글 일반명사만, 금지 단어·상표 단어는 넣지 않는다.
     4. 남는 칸을 최대 글자 수(기본 50자)까지 채운다: 뺐던 원본 단어 → 그래도 남으면 우선순위 높은 새 단어.
     5. 버리는 경우: 같은 단어가 3번 이상 / 33개 스토어의 다른 이름과 같음 /
        같은 원본의 다른 이름과 (앞 N단어 뒤 부분이) 85% 이상 겹치거나 그 첫 두 단어가 같음.
+    core는 예전 호출과 맞추려고 남겨 둔 인자 (쓰지 않음).
     """
     from . import lexicon as lx
     lex = lex or cfg.get("_lex")
@@ -109,10 +110,8 @@ def recombine(original, count, taken_norms, siblings, cfg, seed, tag_words=(), l
     replace_ratio = float(cfg.get("recombine_replace_ratio", 0.4) or 0)
 
     prefix, tail = words[:fixed_n], words[fixed_n:]
-    keep_core = [w for w in tail if core and w.lower() == core.lower()]   # 핵심 키워드는 빼지 않음
-    tail = [w for w in tail if w not in keep_core]
-    cand = new_word_candidates(original, cfg, lex, category, core, kw_words, tag_words)
-    weight = {0: 8, 1: 6, 2: 4, 3: 2, 4: 1}
+    cand = new_word_candidates(original, cfg, lex, category, "", kw_words, tag_words)
+    weight = {1: 6, 2: 4, 3: 2, 4: 1}
 
     rnd = random.Random(seed)
     out, sibs = [], list(siblings)
@@ -178,8 +177,6 @@ def recombine(original, count, taken_norms, siblings, cfg, seed, tag_words=(), l
         for w in prefix:                            # 앞 N단어는 무조건 그대로
             if not any(w.lower() == x.lower() for x in cur):
                 cur.append(w)
-        for w in keep_core:                         # 4번째 이후에 있는 핵심 키워드도 그대로
-            kept.insert(rnd.randint(0, min(1, len(kept))), w)
         for w in kept:
             if can_add(cur, w):
                 cur.append(w)

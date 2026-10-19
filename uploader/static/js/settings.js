@@ -48,17 +48,17 @@ const SETTING_SECTIONS = [
     ["opendict_key", "우리말샘 오픈 API 키", "secret"],
     ["opendict_daily_limit", "한 번에 찾아볼 단어 수", "number"],
   ] },
-  { title: "네이버 키워드 (검색광고 API)", note: "searchad.naver.com 가입(광고비 없이 가능) → 도구 → API 사용 관리 → 고객 ID·액세스 라이선스·비밀키. 무료. (네이버 쇼핑 검색 API는 2026년 7월 종료돼 쓰지 않습니다.) 적용: 키워드를 모을 때, 그 뒤 새로 만드는 이름부터.", fields: [
+  { title: "네이버 키워드 (검색광고 API)", note: "searchad.naver.com 가입(광고비 없이 가능) → 도구 → API 사용 관리 → 고객 ID·액세스 라이선스·비밀키. 무료. (네이버 쇼핑 검색 API는 2026년 7월 종료돼 쓰지 않습니다.) 키가 있으면 재조합·미리보기 때 자동으로 받습니다.", fields: [
     ["use_naver_keywords", "재조합에 네이버에서 모은 단어 쓰기", "check"],
     ["searchad_customer_id", "고객 ID (CUSTOMER_ID)", "text"],
     ["searchad_api_key", "액세스 라이선스 (API_KEY)", "text"],
     ["searchad_secret", "비밀키 (SECRET_KEY)", "secret"],
-    ["core_scan_words", "핵심 키워드를 찾을 앞 단어 수 (검색량이 가장 큰 단어)", "number"],
+    ["core_scan_words", "연관 키워드를 받을 상품명 앞 단어 수", "number"],
     ["kw_min_volume", "연관 키워드 월간 검색량이 이만큼 이상인 것만", "number"],
     ["kw_dict_only", "국어사전에 있는 말만 쓰기 (브랜드·고유명사 거르기 · 우리말샘 API 키나 사전 파일 필요)", "check"],
     ["kw_max_words", "원본 하나에 쓸 단어 수 (검색량 순)", "number"],
-    ["kw_related_max", "핵심 키워드마다 볼 연관 키워드 수", "number"],
-    ["kw_daily_limit", "한 번에 부를 API 횟수 (같은 핵심 키워드는 저장한 결과 재사용)", "number"],
+    ["kw_related_max", "단어마다 볼 연관 키워드 수", "number"],
+    ["kw_daily_limit", "한 번에 부를 API 횟수 (같은 단어는 저장한 결과 재사용)", "number"],
     ["kw_refresh_days", "이 일수가 지나면 다시 모음", "number"],
   ] },
   { title: "상표 확인 (키프리스)", note: "KIPRIS Plus(plus.kipris.or.kr) 회원가입 → 상표 정보 검색 API 활용 신청 → 받은 키를 넣습니다. 사전에 있는 일반명사는 확인하지 않고, '효도의자'처럼 붙여 만든 조어만 확인합니다(우리말샘 키가 있으면 사전 단어인지 먼저 확인).", fields: [

@@ -266,6 +266,10 @@ def generate_recombine(db, ids, per_source, progress=None, should_stop=None):
     use_orig = int(bool(cfg.get("use_original_name")))
     stats = {"sources": 0, "added": 0, "short": 0, "few_words": 0}
     new_min = int(cfg.get("recombine_new_min") or 0)
+    if progress:
+        progress(0, len(ids), "네이버 연관 키워드 받는 중 (아직 안 모은 원본)")
+    stats["kw_error"], stats["kw_new"] = keywords.ensure_collected(db, cfg, ids, should_stop)
+    cfg["_lex"] = lexicon.get(db)
     for i in range(0, len(ids), CHUNK):
         if should_stop and should_stop():
             break
@@ -479,8 +483,8 @@ def _free_names(c, sid, use_orig):
 
 
 def _kw_args(s):
-    core, kw = s.get("_kw") or (s.get("core_kw") or "", [])
-    return {"core": core, "kw_words": kw}
+    _, kw = s.get("_kw") or ("", [])
+    return {"kw_words": kw}
 
 
 def _fill_names(c, s, need, cfg, now):
@@ -526,12 +530,7 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
             break
         chunk = ids[i:i + CHUNK]
         marks = ",".join("?" * len(chunk))
-        srcs = db.q(f"SELECT id, source_key, name, price, tags, category, valid, core_kw, data FROM sources WHERE id IN ({marks})",
-                    chunk)
-        kws = keywords.words_for(db, srcs, cfg, cfg["_lex"])
-        for s in srcs:
-            s["_kw"] = kws.get(s["id"])
-            s.pop("data", None)
+        srcs = db.q(f"SELECT id, source_key, name, price, tags, category, valid FROM sources WHERE id IN ({marks})", chunk)
         active, dead = {}, {}
         for r in db.q(f"SELECT id, source_id, store_id, status, name_id, round FROM listings WHERE source_id IN ({marks})",
                       chunk):
@@ -615,6 +614,11 @@ def rename_listings(db, ids, method="recombine", progress=None, should_stop=None
     for r in todo:
         by_src.setdefault(r["source_id"], []).append(r)
     src_ids = list(by_src)
+    if method != "pool" and src_ids:
+        if progress:
+            progress(0, len(todo), "네이버 연관 키워드 받는 중 (아직 안 모은 원본)")
+        st["kw_error"], st["kw_new"] = keywords.ensure_collected(db, cfg, src_ids, should_stop)
+        cfg["_lex"] = lexicon.get(db)
     if method == "ai" and src_ids:
         # 원본마다 필요한 수만큼 AI로 더 짓는다 (원본별로 개수가 달라도 넉넉히 최대값으로)
         generate_ai(db, src_ids, max(len(v) for v in by_src.values()), should_stop=should_stop)

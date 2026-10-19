@@ -174,16 +174,16 @@ const App = {
         names: () => r.not_found !== undefined
           ? `상품명 가져오기 끝: 새 이름 ${num(r.added)}개 · 다른 이름과 중복 ${num(r.dup)}개 · 원본 못 찾음 ${num(r.not_found)}줄`
             + (r.rejected ? ` · 반복·금지 단어로 버림 ${num(r.rejected)}개 (예: ${r.rejected_examples?.[0] || ""})` : "")
-          : `상품명 만들기 끝: 새 이름 ${num(r.added)}개` + (r.short ? ` · 단어가 적어 다 못 채운 상품 ${num(r.short)}개` : "")
+          : (r.kw_error ? `네이버 키워드를 못 받음(${r.kw_error}) · ` : "") + `상품명 만들기 끝: 새 이름 ${num(r.added)}개` + (r.short ? ` · 단어가 적어 다 못 채운 상품 ${num(r.short)}개` : "")
             + (r.few_words ? ` · 새 단어 후보가 설정보다 적은 원본 ${num(r.few_words)}개 (단어 사전·우리말샘·네이버 키워드로 늘리세요)` : "")
             + (r.rejected ? ` · 반복·금지 단어로 버림 ${num(r.rejected)}개` : "")
             + (r.failed ? ` · 실패 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : ""),
-        rename: () => `상품명 바꾸기 끝: ${num(r.renamed)}건 바꿈` + (r.short ? ` · 후보를 못 만든 ${num(r.short)}건은 그대로 (단어가 적음 → 직접 입력이나 AI)` : "")
+        rename: () => (r.kw_error ? `네이버 키워드를 못 받음(${r.kw_error}) · ` : "") + `상품명 바꾸기 끝: ${num(r.renamed)}건 바꿈` + (r.short ? ` · 후보를 못 만든 ${num(r.short)}건은 그대로 (단어가 적음 → 직접 입력이나 AI)` : "")
           + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
           + (r.few_words ? ` · 새 단어 후보가 설정보다 적은 원본 ${num(r.few_words)}개` : ""),
         bait: () => `원래 가격으로 ${num(r.restored)}건` + (r.failed ? ` · 실패 ${num(r.failed)}건 (${r.errors?.[0] || ""})` : ""),
         dictfile: () => `사전 파일 넣기 끝: 명사 ${num(r.nouns)}개 · 비슷한말 있는 단어 ${num(r.syn_words)}개 (파일 ${num(r.files)}개)`,
-        keywords: () => `네이버 키워드 끝: 원본 ${num(r.sources)}개 · 새 단어 ${num(r.words)}개 · API ${num(r.api_calls)}번 (저장한 결과 ${num(r.cached)}번)`
+        keywords: () => `네이버 키워드 끝: 원본 ${num(r.sources)}개 · 새 단어 ${num(r.words)}개 · 새로 물은 단어 ${num(r.tokens)}개 (저장한 결과 ${num(r.cached)}번)`
           + (r.not_in_dict ? ` · 사전에 없어 뺀 말 ${num(r.not_in_dict)}개` : "")
           + (r.dict_unknown ? ` · 사전 확인 못 해 뺀 말 ${num(r.dict_unknown)}개 (우리말샘 API 키나 사전 파일 필요)` : "")
           + (r.errors ? ` · 실패 ${r.errors} (${r.error})` : ""),

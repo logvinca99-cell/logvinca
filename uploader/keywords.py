@@ -1,16 +1,13 @@
-"""네이버 검색광고 API(연관 키워드·검색량)로 핵심 키워드를 찾고, 재조합 새 단어를 모은다.
+"""네이버 검색광고 API(연관 키워드)로 재조합 새 단어를 모은다. (네이버 쇼핑 검색 API는 2026년 7월 종료)
 
-(네이버 쇼핑 검색 API는 2026년 7월 종료되어 쓰지 않는다.)
-
-원본마다:
-  1. 핵심 키워드: 상품명 앞 5단어 중 월간 검색량이 가장 큰 단어 (속성·판촉 단어 제외).
-     원본 화면에서 직접 고치면 그 단어를 기억해(core_learn) 같은 단어가 나오는 다른 원본에도 쓴다.
-  2. 핵심 키워드의 연관 키워드(검색광고 키워드 도구)에서 핵심 키워드가 들어간 것만 보고,
-     핵심 키워드를 뺀 나머지 말을 새 단어 후보로 쓴다.  예) 핵심 '책상' → 컴퓨터책상 → '컴퓨터', 학생책상 → '학생'
-     같은 핵심 키워드의 결과는 저장해 두고 다시 쓴다 (원본이 많아도 핵심 키워드 수만큼만 묻는다).
-  3. 버리는 것: 검색량이 적은 것(기본 월 30 미만), 판촉 문구, 가게 이름 꼴, 금지 단어·상표 단어,
-     그리고 (기본) 국어사전에 없는 말 → 브랜드(이케아책상 → '이케아') 같은 고유명사가 들어가지 않게.
-  4. 재조합 때 원본마다: 속성 단어(우드·접이식·화이트·대형 등)는 원본 상품명·옵션·상세설명에 있을 때만 쓴다.
+원본마다 상품명 앞 몇 단어(기본 5, 속성·판촉 단어 제외)를 하나씩 검색광고 키워드 도구에 넣어 연관 키워드를 받는다.
+같은 단어는 한 번만 묻고 저장해 다시 쓴다 (커튼·거실처럼 자주 나오는 단어는 수천 개 원본이 같이 씀).
+  - 연관 키워드에 그 단어가 들어 있으면 그 단어를 뺀 나머지:   커튼 → 암막커튼 → '암막'
+  - 연관 키워드 자체가 국어사전에 있는 명사면 그대로:          포그머신 → '연무기'
+버리는 것: 월 검색량이 적은 것(기본 30 미만), 판촉 문구, 가게 이름 꼴, 금지·상표 단어,
+          (기본) 국어사전에 없는 말 → 브랜드(이케아커튼 → '이케아') 같은 고유명사가 들어가지 않게.
+재조합 때 원본마다: 속성 단어(우드·접이식·화이트·대형 등)는 원본 상품명·옵션·상세설명에 있을 때만 쓴다.
+키가 있으면 재조합·미리보기 때 아직 안 모은 원본은 자동으로 모은다.
 """
 
 import base64
@@ -43,7 +40,7 @@ CREATE TABLE IF NOT EXISTS source_kw (
 CREATE INDEX IF NOT EXISTS source_kw_word ON source_kw(word);
 CREATE INDEX IF NOT EXISTS sources_core ON sources(core_kw);
 CREATE TABLE IF NOT EXISTS kw_off (
-    core TEXT NOT NULL,          -- '' 이면 모든 핵심 키워드에서 끔
+    core TEXT NOT NULL,          -- 이 단어(상품명 속 단어)에서 온 새 단어를 끔. '' 이면 모든 단어에서
     word TEXT NOT NULL,
     PRIMARY KEY (core, word)
 ) WITHOUT ROWID;
@@ -91,105 +88,94 @@ def has_keys(cfg):
         or os.environ.get("UPLOADER_FAKE_API") == "1"
 
 
-# ───────────────────────── 핵심 키워드
+# ───────────────────────── 검색할 단어
 
 def head_tokens(name, n=5, lex=None):
-    """핵심 키워드 후보: 앞 n단어 중 2글자 이상 한글이 들어간 단어 (속성·판촉 단어 제외)."""
+    """연관 키워드를 받을 단어: 앞 n단어 중 2글자 이상 한글이 들어간 단어 (속성·판촉 단어 제외)."""
     out = []
     for t in namegen.tokens(name)[:n]:
         w = re.sub(r"[^\w가-힣]", "", t)
-        if re.search(r"[가-힣]{2,}", w) and not lexicon.is_attr(w, lex) and w not in PROMO:
+        if re.search(r"[가-힣]{2,}", w) and not lexicon.is_attr(w, lex) and w not in PROMO and w not in out:
             out.append(w)
     return out
 
 
-def _learned(db):
-    return {r["word"]: r["good"] for r in db.q("SELECT word, good FROM core_learn")}
+def _learned(db):  # 예전 핵심 키워드 기능 (호환용)
+    return {}
 
 
-def detect_core(name, lex=None, vols=None, learn=None, n=5):
-    """앞 n단어 중 핵심 키워드. ① 직접 고쳐 기억한 단어 ② 검색량이 가장 큰 단어 ③ (검색량 모르면) 앞 3단어 중 마지막."""
+def detect_core(name, lex=None, vols=None, learn=None, n=5):  # 예전 호출 호환용: 재조합은 핵심 키워드를 쓰지 않음
     toks = head_tokens(name, n, lex)
-    learn = learn or {}
-    toks = [t for t in toks if learn.get(t) != 0] or toks
-    if not toks:
-        return (namegen.tokens(name) or [""])[0]
-    good = [t for t in toks if learn.get(t) == 1]
-    if good:
-        return good[0]
-    if vols:
-        best = max(toks, key=lambda t: (vols.get(t, -1), -toks.index(t)))
-        if vols.get(best, -1) > 0:
-            return best
-    head = toks[:3]
-    return head[-1]
+    return toks[0] if toks else ""
 
 
-def learn_core(db, word, good=True, other=None):
-    """원본 화면에서 핵심 키워드를 고치면: 고른 단어는 핵심(1), 원래 자동으로 잡혔던 단어는 핵심 아님(0)."""
-    now = time.time()
-    with db.tx() as c:
-        if word:
-            c.execute("INSERT OR REPLACE INTO core_learn(word, good, at) VALUES(?,1,?)", (word, now))
-        if other and other != word:
-            c.execute("INSERT OR IGNORE INTO core_learn(word, good, at) VALUES(?,0,?)", (other, now))
+def learn_core(db, word, good=True, other=None):  # 호환용
+    return None
 
 
 # ───────────────────────── 연관 키워드 → 새 단어
 
-def _fake_related(core):
+def _fake_related(token):
     import random
-    rnd = random.Random(hashlib.md5(core.encode()).hexdigest())
+    rnd = random.Random(hashlib.md5(token.encode()).hexdigest())
     mods = ["사무용", "학생", "컴퓨터", "가정용", "다용도", "원목", "접이식", "화이트", "대형", "미니", "휴대용", "실내",
-            "캠핑", "이케아", "한샘", "추천", "최저가", "선반", "수납", "정리", "보관", "튼튼한"]
-    out = [(core, 20000)]
-    for m in rnd.sample(mods, 14):
-        out.append((m + core if rnd.random() < 0.7 else core + m, rnd.randint(10, 9000)))
-    out.append(("모니터받침대", 5000))
+            "캠핑", "이케아", "한샘", "추천", "최저가", "선반", "수납", "정리", "보관", "튼튼한", "암막", "방풍"]
+    out = [(token, 20000)]
+    for m in rnd.sample(mods, 12):
+        out.append((m + token if rnd.random() < 0.7 else token + m, rnd.randint(10, 9000)))
+    out += [("연무기", 3000), ("가림막", 800), ("모니터받침대", 5000)]
     return out
 
 
-def related(db, cfg, core, session=None):
-    """핵심 키워드의 연관 키워드 [(키워드, 월간 검색량)]. 저장해 둔 것이 있으면 다시 씀."""
+def related(db, cfg, token, session=None):
+    """단어의 연관 키워드 [(키워드, 월간 검색량)]. 저장해 둔 것이 있으면 다시 씀. (결과, API를 불렀는지)"""
     fresh = time.time() - int(cfg.get("kw_refresh_days") or 60) * 86400
-    q = "rel:" + core
+    q = "rel:" + token
     hit = db.one("SELECT data FROM kw_query WHERE query=? AND fetched_at>?", (q, fresh))
     if hit:
         return _unpack(hit["data"]), False
     if os.environ.get("UPLOADER_FAKE_API") == "1":
-        rels = _fake_related(core)
+        rels = _fake_related(token)
     else:
         import requests
         s = session or requests.Session()
-        r = s.get(SEARCHAD_API + "/keywordstool", params={"hintKeywords": core.replace(" ", ""), "showDetail": 1},
+        r = s.get(SEARCHAD_API + "/keywordstool", params={"hintKeywords": token.replace(" ", ""), "showDetail": 1},
                   headers=_searchad_headers(cfg, "GET", "/keywordstool"), timeout=15)
         if r.status_code in (401, 403):
-            raise RuntimeError("검색광고 API 키가 맞지 않습니다 (searchad.naver.com → 도구 → API 사용 관리).")
-        r.raise_for_status()
-        rels = [(k["relKeyword"], _cnt(k.get("monthlyPcQcCnt")) + _cnt(k.get("monthlyMobileQcCnt")))
-                for k in r.json().get("keywordList", [])][: int(cfg.get("kw_related_max") or 200)]
-        time.sleep(0.25)
+            raise RuntimeError("검색광고 API 키가 맞지 않습니다 (searchad.naver.com → 도구 → API 사용 관리에서 "
+                               "고객 ID·액세스 라이선스·비밀키를 다시 확인).")
+        if r.status_code == 400:
+            rels = []  # 검색광고에 없는 말 (특수문자 등)
+        else:
+            r.raise_for_status()
+            rels = [(k["relKeyword"], _cnt(k.get("monthlyPcQcCnt")) + _cnt(k.get("monthlyMobileQcCnt")))
+                    for k in r.json().get("keywordList", [])][: int(cfg.get("kw_related_max") or 200)]
+        time.sleep(0.2)
     db.x("INSERT OR REPLACE INTO kw_query(query, data, fetched_at) VALUES(?,?,?)", (q, _pack(rels), time.time()))
     return rels, True
 
 
-def modifiers(core, rels, name, cfg, lex=None):
-    """연관 키워드 중 핵심 키워드가 들어간 것에서 핵심을 뺀 말 → [(단어, 검색량)]. 사전 검사는 따로."""
-    nc = namegen.normalize(core)
-    have = {namegen.normalize(t) for t in namegen.tokens(name)}
+def token_words(token, rels, cfg, lex=None, have=()):
+    """한 단어의 연관 키워드 → 새 단어 후보 {단어: (검색량, 종류)}. 종류: 'mod'(단어를 뺀 나머지) / 'rel'(연관 키워드 그대로).
+    사전 검사는 따로(_dict_check)."""
+    nt = namegen.normalize(token)
     min_v = int(cfg.get("kw_min_volume") or 0)
-    best = {}
+    out = {}
     for kw, vol in rels:
         nk = namegen.normalize(kw)
-        if nk == nc or nc not in nk or vol < min_v:
+        if nk == nt or vol < min_v:
             continue
-        w = nk.replace(nc, "", 1)
+        if nt in nk:
+            w, kind = nk.replace(nt, "", 1), "mod"
+        else:
+            w, kind = nk, "rel"
         if not re.fullmatch(r"[가-힣]{2,10}", w) or w in have or w in PROMO or w.endswith(SHOP_SUFFIX):
             continue
         if lex and (lexicon.blocked_in(w, lex) or lex.mark_of(w)):
             continue
-        best[w] = max(best.get(w, 0), vol)
-    return sorted(best.items(), key=lambda x: -x[1])
+        if w not in out or out[w][0] < vol:
+            out[w] = (vol, kind)
+    return out
 
 
 def original_text(name, row):
@@ -250,77 +236,120 @@ def _dict_check(db, cfg, words, session):
 
 
 def collect(db, cfg, ids=None, progress=None, should_stop=None):
-    """원본들의 핵심 키워드와 새 단어 후보를 모은다 (검색광고 API)."""
+    """원본들의 새 단어 후보를 모은다 (검색광고 API, 단어마다 한 번)."""
     import requests
     if not has_keys(cfg):
         raise RuntimeError("설정 → 네이버 키워드에서 검색광고 API 키(고객 ID·액세스 라이선스·비밀키)를 먼저 넣어 주세요 "
                            "(searchad.naver.com → 도구 → API 사용 관리, 무료).")
     lex = lexicon.get(db)
-    learn = _learned(db)
     limit = int(cfg.get("kw_daily_limit") or 1000)
     n_head = int(cfg.get("core_scan_words") or 5)
     dict_only = cfg.get("kw_dict_only", True)
     todo = todo_ids(db, cfg, ids)
     s = requests.Session()
     stats = {"sources": 0, "api_calls": 0, "cached": 0, "words": 0, "errors": 0, "error": "", "not_in_dict": 0,
-             "dict_unknown": 0, "cores": 0}
+             "dict_unknown": 0, "tokens": 0}
+    rel_cache = {}
     for i in range(0, len(todo), 200):
         if should_stop and should_stop():
             break
         chunk = todo[i:i + 200]
-        srcs = db.q(f"SELECT id, name, core_kw, core_manual FROM sources WHERE id IN ({','.join('?' * len(chunk))})", chunk)
-        # 1) 앞 단어들의 검색량 (모르는 것만, 5개씩)
-        toks = {t for sr in srcs if not (sr["core_manual"] and sr["core_kw"]) for t in head_tokens(sr["name"], n_head, lex)}
-        known = {r["word"] for r in db.q(f"SELECT word FROM kw_volume WHERE word IN ({','.join('?' * len(toks))})",
-                                         list(toks))} if toks else set()
-        need = [t for t in toks if t not in known]
-        if need:
-            try:
-                fetch_volumes(db, cfg, need, should_stop=should_stop)
-                stats["api_calls"] += math.ceil(len(need) / 5)
-            except Exception as e:  # noqa: BLE001
-                raise RuntimeError(f"검색량을 받지 못했습니다: {e}") if not stats["sources"] else RuntimeError(
-                    f"{stats['sources']}개 모은 뒤 멈춤: {e}")
-        vols = {r["word"]: r["pc"] + r["mobile"] for r in db.q(
-            f"SELECT word, pc, mobile FROM kw_volume WHERE word IN ({','.join('?' * len(toks))})", list(toks))} if toks else {}
+        srcs = db.q(f"SELECT id, name FROM sources WHERE id IN ({','.join('?' * len(chunk))})", chunk)
+        stop = False
         for sr in srcs:
             if should_stop and should_stop():
+                stop = True
                 break
-            core = sr["core_kw"] if sr["core_manual"] and sr["core_kw"] else detect_core(sr["name"], lex, vols, learn, n_head)
-            # 2) 핵심 키워드의 연관 키워드 (핵심 키워드마다 한 번)
-            try:
-                if stats["api_calls"] >= limit and not db.one("SELECT 1 FROM kw_query WHERE query=?", ("rel:" + core,)):
-                    break
-                rels, called = related(db, cfg, core, s)
-                stats["api_calls" if called else "cached"] += 1
-                stats["cores"] += int(called)
-            except Exception as e:  # noqa: BLE001
-                stats["errors"] += 1
-                stats["error"] = str(e)[:200]
-                if "맞지 않" in str(e) or (stats["errors"] >= 5 and not stats["sources"]):
-                    raise RuntimeError(str(e))
-                continue
-            words = modifiers(core, rels, sr["name"], cfg, lex)
-            # 3) 국어사전에 있는 말만 (브랜드·고유명사 거르기)
+            toks = head_tokens(sr["name"], n_head, lex)
+            have = {namegen.normalize(t) for t in namegen.tokens(sr["name"])}
+            merged = {}
+            for t in toks:
+                if t not in rel_cache:
+                    if stats["api_calls"] >= limit and not db.one("SELECT 1 FROM kw_query WHERE query=?", ("rel:" + t,)):
+                        stop = True
+                        break
+                    try:
+                        rel_cache[t], called = related(db, cfg, t, s)
+                    except Exception as e:  # noqa: BLE001
+                        stats["errors"] += 1
+                        stats["error"] = str(e)[:200]
+                        if "맞지 않" in str(e) or (stats["errors"] >= 5 and not stats["sources"]):
+                            raise RuntimeError(str(e))
+                        rel_cache[t], called = [], False
+                    stats["api_calls" if called else "cached"] += 1
+                    stats["tokens"] += int(called)
+                for w, (v, kind) in token_words(t, rel_cache[t], cfg, lex, have).items():
+                    if w not in merged or merged[w][0] < v:
+                        merged[w] = (v, kind)
+            if stop:
+                break
+            words = sorted(merged.items(), key=lambda x: -x[1][0])
             if dict_only and words:
                 ok = _dict_check(db, cfg, [w for w, _ in words], s)
                 stats["not_in_dict"] += sum(1 for w, _ in words if ok.get(w) is False)
                 stats["dict_unknown"] += sum(1 for w, _ in words if ok.get(w) is None)
-                words = [(w, v) for w, v in words if ok.get(w)]
+                words = [(w, x) for w, x in words if ok.get(w)]
             words = words[:40]
             with db.tx() as c:
                 c.execute("DELETE FROM source_kw WHERE source_id=?", (sr["id"],))
                 c.executemany("INSERT INTO source_kw(source_id, word, malls, share) VALUES(?,?,?,1)",
-                              [(sr["id"], w, v) for w, v in words])
-                c.execute("UPDATE sources SET core_kw=?, kw_at=? WHERE id=?", (core, time.time(), sr["id"]))
+                              [(sr["id"], w, x[0]) for w, x in words])
+                c.execute("UPDATE sources SET kw_at=? WHERE id=?", (time.time(), sr["id"]))
             stats["sources"] += 1
             stats["words"] += len(words)
         if progress:
-            progress(min(i + len(chunk), len(todo)), len(todo), f"원본 {stats['sources']:,}개 · 핵심 키워드 {stats['cores']:,}개 새로 물음")
+            progress(min(i + len(chunk), len(todo)), len(todo), f"원본 {stats['sources']:,}개 · 새로 물은 단어 {stats['tokens']:,}개")
+        if stop:
+            break
     if stats["sources"] and db.one("SELECT 1 FROM dict_syn LIMIT 1"):
         with db.tx() as c:
             lexicon._bump(c)
     return stats
+
+
+def words_for_name(db, cfg, name, lex=None):
+    """원본 없이 상품명만으로 새 단어 후보 (미리보기용). 속성 단어는 상품명에 있을 때만."""
+    import requests
+    lex = lex or lexicon.get(db)
+    s = requests.Session()
+    have = {namegen.normalize(t) for t in namegen.tokens(name)}
+    merged = {}
+    for t in head_tokens(name, int(cfg.get("core_scan_words") or 5), lex):
+        rels, _ = related(db, cfg, t, s)
+        for w, (v, kind) in token_words(t, rels, cfg, lex, have).items():
+            if w not in merged or merged[w][0] < v:
+                merged[w] = (v, kind)
+    words = [w for w, _ in sorted(merged.items(), key=lambda x: -x[1][0])]
+    if cfg.get("kw_dict_only", True) and words:
+        ok = _dict_check(db, cfg, words, s)
+        words = [w for w in words if ok.get(w)]
+    text = namegen.normalize(name)
+    out = []
+    for w in words:
+        attrs = lexicon.attrs_in(w, lex)
+        if attrs and not all(namegen.normalize(a) in text for a in attrs):
+            continue
+        if lex.ok_new_word(w):
+            out.append(w)
+    return out[: int(cfg.get("kw_max_words") or 15)]
+
+
+def ensure_collected(db, cfg, ids, should_stop=None):
+    """키가 있으면 아직 안 모은 원본의 새 단어를 모은다 (재조합·미리보기 전에 자동으로). 오류는 문구로 돌려줌."""
+    if not cfg.get("use_naver_keywords", True) or not has_keys(cfg) or not ids:
+        return None, 0
+    need = []
+    for i in range(0, len(ids), 900):
+        chunk = list(ids)[i:i + 900]
+        need += [r["id"] for r in db.q(f"SELECT id FROM sources WHERE kw_at IS NULL AND id IN ({','.join('?' * len(chunk))})",
+                                       chunk)]
+    if not need:
+        return None, 0
+    try:
+        st = collect(db, cfg, need, should_stop=should_stop)
+        return (st.get("error") or None), st["sources"]
+    except Exception as e:  # noqa: BLE001
+        return str(e)[:300], 0
 
 
 # ───────────────────────── 검색량 (검색광고 API)
@@ -397,15 +426,15 @@ def words_for(db, sources, cfg, lex=None):
     learn = None
     out = {}
     for s in sources:
-        if not s.get("core_kw") and learn is None:
-            learn = _learned(db)
-        core = s.get("core_kw") or detect_core(s["name"], lex, None, learn)  # 아직 안 모았으면 앞 단어로
+        core = ""  # 재조합은 핵심 키워드를 쓰지 않는다
         cand = rows.get(s["id"], [])
         if not cand:
             out[s["id"]] = (core, [])
             continue
         text = None
-        dead = off.get("", set()) | off.get(core, set())
+        dead = set(off.get("", set()))
+        for t in head_tokens(s["name"], 10, lex):
+            dead |= off.get(t, set())
         picked = []
         for r in sorted(cand, key=lambda r: -(r["malls"] * _volume_score(
                 {"pc": r["pc"], "mobile": r["mobile"]} if r["pc"] is not None else None))):

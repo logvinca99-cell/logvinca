@@ -129,7 +129,7 @@ App.page("inventory", {
         ${!this.selAll && this.total ? `<button class="link-btn" id="i-all">조건에 맞는 ${num(this.total)}개 모두 고르기</button>` : ""}
       </div>
       <div class="ab-right">
-        <button class="btn" id="i-kw" ${n ? "" : "disabled"} title="고른 원본의 핵심 키워드(검색량)와 연관 키워드를 네이버 검색광고 API에서 받습니다">네이버 키워드 모으기</button>
+        <button class="btn" id="i-kw" ${n ? "" : "disabled"} title="고른 원본의 상품명 속 단어마다 연관 키워드를 네이버 검색광고 API에서 받습니다 (재조합 때도 자동으로 받음)">네이버 키워드 모으기</button>
         <button class="btn" id="i-names" ${n ? "" : "disabled"}>상품명 후보 만들기…</button>
         <button class="btn primary" id="i-plan" ${n ? "" : "disabled"}>다른 스토어로 복사…</button>
       </div>`;
@@ -314,7 +314,7 @@ App.page("inventory", {
       tabs: [
         { key: "info", label: "정보", render: (b) => self.renderInfo(b, d) },
         { key: "names", label: `상품명 후보 ${d.names.length}`, render: (b) => self.renderNames(b, d) },
-        { key: "kw", label: `키워드${d.kw.core ? " · " + d.kw.core : ""}`, render: (b) => self.renderKw(b, d) },
+        { key: "kw", label: `네이버 키워드 ${d.kw.words.filter((w) => w.used).length}`, render: (b) => self.renderKw(b, d) },
         { key: "stores", label: `스토어 ${d.listings.filter((l) => l.status !== "deleted").length}/${d.max_copies}`, render: (b) => self.renderListings(b, d) },
         { key: "detail", label: "상세페이지", render: (b) => {
           b.innerHTML = `<iframe class="preview" sandbox referrerpolicy="no-referrer"></iframe>`;
@@ -345,24 +345,15 @@ App.page("inventory", {
     const k = d.kw;
     const used = k.words.filter((w) => w.used);
     b.innerHTML = `<div class="kw-src">
-      <h3 class="sec-title">핵심 키워드</h3>
-      <div class="core-edit"><input id="core-in" value="${esc(k.core)}" placeholder="예: 책상">
-        <button class="btn" id="core-save">저장</button>
-        ${k.manual ? `<button class="link-btn" id="core-auto">자동으로 되돌리기</button>` : `<span class="muted small">${k.collected_at ? "검색량으로 정함" : "아직 안 모음 → 앞 단어로 대충 정함 (키워드 모으기를 하면 검색량으로)"}</span>`}</div>
-      <p class="muted small">재조합 때 이 단어의 유의어를 가장 먼저 넣고, 4번째 이후에 있어도 빼지 않습니다. 고치면 이 단어를 기억해 다른 원본에도 씁니다.</p>
-      <h3 class="sec-title">연관 키워드에서 온 새 단어 ${k.collected_at ? `<span class="muted small">· ${ymd(k.collected_at)} 모음</span>` : ""}
-        <button class="link-btn" id="kw-one">${k.collected_at ? "다시 모으기" : "지금 모으기"}</button></h3>
-      ${k.words.length ? `<p class="muted small">재조합에 쓰는 단어 ${used.length}개 (초록). 회색은 쓰지 않는 단어 — 이유에 마우스를 올리세요.</p>
+      <p class="muted small">연관 키워드를 받는 단어: ${k.tokens.map((t) => `<b>${esc(t)}</b>`).join(", ") || "없음"}
+        ${k.has_key ? "" : ` · <span class="c-err">설정에 검색광고 API 키가 없음</span>`}</p>
+      <h3 class="sec-title">네이버 연관 키워드에서 온 새 단어 ${k.collected_at ? `<span class="muted small">· ${ymd(k.collected_at)} 받음</span>` : ""}
+        <button class="link-btn" id="kw-one">${k.collected_at ? "다시 받기" : "지금 받기"}</button></h3>
+      ${k.words.length ? `<p class="muted small">재조합에 쓰는 단어 ${used.length}개 (초록). 회색은 쓰지 않는 단어 — 이유에 마우스를 올리세요. 숫자 = 연관 키워드 월 검색량.</p>
         <div class="kw-chips">${k.words.map((w) => `<span class="kw-chip ${w.used ? "used" : "off"}" title="${esc(w.used ? `연관 키워드 월 검색량 ${num(w.malls)}` : w.why)}">${esc(w.word)}<small>${num(w.malls)}</small>${w.used ? "" : `<small>${esc(w.why)}</small>`}</span>`).join("")}</div>`
-        : `<p class="muted small">모은 단어가 없습니다.</p>`}
+        : `<p class="muted small">${k.collected_at ? "받은 새 단어가 없습니다." : "아직 안 받았습니다 (재조합하거나 '지금 받기'를 누르면 받음)."}</p>`}
     </div>`;
     const reload = async () => { const nd = await App.api(`/api/sources/${d.id}`); Object.assign(d, nd); this.renderKw(b, d); };
-    const save = async (core) => {
-      try { await App.api(`/api/sources/${d.id}/core`, { json: { core } }); await reload(); App.toast("핵심 키워드를 저장했습니다"); }
-      catch (e) { App.toast(e.message, true); }
-    };
-    $("#core-save", b).addEventListener("click", () => save($("#core-in", b).value.trim()));
-    $("#core-auto", b)?.addEventListener("click", () => save(""));
     $("#kw-one", b).addEventListener("click", async () => {
       const t = await App.startTask(App.api("/api/keywords/collect", { json: { source_id: d.id } }));
       if (t) App.on("task-done", async function h(x) { if (x.kind === "keywords") { App.off("task-done", h); await reload(); } });
