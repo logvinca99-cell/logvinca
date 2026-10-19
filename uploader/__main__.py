@@ -40,6 +40,8 @@ def main():
     _setup_log()
     if moved:
         print(f"예전 기록을 옮겨 왔습니다: {moved} → {config.DATA_DIR}")
+    from . import VERSION
+    print(f"상품 등록기 버전 {VERSION} · 프로그램 폴더: {config.ROOT}")
     print(f"기록·설정 폴더: {config.DATA_DIR}")
 
     from .web import create_app

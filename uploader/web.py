@@ -9,7 +9,7 @@ import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import bait, config, convert, engine, inventory, keywords, lexicon, naver, orders, watermark
+from . import VERSION, bait, config, convert, engine, inventory, keywords, lexicon, naver, orders, watermark
 from .db import DB
 from .tasks import Tasks
 
@@ -98,6 +98,7 @@ def create_app(db=None):
             "settings": config.public(cfg),
             "fake_api": os.environ.get("UPLOADER_FAKE_API") == "1",
             "data_dir": config.DATA_DIR,
+            "version": VERSION, "program_dir": config.ROOT,
             "categories": len(cats) if cats else 0,
             "stats": db.stats(),
             "tasks": tasks.list(),

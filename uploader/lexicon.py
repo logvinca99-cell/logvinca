@@ -625,7 +625,7 @@ def import_dictionary(db, fh, filename, progress=None, should_stop=None):
     if not nouns:
         d = _diag
         raise RuntimeError(
-            "명사 표제어를 찾지 못했습니다. 이 내용을 그대로 보내 주세요 → "
+            f"명사 표제어를 찾지 못했습니다(버전 {__import__('uploader').VERSION}). 이 내용을 그대로 보내 주세요 → "
             f"파일 {len(files)}개({', '.join(n for n, _ in files[:3])}) · 항목 {d.get('records', 0):,}개"
             f"(태그 '{d.get('tag', '?')}', 맨 바깥 '{d.get('root', '?')}') · 읽은 항목 {stats['entries']:,} · "
             f"첫 항목: {' | '.join(d.get('sample') or ['없음'])}")

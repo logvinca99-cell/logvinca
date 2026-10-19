@@ -123,6 +123,8 @@ const App = {
   async refreshState() {
     this.state = await this.api("/api/state");
     const st = this.state.stats;
+    const bs = $(".brand-sub");
+    if (bs) { bs.textContent = `버전 ${this.state.version}`; bs.title = `프로그램 폴더: ${this.state.program_dir}`; }
     const c = $("#conn");
     if (this.state.fake_api) { c.className = "conn warn"; c.textContent = "시연 모드 (네이버 접속 안 함)"; }
     else if (!st.stores) { c.className = "conn warn"; c.innerHTML = '<a href="#stores">스토어를 추가하세요</a>'; }
