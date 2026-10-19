@@ -8,7 +8,10 @@ import os
 import threading
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.environ.get("UPLOADER_DATA_DIR") or os.path.join(ROOT, "data")
+# 기록·설정은 프로그램 폴더가 아니라 사용자 폴더에 둔다 → 새 버전을 다른 폴더에 받아도 그대로 이어서 씀
+#   (Windows: C:\Users\이름\상품등록기_data)
+LEGACY_DATA_DIR = os.path.join(ROOT, "data")
+DATA_DIR = os.environ.get("UPLOADER_DATA_DIR") or os.path.join(os.path.expanduser("~"), "상품등록기_data")
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
 
 DEFAULTS = {
@@ -139,6 +142,28 @@ DEFAULTS = {
 
 SECRET_KEYS = ("anthropic_api_key", "opendict_key", "kipris_key", "searchad_secret")
 _lock = threading.Lock()
+
+
+def migrate_legacy_data():
+    """예전 버전은 프로그램 폴더의 data에 저장했다. 사용자 폴더에 아직 기록이 없고 프로그램 폴더 data에
+    원본이 들어 있는 기록이 있으면 한 번 복사해 온다 (이미지 캐시는 빼고, 원래 폴더는 그대로 둠)."""
+    import shutil
+    import sqlite3
+    if os.environ.get("UPLOADER_DATA_DIR"):
+        return None
+    new_db, old_db = os.path.join(DATA_DIR, "inventory.db"), os.path.join(LEGACY_DATA_DIR, "inventory.db")
+    if os.path.exists(new_db) or not os.path.exists(old_db):
+        return None
+    try:
+        con = sqlite3.connect(f"file:{old_db}?mode=ro", uri=True)
+        n = con.execute("SELECT (SELECT COUNT(*) FROM sources) + (SELECT COUNT(*) FROM stores)").fetchone()[0]
+        con.close()
+    except sqlite3.Error:
+        n = 0
+    if not n:
+        return None
+    shutil.copytree(LEGACY_DATA_DIR, DATA_DIR, dirs_exist_ok=True, ignore=shutil.ignore_patterns("imgcache", "*.tmp"))
+    return LEGACY_DATA_DIR
 
 
 def load():

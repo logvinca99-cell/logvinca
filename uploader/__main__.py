@@ -35,7 +35,12 @@ def main():
     a = p.parse_args()
     if a.fake_api:
         os.environ["UPLOADER_FAKE_API"] = "1"
+    from . import config
+    moved = config.migrate_legacy_data()
     _setup_log()
+    if moved:
+        print(f"예전 기록을 옮겨 왔습니다: {moved} → {config.DATA_DIR}")
+    print(f"기록·설정 폴더: {config.DATA_DIR}")
 
     from .web import create_app
     app = create_app()

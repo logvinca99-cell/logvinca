@@ -147,6 +147,7 @@ App.page("settings", {
         ${APPLY_WHEN[sec.title] ? `<p class="apply-when">적용: ${esc(APPLY_WHEN[sec.title])}</p>` : ""}${sec.fields.map(field).join("")}</div>`).join("")}
       </form></div>`;
     $(".settings", el).insertAdjacentHTML("beforebegin", `<div class="card pad reapply">
+      <div class="muted small" style="width:100%">기록·설정 폴더: <code>${esc(st.data_dir)}</code> — 프로그램 폴더와 따로 있어 새 버전을 받아도 그대로 이어집니다. 백업은 이 폴더를 복사하세요.</div>
       <div><b>설정은 저장한 뒤 새로 만드는 것부터 적용됩니다.</b> <span class="muted small">이미 만든 복사본 가격·이름 후보에 다시 적용하려면:</span></div>
       <div class="reapply-btns"><button class="btn" data-reapply="prices" title="아직 안 올린(대기·실패) 복사본의 가격을 지금 설정(±%, 100원 올림)으로 다시 계산">대기 중인 복사본 가격 다시 계산</button>
         <button class="btn" data-reapply="names" title="아직 아무 복사본에도 안 쓴 재조합·AI 이름 후보를 지움 → 새 설정으로 다시 만들 수 있음">안 쓴 이름 후보 지우기</button>

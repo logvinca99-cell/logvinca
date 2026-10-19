@@ -97,6 +97,7 @@ def create_app(db=None):
         return jsonify({
             "settings": config.public(cfg),
             "fake_api": os.environ.get("UPLOADER_FAKE_API") == "1",
+            "data_dir": config.DATA_DIR,
             "categories": len(cats) if cats else 0,
             "stats": db.stats(),
             "tasks": tasks.list(),
