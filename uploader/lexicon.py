@@ -450,21 +450,53 @@ def _entry_from_json(item):
     return word, any("명사" in p for p in pos), rels, unit
 
 
+def _tag(el):
+    return el.tag.split("}")[-1].lower() if isinstance(el.tag, str) else ""
+
+
 def _entry_from_xml(el):
-    w = el.find("wordinfo/word")
-    if w is None:
-        w = el.find("word_info/word")
-    if w is None:
-        w = el.find("word")
-    unit = el.findtext("wordinfo/word_unit") or el.findtext("word_info/word_unit") or ""
-    pos = [x.text or "" for x in el.iter("pos")]
-    rels = []
+    """한 항목 → (표제어, 명사인가, 비슷한말들, 단어 단위). 태그 이름이 조금 달라도(wordinfo/word_info,
+    이름공간, 대소문자) 읽는다: 표제어 = '...info' 안이나 항목 바로 아래의 word, 품사 = pos, 비슷한말 = type이 비슷/동의인 묶음의 word."""
+    parent = {c: p for p in el.iter() for c in p}
+    word, unit, pos, rels = "", "", [], []
     for x in el.iter():
-        t = x.findtext("type") or x.findtext("relation_type") or ""
-        rw = x.findtext("word")
-        if rw and x is not el and x.tag not in ("wordinfo", "word_info") and any(k in t for k in _REL_TYPES):
-            rels.append(rw)
-    return (w.text if w is not None else ""), any("명사" in p for p in pos), rels, unit
+        t = _tag(x)
+        if t == "word" and not word:
+            pt = _tag(parent.get(x, el))
+            if x in list(el) or (pt.endswith("info") and "relation" not in pt and "lexical" not in pt):
+                word = (x.text or "").strip()
+        elif t in ("word_unit", "unit") and not unit:
+            unit = (x.text or "").strip()
+        elif t == "pos" or t == "pos_name":
+            pos.append((x.text or "").strip())
+        if x is not el:
+            kids = {_tag(c): (c.text or "").strip() for c in x}
+            typ = kids.get("type") or kids.get("relation_type") or ""
+            if kids.get("word") and any(k in typ for k in _REL_TYPES) and not _tag(x).endswith("wordinfo") \
+                    and _tag(x) not in ("word_info",):
+                rels.append(kids["word"])
+    return word, any("명사" in p for p in pos), rels, unit
+
+
+def _leaf_paths(el, limit=14):
+    """진단용: 항목 안의 '경로=값' 몇 개."""
+    out = []
+
+    def walk(x, path):
+        kids = list(x)
+        if not kids:
+            v = (x.text or "").strip()
+            if v:
+                out.append(f"{path}={v[:20]}")
+        for c in kids:
+            if len(out) >= limit:
+                return
+            walk(c, f"{path}/{_tag(c)}" if path else _tag(c))
+    walk(el, "")
+    return out
+
+
+_diag = {}
 
 
 def _iter_entries(fh, name):
@@ -485,16 +517,29 @@ def _iter_entries(fh, name):
                 for v in o:
                     find(v)
         find(data)
+        _diag.setdefault("records", 0)
+        _diag["records"] += len(items)
         for it in items:
             yield _entry_from_json(it)
     elif low.endswith(".xml"):
-        root = None
+        # 항목 = 맨 바깥 요소 바로 아래에서 하위 요소를 가진 요소 (item 등, 이름이 달라도 됨)
+        root, depth = None, 0
         for ev, el in ET.iterparse(fh, events=("start", "end")):
-            if root is None:
-                root = el
-            if ev == "end" and el.tag == "item":
+            if ev == "start":
+                if root is None:
+                    root = el
+                depth += 1
+                continue
+            depth -= 1
+            if depth == 1 and len(el):
+                _diag["records"] = _diag.get("records", 0) + 1
+                _diag.setdefault("tag", _tag(el))
+                if "sample" not in _diag:
+                    _diag["sample"] = _leaf_paths(el)
                 yield _entry_from_xml(el)
                 root.clear()  # 큰 파일(수십만 항목)도 메모리가 늘지 않게
+            elif depth == 0:
+                _diag.setdefault("root", _tag(el))
 
 
 def dict_dir():
@@ -555,6 +600,7 @@ def import_dictionary(db, fh, filename, progress=None, should_stop=None):
     if not files:
         raise RuntimeError("zip 안에 xml이나 json 사전 파일이 없습니다.")
     nouns, syn = set(), {}
+    _diag.clear()
     stats = {"files": 0, "entries": 0, "nouns": 0, "syn_words": 0}
     for i, (name, opener) in enumerate(files, 1):
         if should_stop and should_stop():
@@ -577,7 +623,12 @@ def import_dictionary(db, fh, filename, progress=None, should_stop=None):
         if progress:
             progress(i, len(files), f"{name} · 명사 {len(nouns):,}개")
     if not nouns:
-        raise RuntimeError("명사 표제어를 찾지 못했습니다. 우리말샘·표준국어대사전 '사전 내려받기'의 xml 또는 json 파일인지 확인하세요.")
+        d = _diag
+        raise RuntimeError(
+            "명사 표제어를 찾지 못했습니다. 이 내용을 그대로 보내 주세요 → "
+            f"파일 {len(files)}개({', '.join(n for n, _ in files[:3])}) · 항목 {d.get('records', 0):,}개"
+            f"(태그 '{d.get('tag', '?')}', 맨 바깥 '{d.get('root', '?')}') · 읽은 항목 {stats['entries']:,} · "
+            f"첫 항목: {' | '.join(d.get('sample') or ['없음'])}")
     now = time.time()
     with db.tx() as c:
         c.executemany("INSERT OR REPLACE INTO word_dict(word, in_dict, checked_at) VALUES(?,1,?)", [(w, now) for w in nouns])
