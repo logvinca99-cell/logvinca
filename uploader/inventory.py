@@ -12,7 +12,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from . import config, convert, excel, keywords, lexicon, namegen, naver
+from . import aiwords, config, convert, excel, keywords, lexicon, namegen, naver
 from .db import pack, unpack
 
 CHUNK = 500
@@ -270,16 +270,14 @@ def generate_recombine(db, ids, per_source, progress=None, should_stop=None):
         progress(0, len(ids), "네이버 연관 키워드 받는 중 (아직 안 모은 원본)")
     stats["kw_error"], stats["kw_new"] = keywords.ensure_collected(db, cfg, ids, should_stop)
     cfg["_lex"] = lexicon.get(db)
+    stats["ai"] = aiwords.ensure_words(db, cfg, ids, progress, should_stop)
     for i in range(0, len(ids), CHUNK):
         if should_stop and should_stop():
             break
         chunk = ids[i:i + CHUNK]
         rows = db.q(f"SELECT id, name, tags, category, n_free_names, core_kw, data FROM sources WHERE id IN ({','.join('?' * len(chunk))})",
                     chunk)
-        kws = keywords.words_for(db, rows, cfg, cfg["_lex"])
-        for r in rows:
-            r["_kw"] = kws.get(r["id"])
-            r.pop("data", None)
+        _attach_words(db, cfg, rows)
         with db.tx() as c:
             for r in rows:
                 free = c.execute("SELECT COUNT(*) FROM names WHERE source_id=? AND listing_id IS NULL "
@@ -484,7 +482,78 @@ def _free_names(c, sid, use_orig):
 
 def _kw_args(s):
     _, kw = s.get("_kw") or ("", [])
-    return {"kw_words": kw}
+    return {"kw_words": kw, "ai_words": s.get("_ai") or ()}
+
+
+def _attach_words(db, cfg, rows):
+    """재조합 전에 원본 행에 네이버 키워드(_kw)·AI 단어(_ai)를 붙이고 무거운 data는 뗀다."""
+    kws = keywords.words_for(db, rows, cfg, cfg["_lex"])
+    ais = aiwords.words_for(db, rows, cfg, cfg["_lex"])
+    for r in rows:
+        r["_kw"] = kws.get(r["id"])
+        r["_ai"] = ais.get(r["id"]) or ()
+        r.pop("data", None)
+
+
+class StoreContext:
+    """스토어마다: 새 단어를 쓴 횟수, 이미 쓴 상품명(카테고리·첫 단어별 단어 집합).
+    재조합 때 많이 쓴 단어는 덜 뽑고, 같은 스토어 내 다른 상품명과 너무 비슷한 이름은 버리는 데 쓴다."""
+
+    def __init__(self, db, store_ids):
+        self.use = aiwords.use_counts(db, store_ids)
+        self.idx = {sid: {} for sid in store_ids}
+        if store_ids:
+            for r in db.q(f"""SELECT l.store_id, l.name, s.category FROM listings l JOIN sources s ON s.id=l.source_id
+                    WHERE l.name_id IS NOT NULL AND l.status!='deleted' AND l.store_id IN ({','.join('?' * len(store_ids))})""",
+                          list(store_ids)):
+                self.add(r["store_id"], r["category"], r["name"])
+
+    @staticmethod
+    def _key(category, name):
+        t = namegen.tokens(name)
+        return (lexicon.cat_key(category or ""), t[0].lower() if t else "")
+
+    def add(self, store_id, category, name):
+        self.idx.setdefault(store_id, {}).setdefault(self._key(category, name), []).append(
+            {x.lower() for x in namegen.tokens(name)})
+
+    def neighbors(self, store_id, category, original, lex):
+        first = namegen.safe_tokens(original, lex)
+        return self.idx.get(store_id, {}).get(self._key(category, " ".join(first)), [])
+
+
+def _new_words(original, name):
+    orig = {t.lower() for t in namegen.tokens(original)}
+    return [t for t in namegen.tokens(name) if t.lower() not in orig]
+
+
+def name_for_listing(c, s, store_id, cfg, now, ctx, avoid=()):
+    """한 복사본(스토어)에 맞춘 재조합 이름을 하나 만들어 후보에 넣고 돌려준다 ({id, name} 또는 None)."""
+    lex = cfg["_lex"]
+    for attempt in range(3):
+        sibs = _siblings(c, s["id"])
+        cands = namegen.recombine(s["name"], 1, set(), sibs, cfg, seed=f"{s['id']}:{store_id}:{len(sibs)}:{attempt}",
+                                  tag_words=[t for t in (s.get("tags") or "").split(",") if t],
+                                  category=s.get("category") or "", lex=lex,
+                                  use_count=ctx.use.get(store_id), avoid=avoid,
+                                  neighbors=ctx.neighbors(store_id, s.get("category"), s["name"], lex), **_kw_args(s))
+        if not cands:
+            continue
+        add_names(c, s["id"], cands, "recombine", now)
+        r = c.execute("SELECT id, name FROM names WHERE source_id=? AND norm=? AND listing_id IS NULL",
+                      (s["id"], namegen.normalize(cands[0]))).fetchone()
+        if r:
+            return dict(r)
+    return None
+
+
+def assign_name(c, lid, store_id, s, nm, now, ctx):
+    c.execute("UPDATE listings SET name_id=?, name=?, updated_at=? WHERE id=?", (nm["id"], nm["name"], now, lid))
+    c.execute("UPDATE names SET listing_id=? WHERE id=?", (lid, nm["id"]))
+    aiwords.count_use(c, store_id, s["name"], nm["name"])
+    for w in _new_words(s["name"], nm["name"]):
+        ctx.use.setdefault(store_id, {})[w] = ctx.use.get(store_id, {}).get(w, 0) + 1
+    ctx.add(store_id, s.get("category"), nm["name"])
 
 
 def _fill_names(c, s, need, cfg, now):
@@ -596,15 +665,17 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
 
 
 def rename_listings(db, ids, method="recombine", progress=None, should_stop=None):
-    """복사본 상품명 바꾸기 (아직 안 올린 복사본만). 원본마다 필요한 만큼 후보를 만들어 하나씩 배정한다.
-    method: recombine(재조합, 무료) / ai(Claude, 모자라면 재조합) / pool(만들어 둔 후보만)
-    이미 바꾼 이름이 있으면 그 이름은 버리고 새로 고른다."""
+    """복사본 상품명 바꾸기 (아직 안 올린 복사본만).
+    method: recombine(재조합: AI가 준 새 단어로 스토어마다 따로 조립) / ai(Claude가 이름 전체를 지음, 모자라면 재조합)
+            / pool(만들어 둔 후보만)
+    재조합은 원본마다 처음 한 번 AI에게 새 단어를 받아 저장하고(단어 은행에 충분하면 AI 없이), 그 단어로 조립한다.
+    이미 바꾼 이름이 있으면 그 이름은 버리고 새로 고르며, 지난 이름에 넣었던 새 단어는 되도록 피한다."""
     cfg = config.load()
     cfg["_lex"] = lexicon.get(db)
     rows = []
     for i in range(0, len(ids), 900):
         chunk = ids[i:i + 900]
-        rows += db.q(f"""SELECT id, source_id, name_id, origin_no, status FROM listings
+        rows += db.q(f"""SELECT id, store_id, source_id, name_id, name, origin_no, status FROM listings
             WHERE id IN ({','.join('?' * len(chunk))})""", chunk)
     st = {"renamed": 0, "short": 0, "live": 0, "listings": len(rows), "few_words": 0}
     new_min = int(cfg.get("recombine_new_min") or 0)
@@ -619,9 +690,14 @@ def rename_listings(db, ids, method="recombine", progress=None, should_stop=None
             progress(0, len(todo), "네이버 연관 키워드 받는 중 (아직 안 모은 원본)")
         st["kw_error"], st["kw_new"] = keywords.ensure_collected(db, cfg, src_ids, should_stop)
         cfg["_lex"] = lexicon.get(db)
+    if method == "recombine" and src_ids:
+        if progress:
+            progress(0, len(todo), "새 단어 받는 중 (단어 은행 → AI)")
+        st["ai"] = aiwords.ensure_words(db, cfg, src_ids, progress, should_stop)
     if method == "ai" and src_ids:
         # 원본마다 필요한 수만큼 AI로 더 짓는다 (원본별로 개수가 달라도 넉넉히 최대값으로)
         generate_ai(db, src_ids, max(len(v) for v in by_src.values()), should_stop=should_stop)
+    ctx = StoreContext(db, sorted({r["store_id"] for r in todo})) if method == "recombine" else None
     now = time.time()
     done = 0
     for i in range(0, len(src_ids), CHUNK):
@@ -630,14 +706,14 @@ def rename_listings(db, ids, method="recombine", progress=None, should_stop=None
         chunk = src_ids[i:i + CHUNK]
         srcs = db.q(f"""SELECT id, name, tags, category, core_kw, data FROM sources
             WHERE id IN ({','.join('?' * len(chunk))})""", chunk)
-        kws = keywords.words_for(db, srcs, cfg, cfg["_lex"])
+        _attach_words(db, cfg, srcs)
         with db.tx() as c:
             for s in srcs:
-                s["_kw"] = kws.get(s["id"])
-                s.pop("data", None)
                 ls = by_src[s["id"]]
+                old = {}
                 for l in ls:
                     if l["name_id"]:
+                        old[l["id"]] = _new_words(s["name"], l["name"])
                         c.execute("DELETE FROM names WHERE id=? AND origin!='original'", (l["name_id"],))
                         c.execute("UPDATE names SET listing_id=NULL WHERE id=?", (l["name_id"],))
                 if method != "pool" and len(namegen.new_word_candidates(
@@ -645,16 +721,28 @@ def rename_listings(db, ids, method="recombine", progress=None, should_stop=None
                     st["few_words"] += 1
                 if method == "pool":
                     pool = _free_names(c, s["id"], bool(cfg.get("use_original_name")))
-                else:
+                elif method == "ai":
                     pool = _fill_names(c, s, len(ls), {**cfg, "auto_recombine": True}, now)
+                else:
+                    pool = None
                 for l in ls:
-                    if not pool:
+                    nm = None
+                    if pool is None:
+                        nm = name_for_listing(c, s, l["store_id"], cfg, now, ctx, avoid=old.get(l["id"], ()))
+                        if not nm:   # 스토어에 맞춘 이름을 못 만들면 만들어 둔 후보라도
+                            free = _free_names(c, s["id"], bool(cfg.get("use_original_name")))
+                            nm = free[0] if free else None
+                    elif pool:
+                        nm = pool.pop(0)
+                    if not nm:
                         c.execute("UPDATE listings SET name_id=NULL, name=?, updated_at=? WHERE id=?", (s["name"], now, l["id"]))
                         st["short"] += 1
                         continue
-                    nm = pool.pop(0)
-                    c.execute("UPDATE listings SET name_id=?, name=?, updated_at=? WHERE id=?", (nm["id"], nm["name"], now, l["id"]))
-                    c.execute("UPDATE names SET listing_id=? WHERE id=?", (l["id"], nm["id"]))
+                    if ctx:
+                        assign_name(c, l["id"], l["store_id"], s, nm, now, ctx)
+                    else:
+                        c.execute("UPDATE listings SET name_id=?, name=?, updated_at=? WHERE id=?", (nm["id"], nm["name"], now, l["id"]))
+                        c.execute("UPDATE names SET listing_id=? WHERE id=?", (l["id"], nm["id"]))
                     st["renamed"] += 1
                 done += len(ls)
         db.recount_sources(chunk)

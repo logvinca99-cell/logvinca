@@ -177,10 +177,10 @@ const App = {
           : (r.kw_error ? `네이버 키워드를 못 받음(${r.kw_error}) · ` : "") + `상품명 만들기 끝: 새 이름 ${num(r.added)}개` + (r.short ? ` · 단어가 적어 다 못 채운 상품 ${num(r.short)}개` : "")
             + (r.few_words ? ` · 새 단어 후보가 설정보다 적은 원본 ${num(r.few_words)}개 (단어 사전·우리말샘·네이버 키워드로 늘리세요)` : "")
             + (r.rejected ? ` · 반복·금지 단어로 버림 ${num(r.rejected)}개` : "")
-            + (r.failed ? ` · 실패 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : ""),
+            + (r.failed ? ` · 실패 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : "") + aiMsg(r.ai),
         rename: () => (r.kw_error ? `네이버 키워드를 못 받음(${r.kw_error}) · ` : "") + `상품명 바꾸기 끝: ${num(r.renamed)}건 바꿈` + (r.short ? ` · 후보를 못 만든 ${num(r.short)}건은 그대로 (단어가 적음 → 직접 입력이나 AI)` : "")
           + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
-          + (r.few_words ? ` · 새 단어 후보가 설정보다 적은 원본 ${num(r.few_words)}개` : ""),
+          + (r.few_words ? ` · 새 단어 후보가 설정보다 적은 원본 ${num(r.few_words)}개` : "") + aiMsg(r.ai),
         bait: () => `원래 가격으로 ${num(r.restored)}건` + (r.failed ? ` · 실패 ${num(r.failed)}건 (${r.errors?.[0] || ""})` : ""),
         dictfile: () => `사전 파일 넣기 끝: 명사 ${num(r.nouns)}개 · 비슷한말 있는 단어 ${num(r.syn_words)}개 (파일 ${num(r.files)}개)`,
         keywords: () => `네이버 키워드 끝: 원본 ${num(r.sources)}개 · 새 단어 ${num(r.words)}개 · 새로 물은 단어 ${num(r.tokens)}개 (저장한 결과 ${num(r.cached)}번)`
@@ -380,4 +380,14 @@ function usageBar(used, cap) {
   const p = cap ? Math.min(100, (used / cap) * 100) : 0;
   const cls = p >= 95 ? "full" : p >= 80 ? "high" : "";
   return `<div class="usage ${cls}"><div style="width:${p}%"></div></div>`;
+}
+
+/* 재조합 AI 단어 받은 결과 한 줄 (요금은 1달러 1,400원으로 어림) */
+function aiMsg(a) {
+  if (!a) return "";
+  const parts = [];
+  if (a.asked) parts.push(`AI 단어 새로 받은 원본 ${num(a.asked)}개 (요청 ${num(a.calls)}번, 약 ${num(Math.ceil((a.cost_usd || 0) * 1400))}원)`);
+  if (a.bank) parts.push(`단어 은행으로 채운 원본 ${num(a.bank)}개 (AI 안 부름)`);
+  if (a.error) parts.push(a.error);
+  return parts.length ? " · " + parts.join(" · ") : "";
 }

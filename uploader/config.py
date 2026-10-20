@@ -114,6 +114,14 @@ DEFAULTS = {
     "wm_square": "safe",             # safe(가운데 정사각형 안쪽) / pad(흰 여백으로 정사각형) / full(이미지 전체 기준)
     "wm_font": "",                   # 글자 워터마크 글꼴 파일 (비우면 맑은 고딕 등)
 
+    # ── 재조합 새 단어 (AI): 원본마다 처음 한 번 AI에게 '넣어도 되는 단어'를 받아 저장, 이름 조립은 재조합이 함
+    "ai_words_enabled": True,
+    "ai_words_model": "claude-sonnet-5-5",
+    "ai_words_effort": "low",
+    "ai_words_per_call": 20,         # 한 번에 보낼 원본 수
+    "ai_words_max": 15,              # 원본 하나에 받을 단어 수 (대략)
+    "ai_bank_min": 8,                # 단어 은행에서 이만큼 찾으면 AI를 부르지 않음 (0이면 은행 안 씀)
+
     # ── AI 상품명 (Claude API)
     "anthropic_api_key": "",
     "ai_model": "claude-opus-5-5",

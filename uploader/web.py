@@ -9,7 +9,7 @@ import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import VERSION, bait, config, convert, engine, inventory, keywords, lexicon, naver, orders, watermark
+from . import VERSION, aiwords, bait, config, convert, engine, inventory, keywords, lexicon, naver, orders, watermark
 from .db import DB
 from .tasks import Tasks
 
@@ -289,7 +289,34 @@ def create_app(db=None):
             "detail_html": row.get("상세설명") or "",
         })
         s["kw"] = _source_kw(sid, row)
+        s["ai"] = _source_ai(sid, row)
         return jsonify(s)
+
+    def _source_ai(sid, row):
+        """원본에 받아 둔 AI 단어 (재조합에 쓰는 것 / 빠진 이유)."""
+        cfg = config.load()
+        lex = lexicon.get(db)
+        src = db.one("SELECT id, name FROM sources WHERE id=?", (sid,))
+        used = {w for w, _ in aiwords.words_for(db, [{**src, "data": None, "_row": row}], {**cfg, "ai_words_enabled": True},
+                                                 lex).get(sid, [])}
+        d = aiwords.source_words(db, sid)
+        for w in d["words"]:
+            w["used"] = w["word"] in used
+            w["why"] = "" if w["used"] else ("끈 단어" if w["off"] or w["all_off"] else
+                                             "상표 단어" if lex.mark_of(w["word"]) else
+                                             "금지 단어" if not lex.ok_new_word(w["word"]) else "원본에 없는 속성")
+        d["has_key"] = aiwords.has_key(cfg)
+        d["enabled"] = aiwords.enabled(cfg)
+        return d
+
+    @app.post("/api/sources/<int:sid>/aiwords")
+    def source_aiwords(sid):
+        b = request.get_json(force=True) or {}
+        if b.get("reset"):
+            aiwords.forget(db, sid)
+        elif b.get("word"):
+            aiwords.set_off(db, sid, str(b["word"]), bool(b.get("off")), bool(b.get("all")))
+        return jsonify({"ok": True})
 
     def _source_kw(sid, row):
         """원본의 네이버 연관 키워드에서 온 새 단어 (재조합에 쓰는 것 / 빠진 이유)."""

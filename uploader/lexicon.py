@@ -354,12 +354,27 @@ def marks_in(name, lex):
     return list(dict.fromkeys(out))
 
 
+# '-식·-형·-색'으로 끝나도 속성이 아닌 말 (장식·모형·도색 등), 속성 단어를 품었지만 속성이 아닌 말 (자동차의 '자동')
+NOT_ATTR_ENDS = ("장식", "모형", "인형", "도색", "염색", "탈색", "변색", "검색", "특색", "음식", "간식", "양식", "한식",
+                 "중식", "일식", "분식", "정식", "공식", "방식", "형식", "지식", "의식", "회식", "주식", "유형", "성형",
+                 "정형", "외형", "체형", "지형", "조형")
+NOT_ATTR_PARTS = ("자동차",)
+
+
+def _attr_ending(w):
+    return len(w) >= 3 and w.endswith(ATTR_ENDINGS) and not w.endswith(NOT_ATTR_ENDS)
+
+
 def attrs_in(word, lex=None):
-    """단어에 들어 있는 속성 단어들 ([] 이면 속성 아님). '원목책상' → ['원목'], '코너형' → ['코너형']."""
+    """단어에 들어 있는 속성 단어들 ([] 이면 속성 아님). '원목책상' → ['원목'], '코너형' → ['코너형'].
+    '레이싱모형'·'자동차잭'처럼 속성 글자가 다른 말의 일부인 경우는 속성으로 보지 않는다."""
     w = str(word or "")
     attrs = lex.attrs if lex else set()
-    found = [a for a in attrs if len(a) >= 2 and a in w] + [a for a in attrs if len(a) == 1 and a == w]
-    if not found and len(w) >= 3 and w.endswith(ATTR_ENDINGS):
+    body = w
+    for part in NOT_ATTR_PARTS:
+        body = body.replace(part, " ")
+    found = [a for a in attrs if len(a) >= 2 and a in body] + [a for a in attrs if len(a) == 1 and a == w]
+    if not found and _attr_ending(w):
         found = [w]
     return sorted(set(found), key=len, reverse=True)
 
@@ -367,7 +382,7 @@ def attrs_in(word, lex=None):
 def is_attr(word, lex=None):
     """단어 자체가 속성인가 (속성이 들어간 '방수테이프' 같은 상품 이름은 아님)."""
     w = str(word or "")
-    return w in (lex.attrs if lex else ()) or (len(w) >= 3 and w.endswith(ATTR_ENDINGS))
+    return w in (lex.attrs if lex else ()) or _attr_ending(w)
 
 
 def category_words(category):

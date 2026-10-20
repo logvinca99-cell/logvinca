@@ -81,6 +81,14 @@ const SETTING_SECTIONS = [
     ["wm_margin_pct", "가장자리 여백 (%)", "number", { step: 1 }],
     ["wm_font", "글자 워터마크 글꼴 파일 (비우면 맑은 고딕)", "text"],
   ] },
+  { title: "재조합 새 단어 (AI)", note: "원본마다 처음 재조합할 때 한 번만 AI에게 '이 상품에 넣어도 되는 단어'를 받아 저장합니다. 이름은 재조합이 조립하고, 최신화 때는 저장한 단어를 다시 써서 비용이 들지 않습니다. 같은 카테고리·같은 단어를 이미 물어본 적이 있으면(단어 은행) AI를 부르지 않습니다. API 키는 아래 'AI 상품명'의 키를 같이 씁니다.", fields: [
+    ["ai_words_enabled", "재조합에 AI 단어 쓰기 (끄면 단어 사전·네이버 키워드만)", "check"],
+    ["ai_words_model", "모델", "select", { options: [["claude-sonnet-5-5", "Claude Sonnet 5.5 (기본)"],
+      ["claude-haiku-5-5", "Claude Haiku 5.5 (가장 저렴)"], ["claude-opus-5-5", "Claude Opus 5.5 (가장 정확·비쌈)"]] }],
+    ["ai_words_per_call", "한 번에 보낼 원본 수", "number"],
+    ["ai_words_max", "원본 하나에 받을 단어 수 (대략)", "number"],
+    ["ai_bank_min", "단어 은행에서 이만큼 찾으면 AI를 부르지 않음 (0이면 항상 AI)", "number"],
+  ] },
   { title: "AI 상품명 (Claude API)", note: "console.anthropic.com에서 API 키를 만들어 넣습니다. 사용한 만큼 요금이 나옵니다.", fields: [
     ["anthropic_api_key", "Anthropic API 키", "secret"],
     ["ai_model", "모델", "select", { options: [["claude-opus-5-5", "Claude Opus 5.5 (기본, 가장 정확)"],
@@ -117,6 +125,7 @@ const APPLY_WHEN = {
   "상표 확인 (키프리스)": "확인할 때 · 출원 중 막기는 저장 즉시",
   "도둑방지": "다음 복사 창·다음 등록부터 (이미 올라간 상품은 그대로)",
   "워터마크 (대표 이미지)": "다음 등록부터 (이미 올라간 상품은 그대로)",
+  "재조합 새 단어 (AI)": "아직 단어를 안 받은 원본부터 (받은 원본은 원본 화면에서 '다시 받기')",
   "AI 상품명 (Claude API)": "다음 AI 이름 만들기부터",
   "이미지": "다음 등록부터",
   "속도": "다음 [시작]부터 (실행 중에는 그 실행에 적용 안 됨)",

@@ -91,6 +91,7 @@ class Runner:
         with self.lock:
             if self.state["running"]:
                 raise RuntimeError("이미 등록 중입니다.")
+            self._name_ctx = {}   # 최신화 새 이름용 스토어 정보 (실행마다 새로 읽음)
             cfg = config.load()
             targets = listing_targets(self.db, f)
             if f.get("limit"):
@@ -380,18 +381,27 @@ class Runner:
                    t["channel_no"] or "", t["registered_at"], time.time(), reason))
 
     def _new_name(self, cfg, t):
-        """최신화 때 새 이름을 쓰는 설정이면 안 쓴 후보로 바꾼다."""
-        from .inventory import _fill_names
-        from . import lexicon
+        """최신화 때 새 이름을 쓰는 설정이면 이 스토어에 맞춰 새로 재조합한다 (지난 이름에 넣었던 새 단어는 되도록 피함).
+        AI 단어는 처음 이름을 바꿀 때 받아 둔 것을 다시 쓴다 (여기서는 AI를 부르지 않음)."""
+        from . import inventory, lexicon
         cfg = {**cfg, "_lex": lexicon.get(self.db)}
-        src = self.db.one("SELECT id, name, tags, category FROM sources WHERE id=?", (t["source_id"],))
+        src = self.db.one("SELECT id, name, tags, category, data FROM sources WHERE id=?", (t["source_id"],))
+        inventory._attach_words(self.db, cfg, [src])
+        with self.lock:   # 스토어마다 한 번만 읽어 이번 실행 동안 같이 씀
+            cache = self.__dict__.setdefault("_name_ctx", {})
+            if t["store_id"] not in cache:
+                cache[t["store_id"]] = inventory.StoreContext(self.db, [t["store_id"]])
+            ctx = cache[t["store_id"]]
+        avoid = inventory._new_words(src["name"], t["name"])
+        now = time.time()
         with self.db.tx() as c:
-            pool = _fill_names(c, src, 1, cfg, time.time())
-            if not pool:
+            nm = inventory.name_for_listing(c, src, t["store_id"], cfg, now, ctx, avoid=avoid)
+            if not nm:
+                pool = inventory._fill_names(c, src, 1, cfg, now)
+                nm = pool[0] if pool else None
+            if not nm:
                 return None
-            nm = pool[0]
-            c.execute("UPDATE names SET listing_id=? WHERE id=?", (t["id"], nm["id"]))
-            c.execute("UPDATE listings SET name_id=?, name=? WHERE id=?", (nm["id"], nm["name"], t["id"]))
+            inventory.assign_name(c, t["id"], t["store_id"], src, nm, now, ctx)
         return nm["name"]
 
     def _images(self, client, pool, cache, scope, srcs, required, lid, label, on_wait, wm=None):

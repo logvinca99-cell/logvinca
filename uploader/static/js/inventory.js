@@ -314,6 +314,7 @@ App.page("inventory", {
       tabs: [
         { key: "info", label: "정보", render: (b) => self.renderInfo(b, d) },
         { key: "names", label: `상품명 후보 ${d.names.length}`, render: (b) => self.renderNames(b, d) },
+        { key: "ai", label: `AI 단어 ${d.ai.words.filter((w) => w.used).length}`, render: (b) => self.renderAi(b, d) },
         { key: "kw", label: `네이버 키워드 ${d.kw.words.filter((w) => w.used).length}`, render: (b) => self.renderKw(b, d) },
         { key: "stores", label: `스토어 ${d.listings.filter((l) => l.status !== "deleted").length}/${d.max_copies}`, render: (b) => self.renderListings(b, d) },
         { key: "detail", label: "상세페이지", render: (b) => {
@@ -339,6 +340,38 @@ App.page("inventory", {
           <td class="r">${o.price ? (o.price > 0 ? "+" : "") + num(o.price) + "원" : "-"}</td><td class="r">${num(o.stockQuantity)}</td></tr>`).join("")}
         </table></div>` : "") +
       (d.tags_list.length ? `<div><h3 class="sec-title">엑셀 태그</h3><div class="tags">${d.tags_list.map((t) => `<span>${esc(t)}</span>`).join("")}</div></div>` : "");
+  },
+
+  renderAi(b, d) {
+    const a = d.ai;
+    const used = a.words.filter((w) => w.used);
+    const via = a.via === "bank" ? "단어 은행에서 채움" : "AI에게 받음";
+    b.innerHTML = `<div class="kw-src">
+      <p class="muted small">재조합할 때 처음 한 번 받아 저장한 단어입니다. 이름은 이 단어로 재조합이 스토어마다 따로 조립합니다.
+        ${a.enabled ? "" : ` · <span class="c-err">설정에서 '재조합에 AI 단어 쓰기'가 꺼져 있음</span>`}
+        ${a.has_key ? "" : ` · <span class="c-err">설정에 Anthropic API 키가 없음</span>`}</p>
+      <h3 class="sec-title">AI 단어 ${a.asked_at ? `<span class="muted small">· ${ymd(a.asked_at)} ${via}</span>` : ""}
+        ${a.asked_at ? `<button class="link-btn" id="ai-reset">다시 받기</button>` : ""}</h3>
+      ${a.words.length ? `<p class="muted small">재조합에 쓰는 단어 ${used.length}개 (초록). 누르면 이 원본에서 끔 · Shift+클릭은 모든 원본에서 끔.
+        '→'는 원본의 그 단어 대신 넣을 수 있는 말, 나머지는 덧붙이는 말.</p>
+        <div class="kw-chips">${a.words.map((w) => `<button class="kw-chip ${w.used ? "used" : "off"}" data-word="${esc(w.word)}" data-off="${w.off || w.all_off ? 1 : 0}" data-all="${w.all_off ? 1 : 0}"
+          title="${esc(w.used ? "누르면 끔" : w.why + (w.off || w.all_off ? " (누르면 켬)" : ""))}">${w.for_token ? `<small>${esc(w.for_token)} →</small>` : ""}${esc(w.word)}${w.used ? "" : `<small>${esc(w.why)}</small>`}</button>`).join("")}</div>`
+        : `<p class="muted small">${a.asked_at ? "받은 단어가 없습니다." : "아직 안 받았습니다. 복사본 화면에서 이 원본의 복사본을 재조합하면 받습니다."}</p>`}
+    </div>`;
+    const reload = async () => { const nd = await App.api(`/api/sources/${d.id}`); Object.assign(d, nd); this.renderAi(b, d); };
+    $(".kw-chips", b)?.addEventListener("click", async (e) => {
+      const c = e.target.closest("[data-word]");
+      if (!c) return;
+      const turnOff = c.dataset.off !== "1";
+      const all = turnOff ? e.shiftKey : c.dataset.all === "1";
+      try { await App.api(`/api/sources/${d.id}/aiwords`, { json: { word: c.dataset.word, off: turnOff, all } }); await reload(); }
+      catch (err) { App.toast(err.message, true); }
+    });
+    $("#ai-reset", b)?.addEventListener("click", async () => {
+      if (!confirm("이 원본의 AI 단어를 지울까요? 다음에 재조합할 때 다시 받습니다 (AI 비용이 다시 듭니다).")) return;
+      await App.api(`/api/sources/${d.id}/aiwords`, { json: { reset: true } });
+      await reload();
+    });
   },
 
   renderKw(b, d) {

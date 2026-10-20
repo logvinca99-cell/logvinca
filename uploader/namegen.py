@@ -29,6 +29,22 @@ def tokens(name):
     return out
 
 
+def bad_word(w, lex):
+    """금지 단어·상표 단어인가 (원본 단어를 재조합에 쓸지 볼 때). check_name과 같은 기준."""
+    if not lex:
+        return False
+    low = w.lower()
+    for b in lex.blocked:
+        if (b == low) if b.isascii() else (len(b) >= 2 and b in low):
+            return True
+    return bool(lex.mark_of(w))
+
+
+def safe_tokens(name, lex):
+    """원본 단어 중 금지·상표 단어를 뺀 것 (원본에 '포크레인' 같은 말이 있어도 새 이름은 쓸 수 있게)."""
+    return [t for t in tokens(name) if not bad_word(t, lex)]
+
+
 def overlap(a, b):
     """두 이름의 단어가 겹치는 정도 (0~1, 자카드)."""
     sa, sb = {t.lower() for t in tokens(a)}, {t.lower() for t in tokens(b)}
@@ -48,18 +64,26 @@ def clean(name, max_len=100):
 
 # ───────────────────────── 재조합
 
-def new_word_detail(original, cfg, lex=None, category="", kw_words=(), tag_words=()):
+def new_word_detail(original, cfg, lex=None, category="", kw_words=(), tag_words=(), ai_words=()):
     """재조합에 넣을 수 있는 새 단어 [(단어, 바꿀 수 있는 원래 단어, 우선순위, 출처)]. 출처: 묶음 / 사전 / 네이버 / 태그.
     우선순위: 1 = 앞 단어의 유의어·네이버 연관 키워드, 2 = 나머지 단어의 유의어(바꿔 넣기 가능),
-              3 = 뜻이 다를 수 있는 사전 비슷한말(같은 카테고리 상품명에 안 쓰이는 말), 4 = 태그"""
+              3 = 뜻이 다를 수 있는 사전 비슷한말(같은 카테고리 상품명에 안 쓰이는 말), 4 = 태그
+    ai_words [(단어, 대신할 원래 단어 또는 '')]가 있으면 그것만 쓴다: AI가 이 상품을 보고 고른 말이라
+    뜻을 모르고 바꾸는 사전 유의어·네이버 키워드(이미 AI에게 보여 줌)는 섞지 않는다."""
     from . import lexicon as lx
     lex = lex or cfg.get("_lex")
-    words = tokens(original)
+    words = safe_tokens(original, lex)
     fixed_n = max(0, int(cfg.get("recombine_fixed_prefix", 3) or 0))
     prefix, tail = words[:fixed_n], words[fixed_n:]
-    have = {w.lower() for w in words}
+    have = {w.lower() for w in tokens(original)}
     pool = []
-    if lex:
+    if ai_words:
+        for w, t in ai_words:
+            if t:   # 원래 단어 대신 넣을 수 있는 말 (앞 고정 단어의 것이면 덧붙이기만)
+                pool.append((w, t if t in tail else None, 1, "AI"))
+            else:
+                pool.append((w, None, 2, "AI"))
+    elif lex:
         for w in prefix:   # 앞 단어는 고정이라 바꾸지 않고 덧붙이기만
             pool += [(x, None, 1 if r == 0 else 3, o) for x, o, r in lex.synonyms_src(w, category)]
         pool += [(w, None, 1, "네이버") for w in kw_words]
@@ -78,13 +102,13 @@ def new_word_detail(original, cfg, lex=None, category="", kw_words=(), tag_words
     return cand
 
 
-def new_word_candidates(original, cfg, lex=None, category="", core="", kw_words=(), tag_words=()):
+def new_word_candidates(original, cfg, lex=None, category="", core="", kw_words=(), tag_words=(), ai_words=()):
     """재조합에 넣을 수 있는 새 단어 [(단어, 바꿀 수 있는 원래 단어, 우선순위)]. 이 수가 설정보다 적으면 그만큼만 들어간다."""
-    return [c[:3] for c in new_word_detail(original, cfg, lex, category, kw_words, tag_words)]
+    return [c[:3] for c in new_word_detail(original, cfg, lex, category, kw_words, tag_words, ai_words)]
 
 
 def recombine(original, count, taken_norms, siblings, cfg, seed, tag_words=(), lex=None, category="",
-              core="", kw_words=()):
+              core="", kw_words=(), ai_words=(), use_count=None, avoid=(), neighbors=()):
     """새 이름 count개. 토큰(비용) 없이 만든다.
 
     1. 원본의 앞 N단어(기본 3)는 그대로 맨 앞에 둔다.
@@ -95,11 +119,16 @@ def recombine(original, count, taken_norms, siblings, cfg, seed, tag_words=(), l
     4. 남는 칸을 최대 글자 수(기본 50자)까지 채운다: 뺐던 원본 단어 → 그래도 남으면 우선순위 높은 새 단어.
     5. 버리는 경우: 같은 단어가 3번 이상 / 33개 스토어의 다른 이름과 같음 /
        같은 원본의 다른 이름과 (앞 N단어 뒤 부분이) 85% 이상 겹치거나 그 첫 두 단어가 같음.
+    6. 원본의 금지·상표 단어(예: 포크레인)는 빼고 만든다.
+    ai_words: AI가 이 원본에 준 새 단어 (있으면 사전 유의어 대신 이것만 씀).
+    use_count {단어: 이 스토어에서 쓴 횟수}: 많이 쓴 단어일수록 덜 뽑는다 (내 상품끼리 같은 단어가 몰리지 않게).
+    avoid: 되도록 쓰지 않을 단어 (최신화 때 지난 이름의 새 단어).
+    neighbors: 같은 스토어·카테고리 내 다른 상품명들의 단어 집합 — 단어가 너무 많이 겹치면 버린다.
     core는 예전 호출과 맞추려고 남겨 둔 인자 (쓰지 않음).
     """
     from . import lexicon as lx
     lex = lex or cfg.get("_lex")
-    words = tokens(original)
+    words = safe_tokens(original, lex)
     max_len = int(cfg.get("name_max_len") or 50)
     max_overlap = float(cfg.get("recombine_max_overlap") or 0.85)
     max_repeat = int(cfg.get("max_word_repeat") or 2)
@@ -110,8 +139,14 @@ def recombine(original, count, taken_norms, siblings, cfg, seed, tag_words=(), l
     replace_ratio = float(cfg.get("recombine_replace_ratio", 0.4) or 0)
 
     prefix, tail = words[:fixed_n], words[fixed_n:]
-    cand = new_word_candidates(original, cfg, lex, category, "", kw_words, tag_words)
+    cand = new_word_candidates(original, cfg, lex, category, "", kw_words, tag_words, ai_words)
     weight = {1: 6, 2: 4, 3: 2, 4: 1}
+    use_count = use_count or {}
+    avoid = set(avoid or ())
+
+    def wt(c):
+        w = weight[c[2]] / (1 + use_count.get(c[0], 0))
+        return w * 0.05 if c[0] in avoid else w
 
     rnd = random.Random(seed)
     out, sibs = [], list(siblings)
@@ -125,7 +160,12 @@ def recombine(original, count, taken_norms, siblings, cfg, seed, tag_words=(), l
 
     def too_close(name):
         t = tail_of(name)
-        return any(overlap(t, x) >= max_overlap or _same_start(t, x) for x in sib_tails if x)
+        if any(overlap(t, x) >= max_overlap or _same_start(t, x) for x in sib_tails if x):
+            return True
+        if neighbors:
+            mine = {x.lower() for x in tokens(name)}
+            return any(len(mine & x) / len(mine | x) >= max_overlap for x in neighbors if x)
+        return False
 
     def can_add(cur, w, check_overlap=False):
         if any(w.lower() == x.lower() for x in cur):
@@ -143,10 +183,10 @@ def recombine(original, count, taken_norms, siblings, cfg, seed, tag_words=(), l
         left = [c for c in cand if c[0] not in exclude]
         chosen, used_src = [], set()
         while left and len(chosen) < n:
-            total = sum(weight[c[2]] for c in left)
+            total = sum(wt(c) for c in left)
             r = rnd.uniform(0, total)
             for i, c in enumerate(left):
-                r -= weight[c[2]]
+                r -= wt(c)
                 if r <= 0:
                     break
             c = left.pop(i)
@@ -187,7 +227,8 @@ def recombine(original, count, taken_norms, siblings, cfg, seed, tag_words=(), l
             # 남는 칸: 뺐던 원본 단어(바꿔 넣은 원래 단어는 제외) → 그래도 남으면 우선순위 높은 새 단어
             dropped = [w for w in tail if w not in cur and w not in replaced]
             rnd.shuffle(dropped)
-            extra = [c[0] for c in sorted(cand, key=lambda c: (c[2], rnd.random())) if c[0] not in cur]
+            extra = [c[0] for c in sorted(cand, key=lambda c: (c[2], c[0] in avoid, use_count.get(c[0], 0), rnd.random()))
+                     if c[0] not in cur]
             for w in dropped + extra:
                 if len(" ".join(cur)) >= max_len - 1:
                     break

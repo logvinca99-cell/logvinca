@@ -179,14 +179,14 @@ def token_words(token, rels, cfg, lex=None, have=()):
 
 
 def original_text(name, row):
-    """속성 확인용: 원본 상품명 + 옵션 + 상세설명 글자 + 태그."""
+    """속성 확인용: 원본 상품명 + 옵션 + 상세설명 글자.
+    태그는 넣지 않는다 (엑셀 태그가 상품과 안 맞는 경우가 많아, 커튼에 태그의 '우드'가 허용되는 일이 생김)."""
     parts = [name]
     o = convert.options(row)
     if o:
         parts.append(json.dumps(o, ensure_ascii=False))
     d = str(row.get("상세설명") or "")
     parts.append(_TAG.sub(" ", d)[:5000])
-    parts.append(str(row.get("상품태그") or ""))
     return " ".join(parts)
 
 
