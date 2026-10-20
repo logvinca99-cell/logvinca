@@ -69,7 +69,7 @@ function ymd(ts) {
   const d = new Date(ts * 1000), p = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
-const ORIGIN = { original: "원본", recombine: "재조합", import: "가져옴", ai: "AI", manual: "직접" };
+const ORIGIN = { original: "원본", ctx: "맥락", recombine: "재조합", import: "가져옴", ai: "AI", manual: "직접" };
 
 const App = {
   pages: {}, current: null, state: null, stores: [], run: null, listeners: {}, taskSeen: {},
@@ -132,7 +132,19 @@ const App = {
     $("#side-stats").innerHTML =
       `원본 ${num(st.sources)}개 · 이름 후보 ${num(st.names_free)}개<br>` +
       `등록 완료 ${num(st.registered)}건 · 대기 ${num(st.pending)}건<br>` +
-      `카테고리 ${this.state.categories ? num(this.state.categories) + "개" : "아직 안 받음"}`;
+      `카테고리 ${this.state.categories ? num(this.state.categories) + "개" : "아직 안 받음"}` +
+      (st.ctx_pending ? `<br><span class="c-warn">맥락 키워드 일괄 처리 중 ${num(st.ctx_pending)}개</span>
+        <button class="link-btn" id="ctx-check">지금 확인</button> · <button class="link-btn" id="ctx-cancel">중지</button>` : "");
+    $("#ctx-check")?.addEventListener("click", async () => {
+      const r = await this.api("/api/ctx/check", { json: {} });
+      this.toast(r.ended ? `일괄 처리 끝: 키워드 받은 원본 ${num(r.ok)}개` + (r.failed ? ` · 재시도 대기 ${num(r.failed)}개` : "") : "아직 처리 중입니다.");
+      this.refreshState();
+    });
+    $("#ctx-cancel")?.addEventListener("click", async () => {
+      if (!confirm("진행 중인 맥락 키워드 일괄 처리를 중지할까요? 이미 끝난 결과는 저장하고, 나머지 원본은 재시도 대기로 둡니다.")) return;
+      await this.api("/api/ctx/cancel", { json: {} });
+      this.toast("중지를 요청했습니다. 끝난 결과는 다음 확인 때 저장합니다.");
+    });
     this.renderTasks(this.state.tasks);
     return this.state;
   },
@@ -178,7 +190,14 @@ const App = {
             + (r.few_words ? ` · 새 단어 후보가 설정보다 적은 원본 ${num(r.few_words)}개 (단어 사전·우리말샘·네이버 키워드로 늘리세요)` : "")
             + (r.rejected ? ` · 반복·금지 단어로 버림 ${num(r.rejected)}개` : "")
             + (r.failed ? ` · 실패 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : "") + aiMsg(r.ai),
-        rename: () => (r.kw_error ? `네이버 키워드를 못 받음(${r.kw_error}) · ` : "") + `상품명 바꾸기 끝: ${num(r.renamed)}건 바꿈` + (r.short ? ` · 후보를 못 만든 ${num(r.short)}건은 그대로 (단어가 적음 → 직접 입력이나 AI)` : "")
+        ctxkw: () => `맥락 키워드(즉시) 끝: 원본 ${num(r.ok)}개 받음` + (r.failed ? ` · 재시도 대기 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : "")
+          + ` · 실제 약 ${num(r.krw)}원 (예상 ${num(r.est_krw)}원)` + (r.names ? ` · 이름 후보 ${num(r.names.made)}개 · 복사본에 배정 ${num(r.names.assigned)}건` : ""),
+        rename: () => r.method === "ctx"
+          ? `상품명 바꾸기(맥락 키워드) 끝: ${num(r.renamed)}건 배정` + (r.kept ? ` · 이미 맥락 이름 ${num(r.kept)}건 그대로` : "")
+            + (r.fallback ? ` · 키워드 없는 원본은 예비 방식으로 ${num(r.fallback)}건` : "")
+            + (r.no_kw ? ` · 키워드 없는 원본 ${num(r.no_kw)}개(${num(r.no_kw_listings)}건)는 키워드를 받으면 자동 배정` : "")
+            + (r.short ? ` · 이름을 못 만든 ${num(r.short)}건은 '이름 변경 필요'` : "") + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
+          : (r.kw_error ? `네이버 키워드를 못 받음(${r.kw_error}) · ` : "") + `상품명 바꾸기 끝: ${num(r.renamed)}건 바꿈` + (r.short ? ` · 후보를 못 만든 ${num(r.short)}건은 그대로 (단어가 적음 → 직접 입력이나 AI)` : "")
           + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
           + (r.few_words ? ` · 새 단어 후보가 설정보다 적은 원본 ${num(r.few_words)}개` : "") + aiMsg(r.ai),
         bait: () => `원래 가격으로 ${num(r.restored)}건` + (r.failed ? ` · 실패 ${num(r.failed)}건 (${r.errors?.[0] || ""})` : ""),
@@ -304,6 +323,60 @@ const App = {
     setTimeout(() => $("[autofocus]", b)?.focus(), 50);
   },
   closeModal() { $("#modal-bg").hidden = true; },
+
+  // ── 맥락 키워드: 실행 전 비용 안내 → 일괄(기본) / 즉시
+
+  async ctxConfirm(target, after) {
+    let est;
+    try { est = await this.api("/api/ctx/estimate", { json: target }); } catch (e) { return this.toast(e.message, true); }
+    if (!est.sources) {
+      this.toast(`고른 원본 ${num(est.selected)}개 모두 키워드가 있습니다 · 요청 0건 (AI를 부르지 않음)`);
+      if (after) after(false);
+      return;
+    }
+    const s = this.state.settings;
+    const line = (mode) => {
+      const usd = mode === "batch" ? est.usd_batch : est.usd_instant;
+      return `${mode === "batch" ? "일괄" : "즉시"} 약 <b>${num(Math.ceil(usd * est.rate))}원</b>`;
+    };
+    const [b, i] = await Promise.all([this.api("/api/ctx/estimate", { json: { ...target, mode: "batch" } }),
+      this.api("/api/ctx/estimate", { json: { ...target, mode: "instant" } })]);
+    est.usd_batch = b.usd; est.usd_instant = i.usd;
+    this.openModal({
+      title: "맥락 키워드 받기 · 비용 안내",
+      body: `<div class="form">
+        <dl class="kv">
+          <dt>대상 원본</dt><dd><b>${num(est.sources)}개</b> <span class="muted small">(고른 ${num(est.selected)}개 중 이미 키워드가 있는 ${num(est.have)}개 제외)</span></dd>
+          <dt>요청 수</dt><dd>${num(est.requests)}건 <span class="muted small">(요청 1건에 원본 ${num(s.ctx_per_request)}개)</span></dd>
+          <dt>예상 토큰</dt><dd>입력 ${num(est.in_tok)} · 출력 ${num(est.out_tok)}</dd>
+          <dt>예상 비용</dt><dd>${line("batch")} · ${line("instant")} <span class="muted small">(${esc(est.model)}, 환율 ${num(est.rate)}원)</span></dd>
+        </dl>
+        ${est.has_key ? "" : `<p class="c-err small">설정 → AI 상품명에 Anthropic API 키를 먼저 넣어야 합니다.</p>`}
+        ${est.pending ? `<p class="muted small">지금 일괄 처리 중인 원본 ${num(est.pending)}개는 다시 보내지 않습니다.</p>` : ""}
+        <div class="radio-cards">
+          <label><input type="radio" name="cm" value="batch" ${s.ctx_mode !== "instant" ? "checked" : ""}><div><b>일괄 처리 (권장, 50% 할인)</b>
+            <span class="muted small">결과가 오기까지 몇 분~몇 시간. 프로그램을 꺼도 다시 켜면 이어서 확인합니다. 결과가 오면 이름 후보 2개를 만들고 이름 없는 복사본에 바로 배정합니다.</span></div></label>
+          <label><input type="radio" name="cm" value="instant" ${s.ctx_mode === "instant" ? "checked" : ""}><div><b>즉시</b>
+            <span class="muted small">바로 받습니다 (동시 3건). 소량 시험용.</span></div></label>
+        </div>
+        <p class="muted small">끝나면 실제 비용(응답의 사용량 기준)을 실행 기록에 남깁니다.</p></div>`,
+      buttons: [{ label: "취소", onClick: () => { if (after) after(false); } }, { label: "키워드 받기 시작", primary: true, onClick: async (m) => {
+        const mode = $("input[name=cm]:checked", m).value;
+        try {
+          if (mode === "instant") {
+            const t = await this.startTask(this.api("/api/ctx/start", { json: { ...target, mode } }));
+            if (after) after(!!t);
+            return !!t;
+          }
+          const r = await this.api("/api/ctx/start", { json: { ...target, mode } });
+          this.toast(r.started ? `일괄 처리를 보냈습니다: 원본 ${num(r.sources)}개 · 요청 ${num(r.requests)}건 (예상 약 ${num(r.est_krw)}원). 결과는 1분마다 확인합니다.` : r.message);
+          this.refreshState();
+          if (after) after(true);
+          return true;
+        } catch (e) { this.toast(e.message, true); return false; }
+      } }],
+    });
+  },
 
   // ── 쪽 넘기기
 

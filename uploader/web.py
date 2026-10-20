@@ -9,7 +9,7 @@ import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import VERSION, aiwords, bait, config, convert, engine, inventory, keywords, lexicon, naver, orders, watermark
+from . import VERSION, aiwords, bait, ctxkw, config, convert, engine, inventory, keywords, lexicon, naver, orders, watermark
 from .db import DB
 from .tasks import Tasks
 
@@ -290,6 +290,7 @@ def create_app(db=None):
         })
         s["kw"] = _source_kw(sid, row)
         s["ai"] = _source_ai(sid, row)
+        s["ctx"] = ctxkw.source_info(db, sid)
         return jsonify(s)
 
     def _source_ai(sid, row):
@@ -441,13 +442,99 @@ def create_app(db=None):
             return fail("등록이 진행 중일 때는 계획을 만들 수 없습니다. 끝난 뒤에 다시 시도하세요.")
         mode = "spread" if b.get("mode") == "spread" else "all"
         per = max(1, int(b.get("per_product") or 1))
+        seed = b.get("seed")   # 미리보기와 같은 배정이 나오게
         try:
             tid = tasks.start("plan", f"등록 계획 · 상품 {len(ids):,}개 × 스토어 {len(store_ids)}곳",
                               lambda **kw: inventory.create_plan(db, ids, store_ids, mode, per,
-                                                                 b.get("title") or "", bait=b.get("bait"), **kw))
+                                                                 b.get("title") or "", bait=b.get("bait"), seed=seed, **kw))
         except RuntimeError as e:
             return fail(str(e))
         return jsonify({"task": tid})
+
+    @app.post("/api/plans/preview")
+    def plan_preview():
+        """'원본마다 N곳 골고루' 미리보기: 스토어별 배정 수, 두 스토어가 같은 원본을 공유하는 비율 (계획은 만들지 않음)."""
+        b = body()
+        ids = inventory.source_ids(db, _filter_from(b))
+        store_ids = [int(i) for i in b.get("store_ids") or []]
+        if not ids or not store_ids:
+            return fail("상품과 스토어를 골라 주세요.")
+        seed = int(time.time() * 1000) % 1_000_000_007
+        try:
+            _, pv = inventory.plan_spread(db, ids, store_ids, max(1, int(b.get("per_product") or 1)), seed)
+        except ValueError as e:
+            return fail(str(e))
+        return jsonify(pv)
+
+    # ── 맥락 키워드 (AI): 실행 전 비용 안내 → 일괄(기본)/즉시
+
+    def _ctx_sources(b):
+        if b.get("listing_filter"):
+            f = _filter_from(b["listing_filter"])
+            f.pop("op", None)
+            lids = inventory.listing_ids(db, f)
+            out = []
+            for i in range(0, len(lids), 900):
+                chunk = lids[i:i + 900]
+                out += [r["source_id"] for r in db.q(f"SELECT DISTINCT source_id FROM listings WHERE id IN ({','.join('?' * len(chunk))})", chunk)]
+            return sorted(set(out))
+        return inventory.source_ids(db, _filter_from(b))
+
+    @app.post("/api/ctx/estimate")
+    def ctx_estimate():
+        b = body()
+        cfg = config.load()
+        return jsonify(ctxkw.estimate(db, cfg, _ctx_sources(b), b.get("mode")))
+
+    @app.post("/api/ctx/start")
+    def ctx_start():
+        b = body()
+        ids = _ctx_sources(b)
+        mode = b.get("mode") or config.load().get("ctx_mode") or "batch"
+        if not ctxkw.targets(db, ids):
+            return jsonify({"started": False, "message": "고른 원본은 모두 키워드가 있습니다 (요청 0건). AI를 부르지 않습니다."})
+        try:
+            if mode == "instant":
+                tid = tasks.start("ctxkw", f"맥락 키워드 받기(즉시) · 원본 {len(ids):,}개",
+                                  lambda **kw: ctxkw.run_instant(db, ids, **kw))
+                return jsonify({"task": tid})
+            r = ctxkw.start_batch(db, ids)
+        except RuntimeError as e:
+            return fail(str(e))
+        return jsonify({"started": True, **r})
+
+    @app.post("/api/ctx/cancel")
+    def ctx_cancel():
+        return jsonify(ctxkw.cancel(db))
+
+    @app.post("/api/ctx/check")
+    def ctx_check():
+        return jsonify(ctxkw.poll(db))
+
+    @app.get("/api/ctx/status")
+    def ctx_status():
+        return jsonify({**ctxkw.status(db), "runs": ctxkw.runs(db, 20)})
+
+    @app.get("/api/ctx/runs")
+    def ctx_runs():
+        return jsonify(ctxkw.runs(db))
+
+    @app.post("/api/lexicon/blocked/import")
+    def lexicon_blocked_import():
+        f = request.files.get("file")
+        if not f:
+            return fail("파일을 골라 주세요.")
+        raw = f.read()
+        for enc in ("utf-8-sig", "cp949"):
+            try:
+                text = raw.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            return fail("파일 글자 인코딩을 읽지 못했습니다 (UTF-8 또는 CP949 텍스트 파일).")
+        added, existed = lexicon.import_blocked(db, text)
+        return jsonify({"added": added, "existed": existed, **lexicon.export_text(db)})
 
     @app.get("/api/plans")
     def plans():
@@ -550,7 +637,15 @@ def create_app(db=None):
         ids = inventory.listing_ids(db, f)
         if not ids:
             return fail("고른 복사본이 없습니다.")
-        method = b.get("method") if b.get("method") in ("recombine", "ai", "pool") else "recombine"
+        method = b.get("method") if b.get("method") in ("ctx", "recombine", "ai", "pool") else "ctx"
+        if method == "ctx":
+            fb = bool(b.get("fallback", True))
+            try:
+                tid = tasks.start("rename", f"상품명 바꾸기(맥락 키워드) · 복사본 {len(ids):,}건",
+                                  lambda **kw: inventory.rename_ctx(db, ids, fb, **kw))
+            except RuntimeError as e:
+                return fail(str(e))
+            return jsonify({"task": tid})
         if method == "ai" and not config.load().get("anthropic_api_key") and os.environ.get("UPLOADER_FAKE_API") != "1":
             return fail("설정 → AI 상품명에서 Anthropic API 키를 먼저 넣어 주세요.")
         label = {"recombine": "재조합", "ai": "AI", "pool": "만들어 둔 후보"}[method]
@@ -1017,6 +1112,7 @@ def create_app(db=None):
     if not app.config.get("TESTING"):
         threading.Thread(target=auto_sync_loop, daemon=True).start()
         threading.Thread(target=dict_folder_check, daemon=True).start()
+        ctxkw.poll_loop(db)   # 진행 중인 일괄 처리를 켜자마자, 그 뒤 1분마다 확인 (껐다 켜도 이어서)
 
     return app
 

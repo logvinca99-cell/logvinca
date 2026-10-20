@@ -162,7 +162,10 @@ App.page("listings", {
     App.openModal({
       title: `상품명 바꾸기 · 복사본 ${num(n)}건`,
       body: `<div class="form"><div class="radio-cards">
-          <label><input type="radio" name="rn" value="recombine" checked><div><b>재조합</b><span class="muted small">원본 상품명의 단어를 고르고 순서를 바꾸고 유의어를 넣어 새로 만듭니다. 무료·즉시.</span></div></label>
+          <label><input type="radio" name="rn" value="ctx" ${s.name_method !== "recombine" ? "checked" : ""}><div><b>맥락 키워드 (기본)</b><span class="muted small">[원본 앞 ${num(s.ctx_head_n)}단어] + [AI 맥락 키워드 최대 ${num(s.ctx_ai_per_name)}개] + [원본 나머지 ${num(s.ctx_tail_min)}~${num(s.ctx_tail_max)}개], 최대 ${num(s.name_max_len)}자.
+            원본마다 이름 ${num(s.ctx_names_per_source)}개를 한 번에 만들어 복사본에 하나씩 배정합니다. 키워드가 없는 원본은 먼저 비용을 안내하고 받습니다.</span>
+            <label class="check small"><input type="checkbox" id="rn-fb"><span>키워드가 없는 원본은 예비 방식(재조합)으로 바로 바꾸기</span></label></div></label>
+          <label><input type="radio" name="rn" value="recombine" ${s.name_method === "recombine" ? "checked" : ""}><div><b>재조합 (예비 방식)</b><span class="muted small">원본 상품명의 단어를 고르고 순서를 바꾸고 유의어를 넣어 새로 만듭니다.</span></div></label>
           <label><input type="radio" name="rn" value="ai"><div><b>AI로 짓기</b><span class="muted small">Claude(${esc(s.ai_model)})가 원본을 보고 새로 짓습니다. 유료. 모자라면 재조합으로 채웁니다.
             ${s.has_anthropic_api_key || App.state.fake_api ? "" : '<br><span class="c-err">설정에서 API 키를 먼저 넣어야 합니다.</span>'}</span></div></label>
           <label><input type="radio" name="rn" value="pool"><div><b>만들어 둔 후보에서</b><span class="muted small">원본 상품 화면에서 미리 만들거나 파일로 가져온 후보를 씁니다. 후보가 없으면 그대로 둡니다.</span></div></label>
@@ -171,7 +174,21 @@ App.page("listings", {
           · 이미 바꾼 이름이 있으면 그 이름은 버리고 새로 고릅니다.<br>
           · 모든 이름은 금지 단어·상표·같은 단어 반복과 33개 스토어 중복을 검사합니다. 한 건씩은 복사본을 눌러 직접 입력할 수 있습니다.</p></div>`,
       buttons: [{ label: "취소" }, { label: "바꾸기", primary: true, onClick: async (b) => {
-        const r = await App.startTask(App.api("/api/listings/rename", { json: { ...this.target(), method: $("input[name=rn]:checked", b).value } }));
+        const method = $("input[name=rn]:checked", b).value;
+        const target = this.target();
+        if (method === "ctx") {
+          const fallback = $("#rn-fb", b).checked;
+          const go = () => App.startTask(App.api("/api/listings/rename", { json: { ...target, method, fallback } }));
+          const est = await App.api("/api/ctx/estimate", { json: { listing_filter: target } });
+          if (est.sources && !fallback) {
+            // 키워드 없는 원본: 비용 안내 후 받기 → 지금은 키워드 있는 원본만 배정, 나머지는 받으면 자동 배정
+            App.closeModal();
+            App.ctxConfirm({ listing_filter: target }, (ok) => { if (ok) go(); });
+            return false;
+          }
+          return !!(await go());
+        }
+        const r = await App.startTask(App.api("/api/listings/rename", { json: { ...target, method } }));
         return !!r;
       } }],
     });

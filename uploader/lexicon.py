@@ -181,6 +181,13 @@ DEFAULT_BLOCK = """
 정품,명품,가품,짝퉁,레플리카,스타일,호환,st,ST,최고,최저가,1위,특가,무료배송,할인
 """
 
+# 브랜드·캐릭터·명품 이름 (반드시 차단). 흔한 일반어와 겹치는 말(자주·브라운 등)은 넣지 않는다.
+BRAND_BLOCK = """
+이케아,한샘,리바트,까사미아,일룸,시디즈,듀오백,에이스침대,시몬스,다이소,모던하우스,무인양품,테팔,해피콜,쿠쿠,쿠첸,
+필립스,보쉬,마끼다,스탠리,쓰리엠,3M,디즈니,산리오,헬로키티,포켓몬,카카오프렌즈,라인프렌즈,짱구,뽀로로,
+루이비통,샤넬,구찌,에르메스,프라다
+"""
+
 # 일반명사라도 표시·광고 규정(효능·인증·원산지·과장)에 걸릴 수 있는 말. 근거 없이 쓰면 안 되므로 새로 넣지 않는다.
 CLAIM_BLOCK = """
 치료,완치,의료용,의료기기,의약,처방,통증완화,질병,예방,무독성,무해,친환경,유기농,천연,항균,살균,멸균,소독,
@@ -254,6 +261,13 @@ def ensure(db):
                 if w.strip():
                     c.execute("INSERT OR IGNORE INTO word_block(word) VALUES(?)", (w.strip(),))
             c.execute("INSERT OR REPLACE INTO meta(k, v) VALUES('block_v2', '1')")
+            _bump(c)
+        if not c.execute("SELECT 1 FROM meta WHERE k='block_v3'").fetchone():
+            # 브랜드·캐릭터·명품 이름을 금지 단어에 더한다 (이미 쓰던 db에도)
+            for w in BRAND_BLOCK.replace("\n", ",").split(","):
+                if w.strip():
+                    c.execute("INSERT OR IGNORE INTO word_block(word) VALUES(?)", (w.strip(),))
+            c.execute("INSERT OR REPLACE INTO meta(k, v) VALUES('block_v3', '1')")
             _bump(c)
         if not c.execute("SELECT 1 FROM meta WHERE k='attr_seeded'").fetchone():
             for w in ATTR_SEED.replace("\n", ",").split(","):
@@ -754,6 +768,19 @@ def save_text(db, groups_text, blocked_text, opendict_text=None, attrs_text=None
                 if w.strip():
                     c.execute("INSERT OR IGNORE INTO word_attr(word) VALUES(?)", (w.strip(),))
         _bump(c)
+
+
+def import_blocked(db, text):
+    """금지어 파일 가져오기 (예: 금지어_721.txt): 한 줄에 하나 또는 쉼표로 구분. 이미 있는 단어는 건너뜀.
+    → (새로 넣은 수, 이미 있던 수)"""
+    words = [w.strip().lstrip("\ufeff") for w in (text or "").replace("\r", "\n").replace(",", "\n").split("\n")]
+    words = list(dict.fromkeys(w for w in words if w))
+    added = 0
+    with db.tx() as c:
+        for w in words:
+            added += c.execute("INSERT OR IGNORE INTO word_block(word) VALUES(?)", (w,)).rowcount
+        _bump(c)
+    return added, len(words) - added
 
 
 # ───────────────────────── 우리말샘에서 유의어 받기 (선택, 무료 키 필요)

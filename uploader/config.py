@@ -33,7 +33,7 @@ DEFAULTS = {
 
     # ── 복사·구분
     # 원본 하나를 올릴 수 있는 최대 스토어 수 (내린 것은 세지 않음)
-    "max_copies": 3,
+    "max_copies": 2,                 # 원본 하나는 최대 2곳 (예전 3에서 바꿈)
     # 스토어에 등록하는 판매자 관리코드. {store}=스토어 코드, {source}=원본 번호, {round}=회차
     "seller_code_format": "{store}-{source:07d}-{round}",
     # 최신화(지우고 다시 올리기)·다시 올리기 때 상품명을 새 후보로 바꿀지 (끄면 같은 이름)
@@ -116,6 +116,20 @@ DEFAULTS = {
     "wm_square": "safe",             # safe(가운데 정사각형 안쪽) / pad(흰 여백으로 정사각형) / full(이미지 전체 기준)
     "wm_font": "",                   # 글자 워터마크 글꼴 파일 (비우면 맑은 고딕 등)
 
+    # ── 상품명 방식: 맥락 키워드 조립 (기본). [원본 앞 4단어] + [AI 맥락 키워드 최대 6개] + [원본 나머지 3~6개], 최대 name_max_len자
+    #    AI는 원본마다 한 번 '맥락 키워드'(장소·사람·용도·상황) 목록만 만든다. 키워드가 없는 원본만 예전 재조합(예비)
+    "name_method": "ctx",
+    "ctx_head_n": 4,                 # 앞 고정 단어 수
+    "ctx_ai_per_name": 6,            # 이름당 AI 키워드 (최대)
+    "ctx_tail_min": 3,               # 원본 나머지 단어 (최소~최대)
+    "ctx_tail_max": 6,
+    "ctx_names_per_source": 2,       # 원본당 이름 수 (한 번에 만듦)
+    "ctx_kw_count": 12,              # 원본당 요청 키워드 수
+    "ctx_per_request": 10,           # 요청당 원본 수
+    "ctx_model": "claude-sonnet-5-5",
+    "ctx_mode": "batch",             # batch(일괄, 50% 할인) / instant(즉시, 소량 시험용)
+    "krw_rate": 1330,                # 비용 안내 환율 (원/달러)
+
     # ── 재조합 새 단어 (AI): 원본마다 처음 한 번 AI에게 '넣어도 되는 단어'를 받아 저장, 이름 조립은 재조합이 함
     "ai_words_enabled": True,
     "ai_words_model": "claude-sonnet-5-5",
@@ -181,6 +195,8 @@ def load():
     if os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH, encoding="utf-8") as f:
             saved = json.load(f)
+        if "name_method" not in saved and saved.get("max_copies") == 3:
+            saved["max_copies"] = 2   # 맥락 키워드 방식부터 원본당 최대 2곳 (예전 기본 3을 쓰던 설정도 바꿈)
         if "kipris_block_pending" not in saved:
             saved.pop("use_category_words", None)  # 이 버전부터 상품명에 카테고리를 쓰지 않음 (예전 설정도 끔)
         cfg.update(saved)

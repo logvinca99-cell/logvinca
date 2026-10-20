@@ -343,6 +343,7 @@ label.check input { margin-top: 3px; }
 .org-original { background: var(--idle-soft); color: var(--idle); }
 .org-recombine { background: var(--info-soft); color: var(--info); }
 .org-ai { background: var(--dup-soft); color: var(--dup); }
+.org-ctx { background: var(--ok-soft); color: var(--ok); }
 .org-import { background: var(--ok-soft); color: var(--ok); }
 .org-manual { background: var(--warn-soft); color: var(--warn); }
 .opt-table .r { text-align: right; }

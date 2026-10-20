@@ -77,7 +77,8 @@ App.page("lexicon", {
           <textarea id="lx-opendict" rows="6" spellcheck="false">${esc(d.opendict)}</textarea>
         </section>
         <section class="card pad">
-          <div class="sec-head"><h2>금지 단어</h2><span class="muted small">쉼표로 구분 · 이 말이 들어간 단어는 새로 넣지 않고, AI·가져온 이름도 버림</span></div>
+          <div class="sec-head"><h2>금지 단어</h2><span class="muted small">쉼표로 구분 · 이 말이 들어간 단어는 새로 넣지 않고, AI·가져온 이름도 버림
+            · <label class="link-btn">파일에서 가져오기<input type="file" id="lx-block-file" accept=".txt,.csv" hidden></label></span></div>
           <textarea id="lx-block" rows="10" spellcheck="false">${esc(d.blocked)}</textarea>
           <p class="muted small">상표에서 온 말(포스트잇·스티로폼·호치키스 등), 브랜드, '정품·명품·스타일·호환' 같은 사칭 표현,
             근거 없이 쓰면 안 되는 효능·인증·원산지 표현(치료·무독성·항균·KC인증·국산 등)이 기본으로 들어 있습니다.
@@ -90,6 +91,18 @@ App.page("lexicon", {
         </section>
       </div>
     </div>`;
+    $("#lx-block-file").addEventListener("change", async (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      const fd = new FormData();
+      fd.append("file", f);
+      try {
+        const r = await App.api("/api/lexicon/blocked/import", { method: "POST", body: fd });
+        $("#lx-block").value = r.blocked;
+        App.toast(`금지 단어 가져오기: 새로 ${num(r.added)}개 · 이미 있던 ${num(r.existed)}개 (저장됨)`);
+      } catch (err) { App.toast(err.message, true); }
+      e.target.value = "";
+    });
     $("#lx-save").addEventListener("click", () => this.save());
     $("#lx-try").addEventListener("click", () => this.preview());
     $("#lx-name").addEventListener("keydown", (e) => { if (e.key === "Enter") this.preview(); });

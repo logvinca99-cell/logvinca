@@ -70,7 +70,9 @@ App.page("inventory", {
     this.rows = res.rows;
     this.total = res.total;
     const c = res.counts || {};
-    $("#i-tiles").innerHTML = tilesHtml(INV_TILES.map((t) => ({ ...t })), { ...c, all: c.all_ }, this.f.status);
+    const mx = App.state.settings.max_copies || 2;
+    const label = { partial: mx > 2 ? `1~${mx - 1}곳에 있음` : "1곳에 있음", full: `${mx}곳 다 참`, names_short: `이름 후보 ${mx}개 미만` };
+    $("#i-tiles").innerHTML = tilesHtml(INV_TILES.map((t) => ({ ...t, label: label[t.key] || t.label })), { ...c, all: c.all_ }, this.f.status);
     $("#i-rows").innerHTML = res.rows.length ? res.rows.map((p) => this.rowHtml(p)).join("")
       : `<tr class="empty-row"><td colspan="8">${c.all_ ? "조건에 맞는 상품이 없습니다." :
         "아직 원본 상품이 없습니다. 오른쪽 위 <b>원본 엑셀 불러오기</b>를 누르거나 엑셀을 끌어다 놓으세요."}</td></tr>`;
@@ -81,7 +83,7 @@ App.page("inventory", {
 
   rowHtml(p) {
     const cat = (p.category || "").split(">");
-    const mx = App.state.settings.max_copies || 3;
+    const mx = App.state.settings.max_copies || 2;
     let slots;
     if (!p.valid) slots = `<span class="badge s-fail">오류</span><div class="s-msg err" title="${esc(p.errors[0] || "")}">${esc(p.errors[0] || "")}</div>`;
     else {
@@ -130,6 +132,7 @@ App.page("inventory", {
       </div>
       <div class="ab-right">
         <button class="btn" id="i-kw" ${n ? "" : "disabled"} title="고른 원본의 상품명 속 단어마다 연관 키워드를 네이버 검색광고 API에서 받습니다 (재조합 때도 자동으로 받음)">네이버 키워드 모으기</button>
+        <button class="btn" id="i-ctx" ${n ? "" : "disabled"} title="고른 원본마다 AI에게 맥락 키워드를 한 번 받아 이름 후보 2개를 만듭니다 (실행 전에 비용 안내)">맥락 키워드 받기…</button>
         <button class="btn" id="i-names" ${n ? "" : "disabled"}>상품명 후보 만들기…</button>
         <button class="btn primary" id="i-plan" ${n ? "" : "disabled"}>다른 스토어로 복사…</button>
       </div>`;
@@ -187,6 +190,7 @@ App.page("inventory", {
       if (id === "i-names") this.namesModal();
       if (id === "i-kw") App.startTask(App.api("/api/keywords/collect", { json: { filter: this.target() } }));
       if (id === "i-plan") this.planModal();
+      if (id === "i-ctx") App.ctxConfirm(this.target());
     });
   },
 
@@ -257,8 +261,10 @@ App.page("inventory", {
         <div class="plan-opts">
           <h3>나누는 방법</h3>
           <div class="radio-cards">
-            <label><input type="radio" name="mode" value="spread" checked><div><b>원본마다 <input type="number" id="p-per" min="1" max="${App.state.settings.max_copies}" value="1" class="inline-num">곳이 되도록 골고루</b>
-              <span class="muted small">고른 스토어 중 남은 자리가 많은 곳부터 나눠 담습니다. 이미 고른 스토어에 있으면 그만큼 덜 올립니다.</span></div></label>
+            <label><input type="radio" name="mode" value="spread" checked><div><b>원본마다 <input type="number" id="p-per" min="1" max="${App.state.settings.max_copies}" value="${App.state.settings.max_copies}" class="inline-num">곳이 되도록 골고루</b>
+              <span class="muted small">원본을 무작위 순서로 하나씩, 배정 수가 적고 이 원본의 다른 스토어와 <b>같이 묶인 적이 적은</b> 스토어를 고릅니다
+                (점수 = 배정 수 + 3 × 같이 묶인 횟수, 이미 등록된 상품·이전 계획 포함). 스토어끼리 상품 구성이 겹치지 않게 합니다.</span>
+              <button type="button" class="link-btn" id="p-preview">미리보기</button></div></label>
             <label><input type="radio" name="mode" value="all"><div><b>빈 칸을 모두 채우기</b>
               <span class="muted small">원본마다 남은 칸(최대 ${App.state.settings.max_copies}곳)을 고른 스토어로 채웁니다.</span></div></label>
           </div>
@@ -267,9 +273,10 @@ App.page("inventory", {
           <label class="field">계획 이름 <span class="muted">(나중에 등록 화면에서 이 이름으로 거를 수 있음)</span>
             <input id="p-title" placeholder="예: 10월 3주차 공구류"></label>
           <div class="plan-sum" id="p-sum"></div>
+          <div id="p-pv"></div>
           <p class="muted small">· 원본 하나는 최대 <b>${App.state.settings.max_copies}곳</b>까지만 올라갑니다 (내린 스토어는 세지 않음).<br>
             · 전에 내렸던 스토어에 다시 계획하면 같은 이름·가격으로 다음 회차가 됩니다.<br>
-            · 상품명: 복사본은 <b>원본 상품명 그대로</b> 만들어집니다. 복사본 화면 '이름 변경 필요'에서 상품명을 바꿔야 올라갑니다 (원본 상품명·다른 스토어와 같은 이름은 올리지 않음).<br>
+            · 상품명: 맥락 키워드로 만들어 둔 이름 후보가 있으면 스토어가 정해진 복사본에 하나씩 <b>바로 배정</b>합니다. 없으면 원본 상품명 그대로 만들어지고, 복사본 화면 '이름 변경 필요'에서 바꿔야 올라갑니다.<br>
             · 가격: 스토어마다 원본가 ±${App.state.settings.price_jitter_pct}% 안에서 정하고 ${num(App.state.settings.price_round)}원 단위로 올림합니다.<br>
             · 스토어 한도를 넘는 건은 만들지 않습니다.</p>
         </div></div>`,
@@ -279,7 +286,8 @@ App.page("inventory", {
           if (!store_ids.length) { App.toast("스토어를 하나 이상 고르세요.", true); return false; }
           const r = await App.startTask(App.api("/api/plans", {
             json: { ...this.target(), store_ids, mode: $("input[name=mode]:checked", b).value,
-                    per_product: +$("#p-per", b).value || 1, title: $("#p-title", b).value.trim(), bait: $("#p-bait", b).checked },
+                    per_product: +$("#p-per", b).value || 1, title: $("#p-title", b).value.trim(), bait: $("#p-bait", b).checked,
+                    seed: this.pvSeed ?? undefined },
           }));
           if (r) { this.clearSel(); }
           return !!r;
@@ -291,15 +299,34 @@ App.page("inventory", {
       const free = picked.reduce((a, x) => a + (stores.find((s) => s.id === +x.value)?.free || 0), 0);
       const mode = $("input[name=mode]:checked").value;
       const per = +$("#p-per").value || 1;
-      const mx = App.state.settings.max_copies || 3;
+      const mx = App.state.settings.max_copies || 2;
       const want = n * Math.min(mode === "all" ? mx : Math.min(per, mx), picked.length);
       $("#p-sum").innerHTML = `최대 <b>${num(want)}건</b> 계획 · 고른 스토어 ${picked.length}곳의 남은 자리 합계 ${num(free)}`
         + (want > free ? ` <span class="c-err">(자리가 모자라 일부만 계획됩니다)</span>` : "");
     };
+    this.pvSeed = null;
+    const preview = async () => {
+      const store_ids = $$(".store-pick input:checked").map((x) => +x.value);
+      if (!store_ids.length) return App.toast("스토어를 하나 이상 고르세요.", true);
+      $("#p-pv").innerHTML = `<p class="muted small">미리보기 계산 중…</p>`;
+      try {
+        const pv = await App.api("/api/plans/preview", { json: { ...this.target(), store_ids, per_product: +$("#p-per").value || 1 } });
+        this.pvSeed = pv.seed;   // 이 미리보기와 같은 배정으로 계획을 만든다
+        $("#p-pv").innerHTML = `<div class="pv">
+          <p><b>미리보기</b> · 원본 ${num(pv.sources)}개 → 복사본 ${num(pv.copies)}건 · 스토어별 배정 차이 ${pv.spread_pct}%
+            · 두 스토어가 같은 원본을 공유하는 비율 최대 <b class="${pv.max_share_pct > 5 ? "c-err" : ""}">${pv.max_share_pct}%</b></p>
+          ${pv.top_pairs.length ? `<p class="muted small">공유 비율이 가장 높은 스토어 쌍: ${pv.top_pairs.map((t) => `${esc(t.a)}·${esc(t.b)} ${t.pct}% (${num(t.shared)}개)`).join(" / ")}</p>` : ""}
+          <details><summary class="muted small">스토어별 배정 수</summary><table class="grid compact"><thead><tr><th>스토어</th><th class="num">이번 계획</th><th class="num">합계(기존 포함)</th></tr></thead>
+            <tbody>${pv.per_store.map((x) => `<tr><td>${esc(x.name)}</td><td class="num">${num(x.added)}</td><td class="num">${num(x.total)}</td></tr>`).join("")}</tbody></table></details>
+          <p class="muted small">공유 비율 = 두 스토어에 같이 올라간 원본 수 ÷ 두 스토어 중 적은 쪽 상품 수. 스토어·개수를 바꾸면 다시 미리보기 하세요.</p></div>`;
+      } catch (e) { $("#p-pv").innerHTML = ""; App.toast(e.message, true); }
+    };
+    $("#p-preview").addEventListener("click", preview);
+    $$(".store-pick input, #p-per, input[name=mode]").forEach((x) => x.addEventListener("change", () => { this.pvSeed = null; }));
     $("#p-all").addEventListener("click", () => { $$(".store-pick input").forEach((x) => (x.checked = true)); sum(); });
     $("#p-none").addEventListener("click", () => { $$(".store-pick input").forEach((x) => (x.checked = false)); sum(); });
     $$("#m-body input").forEach((x) => x.addEventListener("input", sum));
-    $("#p-per").addEventListener("input", (e) => { if (+e.target.value > (App.state.settings.max_copies || 3)) e.target.value = App.state.settings.max_copies; });
+    $("#p-per").addEventListener("input", (e) => { if (+e.target.value > (App.state.settings.max_copies || 2)) e.target.value = App.state.settings.max_copies; });
     sum();
   },
 
