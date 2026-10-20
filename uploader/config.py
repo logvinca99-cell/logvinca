@@ -25,6 +25,8 @@ DEFAULTS = {
     "importer_template": "{store}협력사",
     "origin_default": "중국",          # origin_force를 끄고 엑셀 원산지가 비었을 때
     "origin_codes": {"중국": "0200037", "상세페이지 참조": "03"},
+    # 관부가세 (출고지가 해외 주소면 네이버가 필수로 요구): 커머스API 상품 등록 detailAttribute.customsTaxType 코드
+    "customs_tax_type": "",
     "delivery_company": "CJGLS",
     "return_fee": 5000,
     "exchange_fee": 10000,

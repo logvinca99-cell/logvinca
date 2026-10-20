@@ -307,6 +307,9 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
                     "customerServicePhoneNumber": phone},
         },
     }
+    customs = str(cfg.get("customs_tax_type") or "").strip()
+    if customs:   # 해외 출고지 상품은 관부가세 항목이 필수
+        detail["customsTaxType"] = customs
     code = seller_code or row.get("판매자코드")
     if code:
         detail["sellerCodeInfo"] = {"sellerManagementCode": str(code)}
