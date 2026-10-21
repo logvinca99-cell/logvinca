@@ -72,6 +72,15 @@ function ymd(ts) {
 const CUSTOMS_OPTS = [["", "보내지 않음"], ["EXCLUDED", "관부가세 미포함 (구매자 납부)"], ["INCLUDED", "관부가세 포함 (해외직구 노출이면 이것만)"], ["NOT_APPLICABLE", "부과 대상 아님"]];
 const REGION = { overseas: "해외", domestic: "국내" };   // 스토어 출고 형태 표시 (해외 파란색 · 국내 초록색)
 const regionCls = (s) => (s.ship_region ? `reg-${s.ship_region}` : "");
+const SELLER_CENTER = "https://sell.smartstore.naver.com/";
+/* 스토어 바로 가기 · 판매자센터 바로 가기 (새 창). 스토어 주소가 없으면 '수정'에서 넣으라고 알려 줌 */
+function storeLinks(s) {
+  const url = /^https?:\/\//.test(s.store_url || "") ? s.store_url : s.store_url ? `https://smartstore.naver.com/${s.store_url.replace(/^\/+/, "")}` : "";
+  return `<span class="st-links">${url
+    ? `<a class="btn sm" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(url)}">스토어 ↗</a>`
+    : `<span class="btn sm disabled" title="스토어 '수정'에서 스토어 주소를 넣으면 생깁니다 (연결 확인 때 자동으로 채워지기도 함)">스토어 ↗</span>`}
+    <a class="btn sm" href="${SELLER_CENTER}" target="_blank" rel="noopener" title="판매자센터 (지금 로그인한 계정의 스토어로 열림)">판매자센터 ↗</a></span>`;
+}
 const ORIGIN = { original: "원본", ctx: "AI 맥락", shuffle: "셔플", recombine: "재조합(예전)", import: "가져옴", ai: "AI", manual: "직접" };
 
 const App = {

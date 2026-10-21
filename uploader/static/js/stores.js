@@ -78,6 +78,7 @@ App.page("stores", {
       <div class="st-meta">${s.naver_count_at ? `연결 확인 ${when(s.naver_count_at)}${line ? `<br>${esc(line)}` : ""}` : '<span class="c-warn">연결 확인 전 (사용량이 정확하지 않음)</span>'}</div>
       <div class="st-meta">실패 <b class="${s.n_fail ? "c-err" : ""}">${num(s.n_fail)}</b> · 판매 이력 <b>${num(s.n_sold)}</b> · 내림 ${num(s.n_deleted)}${s.n_locked ? ` · 잠금 ${num(s.n_locked)}` : ""}
         · <a href="#listings?store_id=${s.id}">복사본 보기</a></div>
+      ${storeLinks(s)}
       <div class="store-acts"><button class="btn sm" data-act="edit" data-id="${s.id}">수정</button>
         <button class="btn sm" data-act="tpl" data-id="${s.id}">템플릿</button>
         <button class="btn sm" data-act="test" data-id="${s.id}">연결 확인</button>

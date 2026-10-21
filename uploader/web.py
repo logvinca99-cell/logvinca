@@ -319,6 +319,10 @@ def create_app(db=None):
             return fail(str(e))
         db.x("UPDATE stores SET naver_count=?, naver_count_at=?, naver_sale=?, naver_suspended=?, naver_status=? WHERE id=?",
              (count, time.time(), st.get("SALE", 0), st.get("SUSPENSION", 0), json.dumps(st), sid))
+        if not s.get("store_url"):   # 스토어 주소를 아직 안 넣었으면 네이버에서 받아 채움 (스토어 바로 가기 버튼)
+            url = client.store_url()
+            if url:
+                db.x("UPDATE stores SET store_url=? WHERE id=?", (url, sid))
         if not naver.cached_categories():
             try:
                 client.categories(refresh=True)

@@ -265,6 +265,16 @@ class Client:
         _save_category_cache(table)
         return table
 
+    def store_url(self):
+        """이 스마트스토어 주소 (판매자 채널 정보에서). 못 찾으면 빈 문자열, 실패해도 오류를 내지 않는다."""
+        try:
+            r = self.request("GET", "/v1/seller/channels")
+            if r.status_code != 200:
+                return ""
+            return find_store_url(r.json())
+        except Exception:
+            return ""
+
     def address_books(self):
         """판매자센터 주소록 (출고지·반품지 고르기용). [{id, name, type, address}]"""
         r = self.request("GET", "/v1/seller/addressbooks-for-page", params={"page": 1, "size": 100})
@@ -390,6 +400,18 @@ class Client:
         return True
 
 
+def find_store_url(data):
+    """채널 정보 응답 어디에든 있는 스마트스토어 주소를 찾는다."""
+    if isinstance(data, str):
+        return data if "smartstore.naver.com/" in data else ""
+    vals = data.values() if isinstance(data, dict) else data if isinstance(data, list) else ()
+    for v in vals:
+        got = find_store_url(v)
+        if got:
+            return got
+    return ""
+
+
 def parse_address_books(data):
     """주소록 응답에서 주소 목록을 꺼낸다. 응답 모양이 조금 달라도 첫 번째 주소 목록을 찾아 쓴다."""
     def find(v):
@@ -429,6 +451,9 @@ class FakeClient:
 
     def categories(self, refresh=False):
         return _load_category_cache() or {}
+
+    def store_url(self):
+        return ""
 
     def address_books(self):
         return parse_address_books({"addressBooks": [

@@ -42,12 +42,14 @@ App.page("home", {
       <h2>시작 순서</h2><ol>${steps.map(([done, t, d, href]) =>
         `<li class="${done ? "done" : ""}"><a href="${href}"><b>${t}</b><span class="muted small">${d}</span></a></li>`).join("")}</ol></section>`;
 
+    $("#h-stores").onclick = (e) => { const c = e.target.closest("[data-go]"); if (c && !e.target.closest("a")) App.go(c.dataset.go); };
     $("#h-stores").innerHTML = stores.length ? byBusiness(stores).map(([biz, ss]) => `<div class="h-biz">
         <div class="h-biz-title">${esc(biz)} <span class="muted small">스토어 ${ss.length}</span></div>
-        <div class="h-biz-cards">${ss.map((x) => `<a class="h-store ${x.enabled ? "" : "off"} ${regionCls(x)}" href="#listings?store_id=${x.id}">
+        <div class="h-biz-cards">${ss.map((x) => `<div class="h-store ${x.enabled ? "" : "off"} ${regionCls(x)}" data-go="#listings?store_id=${x.id}" title="누르면 이 스토어 복사본">
           <div class="st-card-head"><span class="code">${esc(x.code)}</span><b>${esc(x.name)}</b>${x.has_keys ? "" : '<span class="flag warn">키 없음</span>'}${x.ship_region ? `<span class="region-tag">${REGION[x.ship_region]}</span>` : ""}</div>
           ${storeUsage(x)}
           <div class="st-meta">대기 ${num(x.n_pending + x.n_ops)}${x.n_fail ? ` · <span class="c-err">실패 ${num(x.n_fail)}</span>` : ""}${x.n_sold ? ` · 판매됨 ${num(x.n_sold)}` : ""}${x.oldest_at ? ` · 가장 오래된 것 ${age(x.oldest_at)}` : ""}</div>
-        </a>`).join("")}</div></div>`).join("") : `<p class="muted">아직 스토어가 없습니다. <a href="#stores">스토어 추가</a></p>`;
+          ${storeLinks(x)}
+        </div>`).join("")}</div></div>`).join("") : `<p class="muted">아직 스토어가 없습니다. <a href="#stores">스토어 추가</a></p>`;
   },
 });

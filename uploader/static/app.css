@@ -625,3 +625,9 @@ span.kw-chip { cursor: default; }
 .region-tag { margin-left: auto; font-size: 12px; font-weight: 700; padding: 2px 10px; border-radius: 99px; color: #fff; flex: none; }
 .reg-overseas .region-tag { background: #2f6fdb; } .reg-domestic .region-tag { background: #1f9d55; }
 @media (prefers-color-scheme: dark) { .reg-overseas { background: rgba(47, 111, 219, .16) !important; } .reg-domestic { background: rgba(31, 157, 85, .16) !important; } }
+/* 스토어 바로 가기 · 판매자센터 바로 가기 */
+.st-links { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.st-links .btn { height: 28px; padding: 0 10px; font-size: 12.5px; }
+.st-links .btn.disabled { opacity: .45; cursor: help; }
+.h-store, .store-card { cursor: pointer; }
+.h-store .st-links, .store-card .st-links { margin-top: 2px; }
