@@ -337,6 +337,15 @@ def create_app(db=None):
         db.x("UPDATE stores SET goguma_manual=? WHERE id=?", (None if v in (None, "") else max(0, int(v)), sid))
         return jsonify(db.store(sid))
 
+    @app.post("/api/stores/<int:sid>/region")
+    def store_region(sid):
+        """스토어 출고 형태 표시 (해외·국내·안 정함)."""
+        v = str(body().get("region") or "")
+        if v not in ("", "overseas", "domestic"):
+            return fail("해외·국내 중에서 골라 주세요.")
+        db.x("UPDATE stores SET ship_region=? WHERE id=?", (v, sid))
+        return jsonify(db.store(sid))
+
     # ── 원본 (인벤토리)
 
     @app.get("/api/sources")

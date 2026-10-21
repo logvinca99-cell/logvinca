@@ -613,3 +613,15 @@ span.kw-chip { cursor: default; }
 .addr-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .addr-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
 .addr-use { margin-left: auto; display: flex; gap: 6px; }
+/* 스토어 출고 형태: 해외 파란색 · 국내 초록색 (안 정하면 그대로) */
+.reg-overseas { border-color: #2f6fdb !important; background: #eef4ff !important; box-shadow: inset 4px 0 0 #2f6fdb; }
+.reg-domestic { border-color: #1f9d55 !important; background: #ecf8f0 !important; box-shadow: inset 4px 0 0 #1f9d55; }
+.region-pick { margin-left: auto; display: inline-flex; border: 1px solid var(--line); border-radius: 99px; overflow: hidden; flex: none; }
+.st-card-head .flag + .region-pick, .st-card-head .flag ~ .region-pick { margin-left: 6px; }
+.region-pick button { border: 0; background: var(--panel); font-size: 12px; font-weight: 700; padding: 3px 10px; cursor: pointer; color: var(--muted); }
+.region-pick button + button { border-left: 1px solid var(--line); }
+.region-pick button[data-v=overseas].on { background: #2f6fdb; color: #fff; }
+.region-pick button[data-v=domestic].on { background: #1f9d55; color: #fff; }
+.region-tag { margin-left: auto; font-size: 12px; font-weight: 700; padding: 2px 10px; border-radius: 99px; color: #fff; flex: none; }
+.reg-overseas .region-tag { background: #2f6fdb; } .reg-domestic .region-tag { background: #1f9d55; }
+@media (prefers-color-scheme: dark) { .reg-overseas { background: rgba(47, 111, 219, .16) !important; } .reg-domestic { background: rgba(31, 157, 85, .16) !important; } }

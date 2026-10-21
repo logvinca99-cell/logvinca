@@ -70,6 +70,8 @@ function ymd(ts) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 const CUSTOMS_OPTS = [["", "보내지 않음"], ["EXCLUDED", "관부가세 미포함 (구매자 납부)"], ["INCLUDED", "관부가세 포함 (해외직구 노출이면 이것만)"], ["NOT_APPLICABLE", "부과 대상 아님"]];
+const REGION = { overseas: "해외", domestic: "국내" };   // 스토어 출고 형태 표시 (해외 파란색 · 국내 초록색)
+const regionCls = (s) => (s.ship_region ? `reg-${s.ship_region}` : "");
 const ORIGIN = { original: "원본", ctx: "AI 맥락", shuffle: "셔플", recombine: "재조합(예전)", import: "가져옴", ai: "AI", manual: "직접" };
 
 const App = {

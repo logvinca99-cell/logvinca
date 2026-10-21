@@ -68,10 +68,12 @@ App.page("stores", {
 
   rowHtml(s) {
     const line = naverStatusLine(s);
-    return `<div class="st-card ${s.enabled ? "" : "off"}" data-store="${s.id}" data-drag="store">
+    return `<div class="st-card ${s.enabled ? "" : "off"} ${regionCls(s)}" data-store="${s.id}" data-drag="store">
       <div class="st-card-head"><span class="grip" title="끌어서 순서 바꾸기·다른 사업자로 옮기기">⠿</span>
         <span class="code">${esc(s.code)}</span><b>${esc(s.name)}</b>
-        ${s.enabled ? "" : '<span class="flag">사용 안 함</span>'}${s.has_keys ? "" : '<span class="flag warn">키 없음</span>'}</div>
+        ${s.enabled ? "" : '<span class="flag">사용 안 함</span>'}${s.has_keys ? "" : '<span class="flag warn">키 없음</span>'}
+        <span class="region-pick" title="지금 이 스토어 출고 형태 (표시만, 누른 것을 다시 누르면 지움)">${Object.entries(REGION).map(([k, l]) =>
+          `<button class="${s.ship_region === k ? "on" : ""}" data-act="region" data-v="${k}" data-id="${s.id}">${l}</button>`).join("")}</span></div>
       ${storeUsage(s, true)}
       <div class="st-meta">${s.naver_count_at ? `연결 확인 ${when(s.naver_count_at)}${line ? `<br>${esc(line)}` : ""}` : '<span class="c-warn">연결 확인 전 (사용량이 정확하지 않음)</span>'}</div>
       <div class="st-meta">실패 <b class="${s.n_fail ? "c-err" : ""}">${num(s.n_fail)}</b> · 판매 이력 <b>${num(s.n_sold)}</b> · 내림 ${num(s.n_deleted)}${s.n_locked ? ` · 잠금 ${num(s.n_locked)}` : ""}
@@ -92,6 +94,14 @@ App.page("stores", {
       if (b.dataset.act === "tpl") this.template(s);
       if (b.dataset.act === "test") this.test(s, b);
       if (b.dataset.act === "refresh") this.refresh(s);
+      if (b.dataset.act === "region") {
+        try {
+          const v = s.ship_region === b.dataset.v ? "" : b.dataset.v;
+          Object.assign(s, await App.api(`/api/stores/${s.id}/region`, { json: { region: v } }));
+          b.closest(".st-card").outerHTML = this.rowHtml(s);
+          App.loadStores();
+        } catch (err) { App.toast(err.message, true); }
+      }
       return;
     }
     if (b.dataset.goguma) return this.goguma(this.rows.find((x) => x.id === +b.dataset.goguma));
