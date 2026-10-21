@@ -540,3 +540,24 @@ span.kw-chip { cursor: default; }
 /* 위험한 확인 버튼 (빨강) */
 .btn.primary.danger { background: var(--err); border-color: var(--err); color: #fff; }
 .btn.primary.danger:hover { filter: brightness(.92); }
+
+/* 스토어: 사업자 묶음 */
+.biz-groups { display: flex; flex-direction: column; gap: 10px; }
+.biz { padding: 0; overflow: hidden; }
+.biz-head { display: flex; align-items: center; gap: 14px; padding: 14px 16px; cursor: pointer; flex-wrap: wrap; }
+.biz-head:hover { background: var(--panel-2); }
+.biz.open .biz-head { border-bottom: 1px solid var(--line); }
+.biz-caret { width: 16px; color: var(--muted); font-size: 14px; }
+.biz-title { flex: 1; min-width: 220px; }
+.biz-title b { font-size: 15px; }
+.biz-chips { font-size: 12.5px; color: var(--text-2); margin-top: 2px; }
+.biz-chips .code { margin-right: 4px; }
+.biz-nums { display: flex; gap: 14px; font-size: 13px; color: var(--text-2); flex-wrap: wrap; }
+.biz-nums b { color: var(--text); font-variant-numeric: tabular-nums; }
+.biz-acts { display: flex; gap: 6px; align-items: center; }
+.icon-btn[disabled] { opacity: .3; cursor: default; }
+.w-ord { width: 64px; }
+.sp-group { font-size: 12px; font-weight: 700; color: var(--muted); padding: 10px 4px 4px; }
+.store-group-title { font-size: 13px; font-weight: 700; color: var(--text-2); margin: 6px 0 -4px; grid-column: 1 / -1; }
+.store-acts { display: grid; grid-template-columns: repeat(2, auto); gap: 4px; justify-content: end; }
+.biz .w-act { width: 190px; }

@@ -231,10 +231,10 @@ App.page("inventory", {
       body: `<div class="form">
         <p class="muted small" style="margin:0">고른 원본을 <b>고른 스토어에 그대로</b> 복사합니다. 스토어는 ${mx}곳까지 고를 수 있습니다.
           원본 하나는 최대 ${mx}곳(내린 스토어는 세지 않음)이라, 이미 그 스토어에 있거나 ${mx}회를 넘는 원본은 빼고 몇 개 뺐는지 알려 드립니다.</p>
-        <div class="store-pick">${stores.map((s) => `
+        <div class="store-pick">${byBusiness(stores).map(([biz, ss]) => `<div class="sp-group">${esc(biz)}</div>` + ss.map((s) => `
           <label class="sp-row"><input type="checkbox" value="${s.id}">
-            <span class="sp-name">${esc(s.name)}${s.has_keys ? "" : ' <span class="flag warn">키 없음</span>'}</span>
-            ${usageBar(s.used, s.capacity)}<span class="sp-free ${s.free < 100 ? "c-err" : "muted"}">남은 자리 ${num(s.free)}</span></label>`).join("")
+            <span class="sp-name"><span class="code">${esc(s.code)}</span> ${esc(s.name)}${s.has_keys ? "" : ' <span class="flag warn">키 없음</span>'}</span>
+            ${usageBar(s.used, s.capacity)}<span class="sp-free ${s.free < 100 ? "c-err" : "muted"}">남은 자리 ${num(s.free)}</span></label>`).join("")).join("")
           || '<p class="muted">스토어가 없습니다. 스토어 화면에서 먼저 추가하세요.</p>'}</div>
         <label class="check bait-check"><input type="checkbox" id="p-bait" ${App.state.settings.bait_default ? "checked" : ""}>
           <span><b>도둑방지로 올리기</b> · 처음 올릴 때 판매가 +${num(App.state.settings.bait_amount)}원 (원래 가격으로는 직접 되돌림)</span></label>

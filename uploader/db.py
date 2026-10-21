@@ -114,6 +114,14 @@ CREATE TABLE IF NOT EXISTS stores (
     wm_text TEXT NOT NULL DEFAULT '',       -- 워터마크 글자 (비우면 스토어 이름, 로고 PNG가 있으면 로고)
     created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS businesses (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,                     -- 사업자 이름 (상호)
+    reg_no TEXT NOT NULL DEFAULT '',        -- 사업자등록번호 (메모용)
+    memo TEXT NOT NULL DEFAULT '',
+    sort INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS plans (
     id INTEGER PRIMARY KEY,
     title TEXT NOT NULL,
@@ -251,7 +259,9 @@ class DB:
                    ("wm_text", "TEXT NOT NULL DEFAULT ''"), ("importer", "TEXT NOT NULL DEFAULT ''"),
                    # 스토어 템플릿: 상세 상단·하단(HTML), 관부가세 코드, 가격 조정 %, 표시 할인율 % (비우면 설정 공통값)
                    ("tpl_top_html", "TEXT NOT NULL DEFAULT ''"), ("tpl_bottom_html", "TEXT NOT NULL DEFAULT ''"),
-                   ("tpl_customs", "TEXT NOT NULL DEFAULT ''"), ("tpl_price_pct", "REAL"), ("tpl_discount_pct", "REAL")],
+                   ("tpl_customs", "TEXT NOT NULL DEFAULT ''"), ("tpl_price_pct", "REAL"), ("tpl_discount_pct", "REAL"),
+                   # 사업자 묶음과 순서 (사업자 하나에 스토어 최대 3개)
+                   ("business_id", "INTEGER"), ("sort", "INTEGER NOT NULL DEFAULT 0")],
         "listings": [("sold_count", "INTEGER NOT NULL DEFAULT 0"), ("last_sold_at", "REAL"),
                      ("cancel_count", "INTEGER NOT NULL DEFAULT 0"), ("manual_lock", "INTEGER NOT NULL DEFAULT 0"),
                      ("locked", "INTEGER NOT NULL DEFAULT 0"), ("lock_note", "TEXT NOT NULL DEFAULT ''"),("op", "TEXT NOT NULL DEFAULT 'create'"), ("round", "INTEGER NOT NULL DEFAULT 1"),
@@ -378,8 +388,10 @@ class DB:
                  WHERE l.store_id=s.id AND h.deleted_at > s.naver_count_at) AS n_removed_since,
               (SELECT MIN(l.registered_at) FROM listings l WHERE l.store_id=s.id AND l.origin_no!='') AS oldest_at,
               (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.sold_count>0) AS n_sold,
-              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.locked=1 AND l.status!='deleted') AS n_locked
-            FROM stores s ORDER BY s.id""")
+              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.locked=1 AND l.status!='deleted') AS n_locked,
+              b.name AS business_name
+            FROM stores s LEFT JOIN businesses b ON b.id=s.business_id
+            ORDER BY s.business_id IS NULL, b.sort, b.id, s.sort, s.id""")
         for r in rows:
             r["has_keys"] = bool(r["client_id"] and r["client_secret"])
             r["code"] = r["code"] or f"S{r['id']:02d}"

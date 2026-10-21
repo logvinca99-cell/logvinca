@@ -16,7 +16,8 @@ from .tasks import Tasks
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 FILTER_KEYS = ("q", "status", "category", "store_missing", "store_has", "import_id", "max_listings", "price_min", "price_max", "copies",
                "min_names", "store_id", "plan_id", "op", "age_days", "sold", "locked")
-STORE_FIELDS = ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "capacity", "enabled", "memo", "wm_text", "importer")
+STORE_FIELDS = ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "capacity", "enabled", "memo", "wm_text", "importer",
+                "business_id")
 
 
 def _filter_from(src):
@@ -194,6 +195,12 @@ def create_app(db=None):
             v["capacity"] = max(0, convert.to_int(v["capacity"], 10000))
         if "enabled" in v:
             v["enabled"] = int(bool(v["enabled"]))
+        if "business_id" in v:
+            v["business_id"] = int(v["business_id"]) if str(v["business_id"] or "").isdigit() else None
+            if v["business_id"]:
+                n = db.one("SELECT COUNT(*) AS n FROM stores WHERE business_id=? AND id!=?", (v["business_id"], int(sid or 0)))["n"]
+                if n >= 3:
+                    return fail("이 사업자에는 이미 스토어가 3개 있습니다 (사업자 하나에 최대 3개).")
         for k in ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "memo", "wm_text", "importer"):
             if k in v:
                 v[k] = str(v[k] or "").strip()
@@ -233,6 +240,59 @@ def create_app(db=None):
                      "VALUES(?,?,?,?,?,?,?)", (name, code, cid, sec, url, phone, time.time()))
                 added += 1
         return jsonify({"added": added, "updated": updated})
+
+    # ── 사업자: 스토어를 사업자별로 묶고 순서를 정한다
+
+    @app.get("/api/businesses")
+    def businesses():
+        return jsonify(db.q("SELECT * FROM businesses ORDER BY sort, id"))
+
+    @app.post("/api/businesses")
+    def save_business():
+        b = body()
+        name = str(b.get("name") or "").strip()
+        if not name:
+            return fail("사업자 이름을 넣어 주세요.")
+        vals = (name, str(b.get("reg_no") or "").strip(), str(b.get("memo") or "").strip())
+        if b.get("id"):
+            db.x("UPDATE businesses SET name=?, reg_no=?, memo=? WHERE id=?", (*vals, int(b["id"])))
+            bid = int(b["id"])
+        else:
+            mx = db.one("SELECT COALESCE(MAX(sort), 0) AS m FROM businesses")["m"]
+            bid = db.x("INSERT INTO businesses(name, reg_no, memo, sort, created_at) VALUES(?,?,?,?,?)", (*vals, mx + 1, time.time()))
+        return jsonify(db.one("SELECT * FROM businesses WHERE id=?", (bid,)))
+
+    @app.delete("/api/businesses/<int:bid>")
+    def delete_business(bid):
+        db.x("UPDATE stores SET business_id=NULL WHERE business_id=?", (bid,))   # 스토어는 '사업자 없음'으로
+        db.x("DELETE FROM businesses WHERE id=?", (bid,))
+        return jsonify({"ok": True})
+
+    @app.post("/api/businesses/order")
+    def order_businesses():
+        with db.tx() as c:
+            for i, bid in enumerate(body().get("ids") or [], 1):
+                c.execute("UPDATE businesses SET sort=? WHERE id=?", (i, int(bid)))
+        return jsonify({"ok": True})
+
+    @app.post("/api/stores/order")
+    def order_stores():
+        """스토어 순서 (사업자 안에서). ids: 그 사업자의 스토어 id를 원하는 순서로. business_id를 주면 그 사업자로 옮김."""
+        b = body()
+        ids = [int(i) for i in b.get("ids") or []]
+        bid = b.get("business_id", "keep")
+        if bid != "keep":
+            bid = int(bid) if bid not in (None, "") else None
+            if bid and db.one(f"SELECT COUNT(*) AS n FROM stores WHERE business_id=? AND id NOT IN ({','.join('?' * len(ids)) or 'NULL'})",
+                              (bid, *ids))["n"] + len(ids) > 3:
+                return fail("사업자 하나에 스토어는 최대 3개입니다.")
+        with db.tx() as c:
+            for i, sid in enumerate(ids, 1):
+                if bid == "keep":
+                    c.execute("UPDATE stores SET sort=? WHERE id=?", (i, sid))
+                else:
+                    c.execute("UPDATE stores SET sort=?, business_id=? WHERE id=?", (i, bid, sid))
+        return jsonify({"ok": True})
 
     @app.delete("/api/stores/<int:sid>")
     def delete_store(sid):

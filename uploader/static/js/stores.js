@@ -3,57 +3,159 @@
 
 App.page("stores", {
   async mount(el) {
+    try { this.open = new Set(JSON.parse(localStorage.getItem("biz-open") || "[]")); } catch (e) { this.open = new Set(); }
     el.innerHTML = `<div class="page">
       <header class="page-head"><h1>스토어</h1>
         <div class="head-actions">
+          <button class="btn ghost" id="s-expand">모두 펼치기</button>
           <button class="btn" id="s-test-all">모두 연결 확인</button>
           <button class="btn" id="s-bulk">여러 개 한 번에 추가</button>
+          <button class="btn" id="s-biz-add">사업자 추가</button>
           <button class="btn primary" id="s-add">스토어 추가</button>
         </div></header>
-      <p class="muted small" style="margin:0">스토어마다 커머스API센터에서 애플리케이션을 만들고, 이 PC의 IP를 호출 허용 IP로 등록해야 합니다.
-        <b>연결 확인</b>을 누르면 네이버에 이미 있는 상품 수를 받아 와서 남은 자리를 정확히 계산합니다.</p>
-      <div class="card table-card"><table class="grid"><thead><tr>
-        <th class="w-code">코드</th><th class="w-sname">스토어</th><th class="w-usage">사용량 (대기 포함)</th><th class="w-num">남은 자리</th>
-        <th class="w-num">판매 중</th><th class="w-num">대기</th><th class="w-num">실패</th><th class="w-num">내림</th>
-        <th class="w-num">판매 이력</th><th class="w-num">가장 오래된 것</th><th class="w-num">네이버 상품 수</th><th class="w-num">주문 가져온 때</th><th class="w-act"></th>
-      </tr></thead><tbody id="s-rows"></tbody></table></div>
+      <p class="muted small" style="margin:0">사업자별로 묶여 있습니다(사업자 하나에 스토어 최대 3개). 사업자 줄을 누르면 그 안의 스토어가 펼쳐집니다.
+        ▲▼로 사업자와 스토어 순서를 바꾸면 복사·복사본 화면의 스토어 순서도 같이 바뀝니다.
+        스토어마다 커머스API센터에서 애플리케이션을 만들고 이 PC의 IP를 호출 허용 IP로 등록해야 합니다.</p>
+      <div id="s-groups" class="biz-groups"></div>
     </div>`;
     $("#s-add").addEventListener("click", () => this.edit({ capacity: 10000, enabled: 1 }));
+    $("#s-biz-add").addEventListener("click", () => this.editBiz({}));
     $("#s-bulk").addEventListener("click", () => this.bulk());
     $("#s-test-all").addEventListener("click", () => this.testAll());
-    $("#s-rows").addEventListener("click", (e) => {
-      const b = e.target.closest("button[data-act]");
-      if (!b) return;
-      const s = this.rows.find((x) => x.id === +b.dataset.id);
-      if (b.dataset.act === "edit") this.edit(s);
-      if (b.dataset.act === "tpl") this.template(s);
-      if (b.dataset.act === "test") this.test(s, b);
-      if (b.dataset.act === "refresh") this.refresh(s);
+    $("#s-expand").addEventListener("click", () => {
+      const all = this.groups.map((g) => String(g.id));
+      const allOpen = all.every((k) => this.open.has(k));
+      this.open = new Set(allOpen ? [] : all);
+      this.saveOpen(); this.render();
     });
+    $("#s-groups").addEventListener("click", (e) => this.onClick(e));
     await this.load();
   },
 
+  saveOpen() { try { localStorage.setItem("biz-open", JSON.stringify([...this.open])); } catch (e) { /* 무시 */ } },
+
   async load() {
-    this.rows = await App.loadStores();
-    $("#s-rows").innerHTML = this.rows.length ? this.rows.map((s) => `<tr class="${s.enabled ? "" : "off"}">
+    const [stores, biz] = await Promise.all([App.loadStores(), App.api("/api/businesses")]);
+    this.rows = stores;
+    this.biz = biz;
+    this.groups = [...biz.map((b) => ({ ...b, stores: stores.filter((s) => s.business_id === b.id) })),
+      { id: "none", name: "사업자 없음", none: true, stores: stores.filter((s) => !s.business_id || !biz.some((b) => b.id === s.business_id)) }]
+      .filter((g) => !g.none || g.stores.length);
+    this.render();
+  },
+
+  render() {
+    const sum = (g, k) => g.stores.reduce((a, s) => a + (s[k] || 0), 0);
+    $("#s-expand").textContent = this.groups.length && this.groups.every((g) => this.open.has(String(g.id))) ? "모두 접기" : "모두 펼치기";
+    $("#s-groups").innerHTML = this.groups.length ? this.groups.map((g, gi) => {
+      const open = this.open.has(String(g.id));
+      return `<section class="card biz ${open ? "open" : ""}" data-biz="${g.id}">
+        <div class="biz-head" data-toggle="${g.id}">
+          <span class="biz-caret">${open ? "▾" : "▸"}</span>
+          <div class="biz-title"><b>${esc(g.name)}</b>${g.reg_no ? ` <span class="muted small">${esc(g.reg_no)}</span>` : ""}
+            <div class="biz-chips">${g.stores.map((s) => `<span class="code">${esc(s.code)}</span>${esc(s.name)}`).join(" · ") || '<span class="muted small">스토어 없음</span>'}</div></div>
+          <div class="biz-nums"><span>스토어 <b>${g.stores.length}${g.none ? "" : "/3"}</b></span><span>판매 중 <b>${num(sum(g, "n_live"))}</b></span>
+            <span>대기 <b>${num(sum(g, "n_pending") + sum(g, "n_ops"))}</b></span><span class="${sum(g, "n_fail") ? "c-err" : ""}">실패 <b>${num(sum(g, "n_fail"))}</b></span>
+            <span>남은 자리 <b>${num(sum(g, "free"))}</b></span></div>
+          ${g.none ? "" : `<div class="biz-acts" data-stop>
+            <button class="icon-btn" data-bmove="-1" data-id="${g.id}" title="위로" ${gi === 0 ? "disabled" : ""}>▲</button>
+            <button class="icon-btn" data-bmove="1" data-id="${g.id}" title="아래로" ${gi >= this.biz.length - 1 ? "disabled" : ""}>▼</button>
+            <button class="btn sm" data-bedit="${g.id}">수정</button>
+            ${g.stores.length < 3 ? `<button class="btn sm" data-badd="${g.id}">스토어 추가</button>` : ""}</div>`}
+        </div>
+        ${open ? this.tableHtml(g) : ""}
+      </section>`;
+    }).join("") : `<div class="card pad"><p class="muted">아직 사업자·스토어가 없습니다. <b>사업자 추가</b>로 사업자를 만들고 그 안에 스토어를 추가하세요.</p></div>`;
+  },
+
+  tableHtml(g) {
+    if (!g.stores.length) return `<p class="muted pad">이 사업자에 스토어가 없습니다. 오른쪽 위 <b>스토어 추가</b>를 누르세요.</p>`;
+    return `<div class="table-card"><table class="grid"><thead><tr>
+        <th class="w-ord"></th><th class="w-code">코드</th><th class="w-sname">스토어</th><th class="w-usage">사용량 (대기 포함)</th><th class="w-num">남은 자리</th>
+        <th class="w-num">판매 중</th><th class="w-num">대기</th><th class="w-num">실패</th><th class="w-num">내림</th>
+        <th class="w-num">판매 이력</th><th class="w-num">네이버 상품 수</th><th class="w-act"></th>
+      </tr></thead><tbody>${g.stores.map((s, i) => `<tr class="${s.enabled ? "" : "off"}">
+      <td class="nowrap" data-stop><button class="icon-btn" data-smove="-1" data-id="${s.id}" data-biz="${g.id}" ${i === 0 ? "disabled" : ""} title="위로">▲</button><button class="icon-btn" data-smove="1" data-id="${s.id}" data-biz="${g.id}" ${i === g.stores.length - 1 ? "disabled" : ""} title="아래로">▼</button></td>
       <td><b class="code">${esc(s.code)}</b></td>
       <td><b>${esc(s.name)}</b>${s.enabled ? "" : ' <span class="flag">사용 안 함</span>'}${s.has_keys ? "" : ' <span class="flag warn">키 없음</span>'}
         <div class="p-sub">${s.store_url ? `<a href="${esc(s.store_url)}" target="_blank" rel="noopener">${esc(s.store_url.replace(/^https?:\/\//, ""))}</a>` : "주소 없음"}
-        ${s.memo ? ` · ${esc(s.memo)}` : ""}</div></td>
+        ${s.memo ? ` · ${esc(s.memo)}` : ""}${s.orders_synced_to ? ` · 주문 ${when(s.orders_synced_to)}까지` : ""}</div></td>
       <td>${usageBar(s.used, s.capacity)}<div class="p-sub">${num(s.used)} / ${num(s.capacity)}</div></td>
       <td class="num ${s.free < 500 ? "c-err" : ""}">${num(s.free)}</td>
       <td class="num"><a href="#listings?store_id=${s.id}&status=live">${num(s.n_live)}</a></td>
       <td class="num">${num(s.n_pending + s.n_ops)}</td>
       <td class="num ${s.n_fail ? "c-err" : ""}">${num(s.n_fail)}</td><td class="num">${num(s.n_deleted)}</td>
       <td class="num"><a href="#listings?store_id=${s.id}&status=sold">${num(s.n_sold)}</a>${s.n_locked ? `<div class="p-sub r"><a href="#listings?store_id=${s.id}&status=locked">잠금 ${num(s.n_locked)}</a></div>` : ""}</td>
-      <td class="num">${s.oldest_at ? age(s.oldest_at) : "-"}</td>
       <td class="num">${s.naver_count != null ? `${num(s.naver_count)}<div class="p-sub r">${when(s.naver_count_at)}</div>` : '<span class="muted">확인 전</span>'}</td>
-      <td class="num">${s.orders_synced_to ? when(s.orders_synced_to) : '<span class="muted">-</span>'}</td>
-      <td class="r nowrap"><button class="link-btn" data-act="refresh" data-id="${s.id}" ${s.n_live ? "" : "disabled"}>최신화</button> ·
-        <button class="link-btn" data-act="test" data-id="${s.id}">연결 확인</button> ·
-        <button class="link-btn" data-act="edit" data-id="${s.id}">수정</button>
-        <button class="btn sm" data-act="tpl" data-id="${s.id}" style="margin-left:6px">템플릿</button></td></tr>`).join("")
-      : `<tr class="empty-row"><td colspan="13">아직 스토어가 없습니다. <b>스토어 추가</b> 또는 <b>여러 개 한 번에 추가</b>를 누르세요.</td></tr>`;
+      <td><div class="store-acts"><button class="btn sm" data-act="edit" data-id="${s.id}">수정</button>
+        <button class="btn sm" data-act="tpl" data-id="${s.id}">템플릿</button>
+        <button class="btn sm ghost" data-act="test" data-id="${s.id}">연결 확인</button>
+        <button class="btn sm ghost" data-act="refresh" data-id="${s.id}" ${s.n_live ? "" : "disabled"}>최신화</button></div></td></tr>`).join("")}</tbody></table></div>`;
+  },
+
+  async onClick(e) {
+    const b = e.target.closest("button");
+    if (b?.dataset.act) {
+      const s = this.rows.find((x) => x.id === +b.dataset.id);
+      if (b.dataset.act === "edit") this.edit(s);
+      if (b.dataset.act === "tpl") this.template(s);
+      if (b.dataset.act === "test") this.test(s, b);
+      if (b.dataset.act === "refresh") this.refresh(s);
+      return;
+    }
+    if (b?.dataset.bmove) {
+      const ids = this.biz.map((x) => x.id);
+      const i = ids.indexOf(+b.dataset.id), j = i + +b.dataset.bmove;
+      if (j < 0 || j >= ids.length) return;
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+      await App.api("/api/businesses/order", { json: { ids } });
+      return this.load();
+    }
+    if (b?.dataset.smove) {
+      const g = this.groups.find((x) => String(x.id) === b.dataset.biz);
+      const ids = g.stores.map((x) => x.id);
+      const i = ids.indexOf(+b.dataset.id), j = i + +b.dataset.smove;
+      if (j < 0 || j >= ids.length) return;
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+      try { await App.api("/api/stores/order", { json: { ids } }); } catch (err) { return App.toast(err.message, true); }
+      return this.load();
+    }
+    if (b?.dataset.bedit) return this.editBiz(this.biz.find((x) => x.id === +b.dataset.bedit));
+    if (b?.dataset.badd) return this.edit({ capacity: 10000, enabled: 1, business_id: +b.dataset.badd });
+    if (e.target.closest("[data-stop]")) return;
+    const head = e.target.closest("[data-toggle]");
+    if (head) {
+      const k = head.dataset.toggle;
+      this.open.has(k) ? this.open.delete(k) : this.open.add(k);
+      this.saveOpen(); this.render();
+    }
+  },
+
+  editBiz(b) {
+    const isNew = !b.id;
+    App.openModal({
+      title: isNew ? "사업자 추가" : `${b.name} 수정`,
+      body: `<div class="form">
+        <label class="field">사업자 이름 (상호)<input id="b-name" value="${esc(b.name || "")}" autofocus></label>
+        <label class="field">사업자등록번호 <span class="muted">(메모용, 비워도 됨)</span><input id="b-reg" value="${esc(b.reg_no || "")}"></label>
+        <label class="field">메모<input id="b-memo" value="${esc(b.memo || "")}"></label>
+        <p class="muted small">스토어는 스토어 '수정'에서 사업자를 고르거나, 이 사업자 줄의 '스토어 추가'로 넣습니다. 사업자 하나에 최대 3개.</p></div>`,
+      buttons: [
+        ...(isNew ? [] : [{ label: "삭제", danger: true, onClick: async () => {
+          const ok = await App.confirmDanger({ title: `${b.name} 삭제`, body: `<p>사업자 <b>${esc(b.name)}</b>를 지웁니다. 안의 스토어는 지우지 않고 '사업자 없음'으로 옮깁니다.</p>` });
+          if (!ok) return false;
+          await App.api(`/api/businesses/${b.id}`, { method: "DELETE" }); await this.load();
+        } }]),
+        { label: "취소" },
+        { label: "저장", primary: true, onClick: async (m) => {
+          try {
+            const r = await App.api("/api/businesses", { json: { id: b.id, name: $("#b-name", m).value, reg_no: $("#b-reg", m).value, memo: $("#b-memo", m).value } });
+            this.open.add(String(r.id)); this.saveOpen();
+            await this.load();
+          } catch (e) { App.toast(e.message, true); return false; }
+        } },
+      ],
+    });
   },
 
   /* 스토어 템플릿: 상세 상단·하단(이미지 + HTML), 관부가세 코드, 가격 조정 %, 표시 할인율 % */
@@ -123,6 +225,8 @@ App.page("stores", {
           <label class="field">스토어 이름<input name="name" value="${esc(s.name || "")}" autofocus></label>
           <label class="field">코드 <span class="muted">(판매자 관리코드 앞자리, 예: S07)</span><input name="code" value="${esc(s.id ? s.code : "")}" placeholder="비우면 S+번호"></label>
         </div>
+        <label class="field">사업자 <span class="muted">(사업자 하나에 스토어 최대 3개)</span><select name="business_id"><option value="">사업자 없음</option>
+          ${(this.biz || []).map((b) => `<option value="${b.id}" ${b.id === s.business_id ? "selected" : ""}>${esc(b.name)}</option>`).join("")}</select></label>
         <label class="field">스토어 주소<input name="store_url" value="${esc(s.store_url || "")}" placeholder="https://smartstore.naver.com/mystore"></label>
         <div class="two">
           <label class="field">애플리케이션 ID<input name="client_id" value="${esc(s.client_id || "")}"></label>
@@ -150,7 +254,7 @@ App.page("stores", {
         { label: "취소" },
         { label: "저장", primary: true, onClick: async (b) => {
           const v = { id: s.id };
-          $$("input", b).forEach((x) => (v[x.name] = x.type === "checkbox" ? x.checked : x.value));
+          $$("input, select", b).forEach((x) => { if (x.name) v[x.name] = x.type === "checkbox" ? x.checked : x.value; });
           try { await App.api("/api/stores", { json: v }); await this.load(); App.refreshState(); }
           catch (e) { App.toast(e.message, true); return false; }
         } },

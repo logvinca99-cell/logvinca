@@ -27,7 +27,7 @@ App.page("listings", {
     el.innerHTML = `<div class="page">
       <header class="page-head">
         <div class="store-head"><h1>복사본</h1>
-          <select id="l-store" class="sel" title="다른 스토어로 바꾸기">${App.stores.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join("")}</select>
+          <select id="l-store" class="sel" title="다른 스토어로 바꾸기">${byBusiness(App.stores).map(([biz, ss]) => `<optgroup label="${esc(biz)}">${ss.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join("")}</optgroup>`).join("")}</select>
           <a class="btn ghost sm" href="#listings">스토어 목록</a></div>
         <div class="head-actions">
           <a class="btn ghost" id="l-export">결과 CSV</a>
@@ -74,12 +74,12 @@ App.page("listings", {
     el.innerHTML = `<div class="page">
       <header class="page-head"><h1>복사본 · 스토어 고르기</h1></header>
       <p class="muted" style="margin:0">작업할 스토어를 먼저 고르세요. 그 스토어의 복사본만 보입니다.</p>
-      <div class="store-cards">${ss.map((s) => `<button class="store-card" data-sid="${s.id}">
+      <div class="store-cards">${byBusiness(ss).map(([biz, list]) => `<div class="store-group-title">${esc(biz)}</div>` + list.map((s) => `<button class="store-card" data-sid="${s.id}">
           <h3><span class="code">${esc(s.code)}</span>${esc(s.name)}${s.enabled ? "" : ' <span class="flag">사용 중지</span>'}</h3>
           <div class="sc-nums"><span>복사본 <b>${num(s.all_)}</b></span><span>판매 중 <b>${num(s.live)}</b></span>
             <span class="${s.noname ? "c-err" : ""}">이름 변경 필요 <b>${num(s.noname)}</b></span><span>대기 <b>${num(s.pending)}</b></span>
             <span class="${s.fail ? "c-err" : ""}">실패 <b>${num(s.fail)}</b></span><span>남은 자리 <b>${num(s.free)}</b></span></div>
-        </button>`).join("") || '<p class="muted">스토어가 없습니다. <a href="#stores">스토어</a>에서 먼저 추가하세요.</p>'}</div>
+        </button>`).join("")).join("") || '<p class="muted">스토어가 없습니다. <a href="#stores">스토어</a>에서 먼저 추가하세요.</p>'}</div>
     </div>`;
     $$(".store-card", el).forEach((b) => b.addEventListener("click", () => App.go(`#listings?store_id=${b.dataset.sid}`)));
   },

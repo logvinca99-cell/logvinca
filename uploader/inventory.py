@@ -1181,6 +1181,7 @@ def store_summaries(db):
     for s in db.stores():
         r = rows.get(s["id"], {})
         out.append({"id": s["id"], "name": s["name"], "code": s["code"], "enabled": s["enabled"], "capacity": s["capacity"],
+                    "business_name": s.get("business_name"),
                     "free": s["free"], **{k: r.get(k) or 0 for k in ("all_", "noname", "pending", "live", "fail")}})
     return out
 
