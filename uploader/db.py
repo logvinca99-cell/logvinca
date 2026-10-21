@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS sources (
 );
 CREATE INDEX IF NOT EXISTS sources_cat ON sources(category);
 CREATE INDEX IF NOT EXISTS sources_listings ON sources(n_listings);
+CREATE INDEX IF NOT EXISTS sources_price ON sources(price);
 CREATE TABLE IF NOT EXISTS names (
     id INTEGER PRIMARY KEY,
     source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
@@ -105,6 +106,11 @@ CREATE TABLE IF NOT EXISTS stores (
     enabled INTEGER NOT NULL DEFAULT 1,
     memo TEXT NOT NULL DEFAULT '',
     importer TEXT NOT NULL DEFAULT '',      -- 원산지 수입사 (비우면 설정 틀 '{store}협력사')
+    tpl_top_html TEXT NOT NULL DEFAULT '',  -- 상세페이지 상단 (HTML)
+    tpl_bottom_html TEXT NOT NULL DEFAULT '',
+    tpl_customs TEXT NOT NULL DEFAULT '',   -- 관부가세 코드 (비우면 설정값)
+    tpl_price_pct REAL,                     -- 가격 조정 % (원본가 대비, 비우면 0)
+    tpl_discount_pct REAL,                  -- 표시 할인율 % (비우면 엑셀 할인가 기준)
     wm_text TEXT NOT NULL DEFAULT '',       -- 워터마크 글자 (비우면 스토어 이름, 로고 PNG가 있으면 로고)
     created_at REAL NOT NULL
 );
@@ -241,7 +247,10 @@ class DB:
         "sources": [("seller_code", "TEXT NOT NULL DEFAULT ''"), ("core_kw", "TEXT NOT NULL DEFAULT ''"),
                     ("core_manual", "INTEGER NOT NULL DEFAULT 0"), ("kw_at", "REAL")],
         "stores": [("code", "TEXT NOT NULL DEFAULT ''"), ("orders_synced_to", "REAL"),
-                   ("wm_text", "TEXT NOT NULL DEFAULT ''"), ("importer", "TEXT NOT NULL DEFAULT ''")],
+                   ("wm_text", "TEXT NOT NULL DEFAULT ''"), ("importer", "TEXT NOT NULL DEFAULT ''"),
+                   # 스토어 템플릿: 상세 상단·하단(HTML), 관부가세 코드, 가격 조정 %, 표시 할인율 % (비우면 설정 공통값)
+                   ("tpl_top_html", "TEXT NOT NULL DEFAULT ''"), ("tpl_bottom_html", "TEXT NOT NULL DEFAULT ''"),
+                   ("tpl_customs", "TEXT NOT NULL DEFAULT ''"), ("tpl_price_pct", "REAL"), ("tpl_discount_pct", "REAL")],
         "listings": [("sold_count", "INTEGER NOT NULL DEFAULT 0"), ("last_sold_at", "REAL"),
                      ("cancel_count", "INTEGER NOT NULL DEFAULT 0"), ("manual_lock", "INTEGER NOT NULL DEFAULT 0"),
                      ("locked", "INTEGER NOT NULL DEFAULT 0"), ("lock_note", "TEXT NOT NULL DEFAULT ''"),("op", "TEXT NOT NULL DEFAULT 'create'"), ("round", "INTEGER NOT NULL DEFAULT 1"),

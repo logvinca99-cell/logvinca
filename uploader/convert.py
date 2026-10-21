@@ -223,7 +223,8 @@ def validate(row, cfg, categories=None):
 
 # ───────────────────────── 등록 요청
 
-def detail_html(row, cfg, url_map):
+def detail_html(row, cfg, url_map, top="", bottom=""):
+    """상세설명 (이미지 주소를 네이버 주소로). top/bottom: 스토어 템플릿 상단·하단 HTML을 앞뒤에 붙인다."""
     html = row.get("상세설명") or f"<p>{row.get('상품명') or ''}</p>"
     if cfg.get("detail_video") == "remove":
         html = VIDEO_RE.sub("", html)
@@ -232,7 +233,7 @@ def detail_html(row, cfg, url_map):
         src = m.group(3).strip()
         key = "https:" + src if src.startswith("//") else src
         return f"{m.group(1)}{m.group(2)}{url_map.get(key, src)}{m.group(2)}"
-    return IMG_SRC_RE.sub(repl, html)
+    return (top or "") + IMG_SRC_RE.sub(repl, html) + (bottom or "")
 
 
 def certification_exclude(certs):
@@ -256,22 +257,26 @@ def round_up(price, unit=100):
     return -((-int(price)) // unit) * unit
 
 
-def adjusted_price(price, key, cfg):
-    """원본가를 ±price_jitter_pct% 안에서 바꾼다. key(상품+스토어)가 같으면 항상 같은 값. 100원 단위 올림."""
+def adjusted_price(price, key, cfg, store_pct=0):
+    """원본가를 ±price_jitter_pct% 안에서 바꾼다. key(상품+스토어)가 같으면 항상 같은 값. 100원 단위 올림.
+    store_pct: 스토어 템플릿의 가격 조정 % (예: 10이면 원본가의 110% 기준)."""
     pct = float(cfg.get("price_jitter_pct") or 0)
     unit = max(1, to_int(cfg.get("price_round"), 100))
     if price <= 0:
         return price
     h = int(hashlib.sha1(str(key).encode()).hexdigest()[:8], 16) / 0xFFFFFFFF  # 0~1
-    p = price * (1 + (h * 2 - 1) * pct / 100)
+    p = price * (1 + float(store_pct or 0) / 100) * (1 + (h * 2 - 1) * pct / 100)
     return max(unit, round_up(math.ceil(p), unit))
 
 
 def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_phone=None, seller_code=None, bait=0,
-               importer=None):
+               importer=None, store=None):
     """url_map: 원본 이미지 주소 → 네이버 이미지 주소. 없는 주소는 원본 그대로 쓴다.
     name / price / as_phone / seller_code: 스토어별로 바꿔 쓸 값 (없으면 엑셀 값).
-    bait: 도둑방지로 판매가에 더할 금액. 할인 금액·옵션가는 도둑방지 전 가격(price) 기준으로 정한다."""
+    bait: 도둑방지로 판매가에 더할 금액. 할인 금액·옵션가는 도둑방지 전 가격(price) 기준으로 정한다.
+    store: 스토어 템플릿 (tpl_top_html·tpl_bottom_html·tpl_customs·tpl_discount_pct). 상단·하단 이미지는
+           엔진이 네이버 주소로 바꾼 HTML을 store['_tpl_top']·['_tpl_bottom']에 넣어 준다."""
+    store = store or {}
     url_map = url_map or {}
     errors, _ = validate(row, cfg)
     if errors:
@@ -307,7 +312,7 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
                     "customerServicePhoneNumber": phone},
         },
     }
-    customs = str(cfg.get("customs_tax_type") or "").strip()
+    customs = str(store.get("tpl_customs") or cfg.get("customs_tax_type") or "").strip()
     if customs:   # 해외 출고지 상품은 관부가세 항목이 필수
         detail["customsTaxType"] = customs
     code = seller_code or row.get("판매자코드")
@@ -332,7 +337,8 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
         "saleType": "NEW",
         "leafCategoryId": category_id,
         "name": name[:100],
-        "detailContent": detail_html(row, cfg, url_map),
+        "detailContent": detail_html(row, cfg, url_map, store.get("_tpl_top", store.get("tpl_top_html", "")),
+                                     store.get("_tpl_bottom", store.get("tpl_bottom_html", ""))),
         "images": {"representativeImage": {"url": images[0]}},
         "salePrice": sale_price + round_up(bait or 0, unit),
         "stockQuantity": to_int(row.get("재고수"), 999),
@@ -350,7 +356,16 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
         origin["images"]["optionalImages"] = [{"url": u} for u in images[1:]]
 
     discount = to_int(row.get("할인가"))
-    if 0 < discount < base_price:
+    disc_pct = float(store.get("tpl_discount_pct") or 0)
+    if 0 < disc_pct < 90:
+        # 스토어 표시 할인율: 지금 가격(price)이 할인된 최종가가 되도록 판매가를 올리고 그만큼 즉시할인 (100원 단위)
+        shown = round_up(math.ceil(sale_price / (1 - disc_pct / 100)), unit)
+        off = shown - sale_price
+        if off > 0:
+            origin["salePrice"] = shown + round_up(bait or 0, unit)
+            origin["customerBenefit"] = {"immediateDiscountPolicy": {
+                "discountMethod": {"value": off, "unitType": "WON"}}}
+    elif 0 < discount < base_price:
         # 엑셀의 할인가는 '할인된 판매가'로 본다. 가격을 바꿨으면 할인율이 같도록, 도둑방지 전 가격 기준으로.
         # 할인된 가격도 100원 단위 올림 → 할인 금액도 100원 단위.
         final = round_up(math.ceil(sale_price * discount / base_price), unit)

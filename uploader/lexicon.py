@@ -770,6 +770,17 @@ def save_text(db, groups_text, blocked_text, opendict_text=None, attrs_text=None
         _bump(c)
 
 
+def save_blocked(db, text):
+    """금지어 화면: 금지어 목록만 바꾼다 (쉼표·줄바꿈으로 구분)."""
+    words = list(dict.fromkeys(w.strip() for w in (text or "").replace("\n", ",").split(",") if w.strip()))
+    with db.tx() as c:
+        c.execute("DELETE FROM word_block")
+        for w in words:
+            c.execute("INSERT OR IGNORE INTO word_block(word) VALUES(?)", (w,))
+        _bump(c)
+    return len(words)
+
+
 def import_blocked(db, text):
     """금지어 파일 가져오기 (예: 금지어_721.txt): 한 줄에 하나 또는 쉼표로 구분. 이미 있는 단어는 건너뜀.
     → (새로 넣은 수, 이미 있던 수)"""

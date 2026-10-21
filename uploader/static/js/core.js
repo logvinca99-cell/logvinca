@@ -69,7 +69,7 @@ function ymd(ts) {
   const d = new Date(ts * 1000), p = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
-const ORIGIN = { original: "원본", ctx: "맥락", recombine: "재조합", import: "가져옴", ai: "AI", manual: "직접" };
+const ORIGIN = { original: "원본", ctx: "AI 맥락", shuffle: "셔플", recombine: "재조합(예전)", import: "가져옴", ai: "AI", manual: "직접" };
 
 const App = {
   pages: {}, current: null, state: null, stores: [], run: null, listeners: {}, taskSeen: {},
@@ -133,7 +133,7 @@ const App = {
       `원본 ${num(st.sources)}개 · 이름 후보 ${num(st.names_free)}개<br>` +
       `등록 완료 ${num(st.registered)}건 · 대기 ${num(st.pending)}건<br>` +
       `카테고리 ${this.state.categories ? num(this.state.categories) + "개" : "아직 안 받음"}` +
-      (st.ctx_pending ? `<br><span class="c-warn">맥락 키워드 일괄 처리 중 ${num(st.ctx_pending)}개</span>
+      (st.ctx_pending ? `<br><span class="c-warn">AI 맥락 키워드 일괄 처리 중 ${num(st.ctx_pending)}개</span>
         <button class="link-btn" id="ctx-check">지금 확인</button> · <button class="link-btn" id="ctx-cancel">중지</button>` : "");
     $("#ctx-check")?.addEventListener("click", async () => {
       const r = await this.api("/api/ctx/check", { json: {} });
@@ -141,7 +141,7 @@ const App = {
       this.refreshState();
     });
     $("#ctx-cancel")?.addEventListener("click", async () => {
-      if (!confirm("진행 중인 맥락 키워드 일괄 처리를 중지할까요? 이미 끝난 결과는 저장하고, 나머지 원본은 재시도 대기로 둡니다.")) return;
+      if (!confirm("진행 중인 AI 맥락 키워드 일괄 처리를 중지할까요? 이미 끝난 결과는 저장하고, 나머지 원본은 재시도 대기로 둡니다.")) return;
       await this.api("/api/ctx/cancel", { json: {} });
       this.toast("중지를 요청했습니다. 끝난 결과는 다음 확인 때 저장합니다.");
     });
@@ -190,10 +190,11 @@ const App = {
             + (r.few_words ? ` · 새 단어 후보가 설정보다 적은 원본 ${num(r.few_words)}개 (단어 사전·우리말샘·네이버 키워드로 늘리세요)` : "")
             + (r.rejected ? ` · 반복·금지 단어로 버림 ${num(r.rejected)}개` : "")
             + (r.failed ? ` · 실패 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : "") + aiMsg(r.ai),
-        ctxkw: () => `맥락 키워드(즉시) 끝: 원본 ${num(r.ok)}개 받음` + (r.failed ? ` · 재시도 대기 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : "")
+        ctxkw: () => `AI 맥락 키워드(즉시) 끝: 원본 ${num(r.ok)}개 받음` + (r.failed ? ` · 재시도 대기 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : "")
           + ` · 실제 약 ${num(r.krw)}원 (예상 ${num(r.est_krw)}원)` + (r.names ? ` · 이름 후보 ${num(r.names.made)}개 · 복사본에 배정 ${num(r.names.assigned)}건` : ""),
-        rename: () => r.method === "ctx"
-          ? `상품명 바꾸기(맥락 키워드) 끝: ${num(r.renamed)}건 배정` + (r.kept ? ` · 이미 맥락 이름 ${num(r.kept)}건 그대로` : "")
+        rename: () => r.method === "shuffle" ? `상품명 바꾸기(셔플) 끝: ${num(r.renamed)}건 바꿈` + (r.short ? ` · 못 만든 ${num(r.short)}건은 '이름 변경 필요'` : "") + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
+          : r.method === "ctx"
+          ? `상품명 바꾸기(AI 맥락 키워드) 끝: ${num(r.renamed)}건 배정` + (r.kept ? ` · 이미 맥락 이름 ${num(r.kept)}건 그대로` : "")
             + (r.fallback ? ` · 키워드 없는 원본은 예비 방식으로 ${num(r.fallback)}건` : "")
             + (r.no_kw ? ` · 키워드 없는 원본 ${num(r.no_kw)}개(${num(r.no_kw_listings)}건)는 키워드를 받으면 자동 배정` : "")
             + (r.short ? ` · 이름을 못 만든 ${num(r.short)}건은 '이름 변경 필요'` : "") + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
@@ -211,9 +212,11 @@ const App = {
           + (r.examples?.length ? ` (예: ${r.examples.join(", ")})` : "") + (r.errors ? ` · 오류 ${r.errors}` : ""),
         lexicon: () => `우리말샘: ${num(r.looked)}개 단어를 찾아 ${num(r.found)}개에 유의어가 있었습니다` + (r.errors ? ` · 오류 ${r.errors}` : ""),
         plan: () => `복사 끝: 새 복사본 ${num(r.created)}건${r.revived ? ` · 다시 살림 ${num(r.revived)}건` : ""}`
-          + (r.capacity ? ` · 자리 부족 ${num(r.capacity)}` : "") + (r.exists ? ` · 이미 있음 ${num(r.exists)}` : "")
-          + (r.invalid ? ` · 오류 원본 ${num(r.invalid)}개는 뺌` : "")
-          + (r.created ? " · 복사본 화면 '이름 변경 필요'에서 상품명을 바꾼 뒤 올리세요" : ""),
+          + (r.exists ? ` · 그 스토어에 이미 있어 뺀 것 ${num(r.exists)}` : "")
+          + (r.full ? ` · 최대 ${App.state.settings.max_copies}회라 일부·전부 못 보낸 원본 ${num(r.full)}개` : "")
+          + (r.capacity ? ` · 스토어 자리 부족 ${num(r.capacity)}` : "") + (r.invalid ? ` · 오류 원본 ${num(r.invalid)}개는 뺌` : "")
+          + (r.named ? ` · AI 맥락 이름 바로 붙음 ${num(r.named)}건` : "")
+          + (r.created - (r.named || 0) > 0 ? " · 나머지는 복사본 화면 '이름 변경 필요'에서 상품명을 바꾼 뒤 올리세요" : ""),
         revalidate: () => `다시 검사 끝: ${num(r.total)}개` + (r.invalid !== undefined ? ` · 오류 ${num(r.invalid)}개` : ""),
         orders: () => r.rows !== undefined
           ? `판매 이력 파일 끝: ${num(r.rows)}줄 중 복사본과 맞춘 주문 ${num(r.matched)}건 · 못 맞춘 ${num(r.unmatched)}건`
@@ -335,21 +338,17 @@ const App = {
       return;
     }
     const s = this.state.settings;
-    const line = (mode) => {
-      const usd = mode === "batch" ? est.usd_batch : est.usd_instant;
-      return `${mode === "batch" ? "일괄" : "즉시"} 약 <b>${num(Math.ceil(usd * est.rate))}원</b>`;
-    };
     const [b, i] = await Promise.all([this.api("/api/ctx/estimate", { json: { ...target, mode: "batch" } }),
       this.api("/api/ctx/estimate", { json: { ...target, mode: "instant" } })]);
-    est.usd_batch = b.usd; est.usd_instant = i.usd;
+    const line = (e, label) => `${label} 약 <b>${num(e.krw)}원</b> <span class="muted small">(1천 개면 약 ${num(e.per_1k_krw)}원 · 1만 개면 약 ${num(e.per_10k_krw)}원)</span>`;
     this.openModal({
-      title: "맥락 키워드 받기 · 비용 안내",
+      title: "AI 맥락 키워드 받기 · 비용 안내",
       body: `<div class="form">
         <dl class="kv">
           <dt>대상 원본</dt><dd><b>${num(est.sources)}개</b> <span class="muted small">(고른 ${num(est.selected)}개 중 이미 키워드가 있는 ${num(est.have)}개 제외)</span></dd>
           <dt>요청 수</dt><dd>${num(est.requests)}건 <span class="muted small">(요청 1건에 원본 ${num(s.ctx_per_request)}개)</span></dd>
           <dt>예상 토큰</dt><dd>입력 ${num(est.in_tok)} · 출력 ${num(est.out_tok)}</dd>
-          <dt>예상 비용</dt><dd>${line("batch")} · ${line("instant")} <span class="muted small">(${esc(est.model)}, 환율 ${num(est.rate)}원)</span></dd>
+          <dt>예상 비용</dt><dd>${line(b, "일괄")}<br>${line(i, "즉시")}<br><span class="muted small">${esc(est.model)} · 환율 ${num(est.rate)}원 · 원본당 입력 약 125, 출력 약 85토큰 기준</span></dd>
         </dl>
         ${est.has_key ? "" : `<p class="c-err small">설정 → AI 상품명에 Anthropic API 키를 먼저 넣어야 합니다.</p>`}
         ${est.pending ? `<p class="muted small">지금 일괄 처리 중인 원본 ${num(est.pending)}개는 다시 보내지 않습니다.</p>` : ""}
@@ -357,7 +356,7 @@ const App = {
           <label><input type="radio" name="cm" value="batch" ${s.ctx_mode !== "instant" ? "checked" : ""}><div><b>일괄 처리 (권장, 50% 할인)</b>
             <span class="muted small">결과가 오기까지 몇 분~몇 시간. 프로그램을 꺼도 다시 켜면 이어서 확인합니다. 결과가 오면 이름 후보 2개를 만들고 이름 없는 복사본에 바로 배정합니다.</span></div></label>
           <label><input type="radio" name="cm" value="instant" ${s.ctx_mode === "instant" ? "checked" : ""}><div><b>즉시</b>
-            <span class="muted small">바로 받습니다 (동시 3건). 소량 시험용.</span></div></label>
+            <span class="muted small">바로 받습니다. 요청을 한꺼번에 보냅니다 (요금은 일괄의 2배).</span></div></label>
         </div>
         <p class="muted small">끝나면 실제 비용(응답의 사용량 기준)을 실행 기록에 남깁니다.</p></div>`,
       buttons: [{ label: "취소", onClick: () => { if (after) after(false); } }, { label: "키워드 받기 시작", primary: true, onClick: async (m) => {
@@ -390,6 +389,57 @@ const App = {
     $$("button", el).forEach((b) => b.addEventListener("click", () => onPage(+b.dataset.p)));
     $("input", el).addEventListener("change", (e) => onPage(Math.min(pages, Math.max(1, +e.target.value)) - 1));
   },
+
+  // ── 대량 목록: 위에 붙는 막대 (선택 상태 + 할 일 버튼 + 쪽 넘기기)
+  //   o: { count, selAll, total, unit, pageChecked, actions: [{ id, label, primary, danger, title, always }],
+  //        page, size, onPageCheck(bool), onAll(), onClear(), onAction(id), onPage(p), onSize(n) }
+
+  listBar(el, o) {
+    const unit = o.unit || "개";
+    const n = o.count || 0;
+    const acts = (o.actions || []).map((x) => x === "|" ? `<span class="lb-sep"></span>`
+      : `<button class="btn ${x.primary ? "primary" : ""} ${x.danger ? "danger" : ""}" data-act="${x.id}" ${n || x.always ? "" : "disabled"}
+          ${x.title ? `title="${esc(x.title)}"` : ""}>${esc(x.label)}</button>`).join("");
+    el.innerHTML = `<div class="lb-row">
+        <div class="lb-left">
+          <label class="lb-check"><input type="checkbox" data-lb="page" ${o.pageChecked ? "checked" : ""} ${o.selAll ? "disabled" : ""}>이 쪽 전체</label>
+          ${n ? `<span class="lb-count">${o.selAll ? `조건에 맞는 ${num(n)}${unit} 전체` : `${num(n)}${unit}`} 선택됨<button data-lb="clear" title="선택 해제" aria-label="선택 해제">✕</button></span>`
+            : `<span class="lb-none">선택한 ${esc(o.what || "상품")}이 없습니다</span>`}
+          ${!o.selAll && o.total ? `<button class="btn sm outline" data-lb="all">조건에 맞는 ${num(o.total)}${unit} 모두 선택</button>` : ""}
+        </div>
+        <div class="lb-right">${acts}</div>
+      </div>
+      <div class="lb-row"><div></div><div class="pg" data-pgbox></div></div>`;
+    this.pagerBar($("[data-pgbox]", el), o);
+    $("[data-lb=page]", el).addEventListener("change", (e) => o.onPageCheck(e.target.checked));
+    $("[data-lb=clear]", el)?.addEventListener("click", () => o.onClear());
+    $("[data-lb=all]", el)?.addEventListener("click", () => o.onAll());
+    $$("[data-act]", el).forEach((b) => b.addEventListener("click", () => o.onAction(b.dataset.act)));
+  },
+
+  /* 쪽 넘기기: 총 N개 · [100]개씩 · « ‹ [3] / 120쪽 › » */
+  pagerBar(el, { page, size, total, onPage, onSize, unit = "개" }) {
+    const pages = Math.max(1, Math.ceil(total / size));
+    el.innerHTML = `<span>총 <b>${num(total)}</b>${unit}</span>
+      <label><select data-pg="size">${[50, 100, 200, 500].map((x) => `<option value="${x}" ${x === size ? "selected" : ""}>${x}</option>`).join("")}</select> ${unit}씩 보기</label>
+      <span class="pg-nav">
+        <button data-p="0" ${page <= 0 ? "disabled" : ""} title="처음">«</button>
+        <button data-p="${page - 1}" ${page <= 0 ? "disabled" : ""} title="이전 쪽">‹</button>
+        <input data-pg="page" type="number" min="1" max="${pages}" value="${page + 1}" aria-label="쪽 번호 (엔터로 이동)"> / <b>${num(pages)}</b>쪽
+        <button data-p="${page + 1}" ${page >= pages - 1 ? "disabled" : ""} title="다음 쪽">›</button>
+        <button data-p="${pages - 1}" ${page >= pages - 1 ? "disabled" : ""} title="마지막">»</button>
+      </span>`;
+    $$("[data-p]", el).forEach((b) => b.addEventListener("click", () => onPage(+b.dataset.p)));
+    const go = (e) => onPage(Math.min(pages, Math.max(1, +e.target.value || 1)) - 1);
+    $("[data-pg=page]", el).addEventListener("change", go);
+    $("[data-pg=page]", el).addEventListener("keydown", (e) => { if (e.key === "Enter") go(e); });
+    $("[data-pg=size]", el).addEventListener("change", (e) => onSize(+e.target.value));
+  },
+
+  pageSize(key, def = 100) {
+    try { return +localStorage.getItem("size:" + key) || def; } catch (e) { return def; }
+  },
+  savePageSize(key, n) { try { localStorage.setItem("size:" + key, n); } catch (e) { /* 무시 */ } },
 
   // ── 파일 끌어다 놓기: 원본인지 상품명인지 묻는다
 
@@ -464,3 +514,23 @@ function aiMsg(a) {
   if (a.error) parts.push(a.error);
   return parts.length ? " · " + parts.join(" · ") : "";
 }
+
+/* 등록 상품명을 원본과 비교해 색으로: 같은 자리 / 자리만 바뀜 / AI 단어 / 직접 넣은 단어, 아래에 빠진 원본 단어 */
+function nameDiff(name, orig, aiWords = [], origin = "") {
+  const ot = String(orig || "").split(/\s+/).filter(Boolean);
+  const nt = String(name || "").split(/\s+/).filter(Boolean);
+  const oset = new Set(ot), ai = new Set(aiWords || []);
+  const html = nt.map((w, i) => {
+    let c = "nd-add", t = "직접 넣은 단어";
+    if (oset.has(w)) { c = ot[i] === w ? "nd-same" : "nd-move"; t = ot[i] === w ? "원본과 같은 자리" : "자리만 바뀐 원본 단어"; }
+    else if (ai.has(w) || origin === "ctx" || origin === "ai") { c = "nd-ai"; t = "AI가 가져온 단어"; }
+    return `<span class="${c}" title="${t}">${esc(w)}</span>`;
+  }).join(" ");
+  const nset = new Set(nt);
+  const gone = ot.filter((w, i) => !nset.has(w) && ot.indexOf(w) === i);
+  return `<div class="nd">${html}</div>${gone.length && name !== orig ? `<div class="nd-gone">빠진 원본 단어: ${gone.map((w) => `<s>${esc(w)}</s>`).join("")}</div>` : ""}`;
+}
+
+const ND_LEGEND = `<div class="nd-legend"><span class="nd-same" style="border:1px solid var(--line)">원본과 같은 자리</span>
+  <span style="background:var(--info-soft);color:var(--info)">자리만 바뀜(셔플)</span><span style="background:var(--accent-soft);color:var(--accent-strong)">AI 단어</span>
+  <span style="background:var(--warn-soft);color:var(--warn)">직접 넣은 단어</span><span><s>빠진 원본 단어</s></span></div>`;

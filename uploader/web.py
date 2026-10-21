@@ -9,12 +9,12 @@ import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import VERSION, aiwords, bait, ctxkw, config, convert, engine, inventory, keywords, lexicon, naver, orders, watermark
+from . import VERSION, aiwords, bait, ctxkw, templates, config, convert, engine, inventory, keywords, lexicon, naver, orders, watermark
 from .db import DB
 from .tasks import Tasks
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-FILTER_KEYS = ("q", "status", "category", "store_missing", "store_has", "import_id", "max_listings",
+FILTER_KEYS = ("q", "status", "category", "store_missing", "store_has", "import_id", "max_listings", "price_min", "price_max", "copies",
                "min_names", "store_id", "plan_id", "op", "age_days", "sold", "locked")
 STORE_FIELDS = ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "capacity", "enabled", "memo", "wm_text", "importer")
 
@@ -151,16 +151,19 @@ def create_app(db=None):
         what = body().get("what")
         cfg = config.load()
         if what == "prices":
-            rows = db.q("""SELECT l.id, l.store_id, s.price, s.source_key FROM listings l JOIN sources s ON s.id=l.source_id
+            rows = db.q("""SELECT l.id, l.store_id, s.price, s.source_key, st.tpl_price_pct FROM listings l
+                JOIN sources s ON s.id=l.source_id JOIN stores st ON st.id=l.store_id
                 WHERE l.origin_no='' AND l.status IN ('planned','fail')""")
             with db.tx() as c:
                 for r in rows:
                     c.execute("UPDATE listings SET price=? WHERE id=?",
-                              (convert.adjusted_price(r["price"], f"{r['source_key']}|{r['store_id']}", cfg), r["id"]))
+                              (convert.adjusted_price(r["price"], f"{r['source_key']}|{r['store_id']}", cfg, r["tpl_price_pct"]),
+                               r["id"]))
             return jsonify({"count": len(rows)})
         if what == "names":
-            n = db.one("SELECT COUNT(*) AS n FROM names WHERE listing_id IS NULL AND origin IN ('recombine','ai')")["n"]
-            db.x("DELETE FROM names WHERE listing_id IS NULL AND origin IN ('recombine','ai')")
+            n = db.one("SELECT COUNT(*) AS n FROM names WHERE listing_id IS NULL AND origin IN ('recombine','ai','ctx','shuffle')")["n"]
+            db.x("DELETE FROM names WHERE listing_id IS NULL AND origin IN ('recombine','ai','ctx','shuffle')")
+            db.x("UPDATE ctx_kw SET names_made=0 WHERE status='ok'")   # 맥락 키워드는 그대로, 이름은 다음에 다시 만듦
             db.recount_sources()
             return jsonify({"count": n})
         return fail("알 수 없는 작업입니다.")
@@ -519,6 +522,11 @@ def create_app(db=None):
     def ctx_runs():
         return jsonify(ctxkw.runs(db))
 
+    @app.post("/api/lexicon/blocked")
+    def lexicon_blocked_save():
+        n = lexicon.save_blocked(db, body().get("text") or "")
+        return jsonify({"count": n, **lexicon.export_text(db)})
+
     @app.post("/api/lexicon/blocked/import")
     def lexicon_blocked_import():
         f = request.files.get("file")
@@ -552,6 +560,10 @@ def create_app(db=None):
         return jsonify({**inventory.query_listings(db, f, page, size),
                         "counts": inventory.listing_counts(db, f.get("store_id"), f.get("plan_id"))})
 
+    @app.get("/api/listings/stores")
+    def listing_stores():
+        return jsonify(inventory.store_summaries(db))
+
     @app.get("/api/listings/<int:lid>")
     def listing(lid):
         l = db.one("SELECT l.*, t.name AS store_name, t.store_url, t.as_phone, t.code AS store_code FROM listings l "
@@ -569,14 +581,17 @@ def create_app(db=None):
         l["next_seller_code"] = engine.seller_code(cfg, store, nxt)
         l["history"] = db.q("SELECT * FROM listing_history WHERE listing_id=? ORDER BY round DESC", (lid,))
         l["orders"] = db.q("SELECT * FROM orders WHERE listing_id=? ORDER BY ordered_at DESC LIMIT 50", (lid,))
-        l["siblings"] = db.q("""SELECT l.id, l.name, l.status, l.round, t.name AS store_name FROM listings l
+        l["siblings"] = db.q("""SELECT l.id, l.name, l.status, l.round, l.store_id, t.name AS store_name FROM listings l
             JOIN stores t ON t.id=l.store_id WHERE l.source_id=? AND l.id!=? AND l.status!='deleted'""",
                              (l["source_id"], lid))
+        nm = db.one("SELECT origin FROM names WHERE id=?", (l["name_id"],)) if l["name_id"] else None
+        l["name_origin"] = nm["origin"] if nm else ""
+        l["ctx_words"] = ctxkw.source_info(db, l["source_id"])["words"]
         try:
             l["body"] = convert.build_body(row, cfg, cats.get(cat) or f"(카테고리 번호 확인 필요) {cat}", url_map,
                                            name=l["name"], price=l["price"], seller_code=l["next_seller_code"],
                                            as_phone=l["as_phone"] or cfg.get("as_phone"),
-                                           importer=convert.importer_for(store, cfg))
+                                           importer=convert.importer_for(store, cfg), store=store)
         except convert.ConvertError as e:
             l["body"] = {"검사 오류": str(e)}
         l["thumb"] = (convert.thumbnails(row) or [""])[0]
@@ -630,16 +645,25 @@ def create_app(db=None):
 
     @app.post("/api/listings/rename")
     def listings_rename():
-        """고른 복사본(아직 안 올린 것)의 상품명을 재조합·AI·만들어 둔 후보로 바꾼다."""
+        """고른 복사본(아직 안 올린 것)의 상품명 바꾸기: AI 맥락 키워드(기본) / AI로 짓기 / 셔플."""
         b = body()
         f = _filter_from(b)
         f.pop("op", None)
         ids = inventory.listing_ids(db, f)
         if not ids:
             return fail("고른 복사본이 없습니다.")
-        method = b.get("method") if b.get("method") in ("ctx", "recombine", "ai", "pool") else "ctx"
+        method = b.get("method") if b.get("method") in ("ctx", "ai", "shuffle") else "ctx"
+        if method == "shuffle":
+            fixed = max(0, int(b.get("fixed_n") if b.get("fixed_n") not in (None, "") else config.load().get("shuffle_fixed") or 3))
+            extra = [w for w in str(b.get("extra") or "").replace(",", " ").split() if w]
+            try:
+                tid = tasks.start("rename", f"상품명 바꾸기(셔플, 앞 {fixed}단어 고정) · 복사본 {len(ids):,}건",
+                                  lambda **kw: inventory.rename_shuffle(db, ids, fixed, extra, **kw))
+            except RuntimeError as e:
+                return fail(str(e))
+            return jsonify({"task": tid})
         if method == "ctx":
-            fb = bool(b.get("fallback", True))
+            fb = False
             try:
                 tid = tasks.start("rename", f"상품명 바꾸기(맥락 키워드) · 복사본 {len(ids):,}건",
                                   lambda **kw: inventory.rename_ctx(db, ids, fb, **kw))
@@ -648,7 +672,7 @@ def create_app(db=None):
             return jsonify({"task": tid})
         if method == "ai" and not config.load().get("anthropic_api_key") and os.environ.get("UPLOADER_FAKE_API") != "1":
             return fail("설정 → AI 상품명에서 Anthropic API 키를 먼저 넣어 주세요.")
-        label = {"recombine": "재조합", "ai": "AI", "pool": "만들어 둔 후보"}[method]
+        label = {"ai": "AI로 짓기"}[method]
         try:
             tid = tasks.start("rename", f"상품명 바꾸기({label}) · 복사본 {len(ids):,}건",
                               lambda **kw: inventory.rename_listings(db, ids, method, **kw))
@@ -838,6 +862,62 @@ def create_app(db=None):
         except RuntimeError as e:
             return fail(str(e))
         return jsonify({"task": tid})
+
+    # ── 스토어 템플릿: 상세 상단·하단(이미지 + HTML), 관부가세 코드, 가격 조정 %, 표시 할인율 %
+
+    @app.get("/api/stores/<int:sid>/template")
+    def store_template(sid):
+        st = db.store(sid)
+        if not st:
+            return fail("스토어가 없습니다.", 404)
+        return jsonify({**templates.summary(st), "name": st["name"]})
+
+    @app.post("/api/stores/<int:sid>/template")
+    def store_template_save(sid):
+        b = body()
+
+        def num_or_none(v):
+            if v in (None, ""):
+                return None
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                raise ValueError(f"숫자를 넣어 주세요: {v}") from None
+        try:
+            price_pct, disc = num_or_none(b.get("price_pct")), num_or_none(b.get("discount_pct"))
+        except ValueError as e:
+            return fail(str(e))
+        if disc is not None and not 0 <= disc < 90:
+            return fail("표시 할인율은 0~89% 사이로 넣어 주세요.")
+        db.x("""UPDATE stores SET tpl_top_html=?, tpl_bottom_html=?, tpl_customs=?, tpl_price_pct=?, tpl_discount_pct=?
+            WHERE id=?""", (str(b.get("top_html") or ""), str(b.get("bottom_html") or ""), str(b.get("customs") or "").strip(),
+                            price_pct, disc, sid))
+        return jsonify(templates.summary(db.store(sid)))
+
+    @app.post("/api/stores/<int:sid>/template/image")
+    def store_template_image(sid):
+        f = request.files.get("file")
+        part = request.form.get("part") or "top"
+        if not f:
+            return fail("이미지를 골라 주세요.")
+        try:
+            templates.save_image(sid, part, f.filename, f.read())
+        except ValueError as e:
+            return fail(str(e))
+        return jsonify(templates.summary(db.store(sid)))
+
+    @app.delete("/api/stores/<int:sid>/template/image/<name>")
+    def store_template_image_del(sid, name):
+        templates.delete_image(sid, name)
+        return jsonify(templates.summary(db.store(sid)))
+
+    @app.get("/api/stores/<int:sid>/template/image/<name>")
+    def store_template_image_get(sid, name):
+        from flask import send_file
+        p = templates.path_of(sid, name)
+        if not p:
+            return fail("이미지가 없습니다.", 404)
+        return send_file(p)
 
     @app.post("/api/stores/<int:sid>/watermark")
     def store_watermark(sid):

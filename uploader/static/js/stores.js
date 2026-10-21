@@ -26,6 +26,7 @@ App.page("stores", {
       if (!b) return;
       const s = this.rows.find((x) => x.id === +b.dataset.id);
       if (b.dataset.act === "edit") this.edit(s);
+      if (b.dataset.act === "tpl") this.template(s);
       if (b.dataset.act === "test") this.test(s, b);
       if (b.dataset.act === "refresh") this.refresh(s);
     });
@@ -50,8 +51,67 @@ App.page("stores", {
       <td class="num">${s.orders_synced_to ? when(s.orders_synced_to) : '<span class="muted">-</span>'}</td>
       <td class="r nowrap"><button class="link-btn" data-act="refresh" data-id="${s.id}" ${s.n_live ? "" : "disabled"}>최신화</button> ·
         <button class="link-btn" data-act="test" data-id="${s.id}">연결 확인</button> ·
-        <button class="link-btn" data-act="edit" data-id="${s.id}">수정</button></td></tr>`).join("")
+        <button class="link-btn" data-act="edit" data-id="${s.id}">수정</button>
+        <button class="btn sm" data-act="tpl" data-id="${s.id}" style="margin-left:6px">템플릿</button></td></tr>`).join("")
       : `<tr class="empty-row"><td colspan="13">아직 스토어가 없습니다. <b>스토어 추가</b> 또는 <b>여러 개 한 번에 추가</b>를 누르세요.</td></tr>`;
+  },
+
+  /* 스토어 템플릿: 상세 상단·하단(이미지 + HTML), 관부가세 코드, 가격 조정 %, 표시 할인율 % */
+  async template(s) {
+    let t;
+    try { t = await App.api(`/api/stores/${s.id}/template`); } catch (e) { return App.toast(e.message, true); }
+    const cfg = App.state.settings;
+    const imgs = (part) => `<div class="tpl-imgs">${t[part].map((f) => `<figure><img src="/api/stores/${s.id}/template/image/${encodeURIComponent(f)}" alt="">
+        <button type="button" data-del="${esc(f)}" title="지우기">✕</button></figure>`).join("") || '<span class="muted small">이미지 없음</span>'}</div>
+      <label class="btn sm"><input type="file" data-up="${part}" accept=".jpg,.jpeg,.png,.gif,.webp" multiple hidden>이미지 추가</label>`;
+    App.openModal({
+      title: `${s.name} · 스토어 템플릿`,
+      wide: true,
+      body: `<div class="form" id="tpl-box">
+        <p class="muted small" style="margin:0">원본 상품에는 스토어 상단·하단이 없습니다. 이 스토어에 올릴 때 상세페이지 <b>맨 위에 상단</b>, <b>맨 아래에 하단</b>을 붙입니다.
+          이미지는 올린 순서대로 들어가고, 처음 등록할 때 이 스토어 이름으로 네이버에 한 번 올려 두고 다시 씁니다. 비워 둔 칸은 설정의 공통값을 씁니다.</p>
+        <div class="tpl-grid">
+          <div><h3 class="sec-title">상세 상단</h3>${imgs("top")}
+            <label class="field">상단 HTML <span class="muted">(이미지 아래에 붙음, 비워도 됨)</span><textarea id="t-top" rows="4" spellcheck="false">${esc(t.top_html)}</textarea></label></div>
+          <div><h3 class="sec-title">상세 하단</h3>${imgs("bottom")}
+            <label class="field">하단 HTML <span class="muted">(이미지 위에 붙음, 비워도 됨)</span><textarea id="t-bottom" rows="4" spellcheck="false">${esc(t.bottom_html)}</textarea></label></div>
+        </div>
+        <div class="two">
+          <label class="field">관부가세 코드 <span class="muted">(출고지가 해외면 필수 · 비우면 설정 공통값 '${esc(cfg.customs_tax_type || "없음")}')</span>
+            <input id="t-customs" value="${esc(t.customs)}" placeholder="커머스API customsTaxType 값"></label>
+          <label class="field">가격 조정 % <span class="muted">(원본가 대비, 예: 10 = 10% 올림, -5 = 5% 내림 · 그 뒤 ±${cfg.price_jitter_pct}%, 100원 올림)</span>
+            <input id="t-price" type="number" step="0.5" value="${t.price_pct ?? ""}" placeholder="0"></label>
+          <label class="field">표시 할인율 % <span class="muted">(예: 30이면 판매가를 올리고 30% 즉시할인으로 같은 최종가 · 비우면 엑셀 할인가 기준)</span>
+            <input id="t-disc" type="number" min="0" max="89" step="1" value="${t.discount_pct ?? ""}" placeholder="없음"></label>
+          <label class="field">수입사·A/S 전화·워터마크 <span class="muted">스토어 '수정'에서 정합니다</span></label>
+        </div>
+        <p class="muted small">가격 조정은 새로 복사하는 것부터, 이미 만든 대기 복사본은 설정 → '대기 중인 복사본 가격 다시 계산'. 상단·하단·관부가세·표시 할인율은 다음 등록부터.</p>
+      </div>`,
+      buttons: [{ label: "닫기" }, { label: "저장", primary: true, onClick: async (b) => {
+        try {
+          await App.api(`/api/stores/${s.id}/template`, { json: { top_html: $("#t-top", b).value, bottom_html: $("#t-bottom", b).value,
+            customs: $("#t-customs", b).value, price_pct: $("#t-price", b).value, discount_pct: $("#t-disc", b).value } });
+          App.toast(`${s.name} 템플릿을 저장했습니다`);
+        } catch (e) { App.toast(e.message, true); return false; }
+      } }],
+    });
+    const body = $("#tpl-box");   // 창을 다시 그릴 때마다 새 요소라 이벤트가 겹치지 않음
+    body.addEventListener("change", async (e) => {
+      const inp = e.target.closest("[data-up]");
+      if (!inp) return;
+      for (const f of inp.files) {
+        const fd = new FormData(); fd.append("file", f); fd.append("part", inp.dataset.up);
+        try { await App.api(`/api/stores/${s.id}/template/image`, { method: "POST", body: fd }); }
+        catch (err) { App.toast(err.message, true); }
+      }
+      this.template(s);
+    });
+    body.addEventListener("click", async (e) => {
+      const d = e.target.closest("[data-del]");
+      if (!d) return;
+      await App.api(`/api/stores/${s.id}/template/image/${encodeURIComponent(d.dataset.del)}`, { method: "DELETE" });
+      this.template(s);
+    });
   },
 
   edit(s) {

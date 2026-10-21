@@ -14,43 +14,44 @@ const LST_TILES = [
 ];
 
 App.page("listings", {
-  size: 100,
-
   async mount(el, params) {
-    this.f = { status: "all", store_id: "", plan_id: "", q: "", age_days: "", ...params };
+    this.el = el;
+    if (!params.store_id) return this.renderStores(el);
+    this.f = { status: "all", store_id: params.store_id, q: "", age_days: "", ...params };
+    delete this.f.open;
     this.page = 0;
+    this.size = App.pageSize("listings");
     this.sel = new Set();
     this.selAll = false;
+    const store = App.stores.find((s) => s.id === +params.store_id);
     el.innerHTML = `<div class="page">
-      <header class="page-head"><h1>복사본</h1>
+      <header class="page-head">
+        <div class="store-head"><h1>복사본</h1>
+          <select id="l-store" class="sel" title="다른 스토어로 바꾸기">${App.stores.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join("")}</select>
+          <a class="btn ghost sm" href="#listings">스토어 목록</a></div>
         <div class="head-actions">
           <a class="btn ghost" id="l-export">결과 CSV</a>
           <label class="btn" title="아바닛 등 주문 수집 웹에서 내려받은 주문 파일"><input type="file" id="l-sales-file" accept=".xlsx,.xlsm,.csv" hidden>판매 이력 파일 가져오기</label>
           <a class="btn" href="#orders" title="판매자센터 주문을 가져오고 기간·스토어별로 보기">판매 현황</a>
         </div></header>
       <div class="card run" id="l-run"></div>
-      <div class="toolbar"><div class="filters">
-        <select id="l-store" class="sel"><option value="">모든 스토어</option></select>
-        <select id="l-plan" class="sel"><option value="">모든 계획</option></select>
+      <div class="tiles" id="l-tiles"></div>
+      <div class="filters-row">
+        <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
+          <input id="l-q" placeholder="상품명·관리코드·상품번호 검색"></div>
         <select id="l-age" class="sel"><option value="">올린 날 전체</option><option value="7">올린 지 7일 넘음</option>
           <option value="30">30일 넘음</option><option value="60">60일 넘음</option><option value="90">90일 넘음</option></select>
-        <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
-          <input id="l-q" placeholder="상품명·관리코드·상품번호"></div>
-      </div></div>
-      <div class="tiles" id="l-tiles"></div>
-      <div class="actionbar" id="l-actions"></div>
+      </div>
+      <div class="listbar" id="l-bar"></div>
       <div class="card table-card">
-        <table class="grid"><thead><tr><th class="w-check"><input type="checkbox" id="l-check-all" aria-label="이 쪽 모두 선택"></th>
-          <th class="w-thumb"></th><th>등록 상품명</th><th class="w-store">스토어</th>
+        <table class="grid"><thead><tr><th class="w-check"></th>
+          <th class="w-thumb"></th><th>등록 상품명 <span class="muted small" style="font-weight:400">(원본과 비교)</span></th>
           <th class="w-round">관리코드 · 올린 날</th><th class="w-num">판매가</th><th class="w-status">상태</th></tr></thead><tbody id="l-rows"></tbody></table>
-        <div class="pager" id="l-pager"></div>
+        <div class="pg-foot"><div class="pg" id="l-pager"></div></div>
       </div>
     </div>`;
-    $("#l-store").innerHTML += App.stores.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join("");
-    const plans = await App.api("/api/plans");
-    $("#l-plan").innerHTML += plans.map((p) => `<option value="${p.id}">${esc(p.title)} · ${num(p.total)}건</option>`).join("");
-    $("#l-store").value = this.f.store_id || "";
-    $("#l-plan").value = this.f.plan_id || "";
+    $("#l-store").value = String(params.store_id);
+    if (!store) App.toast("스토어를 찾지 못했습니다.", true);
     $("#l-age").value = this.f.age_days || "";
     this.bind();
     this.onRun = (r) => this.renderRun(r);
@@ -60,19 +61,39 @@ App.page("listings", {
     App.on("task-done", this.onDone);
     await this.load();
     this.renderRun(App.run);
+    if (params.open) this.openListing(+params.open);
   },
   unmount() {
     App.off("run", this.onRun); App.off("run-done", this.onDone); App.off("task-done", this.onDone);
     clearInterval(this.timer);
   },
 
-  /* 시작·예상 시간은 스토어·계획 범위만 따른다 (상태·올린 날·검색어 거르기와 무관하게 대기·실패 건 전부) */
-  runScope() {
-    const f = {};
-    if (this.f.store_id) f.store_id = this.f.store_id;
-    if (this.f.plan_id) f.plan_id = this.f.plan_id;
-    return f;
+  /* 복사본 첫 화면: 스토어를 먼저 고른다 (한 번에 다 보이면 어느 스토어인지 헷갈려 실수하기 쉬움) */
+  async renderStores(el) {
+    const ss = await App.api("/api/listings/stores");
+    el.innerHTML = `<div class="page">
+      <header class="page-head"><h1>복사본 · 스토어 고르기</h1></header>
+      <p class="muted" style="margin:0">작업할 스토어를 먼저 고르세요. 그 스토어의 복사본만 보입니다.</p>
+      <div class="store-cards">${ss.map((s) => `<button class="store-card" data-sid="${s.id}">
+          <h3><span class="code">${esc(s.code)}</span>${esc(s.name)}${s.enabled ? "" : ' <span class="flag">사용 중지</span>'}</h3>
+          <div class="sc-nums"><span>복사본 <b>${num(s.all_)}</b></span><span>판매 중 <b>${num(s.live)}</b></span>
+            <span class="${s.noname ? "c-err" : ""}">이름 변경 필요 <b>${num(s.noname)}</b></span><span>대기 <b>${num(s.pending)}</b></span>
+            <span class="${s.fail ? "c-err" : ""}">실패 <b>${num(s.fail)}</b></span><span>남은 자리 <b>${num(s.free)}</b></span></div>
+        </button>`).join("") || '<p class="muted">스토어가 없습니다. <a href="#stores">스토어</a>에서 먼저 추가하세요.</p>'}</div>
+    </div>`;
+    $$(".store-card", el).forEach((b) => b.addEventListener("click", () => App.go(`#listings?store_id=${b.dataset.sid}`)));
   },
+
+  /* 다른 화면에서 복사본 하나로: 그 스토어 복사본 화면을 열고 그 건을 띄운다 */
+  async goto(id) {
+    try {
+      const l = await App.api(`/api/listings/${id}`);
+      App.go(`#listings?store_id=${l.store_id}&open=${id}`);
+    } catch (e) { App.toast(e.message, true); }
+  },
+
+  /* 시작·예상 시간은 이 스토어 범위만 따른다 (상태·올린 날·검색어 거르기와 무관하게 대기·실패 건 전부) */
+  runScope() { return { store_id: this.f.store_id }; },
 
   query() {
     const f = { ...this.f };
@@ -89,13 +110,56 @@ App.page("listings", {
     this.total = res.total;
     $("#l-tiles").innerHTML = tilesHtml(LST_TILES, { ...this.counts, all: this.counts.all_ }, this.f.status);
     $("#l-rows").innerHTML = res.rows.length ? res.rows.map((l) => this.rowHtml(l)).join("")
-      : `<tr class="empty-row"><td colspan="7">${this.counts.all_ ? "조건에 맞는 건이 없습니다."
-        : '아직 등록 계획이 없습니다. <a href="#inventory">원본 상품</a>에서 상품을 고르고 <b>스토어에 올리기 계획</b>을 만드세요.'}</td></tr>`;
-    App.pager($("#l-pager"), { page: this.page, size: this.size, total: res.total, onPage: (p) => { this.page = p; this.load(); } });
+      : `<tr class="empty-row"><td colspan="6">${this.counts.all_ ? "조건에 맞는 건이 없습니다."
+        : '이 스토어에 복사본이 없습니다. <a href="#inventory">원본 상품</a>에서 원본을 고르고 <b>다른 스토어로 복사</b>를 누르세요.'}</td></tr>`;
     $("#l-export").href = `/api/listings/export.csv?${new URLSearchParams(this.query())}`;
-    $("#l-check-all").checked = res.rows.length > 0 && res.rows.every((l) => this.sel.has(l.id));
-    this.renderActions();
+    this.renderBar();
     if (!App.run?.running) this.renderIdle();
+  },
+
+  pagerOpts() {
+    return { page: this.page, size: this.size, total: this.total, unit: "건",
+      onPage: (p) => { this.page = p; this.load(); window.scrollTo(0, 0); },
+      onSize: (n) => { this.size = n; App.savePageSize("listings", n); this.page = 0; this.load(); } };
+  },
+
+  renderBar() {
+    const n = this.selAll ? this.total : this.sel.size;
+    App.listBar($("#l-bar"), {
+      ...this.pagerOpts(), count: n, selAll: this.selAll, what: "복사본",
+      pageChecked: this.rows.length > 0 && this.rows.every((l) => this.sel.has(l.id)),
+      actions: [
+        { id: "rename", label: "상품명 바꾸기", primary: true, title: "아직 안 올린 복사본의 상품명을 AI 맥락 키워드·AI로 짓기·셔플로 바꿈" },
+        "|",
+        { id: "refresh", label: "최신화 예약", title: "판매 중인 건을 네이버에서 지우고 같은 내용으로 다시 올림 (회차 +1)" },
+        { id: "delete", label: "내리기 예약", title: "판매 중인 건을 네이버에서 지움" },
+        { id: "cancel", label: "대기·실패 취소", danger: true, title: "아직 처리 안 된 대기·실패 할 일을 취소" },
+        "|",
+        { id: "lock", label: "잠금", title: "판매 이력과 상관없이 지우지 못하게 잠금" },
+        { id: "unlock", label: "잠금 풀기" },
+        ...(this.f.status === "bait" ? ["|", { id: "restore", label: "원래 가격으로", primary: true }] : []),
+      ],
+      onPageCheck: (on) => { this.selAll = false; this.rows.forEach((l) => (on ? this.sel.add(l.id) : this.sel.delete(l.id))); this.load(); },
+      onAll: () => { this.selAll = true; this.sel.clear(); this.load(); },
+      onClear: () => { this.clearSel(); this.load(); },
+      onAction: (id) => this.action(id),
+    });
+    App.pagerBar($("#l-pager"), this.pagerOpts());
+  },
+
+  async action(id) {
+    if (id === "rename") this.renameModal();
+    if (id === "refresh" || id === "delete") this.schedule(id);
+    if (id === "lock" || id === "unlock") this.lock(id === "lock");
+    if (id === "restore") App.startTask(App.api("/api/bait/restore", { json: this.selAll ? { filter: this.query() } : { ids: [...this.sel] } }));
+    if (id === "cancel") {
+      if (!confirm("고른 건 중 대기·실패 할 일을 취소할까요?\n새 등록이면 계획을 지우고 이름을 후보로 돌립니다. 최신화·내리기면 판매 중으로 되돌립니다.")) return;
+      try {
+        const r = await App.api("/api/listings/cancel", { json: this.target() });
+        App.toast(`${num(r.cancelled)}건을 취소했습니다.`);
+        this.clearSel(); this.estKey = ""; this.load();
+      } catch (err) { App.toast(err.message, true); }
+    }
   },
 
   rowHtml(l) {
@@ -106,43 +170,28 @@ App.page("listings", {
     else if (l.status === "running") msg = l.stage;
     else if (l.status === "deleted") msg = `${ymd(l.deleted_at)}에 내림`;
     const on = this.selAll || this.sel.has(l.id);
-    const noname = !l.name_id && !l.origin_no && l.status !== "deleted";
-    const others = (noname ? `<span class="flag bad" title="원본 상품명 그대로라 올리지 않습니다. '상품명 바꾸기'로 바꾸세요">이름 변경 필요</span>` : "")
-      + (l.source_copies > 1 ? `<span class="flag" title="같은 원본이 다른 스토어에도 있음">같은 원본 ${l.source_copies}곳</span>` : "")
-      + lockFlag(l) + salesFlag(l);
+    const live = !!l.origin_no;
+    const noname = !l.name_id && !live && l.status !== "deleted";
+    const flags = (noname ? `<span class="flag bad" title="원본 상품명 그대로라 올리지 않습니다">이름 변경 필요</span>` : "")
+      + (l.name_origin ? `<span class="org org-${l.name_origin}">${ORIGIN[l.name_origin] || l.name_origin}</span>` : "") + lockFlag(l) + salesFlag(l);
     return `<tr data-id="${l.id}" class="${on ? "sel" : ""} ${l.status === "deleted" ? "off" : ""}">
-      <td class="w-check" data-stop><input type="checkbox" ${on ? "checked" : ""} ${this.selAll ? "disabled" : ""}></td>
+      <td class="w-check" data-stop><input type="checkbox" ${on ? "checked" : ""} ${this.selAll ? "disabled" : ""} aria-label="고르기"></td>
       <td>${img(l.thumb)}</td>
-      <td><div class="p-name">${esc(l.name)}</div><div class="p-sub"><span>원본 #${l.source_id}</span>${others}</div></td>
-      <td><b class="code">${esc(l.store_code)}</b> ${esc(l.store_name)}</td>
+      <td>${noname ? `<div class="p-name">${esc(l.name)}</div>` : nameDiff(l.name, l.source_name, l.ctx_words, l.name_origin)}
+        ${!noname ? `<div class="orig-name">원본: ${esc(l.source_name)}</div>` : ""}
+        <div class="p-sub"><span>원본 #${l.source_id}</span>${flags}</div>
+        <div class="row-acts" data-stop>
+          ${!live && l.status !== "deleted" ? `<button class="btn ${noname ? "primary" : ""}" data-rename="${l.id}">상품명 바꾸기</button>` : ""}
+          <button class="btn" data-src="${l.source_id}">원본 보기</button>
+          ${l.others.map((o) => `<button class="go-store" data-go="${o.id}" title="같은 원본이 있는 다른 스토어로">→ ${esc(o.store_name)}</button>`).join("")}
+        </div></td>
       <td>${esc(l.seller_code || "-")}<div class="p-sub">${l.round}회차${l.registered_at && l.origin_no ? ` · ${ymd(l.registered_at)} (${age(l.registered_at)})` : ""}</div></td>
       <td class="num">${num(l.price)}원<div class="p-sub r">${diff ? (diff > 0 ? "+" : "") + diff.toFixed(1) + "%" : "원본가"}</div></td>
       <td>${statusBadge(l.status, l.op)}${msg ? `<div class="s-msg ${cls}" title="${esc(msg)}">${esc(msg)}</div>` : ""}</td></tr>`;
   },
 
-  renderActions() {
-    const n = this.selAll ? this.total : this.sel.size;
-    const target = this.selAll ? `조건에 맞는 <b>${num(this.total)}건 전체</b>` : n ? `<b>${num(n)}건</b> 선택` : "";
-    $("#l-actions").innerHTML = `<div class="ab-left">
-        ${target ? `<span>${target}</span><button class="link-btn" id="la-clear">선택 해제</button>` : `<span class="muted">건을 고르거나</span>`}
-        ${!this.selAll && this.total ? `<button class="link-btn" id="la-all">조건에 맞는 ${num(this.total)}건 모두 고르기</button>` : ""}
-      </div>
-      <div class="ab-right">
-        <button class="btn primary" id="la-rename" ${n ? "" : "disabled"} title="아직 안 올린 복사본의 상품명을 재조합·AI·만들어 둔 후보로 바꿈">상품명 바꾸기…</button>
-        <span class="ab-sep"></span>
-        <button class="btn" id="la-refresh" ${n ? "" : "disabled"} title="판매 중인 건을 네이버에서 지우고 같은 내용으로 다시 올림 (회차 +1)">최신화 예약</button>
-        <button class="btn" id="la-delete" ${n ? "" : "disabled"} title="판매 중인 건을 네이버에서 지움. 원본의 빈 칸이 생겨 다른 스토어에 올릴 수 있음">내리기 예약</button>
-        <button class="btn ghost danger-text" id="la-cancel" ${n ? "" : "disabled"} title="아직 처리 안 된 대기·실패 할 일을 취소">대기·실패 취소</button>
-        <span class="ab-sep"></span>
-        <button class="btn" id="la-lock" ${n ? "" : "disabled"} title="판매 이력과 상관없이 지우지 못하게 잠금">잠금</button>
-        <button class="btn ghost" id="la-unlock" ${n ? "" : "disabled"} title="직접 건 잠금을 풂 (판매 이력으로 걸린 잠금은 그대로)">잠금 풀기</button>
-        ${this.f.status === "bait" ? `<span class="ab-sep"></span>
-        <button class="btn primary" id="la-restore" ${n ? "" : "disabled"} title="높여 둔 가격을 지금 원래 가격으로">원래 가격으로</button>` : ""}
-      </div>`;
-  },
-
   target() {
-    if (this.selAll) { const f = this.query(); return f; }
+    if (this.selAll) return this.query();
     return { ids: [...this.sel] };
   },
 
@@ -156,40 +205,45 @@ App.page("listings", {
     } catch (e) { App.toast(e.message, true); }
   },
 
-  renameModal() {
+  /* 상품명 바꾸기: AI 맥락 키워드(기본) / AI로 짓기 / 셔플. ids를 주면 그 건만 */
+  renameModal(ids) {
     const s = App.state.settings;
-    const n = this.selAll ? this.total : this.sel.size;
+    const target = ids ? { ids } : this.target();
+    const n = ids ? ids.length : this.selAll ? this.total : this.sel.size;
+    const keyOk = s.has_anthropic_api_key || App.state.fake_api;
     App.openModal({
       title: `상품명 바꾸기 · 복사본 ${num(n)}건`,
       body: `<div class="form"><div class="radio-cards">
-          <label><input type="radio" name="rn" value="ctx" ${s.name_method !== "recombine" ? "checked" : ""}><div><b>맥락 키워드 (기본)</b><span class="muted small">[원본 앞 ${num(s.ctx_head_n)}단어] + [AI 맥락 키워드 최대 ${num(s.ctx_ai_per_name)}개] + [원본 나머지 ${num(s.ctx_tail_min)}~${num(s.ctx_tail_max)}개], 최대 ${num(s.name_max_len)}자.
-            원본마다 이름 ${num(s.ctx_names_per_source)}개를 한 번에 만들어 복사본에 하나씩 배정합니다. 키워드가 없는 원본은 먼저 비용을 안내하고 받습니다.</span>
-            <label class="check small"><input type="checkbox" id="rn-fb"><span>키워드가 없는 원본은 예비 방식(재조합)으로 바로 바꾸기</span></label></div></label>
-          <label><input type="radio" name="rn" value="recombine" ${s.name_method === "recombine" ? "checked" : ""}><div><b>재조합 (예비 방식)</b><span class="muted small">원본 상품명의 단어를 고르고 순서를 바꾸고 유의어를 넣어 새로 만듭니다.</span></div></label>
-          <label><input type="radio" name="rn" value="ai"><div><b>AI로 짓기</b><span class="muted small">Claude(${esc(s.ai_model)})가 원본을 보고 새로 짓습니다. 유료. 모자라면 재조합으로 채웁니다.
-            ${s.has_anthropic_api_key || App.state.fake_api ? "" : '<br><span class="c-err">설정에서 API 키를 먼저 넣어야 합니다.</span>'}</span></div></label>
-          <label><input type="radio" name="rn" value="pool"><div><b>만들어 둔 후보에서</b><span class="muted small">원본 상품 화면에서 미리 만들거나 파일로 가져온 후보를 씁니다. 후보가 없으면 그대로 둡니다.</span></div></label>
+          <label><input type="radio" name="rn" value="ctx" checked><div><b>AI 맥락 키워드 (기본)</b><span class="muted small">[원본 앞 ${num(s.ctx_head_n)}단어] + [AI 맥락 키워드 최대 ${num(s.ctx_ai_per_name)}개] + [원본 나머지 ${num(s.ctx_tail_min)}~${num(s.ctx_tail_max)}개], 최대 ${num(s.name_max_len)}자.
+            원본마다 AI를 한 번 부르고 이름 ${num(s.ctx_names_per_source)}개를 만들어 하나씩 붙입니다. 키워드가 없는 원본은 먼저 비용을 안내하고 받습니다.</span></div></label>
+          <label><input type="radio" name="rn" value="ai"><div><b>AI로 짓기</b><span class="muted small">AI(${esc(s.ai_model)})가 원본을 보고 이름 전체를 새로 짓습니다.</span></div></label>
+          <label><input type="radio" name="rn" value="shuffle"><div><b>셔플 (AI 안 씀)</b><span class="muted small">앞 단어를 고정하고 나머지 단어 순서를 섞습니다. 넣을 단어를 적으면 그 단어도 고정 단어 뒤에서 함께 섞입니다.</span>
+            <div class="shuffle-opts" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px">
+              <label class="field" style="margin:0">앞에서 고정할 단어 수 <input type="number" id="rn-fixed" min="0" max="10" value="${num(s.shuffle_fixed || 3)}" style="width:80px"></label>
+              <label class="field" style="margin:0;flex:1;min-width:220px">넣을 단어 (띄어쓰기·쉼표로 구분, 비워도 됨) <input id="rn-extra" placeholder="예: 업소용 카페"></label>
+            </div></div></label>
         </div>
-        <p class="muted small">· 이미 올라간 복사본은 바꾸지 않습니다(최신화로 다시 올릴 때 바뀜).<br>
-          · 이미 바꾼 이름이 있으면 그 이름은 버리고 새로 고릅니다.<br>
-          · 모든 이름은 금지 단어·상표·같은 단어 반복과 33개 스토어 중복을 검사합니다. 한 건씩은 복사본을 눌러 직접 입력할 수 있습니다.</p></div>`,
+        ${keyOk ? "" : '<p class="c-err small">AI 맥락 키워드·AI로 짓기는 설정 → API 키에서 Anthropic 키를 먼저 넣어야 합니다.</p>'}
+        <p class="muted small">이미 올라간 복사본은 바꾸지 않습니다(최신화로 다시 올릴 때 바뀜). 판매자 관리코드는 그대로입니다.
+          모든 이름은 금지어·상표와 33개 스토어 중복을 검사합니다. 한 건씩은 복사본을 눌러 직접 입력할 수도 있습니다.</p></div>`,
       buttons: [{ label: "취소" }, { label: "바꾸기", primary: true, onClick: async (b) => {
         const method = $("input[name=rn]:checked", b).value;
-        const target = this.target();
+        if (method === "shuffle") {
+          return !!(await App.startTask(App.api("/api/listings/rename", { json: { ...target, method,
+            fixed_n: +$("#rn-fixed", b).value, extra: $("#rn-extra", b).value } })));
+        }
         if (method === "ctx") {
-          const fallback = $("#rn-fb", b).checked;
-          const go = () => App.startTask(App.api("/api/listings/rename", { json: { ...target, method, fallback } }));
+          const go = () => App.startTask(App.api("/api/listings/rename", { json: { ...target, method } }));
           const est = await App.api("/api/ctx/estimate", { json: { listing_filter: target } });
-          if (est.sources && !fallback) {
-            // 키워드 없는 원본: 비용 안내 후 받기 → 지금은 키워드 있는 원본만 배정, 나머지는 받으면 자동 배정
+          if (est.sources) {
+            // 키워드 없는 원본: 비용 안내 후 받기 → 키워드 있는 원본은 지금 붙이고, 나머지는 받는 대로 자동으로 붙음
             App.closeModal();
             App.ctxConfirm({ listing_filter: target }, (ok) => { if (ok) go(); });
             return false;
           }
           return !!(await go());
         }
-        const r = await App.startTask(App.api("/api/listings/rename", { json: { ...target, method } }));
-        return !!r;
+        return !!(await App.startTask(App.api("/api/listings/rename", { json: { ...target, method } })));
       } }],
     });
   },
@@ -211,8 +265,7 @@ App.page("listings", {
     const box = $("#l-run");
     const c = this.counts;
     const n = Math.max(0, (c.pending || 0) + (c.fail || 0) - (c.noname || 0));
-    const scope = [this.f.store_id && $("#l-store").selectedOptions[0]?.text, this.f.plan_id && $("#l-plan").selectedOptions[0]?.text.split(" · ")[0]]
-      .filter(Boolean).join(" · ");
+    const scope = $("#l-store")?.selectedOptions[0]?.text || "";
     box.innerHTML = `<div class="run-idle">
         <div class="run-actions">
           <button class="btn primary big" id="l-start" ${n ? "" : "disabled"}>▶ 시작 · ${num(n)}건</button>
@@ -322,52 +375,33 @@ App.page("listings", {
 
   bind() {
     $("#l-sales-file").addEventListener("change", (e) => { if (e.target.files[0]) App.upload("/api/orders/import", e.target.files[0]); e.target.value = ""; });
-
+    $("#l-store").addEventListener("change", (e) => App.go(`#listings?store_id=${e.target.value}`));
     $("#l-tiles").addEventListener("click", (e) => {
       const t = e.target.closest("[data-filter]");
       if (t) { this.f.status = t.dataset.filter; this.page = 0; this.clearSel(); this.load(); }
     });
-    $("#l-store").addEventListener("change", (e) => { this.f.store_id = e.target.value; this.page = 0; this.clearSel(); this.load(); });
-    $("#l-plan").addEventListener("change", (e) => { this.f.plan_id = e.target.value; this.page = 0; this.clearSel(); this.load(); });
     let timer;
     $("#l-q").addEventListener("input", (e) => {
       clearTimeout(timer);
-      timer = setTimeout(() => { this.f.q = e.target.value.trim(); this.page = 0; this.load(); }, 300);
+      timer = setTimeout(() => { this.f.q = e.target.value.trim(); this.page = 0; this.clearSel(); this.load(); }, 300);
     });
     $("#l-age").addEventListener("change", (e) => { this.f.age_days = e.target.value; this.page = 0; this.clearSel(); this.load(); });
-    $("#l-check-all").addEventListener("change", (e) => {
-      this.selAll = false;
-      this.rows.forEach((l) => (e.target.checked ? this.sel.add(l.id) : this.sel.delete(l.id)));
-      this.load();
-    });
-    $("#l-actions").addEventListener("click", async (e) => {
-      const id = e.target.closest("button")?.id;
-      if (id === "la-clear") { this.clearSel(); this.load(); }
-      if (id === "la-all") { this.selAll = true; this.sel.clear(); this.load(); }
-      if (id === "la-refresh") this.schedule("refresh");
-      if (id === "la-lock" || id === "la-unlock") this.lock(id === "la-lock");
-      if (id === "la-rename") this.renameModal();
-      if (id === "la-restore") App.startTask(App.api("/api/bait/restore", { json: this.selAll ? { filter: this.query() } : { ids: [...this.sel] } }));
-      if (id === "la-delete") this.schedule("delete");
-      if (id === "la-cancel") {
-        if (!confirm("고른 건 중 대기·실패 할 일을 취소할까요?\n새 등록이면 계획을 지우고 이름을 후보로 돌립니다. 최신화·내리기면 판매 중으로 되돌립니다.")) return;
-        try {
-          const r = await App.api("/api/listings/cancel", { json: this.target() });
-          App.toast(`${num(r.cancelled)}건을 취소했습니다.`);
-          this.clearSel(); this.estKey = ""; this.load();
-        } catch (err) { App.toast(err.message, true); }
-      }
-    });
     $("#l-rows").addEventListener("click", (e) => {
+      const rn = e.target.closest("[data-rename]");
+      if (rn) return this.renameModal([+rn.dataset.rename]);
+      const src = e.target.closest("[data-src]");
+      if (src) return App.pages.inventory.openSource(+src.dataset.src);
+      const go = e.target.closest("[data-go]");
+      if (go) return this.goto(+go.dataset.go);
       const tr = e.target.closest("tr[data-id]");
       if (!tr) return;
       const id = +tr.dataset.id;
       if (e.target.closest("[data-stop]")) {
-        if (this.selAll) return;
+        if (this.selAll || !e.target.closest(".w-check")) return;
         this.sel.has(id) ? this.sel.delete(id) : this.sel.add(id);
         tr.classList.toggle("sel", this.sel.has(id));
         $("input", tr).checked = this.sel.has(id);
-        this.renderActions();
+        this.renderBar();
         return;
       }
       this.openListing(id);
@@ -390,16 +424,18 @@ App.page("listings", {
               ${!l.origin_no && l.status !== "deleted" ? `<div class="notice ${l.name_id ? "" : "err"} name-edit">
                 <div><b>${l.name_id ? "바꾼 상품명" : "이름 변경 필요 — 원본 상품명 그대로라 올리지 않습니다"}</b></div>
                 <div class="add-name"><input id="d-name" value="${esc(l.name)}" maxlength="100"><button class="btn primary" id="d-name-save">이 이름으로</button></div>
-                <span class="muted small">직접 고쳐 저장하거나, 목록에서 고른 뒤 '상품명 바꾸기'로 재조합·AI를 씁니다. 금지 단어·상표·반복·33개 스토어 중복을 검사합니다.</span></div>` : ""}
-              <dl class="kv"><dt>스토어</dt><dd>${esc(l.store_name)}</dd><dt>등록 상품명</dt><dd>${esc(l.name)}${l.name_id ? "" : ` <span class="flag bad">원본 상품명</span>`}</dd>
+                <span class="muted small">직접 고쳐 저장하거나 <button class="link-btn" id="d-rename">상품명 바꾸기</button>(AI 맥락 키워드·AI로 짓기·셔플). 금지어·상표·33개 스토어 중복을 검사합니다.</span></div>` : ""}
+              <dl class="kv"><dt>스토어</dt><dd>${esc(l.store_name)}</dd>
+              <dt>등록 상품명</dt><dd>${l.name_id ? nameDiff(l.name, l.source_name, l.ctx_words, l.name_origin) + ND_LEGEND : `${esc(l.name)} <span class="flag bad">원본 상품명 그대로</span>`}</dd>
+              <dt>원본 상품명</dt><dd>${esc(l.source_name)} <button class="btn sm" id="d-src">원본 보기</button></dd>
               <dt>판매자 관리코드</dt><dd>${esc(l.seller_code || l.next_seller_code)} <span class="muted">(${l.round}회차${l.seller_code ? "" : ", 등록하면 붙음"})</span></dd>
-              <dt>원본</dt><dd>#${l.source_id} ${esc(l.source_name)}</dd>
+              <dt>원본 번호</dt><dd>#${l.source_id}</dd>
               <dt>판매가</dt><dd>${num(l.price)}원 <span class="muted">(원본가 ${num(l.source_price)}원)</span>
                 ${l.bait_state === "on" ? `<br><span class="flag bad">도둑방지 중</span> 네이버에는 <b>${num(l.price + l.bait)}원</b> <button class="btn" id="d-restore">원래 가격으로</button>` : ""}
                 ${!l.origin_no && l.status !== "deleted" ? `<br><span class="muted">${l.bait_want ? `도둑방지로 올림 (+${num(App.state.settings.bait_amount)}원, 처음 등록일 때)` : "도둑방지 없이 올림"}</span>` : ""}
                 ${l.bait_state === "restored" ? `<br><span class="muted">도둑방지 끝 · ${ymd(l.bait_restored_at)} 원래 가격으로 (${esc(l.bait_note)})</span>` : ""}
                 ${l.bait_state === "fail" ? `<br><span class="flag bad">${esc(l.bait_note)}</span>` : ""}</dd>
-              <dt>같은 원본</dt><dd>${l.siblings.length ? l.siblings.map((x) => `${esc(x.store_name)} · ${esc(x.name)} <span class="muted">(${STATUS[x.status] || x.status})</span>`).join("<br>") : "다른 스토어에는 없음"}</dd></dl>`
+              <dt>다른 스토어</dt><dd>${l.siblings.length ? l.siblings.map((x) => `<div><button class="go-store" data-go="${x.id}">→ ${esc(x.store_name)}</button> ${esc(x.name)} <span class="muted">(${STATUS[x.status] || x.status})</span></div>`).join("") : "같은 원본이 다른 스토어에는 없음"}</dd></dl>`
             + `<div class="notice ${l.locked ? "info" : ""} lock-box"><div><b>${l.locked ? "잠금" : "잠금 아님"}</b>${l.locked ? ` · ${esc(l.lock_note)} · 최신화·내리기로 지우지 않습니다` : " · 최신화·내리기 가능"}
                 ${l.cancel_count ? `<br><span class="muted">취소·반품 ${num(l.cancel_count)}개는 판매로 세지 않음 (설정에서 바꿈)</span>` : ""}</div>
                 <button class="btn" id="d-lock">${l.manual_lock ? "직접 잠금 풀기" : "직접 잠금"}</button></div>`
@@ -417,6 +453,9 @@ App.page("listings", {
               this.openListing(id);
             } catch (err) { App.toast(err.message, true); }
           });
+          $("#d-src", b)?.addEventListener("click", () => App.pages.inventory.openSource(l.source_id));
+          $("#d-rename", b)?.addEventListener("click", () => this.renameModal([id]));
+          $$("[data-go]", b).forEach((x) => x.addEventListener("click", () => { App.closeDrawer(); this.goto(+x.dataset.go); }));
           $("#d-restore", b)?.addEventListener("click", async () => {
             const r = await App.startTask(App.api("/api/bait/restore", { json: { ids: [id] } }));
             if (r) App.on("task-done", function h(t) { if (t.kind === "bait") { App.off("task-done", h); App.pages.listings.openListing(id); } });

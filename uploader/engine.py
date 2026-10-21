@@ -11,7 +11,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import bait, config, convert, naver, orders, watermark
+from . import bait, config, convert, naver, orders, templates, watermark
 
 IMAGE_DOWNLOAD_THREADS = 16
 DETAIL_SCOPE = 0
@@ -92,6 +92,7 @@ class Runner:
             if self.state["running"]:
                 raise RuntimeError("이미 등록 중입니다.")
             self._name_ctx = {}   # 최신화 새 이름용 스토어 정보 (실행마다 새로 읽음)
+            self._tpl_cache = {}  # 스토어 템플릿 상단·하단 HTML (실행마다 새로 만듦)
             cfg = config.load()
             targets = listing_targets(self.db, f)
             if f.get("limit"):
@@ -330,8 +331,14 @@ class Runner:
             # 도둑방지: 처음 올릴 때 가격을 높여 둠 (나중에 원래 가격으로)
             bait_amt = bait.applies(cfg, t, op)
             kw = dict(name=t["name"], price=t["price"], bait=bait_amt, importer=convert.importer_for(store, cfg),
-                      as_phone=store.get("as_phone") or cfg.get("as_phone"), seller_code=code)
+                      as_phone=store.get("as_phone") or cfg.get("as_phone"), seller_code=code, store=store)
             convert.build_body(row, cfg, cat_id, **kw)  # 이미지 올리기 전에 빠진 값부터 확인
+            # 스토어 템플릿 상단·하단 (이미지는 이 스토어 이름으로 한 번만 올리고 이번 실행 동안 같이 씀)
+            tpl = self.__dict__.setdefault("_tpl_cache", {})
+            if store["id"] not in tpl:
+                self._stage(lid, label, "스토어 상단·하단 이미지 올리는 중")
+                tpl[store["id"]] = templates.html(self.db, client, store, on_wait)
+            kw["store"] = {**store, "_tpl_top": tpl[store["id"]][0], "_tpl_bottom": tpl[store["id"]][1]}
 
             thumbs = convert.thumbnails(row)[:10]
             wm = None
@@ -381,27 +388,17 @@ class Runner:
                    t["channel_no"] or "", t["registered_at"], time.time(), reason))
 
     def _new_name(self, cfg, t):
-        """최신화 때 새 이름을 쓰는 설정이면 이 스토어에 맞춰 새로 재조합한다 (지난 이름에 넣었던 새 단어는 되도록 피함).
-        AI 단어는 처음 이름을 바꿀 때 받아 둔 것을 다시 쓴다 (여기서는 AI를 부르지 않음)."""
+        """최신화 때 새 이름을 쓰는 설정이면: 안 쓴 AI 맥락 후보, 없으면 셔플로 새 이름 (AI를 부르지 않음)."""
         from . import inventory, lexicon
         cfg = {**cfg, "_lex": lexicon.get(self.db)}
-        src = self.db.one("SELECT id, name, tags, category, data FROM sources WHERE id=?", (t["source_id"],))
-        inventory._attach_words(self.db, cfg, [src])
-        with self.lock:   # 스토어마다 한 번만 읽어 이번 실행 동안 같이 씀
-            cache = self.__dict__.setdefault("_name_ctx", {})
-            if t["store_id"] not in cache:
-                cache[t["store_id"]] = inventory.StoreContext(self.db, [t["store_id"]])
-            ctx = cache[t["store_id"]]
-        avoid = inventory._new_words(src["name"], t["name"])
+        src = self.db.one("SELECT id, name FROM sources WHERE id=?", (t["source_id"],))
         now = time.time()
         with self.db.tx() as c:
-            nm = inventory.name_for_listing(c, src, t["store_id"], cfg, now, ctx, avoid=avoid)
-            if not nm:
-                pool = inventory._fill_names(c, src, 1, cfg, now)
-                nm = pool[0] if pool else None
+            nm = inventory.refresh_name(c, src, t["store_id"], cfg, now)
             if not nm:
                 return None
-            inventory.assign_name(c, t["id"], t["store_id"], src, nm, now, ctx)
+            c.execute("UPDATE names SET listing_id=? WHERE id=?", (t["id"], nm["id"]))
+            c.execute("UPDATE listings SET name_id=?, name=? WHERE id=?", (nm["id"], nm["name"], t["id"]))
         return nm["name"]
 
     def _images(self, client, pool, cache, scope, srcs, required, lid, label, on_wait, wm=None):

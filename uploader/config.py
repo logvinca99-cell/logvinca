@@ -129,6 +129,7 @@ DEFAULTS = {
     "ctx_model": "claude-sonnet-5-5",
     "ctx_mode": "batch",             # batch(일괄, 50% 할인) / instant(즉시, 소량 시험용)
     "krw_rate": 1330,                # 비용 안내 환율 (원/달러)
+    "shuffle_fixed": 3,              # 셔플: 앞에서 고정할 단어 수 (기본값, 바꾸기 창에서 바꿀 수 있음)
 
     # ── 재조합 새 단어 (AI): 원본마다 처음 한 번 AI에게 '넣어도 되는 단어'를 받아 저장, 이름 조립은 재조합이 함
     "ai_words_enabled": True,

@@ -1,7 +1,7 @@
 """맥락 키워드: AI(Claude)에게 원본마다 '맥락 키워드'(쓰는 장소·사람·용도·상황) 목록만 받아 저장한다.
 상품명은 ctxname(기준 구현)이 이 키워드로 조립한다. 원본마다 한 번만 받고, 받은 원본은 다시 묻지 않는다.
 
-- 기본은 일괄 처리(Message Batches, 요금 50% 할인). 소량 시험은 즉시 모드(일반 요청, 동시 3건).
+- 기본은 일괄 처리(Message Batches, 요금 50% 할인). 소량 시험은 즉시 모드(일반 요청, 한꺼번에 보냄).
 - 요청 하나에 원본 10개. 응답 배열 길이가 보낸 원본 수와 다르거나 파싱이 실패하면 그 요청 전체를 실패로 둔다.
 - 진행 중인 일괄 처리는 디스크(db)에 적어 두고, 프로그램을 다시 켜면 이어서 확인한다.
 - 원본 상품명이 바뀌면 그 원본의 키워드와 아직 안 쓴 이름 후보를 무효로 한다.
@@ -171,7 +171,8 @@ def estimate(db, cfg, ids, mode=None):
     rate = float(cfg.get("krw_rate") or 1330)
     usd = cost(model_of(cfg), in_tok, out_tok, mode == "batch")
     pending = db.one("SELECT COUNT(*) AS n FROM ctx_kw WHERE status='pending'")["n"]
-    return {"sources": n, "selected": len(ids), "have": len(ids) - n, "requests": math.ceil(n / per) if n else 0,
+    per_src = cost(model_of(cfg), EST_IN, EST_OUT * kw / 12, mode == "batch") * rate   # 원본 1개당 원
+    return {"per_1k_krw": round(per_src * 1000), "per_10k_krw": round(per_src * 10000),"sources": n, "selected": len(ids), "have": len(ids) - n, "requests": math.ceil(n / per) if n else 0,
             "in_tok": in_tok, "out_tok": out_tok, "usd": round(usd, 4), "krw": math.ceil(usd * rate), "rate": rate,
             "mode": mode, "model": model_of(cfg), "pending": pending, "has_key": has_key(cfg)}
 
@@ -294,7 +295,7 @@ def _client(cfg):
 
 
 def run_instant(db, ids, progress=None, should_stop=None):
-    """즉시 모드: 요청 10개 원본씩, 동시 3건. 실패한 요청의 원본은 재시도 대기."""
+    """즉시 모드: 요청 하나에 원본 10개, 요청은 한꺼번에(최대 50개 동시). 실패한 요청의 원본은 재시도 대기."""
     cfg = config.load()
     need = targets(db, ids)
     per = max(1, int(cfg.get("ctx_per_request") or 10))
@@ -322,7 +323,8 @@ def run_instant(db, ids, progress=None, should_stop=None):
         return sids, items, _text_of(resp.content), in_tok, out_tok
 
     done = 0
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    # 동시 요청: 고른 만큼 한꺼번에 (요청 한도에 걸리면 SDK가 잠깐 기다렸다 다시 보냄). 프로그램이 멈추지 않게 최대 50개씩.
+    with ThreadPoolExecutor(max_workers=max(1, min(50, len(groups)))) as pool:
         futs = []
         for g in groups:
             if should_stop and should_stop():

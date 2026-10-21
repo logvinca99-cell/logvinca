@@ -465,3 +465,74 @@ span.kw-chip { cursor: default; }
 .name-edit .add-name input { flex: 1; }
 .dict-folder { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 6px 0; font-size: 13px; }
 .dict-folder code { background: var(--panel-2); padding: 2px 6px; border-radius: 4px; }
+
+/* ── 대량 관리용 목록: 위에 붙는 선택·쪽 넘기기 막대, 큰 체크박스 */
+.grid input[type=checkbox], .listbar input[type=checkbox], .store-pick input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; vertical-align: middle; }
+.grid td.w-check, .grid th.w-check { width: 46px; text-align: center; }
+.listbar { position: sticky; top: 0; z-index: 6; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 4px 14px rgba(16, 24, 40, .06); display: flex; flex-direction: column; }
+.lb-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 14px; }
+.lb-row + .lb-row { border-top: 1px solid var(--line-2); padding-top: 8px; padding-bottom: 8px; }
+.lb-left, .lb-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.lb-check { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); user-select: none; }
+.lb-check:hover { border-color: var(--muted); }
+.lb-count { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 6px 0 12px; border-radius: 99px; background: var(--accent-soft); color: var(--accent-strong); font-weight: 700; }
+.lb-count button { border: 0; background: transparent; color: inherit; width: 24px; height: 24px; border-radius: 99px; cursor: pointer; font-size: 13px; line-height: 1; }
+.lb-count button:hover { background: rgba(0, 0, 0, .08); }
+.lb-none { color: var(--muted); }
+.btn.sm { height: 32px; padding: 0 12px; font-size: 13px; }
+.btn.outline { border-color: var(--accent); color: var(--accent-strong); background: var(--panel); }
+.btn.outline:hover { background: var(--accent-soft); }
+.lb-sep { width: 1px; height: 24px; background: var(--line); }
+.pg { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--text-2); }
+.pg b { color: var(--text); font-variant-numeric: tabular-nums; }
+.pg select { height: 30px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); padding: 0 6px; }
+.pg-nav { display: inline-flex; align-items: center; gap: 4px; }
+.pg-nav button { min-width: 30px; height: 30px; border: 1px solid var(--line); background: var(--panel); border-radius: 6px; cursor: pointer; }
+.pg-nav button:disabled { opacity: .4; cursor: default; }
+.pg-nav input { width: 64px; height: 30px; border: 1px solid var(--line); border-radius: 6px; text-align: center; font-variant-numeric: tabular-nums; }
+.pg-foot { padding: 10px 14px; border-top: 1px solid var(--line-2); display: flex; justify-content: flex-end; }
+.filters-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.price-range { display: inline-flex; align-items: center; gap: 6px; height: 36px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 0 10px; }
+.price-range input { width: 92px; border: 0; background: transparent; text-align: right; outline: none; }
+.row-acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.row-acts .btn { height: 28px; padding: 0 10px; font-size: 12.5px; font-weight: 600; }
+.go-store { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px; border-radius: 6px; border: 1px dashed var(--info); color: var(--info); background: var(--info-soft); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+
+/* 상품명 비교: 원본과 같은 자리 / 자리만 바뀜 / AI 단어 / 직접 넣은 단어 / 빠진 원본 단어 */
+.nd { line-height: 1.7; }
+.nd span { padding: 1px 3px; border-radius: 4px; }
+.nd .nd-same { color: var(--text); }
+.nd .nd-move { background: var(--info-soft); color: var(--info); }
+.nd .nd-ai { background: var(--accent-soft); color: var(--accent-strong); font-weight: 700; }
+.nd .nd-add { background: var(--warn-soft); color: var(--warn); font-weight: 700; }
+.nd-gone { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.nd-gone s { margin-right: 6px; }
+.nd-legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.nd-legend span { padding: 1px 6px; border-radius: 4px; }
+.orig-name { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+/* 복사본: 스토어 먼저 고르기 */
+.store-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.store-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 8px; box-shadow: var(--shadow); }
+.store-card:hover { border-color: var(--accent); }
+.store-card h3 { margin: 0; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+.store-card .sc-nums { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px 12px; font-size: 13px; color: var(--text-2); }
+.store-card .sc-nums b { font-variant-numeric: tabular-nums; color: var(--text); }
+.store-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.store-head .sel { font-weight: 700; font-size: 15px; height: 40px; }
+
+/* 설정 탭 */
+.set-tabs { display: flex; gap: 6px; flex-wrap: wrap; position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 6px 0; }
+.set-tabs button { height: 36px; padding: 0 14px; border-radius: 99px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; font-weight: 600; color: var(--text-2); }
+.set-tabs button.on { background: var(--text); color: var(--panel); border-color: var(--text); }
+
+/* 스토어 템플릿 */
+.tpl-imgs { display: flex; gap: 8px; flex-wrap: wrap; }
+.tpl-imgs figure { margin: 0; position: relative; width: 120px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel-2); }
+.tpl-imgs img { width: 100%; height: 90px; object-fit: cover; display: block; }
+.tpl-imgs button { position: absolute; top: 4px; right: 4px; border: 0; border-radius: 99px; width: 22px; height: 22px; background: rgba(0, 0, 0, .55); color: #fff; cursor: pointer; }
+.tpl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 900px) { .tpl-grid { grid-template-columns: 1fr; } }
+/* 복사본 목록: 상품명 비교 칸을 넓게 */
+.grid .w-round { width: 150px; }
+.grid .w-status { width: 170px; }

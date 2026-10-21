@@ -1,57 +1,55 @@
-/* 원본 상품 (인벤토리): 불러오기, 거르기, 고르기 → 상품명 만들기 / 등록 계획 */
+/* 원본 상품 (인벤토리): 가지고 있는 원본 DB 전체. 원본은 바꾸지 않고, 걸러서 골라 → 다른 스토어로 복사 */
 "use strict";
 
 const INV_TILES = [
   { key: "all", label: "전체", dot: "var(--text-2)", count: "all_" },
-  { key: "unlisted", label: "아직 0곳", dot: "var(--info)" },
-  { key: "partial", label: "1~2곳에 있음", dot: "var(--ok)" },
-  { key: "full", label: "3곳 다 참", dot: "var(--dup)" },
-  { key: "names_short", label: "이름 후보 3개 미만", dot: "var(--warn)" },
+  { key: "c0", label: "미복사", dot: "var(--info)" },
+  { key: "c1", label: "1회 복사", dot: "var(--ok)" },
+  { key: "c2", label: "2회 복사", dot: "var(--dup)" },
   { key: "warn", label: "경고 있음", dot: "var(--warn)" },
   { key: "invalid", label: "오류 (고쳐야 함)", dot: "var(--err)" },
 ];
 
 App.page("inventory", {
-  size: 100,
-
   async mount(el, params) {
-    this.f = { status: params.status || "all", q: "", store_missing: "", ...params };
+    this.f = { status: "", copies: "", q: "", price_min: "", price_max: "", store_missing: "", ...params };
+    this.tile = this.f.copies !== "" ? "c" + this.f.copies : this.f.status || "all";
     this.page = 0;
+    this.size = App.pageSize("inventory");
     this.sel = new Set();
     this.selAll = false;
     el.innerHTML = `<div class="page">
       <header class="page-head"><h1>원본 상품</h1>
         <div class="head-actions">
           <button class="btn ghost" id="i-revalidate" title="설정이나 카테고리가 바뀐 뒤 전체를 다시 검사">다시 검사</button>
-          <label class="btn"><input type="file" id="i-names-file" accept=".xlsx,.xlsm,.csv" hidden>상품명 파일 가져오기</label>
           <label class="btn primary"><input type="file" id="i-file" accept=".xlsx,.xlsm,.csv" hidden>
             <svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>원본 엑셀 불러오기</label>
         </div></header>
       <div class="tiles" id="i-tiles"></div>
-      <div class="toolbar">
-        <div class="filters">
-          <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
-            <input id="i-q" placeholder="상품명·판매자코드·카테고리"></div>
-          <select id="i-missing" class="sel"><option value="">스토어 조건 없음</option></select>
-        </div>
-        <div class="muted small" id="i-info"></div>
+      <div class="filters-row">
+        <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
+          <input id="i-q" placeholder="상품명·판매자코드·카테고리 검색"></div>
+        <span class="price-range" title="원본가 구간">원본가 <input id="i-pmin" type="number" min="0" step="1000" placeholder="최소">원 ~
+          <input id="i-pmax" type="number" min="0" step="1000" placeholder="최대">원</span>
+        <select id="i-missing" class="sel"><option value="">스토어 조건 없음</option></select>
+        <button class="btn ghost" id="i-reset">조건 지우기</button>
       </div>
-      <div class="actionbar" id="i-actions"></div>
+      <div class="listbar" id="i-bar"></div>
       <div class="card table-card">
         <table class="grid"><thead><tr>
-          <th class="w-check"><input type="checkbox" id="i-check-all" aria-label="이 쪽 모두 선택"></th>
+          <th class="w-check"></th>
           <th class="w-thumb"></th><th>원본 상품</th><th class="w-cat">카테고리</th>
-          <th class="w-num">원본가</th><th class="w-small" title="아직 안 쓴 상품명 후보">이름 후보</th>
-          <th class="w-copies" title="이 원본을 복사한 스토어. 원본당 최대 칸 수까지. 복사본은 원본 바로 아래 줄에 보입니다">복사</th>
+          <th class="w-num">원본가</th>
+          <th class="w-copies" title="이 원본을 복사한 스토어 (원본당 최대 ${App.state.settings.max_copies}곳). 복사본은 원본 바로 아래 줄에 보입니다">복사</th>
         </tr></thead><tbody id="i-rows"></tbody></table>
-        <div class="pager" id="i-pager"></div>
+        <div class="pg-foot"><div class="pg" id="i-pager"></div></div>
       </div>
     </div>`;
-    $("#i-missing").innerHTML += App.stores.map((s) =>
-      `<option value="${s.id}">${esc(s.name)}에 없는 것만</option>`).join("");
+    $("#i-missing").innerHTML += App.stores.map((s) => `<option value="${s.id}">${esc(s.name)}에 없는 것만</option>`).join("");
     $("#i-missing").value = this.f.store_missing || "";
+    $("#i-q").value = this.f.q || "";
     this.bind();
-    this.onDone = (t) => { if (["import", "names", "plan", "revalidate"].includes(t.kind)) this.load(); };
+    this.onDone = (t) => { if (["import", "plan", "revalidate", "ctxkw"].includes(t.kind)) this.load(); };
     App.on("task-done", this.onDone);
     await this.load();
   },
@@ -60,7 +58,6 @@ App.page("inventory", {
   query() {
     const f = { ...this.f };
     Object.keys(f).forEach((k) => (f[k] === "" || f[k] == null) && delete f[k]);
-    if (f.status === "all") delete f.status;
     return f;
   },
 
@@ -70,15 +67,34 @@ App.page("inventory", {
     this.rows = res.rows;
     this.total = res.total;
     const c = res.counts || {};
-    const mx = App.state.settings.max_copies || 2;
-    const label = { partial: mx > 2 ? `1~${mx - 1}곳에 있음` : "1곳에 있음", full: `${mx}곳 다 참`, names_short: `이름 후보 ${mx}개 미만` };
-    $("#i-tiles").innerHTML = tilesHtml(INV_TILES.map((t) => ({ ...t, label: label[t.key] || t.label })), { ...c, all: c.all_ }, this.f.status);
+    $("#i-tiles").innerHTML = tilesHtml(INV_TILES, { ...c, all: c.all_ }, this.tile);
     $("#i-rows").innerHTML = res.rows.length ? res.rows.map((p) => this.rowHtml(p)).join("")
-      : `<tr class="empty-row"><td colspan="8">${c.all_ ? "조건에 맞는 상품이 없습니다." :
+      : `<tr class="empty-row"><td colspan="6">${c.all_ ? "조건에 맞는 상품이 없습니다." :
         "아직 원본 상품이 없습니다. 오른쪽 위 <b>원본 엑셀 불러오기</b>를 누르거나 엑셀을 끌어다 놓으세요."}</td></tr>`;
-    $("#i-check-all").checked = res.rows.length > 0 && res.rows.every((p) => this.sel.has(p.id));
-    App.pager($("#i-pager"), { page: this.page, size: this.size, total: res.total, onPage: (p) => { this.page = p; this.load(); } });
-    this.renderActions();
+    this.renderBar();
+  },
+
+  pagerOpts() {
+    return { page: this.page, size: this.size, total: this.total,
+      onPage: (p) => { this.page = p; this.load(); window.scrollTo(0, 0); },
+      onSize: (n) => { this.size = n; App.savePageSize("inventory", n); this.page = 0; this.load(); } };
+  },
+
+  renderBar() {
+    const n = this.selAll ? this.total : this.sel.size;
+    App.listBar($("#i-bar"), {
+      ...this.pagerOpts(), count: n, selAll: this.selAll, what: "원본",
+      pageChecked: this.rows.length > 0 && this.rows.every((p) => this.sel.has(p.id)),
+      actions: [
+        { id: "ctx", label: "AI 맥락 키워드 받기", title: "고른 원본마다 AI에게 맥락 키워드를 한 번 받아 이름 후보를 만들어 둡니다 (실행 전에 비용 안내)" },
+        { id: "copy", label: "다른 스토어로 복사", primary: true },
+      ],
+      onPageCheck: (on) => { this.selAll = false; this.rows.forEach((p) => (on ? this.sel.add(p.id) : this.sel.delete(p.id))); this.load(); },
+      onAll: () => { this.selAll = true; this.sel.clear(); this.load(); },
+      onClear: () => { this.clearSel(); this.load(); },
+      onAction: (id) => { if (id === "ctx") App.ctxConfirm(this.target()); if (id === "copy") this.copyModal(); },
+    });
+    App.pagerBar($("#i-pager"), this.pagerOpts());
   },
 
   rowHtml(p) {
@@ -96,80 +112,59 @@ App.page("inventory", {
       p.warnings.length ? `<span class="flag warn" title="${esc(p.warnings.join("\n"))}">경고 ${p.warnings.length}</span>` : "",
       p.has_video ? `<span class="flag video">동영상</span>` : "",
     ].join("");
-    return `<tr data-id="${p.id}" class="${this.selAll || this.sel.has(p.id) ? "sel" : ""}">
-      <td class="w-check" data-stop><input type="checkbox" ${this.selAll || this.sel.has(p.id) ? "checked" : ""} ${this.selAll ? "disabled" : ""}></td>
+    const on = this.selAll || this.sel.has(p.id);
+    return `<tr data-id="${p.id}" class="${on ? "sel" : ""}">
+      <td class="w-check" data-stop><input type="checkbox" ${on ? "checked" : ""} ${this.selAll ? "disabled" : ""} aria-label="고르기"></td>
       <td>${img(p.thumb)}</td>
       <td><div class="p-name">${esc(p.name)}</div><div class="p-sub"><span>원본 #${p.id}</span>${p.seller_code ? `<span>${esc(p.seller_code)}</span>` : ""}${flags}</div></td>
       <td class="cat-td"><div class="cat">${cat.length > 2 ? `<div class="cat-top">${esc(cat.slice(0, -2).join(" › "))}</div>` : ""}${esc(cat.slice(-2).join(" › "))}</div></td>
       <td class="num">${num(p.price)}원</td>
-      <td class="num small-td ${p.valid && p.n_free_names < 3 ? "c-warn" : ""}">${num(p.n_free_names)}</td>
       <td>${slots}${p.deleted_copies ? `<div class="p-sub">내림 ${p.deleted_copies}</div>` : ""}</td></tr>`
       + p.copies.map((c) => this.copyRowHtml(c, p)).join("");
   },
 
-  /* 원본 바로 아래에 붙는 복사본 한 줄: 어느 스토어에, 무슨 이름·가격으로, 지금 상태, 올린 날, 판매 */
+  /* 원본 바로 아래에 붙는 복사본 한 줄 (누르면 그 스토어 복사본으로) */
   copyRowHtml(c, p) {
     const diff = p.price ? ((c.price - p.price) / p.price) * 100 : 0;
-    const link = c.store_url && c.channel_no && c.status !== "deleted"
-      ? ` · <a href="${esc(c.store_url.replace(/\/$/, ""))}/products/${esc(c.channel_no)}" target="_blank" rel="noopener" data-stop>스토어에서 보기</a>` : "";
     const msg = c.status === "fail" || (c.status === "success" && c.message) ? c.message : "";
-    return `<tr class="copy-row" data-copy="${c.id}">
+    return `<tr class="copy-row" data-copy="${c.id}" title="이 스토어의 복사본으로 가기">
       <td></td><td class="copy-arrow">↳</td>
       <td colspan="2"><div class="copy-name"><span class="code">${esc(c.code)}</span> <span class="muted">${esc(c.store)}</span> ${esc(c.name)}</div>
-        <div class="p-sub">${esc(c.seller_code || "관리코드는 등록할 때 붙음")} · ${c.round}회차${c.registered_at && c.channel_no ? ` · ${ymd(c.registered_at)} 올림 (${age(c.registered_at)})` : ""}${link}</div></td>
+        <div class="p-sub">${esc(c.seller_code || "관리코드는 등록할 때 붙음")} · ${c.round}회차${c.registered_at && c.channel_no ? ` · ${ymd(c.registered_at)} 올림 (${age(c.registered_at)})` : ""}</div></td>
       <td class="num">${num(c.price)}원<div class="p-sub r">${diff ? (diff > 0 ? "+" : "") + diff.toFixed(1) + "%" : "원본가"}</div></td>
-      <td class="num">${lockFlag(c)}${c.sold_count && !c.locked ? salesFlag(c) : ""}</td>
-      <td>${statusBadge(c.status, c.op)}${msg ? `<div class="s-msg ${c.status === "fail" ? "err" : ""}" title="${esc(msg)}">${esc(msg)}</div>` : ""}</td></tr>`;
+      <td>${statusBadge(c.status, c.op)}${lockFlag(c)}${msg ? `<div class="s-msg ${c.status === "fail" ? "err" : ""}" title="${esc(msg)}">${esc(msg)}</div>` : ""}</td></tr>`;
   },
 
-  renderActions() {
-    const n = this.selAll ? this.total : this.sel.size;
-    const target = this.selAll ? `조건에 맞는 <b>${num(this.total)}개 전체</b>` : n ? `<b>${num(n)}개</b> 선택` : "";
-    $("#i-actions").innerHTML = `<div class="ab-left">
-        ${target ? `<span>${target}</span><button class="link-btn" id="i-clear">선택 해제</button>`
-          : `<span class="muted">상품을 고르거나</span>`}
-        ${!this.selAll && this.total ? `<button class="link-btn" id="i-all">조건에 맞는 ${num(this.total)}개 모두 고르기</button>` : ""}
-      </div>
-      <div class="ab-right">
-        <button class="btn" id="i-kw" ${n ? "" : "disabled"} title="고른 원본의 상품명 속 단어마다 연관 키워드를 네이버 검색광고 API에서 받습니다 (재조합 때도 자동으로 받음)">네이버 키워드 모으기</button>
-        <button class="btn" id="i-ctx" ${n ? "" : "disabled"} title="고른 원본마다 AI에게 맥락 키워드를 한 번 받아 이름 후보 2개를 만듭니다 (실행 전에 비용 안내)">맥락 키워드 받기…</button>
-        <button class="btn" id="i-names" ${n ? "" : "disabled"}>상품명 후보 만들기…</button>
-        <button class="btn primary" id="i-plan" ${n ? "" : "disabled"}>다른 스토어로 복사…</button>
-      </div>`;
-    $("#i-info").textContent = this.total ? `${num(this.total)}개` : "";
-  },
-
-  target() {
-    return this.selAll ? this.query() : { ids: [...this.sel] };
-  },
-
+  target() { return this.selAll ? this.query() : { ids: [...this.sel] }; },
   targetCount() { return this.selAll ? this.total : this.sel.size; },
+  clearSel() { this.sel.clear(); this.selAll = false; },
+
+  setFilter(patch) { Object.assign(this.f, patch); this.page = 0; this.clearSel(); this.load(); },
 
   bind() {
     $("#i-file").addEventListener("change", (e) => { if (e.target.files[0]) App.upload("/api/sources/import", e.target.files[0]); e.target.value = ""; });
-    $("#i-names-file").addEventListener("change", (e) => { if (e.target.files[0]) App.upload("/api/names/import", e.target.files[0]); e.target.value = ""; });
     $("#i-revalidate").addEventListener("click", () => App.startTask(App.api("/api/sources/revalidate", { json: {} })));
     $("#i-tiles").addEventListener("click", (e) => {
       const t = e.target.closest("[data-filter]");
-      if (t) { this.f.status = t.dataset.filter; this.page = 0; this.clearSel(); this.load(); }
+      if (!t) return;
+      this.tile = t.dataset.filter;
+      const k = this.tile;
+      this.setFilter({ copies: /^c\d$/.test(k) ? k.slice(1) : "", status: ["warn", "invalid"].includes(k) ? k : "" });
     });
     let timer;
-    $("#i-q").addEventListener("input", (e) => {
-      clearTimeout(timer);
-      timer = setTimeout(() => { this.f.q = e.target.value.trim(); this.page = 0; this.clearSel(); this.load(); }, 300);
-    });
-    $("#i-missing").addEventListener("change", (e) => { this.f.store_missing = e.target.value; this.page = 0; this.clearSel(); this.load(); });
-    $("#i-check-all").addEventListener("change", (e) => {
-      this.selAll = false;
-      this.rows.forEach((p) => (e.target.checked ? this.sel.add(p.id) : this.sel.delete(p.id)));
-      this.load();
+    const later = (patch) => { clearTimeout(timer); timer = setTimeout(() => this.setFilter(patch), 350); };
+    $("#i-q").addEventListener("input", (e) => later({ q: e.target.value.trim() }));
+    $("#i-pmin").addEventListener("input", (e) => later({ price_min: e.target.value }));
+    $("#i-pmax").addEventListener("input", (e) => later({ price_max: e.target.value }));
+    $("#i-missing").addEventListener("change", (e) => this.setFilter({ store_missing: e.target.value }));
+    $("#i-reset").addEventListener("click", () => {
+      $("#i-q").value = $("#i-pmin").value = $("#i-pmax").value = ""; $("#i-missing").value = "";
+      this.tile = "all";
+      this.setFilter({ status: "", copies: "", q: "", price_min: "", price_max: "", store_missing: "" });
     });
     $("#i-rows").addEventListener("click", (e) => {
       const cr = e.target.closest("tr[data-copy]");
-      if (cr) {
-        if (!e.target.closest("a")) App.pages.listings.openListing(+cr.dataset.copy);
-        return;
-      }
+      if (cr) { App.pages.listings.goto(+cr.dataset.copy); return; }
       const tr = e.target.closest("tr[data-id]");
       if (!tr) return;
       const id = +tr.dataset.id;
@@ -178,155 +173,56 @@ App.page("inventory", {
         this.sel.has(id) ? this.sel.delete(id) : this.sel.add(id);
         tr.classList.toggle("sel", this.sel.has(id));
         $("input", tr).checked = this.sel.has(id);
-        this.renderActions();
+        this.renderBar();
         return;
       }
       this.openSource(id);
     });
-    $("#i-actions").addEventListener("click", (e) => {
-      const id = e.target.closest("button")?.id;
-      if (id === "i-clear") { this.clearSel(); this.load(); }
-      if (id === "i-all") { this.selAll = true; this.sel.clear(); this.load(); }
-      if (id === "i-names") this.namesModal();
-      if (id === "i-kw") App.startTask(App.api("/api/keywords/collect", { json: { filter: this.target() } }));
-      if (id === "i-plan") this.planModal();
-      if (id === "i-ctx") App.ctxConfirm(this.target());
-    });
   },
 
-  clearSel() { this.sel.clear(); this.selAll = false; },
+  // ── 다른 스토어로 복사: 고른 원본을 고른 스토어(1~2곳)에 그대로 복사
 
-  // ── 상품명 후보 만들기
-
-  namesModal() {
-    const s = App.state.settings;
+  async copyModal() {
+    const stores = (await App.loadStores()).filter((s) => s.enabled);
     const n = this.targetCount();
-    const PRICE = { "claude-opus-5-5": [4, 20], "claude-sonnet-5-5": [2, 10], "claude-haiku-5-5": [0.1, 0.5], "claude-fable-5-1": [10, 50] };
-    App.openModal({
-      title: `상품명 후보 만들기 · 상품 ${num(n)}개`,
-      body: `<div class="radio-cards">
-          <label><input type="radio" name="method" value="recombine" checked>
-            <div><b>재조합</b><span class="muted small">원본 상품명의 단어를 고르고 순서를 바꿔 만듭니다. 무료·즉시.
-            단어가 적은 상품은 다 못 채울 수 있습니다.</span></div></label>
-          <label><input type="radio" name="method" value="ai">
-            <div><b>AI로 짓기</b><span class="muted small">Claude(${esc(s.ai_model)})가 원본을 보고 새로 짓습니다. 유료.
-            ${s.has_anthropic_api_key || App.state.fake_api ? "" : '<br><span class="c-err">설정에서 API 키를 먼저 넣어야 합니다.</span>'}</span></div></label>
-        </div>
-        <label class="field" id="per-label">원본마다 안 쓴 후보가 몇 개가 되도록 채울까요?
-          <input type="number" id="per" min="1" max="100" value="5"></label>
-        <p class="muted small" id="cost"></p>
-        <p class="muted small">모든 이름은 33개 스토어 전체에서 겹치지 않게 저장됩니다. 이미 있는 이름과 같으면 버립니다.</p>`,
-      buttons: [{ label: "취소" }, {
-        label: "만들기", primary: true, onClick: async (b) => {
-          const method = $("input[name=method]:checked", b).value;
-          const r = await App.startTask(App.api("/api/names/generate", {
-            json: { ...this.target(), method, per_source: +$("#per", b).value },
-          }));
-          return !!r;
-        },
-      }],
-    });
-    const upd = () => {
-      const ai = $("input[name=method]:checked").value === "ai";
-      $("#per-label").firstChild.textContent = ai ? "원본마다 새 이름을 몇 개 지을까요? " : "원본마다 안 쓴 후보가 몇 개가 되도록 채울까요? ";
-      const per = +$("#per").value || 1;
-      const [pin, pout] = PRICE[s.ai_model] || [4, 20];
-      const tokIn = n * 90 + Math.ceil(n / (s.ai_products_per_call || 20)) * 400;
-      const tokOut = n * per * 35 * 1.3;
-      const usd = (tokIn * pin + tokOut * pout) / 1e6;
-      $("#cost").innerHTML = ai ? `예상 비용 약 <b>$${usd < 1 ? usd.toFixed(2) : num(Math.round(usd))}</b> (어림값, 실제와 다를 수 있음) · 모델은 설정에서 바꿀 수 있습니다.` : "";
-    };
-    $$("#m-body input").forEach((x) => x.addEventListener("input", upd));
-    upd();
-  },
-
-  // ── 등록 계획
-
-  async planModal() {
-    const stores = await App.loadStores();
-    const n = this.targetCount();
+    const mx = App.state.settings.max_copies || 2;
     App.openModal({
       title: `다른 스토어로 복사 · 원본 ${num(n)}개`,
       wide: true,
-      body: `<div class="plan">
-        <div>
-          <div class="sec-head"><h3>복사할 스토어</h3>
-            <span><button class="link-btn" id="p-all">모두</button> · <button class="link-btn" id="p-none">해제</button></span></div>
-          <div class="store-pick">${stores.filter((s) => s.enabled).map((s) => `
-            <label class="sp-row"><input type="checkbox" value="${s.id}" ${s.free > 0 ? "checked" : ""}>
-              <span class="sp-name">${esc(s.name)}${s.has_keys ? "" : ' <span class="flag warn">키 없음</span>'}</span>
-              ${usageBar(s.used, s.capacity)}<span class="sp-free ${s.free < 100 ? "c-err" : "muted"}">남은 ${num(s.free)}</span></label>`).join("")
-            || '<p class="muted">스토어가 없습니다. 스토어 화면에서 먼저 추가하세요.</p>'}</div>
-        </div>
-        <div class="plan-opts">
-          <h3>나누는 방법</h3>
-          <div class="radio-cards">
-            <label><input type="radio" name="mode" value="spread" checked><div><b>원본마다 <input type="number" id="p-per" min="1" max="${App.state.settings.max_copies}" value="${App.state.settings.max_copies}" class="inline-num">곳이 되도록 골고루</b>
-              <span class="muted small">원본을 무작위 순서로 하나씩, 배정 수가 적고 이 원본의 다른 스토어와 <b>같이 묶인 적이 적은</b> 스토어를 고릅니다
-                (점수 = 배정 수 + 3 × 같이 묶인 횟수, 이미 등록된 상품·이전 계획 포함). 스토어끼리 상품 구성이 겹치지 않게 합니다.</span>
-              <button type="button" class="link-btn" id="p-preview">미리보기</button></div></label>
-            <label><input type="radio" name="mode" value="all"><div><b>빈 칸을 모두 채우기</b>
-              <span class="muted small">원본마다 남은 칸(최대 ${App.state.settings.max_copies}곳)을 고른 스토어로 채웁니다.</span></div></label>
-          </div>
-          <label class="check bait-check"><input type="checkbox" id="p-bait" ${App.state.settings.bait_default ? "checked" : ""}>
-            <span><b>도둑방지로 올리기</b> — 처음 올릴 때 판매가 <b>+${num(App.state.settings.bait_amount)}원</b>. 원래 가격으로는 도둑방지·복사본 화면에서 직접 되돌립니다. 할인은 도둑방지 전 가격 기준.</span></label>
-          <label class="field">계획 이름 <span class="muted">(나중에 등록 화면에서 이 이름으로 거를 수 있음)</span>
-            <input id="p-title" placeholder="예: 10월 3주차 공구류"></label>
-          <div class="plan-sum" id="p-sum"></div>
-          <div id="p-pv"></div>
-          <p class="muted small">· 원본 하나는 최대 <b>${App.state.settings.max_copies}곳</b>까지만 올라갑니다 (내린 스토어는 세지 않음).<br>
-            · 전에 내렸던 스토어에 다시 계획하면 같은 이름·가격으로 다음 회차가 됩니다.<br>
-            · 상품명: 맥락 키워드로 만들어 둔 이름 후보가 있으면 스토어가 정해진 복사본에 하나씩 <b>바로 배정</b>합니다. 없으면 원본 상품명 그대로 만들어지고, 복사본 화면 '이름 변경 필요'에서 바꿔야 올라갑니다.<br>
-            · 가격: 스토어마다 원본가 ±${App.state.settings.price_jitter_pct}% 안에서 정하고 ${num(App.state.settings.price_round)}원 단위로 올림합니다.<br>
-            · 스토어 한도를 넘는 건은 만들지 않습니다.</p>
-        </div></div>`,
+      body: `<div class="form">
+        <p class="muted small" style="margin:0">고른 원본을 <b>고른 스토어에 그대로</b> 복사합니다. 스토어는 ${mx}곳까지 고를 수 있습니다.
+          원본 하나는 최대 ${mx}곳(내린 스토어는 세지 않음)이라, 이미 그 스토어에 있거나 ${mx}회를 넘는 원본은 빼고 몇 개 뺐는지 알려 드립니다.</p>
+        <div class="store-pick">${stores.map((s) => `
+          <label class="sp-row"><input type="checkbox" value="${s.id}">
+            <span class="sp-name">${esc(s.name)}${s.has_keys ? "" : ' <span class="flag warn">키 없음</span>'}</span>
+            ${usageBar(s.used, s.capacity)}<span class="sp-free ${s.free < 100 ? "c-err" : "muted"}">남은 자리 ${num(s.free)}</span></label>`).join("")
+          || '<p class="muted">스토어가 없습니다. 스토어 화면에서 먼저 추가하세요.</p>'}</div>
+        <label class="check bait-check"><input type="checkbox" id="p-bait" ${App.state.settings.bait_default ? "checked" : ""}>
+          <span><b>도둑방지로 올리기</b> · 처음 올릴 때 판매가 +${num(App.state.settings.bait_amount)}원 (원래 가격으로는 직접 되돌림)</span></label>
+        <div class="plan-sum" id="p-sum"></div>
+        <p class="muted small">상품명: AI 맥락 키워드로 만들어 둔 이름 후보가 있으면 바로 붙고, 없으면 복사본 화면에서 '이름 변경 필요'로 보입니다.
+          가격은 스토어 템플릿의 가격 조정과 ±${App.state.settings.price_jitter_pct}%, 100원 단위 올림.</p></div>`,
       buttons: [{ label: "취소" }, {
-        label: "복사 계획 만들기", primary: true, onClick: async (b) => {
+        label: "복사하기", primary: true, onClick: async (b) => {
           const store_ids = $$(".store-pick input:checked", b).map((x) => +x.value);
           if (!store_ids.length) { App.toast("스토어를 하나 이상 고르세요.", true); return false; }
           const r = await App.startTask(App.api("/api/plans", {
-            json: { ...this.target(), store_ids, mode: $("input[name=mode]:checked", b).value,
-                    per_product: +$("#p-per", b).value || 1, title: $("#p-title", b).value.trim(), bait: $("#p-bait", b).checked,
-                    seed: this.pvSeed ?? undefined },
+            json: { ...this.target(), store_ids, mode: "all", bait: $("#p-bait", b).checked },
           }));
-          if (r) { this.clearSel(); }
+          if (r) this.clearSel();
           return !!r;
         },
       }],
     });
     const sum = () => {
       const picked = $$(".store-pick input:checked");
-      const free = picked.reduce((a, x) => a + (stores.find((s) => s.id === +x.value)?.free || 0), 0);
-      const mode = $("input[name=mode]:checked").value;
-      const per = +$("#p-per").value || 1;
-      const mx = App.state.settings.max_copies || 2;
-      const want = n * Math.min(mode === "all" ? mx : Math.min(per, mx), picked.length);
-      $("#p-sum").innerHTML = `최대 <b>${num(want)}건</b> 계획 · 고른 스토어 ${picked.length}곳의 남은 자리 합계 ${num(free)}`
-        + (want > free ? ` <span class="c-err">(자리가 모자라 일부만 계획됩니다)</span>` : "");
+      $$(".store-pick input").forEach((x) => { x.disabled = !x.checked && picked.length >= mx; });
+      const names = picked.map((x) => stores.find((s) => s.id === +x.value)?.name).filter(Boolean);
+      $("#p-sum").innerHTML = picked.length
+        ? `원본 <b>${num(n)}개</b> → <b>${names.map(esc).join(", ")}</b> · 최대 <b>${num(n * picked.length)}건</b> 복사`
+        : `복사할 스토어를 고르세요 (최대 ${mx}곳).`;
     };
-    this.pvSeed = null;
-    const preview = async () => {
-      const store_ids = $$(".store-pick input:checked").map((x) => +x.value);
-      if (!store_ids.length) return App.toast("스토어를 하나 이상 고르세요.", true);
-      $("#p-pv").innerHTML = `<p class="muted small">미리보기 계산 중…</p>`;
-      try {
-        const pv = await App.api("/api/plans/preview", { json: { ...this.target(), store_ids, per_product: +$("#p-per").value || 1 } });
-        this.pvSeed = pv.seed;   // 이 미리보기와 같은 배정으로 계획을 만든다
-        $("#p-pv").innerHTML = `<div class="pv">
-          <p><b>미리보기</b> · 원본 ${num(pv.sources)}개 → 복사본 ${num(pv.copies)}건 · 스토어별 배정 차이 ${pv.spread_pct}%
-            · 두 스토어가 같은 원본을 공유하는 비율 최대 <b class="${pv.max_share_pct > 5 ? "c-err" : ""}">${pv.max_share_pct}%</b></p>
-          ${pv.top_pairs.length ? `<p class="muted small">공유 비율이 가장 높은 스토어 쌍: ${pv.top_pairs.map((t) => `${esc(t.a)}·${esc(t.b)} ${t.pct}% (${num(t.shared)}개)`).join(" / ")}</p>` : ""}
-          <details><summary class="muted small">스토어별 배정 수</summary><table class="grid compact"><thead><tr><th>스토어</th><th class="num">이번 계획</th><th class="num">합계(기존 포함)</th></tr></thead>
-            <tbody>${pv.per_store.map((x) => `<tr><td>${esc(x.name)}</td><td class="num">${num(x.added)}</td><td class="num">${num(x.total)}</td></tr>`).join("")}</tbody></table></details>
-          <p class="muted small">공유 비율 = 두 스토어에 같이 올라간 원본 수 ÷ 두 스토어 중 적은 쪽 상품 수. 스토어·개수를 바꾸면 다시 미리보기 하세요.</p></div>`;
-      } catch (e) { $("#p-pv").innerHTML = ""; App.toast(e.message, true); }
-    };
-    $("#p-preview").addEventListener("click", preview);
-    $$(".store-pick input, #p-per, input[name=mode]").forEach((x) => x.addEventListener("change", () => { this.pvSeed = null; }));
-    $("#p-all").addEventListener("click", () => { $$(".store-pick input").forEach((x) => (x.checked = true)); sum(); });
-    $("#p-none").addEventListener("click", () => { $$(".store-pick input").forEach((x) => (x.checked = false)); sum(); });
-    $$("#m-body input").forEach((x) => x.addEventListener("input", sum));
-    $("#p-per").addEventListener("input", (e) => { if (+e.target.value > (App.state.settings.max_copies || 2)) e.target.value = App.state.settings.max_copies; });
+    $$(".store-pick input").forEach((x) => x.addEventListener("change", sum));
     sum();
   },
 
@@ -340,10 +236,9 @@ App.page("inventory", {
       title: d.name, sub: `원본 #${d.id}${d.seller_code ? " · " + d.seller_code : ""} · 원본가 ${num(d.price)}원`, tab,
       tabs: [
         { key: "info", label: "정보", render: (b) => self.renderInfo(b, d) },
+        { key: "stores", label: `복사본 ${d.listings.filter((l) => l.status !== "deleted").length}/${d.max_copies}`, render: (b) => self.renderListings(b, d) },
+        { key: "ctx", label: `AI 맥락 키워드 ${d.ctx.usable.length}`, render: (b) => self.renderCtx(b, d) },
         { key: "names", label: `상품명 후보 ${d.names.length}`, render: (b) => self.renderNames(b, d) },
-        { key: "ai", label: `AI 단어 ${d.ai.words.filter((w) => w.used).length}`, render: (b) => self.renderAi(b, d) },
-        { key: "kw", label: `네이버 키워드 ${d.kw.words.filter((w) => w.used).length}`, render: (b) => self.renderKw(b, d) },
-        { key: "stores", label: `스토어 ${d.listings.filter((l) => l.status !== "deleted").length}/${d.max_copies}`, render: (b) => self.renderListings(b, d) },
         { key: "detail", label: "상세페이지", render: (b) => {
           b.innerHTML = `<iframe class="preview" sandbox referrerpolicy="no-referrer"></iframe>`;
           $("iframe", b).srcdoc = `<meta name="referrer" content="no-referrer"><style>body{margin:0}img{max-width:100%}</style>` + d.detail_html;
@@ -369,73 +264,28 @@ App.page("inventory", {
       (d.tags_list.length ? `<div><h3 class="sec-title">엑셀 태그</h3><div class="tags">${d.tags_list.map((t) => `<span>${esc(t)}</span>`).join("")}</div></div>` : "");
   },
 
-  renderAi(b, d) {
-    const a = d.ai;
-    const used = a.words.filter((w) => w.used);
-    const via = a.via === "bank" ? "단어 은행에서 채움" : "AI에게 받음";
+  renderCtx(b, d) {
+    const k = d.ctx;
+    const st = { ok: "받음", pending: "일괄 처리 중", retry: "재시도 대기", invalid: "원본 상품명이 바뀌어 다시 받아야 함" }[k.status] || "아직 안 받음";
     b.innerHTML = `<div class="kw-src">
-      <p class="muted small">재조합할 때 처음 한 번 받아 저장한 단어입니다. 이름은 이 단어로 재조합이 스토어마다 따로 조립합니다.
-        ${a.enabled ? "" : ` · <span class="c-err">설정에서 '재조합에 AI 단어 쓰기'가 꺼져 있음</span>`}
-        ${a.has_key ? "" : ` · <span class="c-err">설정에 Anthropic API 키가 없음</span>`}</p>
-      <h3 class="sec-title">AI 단어 ${a.asked_at ? `<span class="muted small">· ${ymd(a.asked_at)} ${via}</span>` : ""}
-        ${a.asked_at ? `<button class="link-btn" id="ai-reset">다시 받기</button>` : ""}</h3>
-      ${a.words.length ? `<p class="muted small">재조합에 쓰는 단어 ${used.length}개 (초록). 누르면 이 원본에서 끔 · Shift+클릭은 모든 원본에서 끔.
-        '→'는 원본의 그 단어 대신 넣을 수 있는 말, 나머지는 덧붙이는 말.</p>
-        <div class="kw-chips">${a.words.map((w) => `<button class="kw-chip ${w.used ? "used" : "off"}" data-word="${esc(w.word)}" data-off="${w.off || w.all_off ? 1 : 0}" data-all="${w.all_off ? 1 : 0}"
-          title="${esc(w.used ? "누르면 끔" : w.why + (w.off || w.all_off ? " (누르면 켬)" : ""))}">${w.for_token ? `<small>${esc(w.for_token)} →</small>` : ""}${esc(w.word)}${w.used ? "" : `<small>${esc(w.why)}</small>`}</button>`).join("")}</div>`
-        : `<p class="muted small">${a.asked_at ? "받은 단어가 없습니다." : "아직 안 받았습니다. 복사본 화면에서 이 원본의 복사본을 재조합하면 받습니다."}</p>`}
+      <p class="muted small">AI가 이 원본에 준 맥락 키워드(쓰는 장소·사람·용도·상황)입니다. 이름 = [원본 앞 단어] + [이 키워드] + [원본 나머지 단어].
+        상태: <b>${st}</b>${k.at ? ` · ${ymd(k.at)}` : ""}${k.error ? ` · <span class="c-err">${esc(k.error)}</span>` : ""}</p>
+      ${k.words.length ? `<div class="kw-chips">${k.words.map((w) => `<span class="kw-chip ${k.usable.includes(w) ? "used" : "off"}"
+          title="${k.usable.includes(w) ? "이름에 쓰는 키워드" : "원본에 있는 말·금지어·막연한 말이라 안 씀"}">${esc(w)}</span>`).join("")}</div>`
+        : `<button class="btn" id="ctx-one">이 원본 맥락 키워드 받기</button>`}
     </div>`;
-    const reload = async () => { const nd = await App.api(`/api/sources/${d.id}`); Object.assign(d, nd); this.renderAi(b, d); };
-    $(".kw-chips", b)?.addEventListener("click", async (e) => {
-      const c = e.target.closest("[data-word]");
-      if (!c) return;
-      const turnOff = c.dataset.off !== "1";
-      const all = turnOff ? e.shiftKey : c.dataset.all === "1";
-      try { await App.api(`/api/sources/${d.id}/aiwords`, { json: { word: c.dataset.word, off: turnOff, all } }); await reload(); }
-      catch (err) { App.toast(err.message, true); }
-    });
-    $("#ai-reset", b)?.addEventListener("click", async () => {
-      if (!confirm("이 원본의 AI 단어를 지울까요? 다음에 재조합할 때 다시 받습니다 (AI 비용이 다시 듭니다).")) return;
-      await App.api(`/api/sources/${d.id}/aiwords`, { json: { reset: true } });
-      await reload();
-    });
-  },
-
-  renderKw(b, d) {
-    const k = d.kw;
-    const used = k.words.filter((w) => w.used);
-    b.innerHTML = `<div class="kw-src">
-      <p class="muted small">연관 키워드를 받는 단어: ${k.tokens.map((t) => `<b>${esc(t)}</b>`).join(", ") || "없음"}
-        ${k.has_key ? "" : ` · <span class="c-err">설정에 검색광고 API 키가 없음</span>`}</p>
-      <h3 class="sec-title">네이버 연관 키워드에서 온 새 단어 ${k.collected_at ? `<span class="muted small">· ${ymd(k.collected_at)} 받음</span>` : ""}
-        <button class="link-btn" id="kw-one">${k.collected_at ? "다시 받기" : "지금 받기"}</button></h3>
-      ${k.words.length ? `<p class="muted small">재조합에 쓰는 단어 ${used.length}개 (초록). 회색은 쓰지 않는 단어 — 이유에 마우스를 올리세요. 숫자 = 연관 키워드 월 검색량.</p>
-        <div class="kw-chips">${k.words.map((w) => `<span class="kw-chip ${w.used ? "used" : "off"}" title="${esc(w.used ? `연관 키워드 월 검색량 ${num(w.malls)}` : w.why)}">${esc(w.word)}<small>${num(w.malls)}</small>${w.used ? "" : `<small>${esc(w.why)}</small>`}</span>`).join("")}</div>`
-        : `<p class="muted small">${k.collected_at ? "받은 새 단어가 없습니다." : "아직 안 받았습니다 (재조합하거나 '지금 받기'를 누르면 받음)."}</p>`}
-    </div>`;
-    const reload = async () => { const nd = await App.api(`/api/sources/${d.id}`); Object.assign(d, nd); this.renderKw(b, d); };
-    $("#kw-one", b).addEventListener("click", async () => {
-      const t = await App.startTask(App.api("/api/keywords/collect", { json: { source_id: d.id } }));
-      if (t) App.on("task-done", async function h(x) { if (x.kind === "keywords") { App.off("task-done", h); await reload(); } });
-    });
+    $("#ctx-one", b)?.addEventListener("click", () => App.ctxConfirm({ ids: [d.id] }));
   },
 
   renderNames(b, d) {
-    const free = d.names.filter((n) => !n.listing_id && (n.origin !== "original" || App.state.settings.use_original_name)).length;
-    b.innerHTML = `<p class="muted small" style="margin:0">안 쓴 후보 <b>${free}개</b>. 등록 계획을 만들 때 스토어마다 하나씩 씁니다.
-      모든 이름은 33개 스토어 전체에서 겹치지 않습니다.</p>
-      <div class="add-name"><input id="n-new" placeholder="직접 이름 추가"><button class="btn" id="n-add">추가</button></div>
+    b.innerHTML = `<p class="muted small" style="margin:0">이 원본으로 만든 이름입니다. 모든 이름은 33개 스토어 전체에서 겹치지 않습니다.</p>
       <ul class="name-list">${d.names.map((n) => `<li>
         <span class="org org-${n.origin}">${ORIGIN[n.origin] || n.origin}</span>
         <span class="nm">${esc(n.name)}</span>
         ${n.listing_id ? `<span class="muted small">${esc(n.store_name)} · ${STATUS[n.status] || ""}</span>`
-          : n.origin === "original" && !App.state.settings.use_original_name ? `<span class="muted small">원본 (사용 안 함)</span>`
+          : n.origin === "original" ? `<span class="muted small">원본</span>`
           : `<button class="link-btn danger-text" data-del="${n.id}">지우기</button>`}</li>`).join("")}</ul>`;
     const reload = async () => { const nd = await App.api(`/api/sources/${d.id}`); Object.assign(d, nd); this.renderNames(b, d); this.load(); };
-    $("#n-add", b).addEventListener("click", async () => {
-      try { await App.api("/api/names", { json: { source_id: d.id, name: $("#n-new", b).value } }); await reload(); }
-      catch (e) { App.toast(e.message, true); }
-    });
     $(".name-list", b).addEventListener("click", async (e) => {
       const id = e.target.dataset.del;
       if (!id) return;
@@ -444,18 +294,18 @@ App.page("inventory", {
   },
 
   renderListings(b, d) {
-    const link = (l) => l.store_url && l.channel_no
-      ? ` <a href="${esc(l.store_url.replace(/\/$/, ""))}/products/${esc(l.channel_no)}" target="_blank" rel="noopener">보기</a>` : "";
     const live = d.listings.filter((l) => l.status !== "deleted").length;
-    b.innerHTML = `<p class="muted small" style="margin:0">이 원본은 <b>${live}/${d.max_copies}곳</b>에 있습니다. 판매자 관리코드는 '스토어코드-원본번호-회차'입니다.</p>` +
+    b.innerHTML = `<p class="muted small" style="margin:0">이 원본은 <b>${live}/${d.max_copies}곳</b>에 있습니다. 줄을 누르면 그 스토어 복사본으로 갑니다.</p>` +
       (d.listings.length ? `<table class="opt-table"><tr><th>스토어</th><th>등록 상품명</th><th>관리코드·회차</th><th>올린 날</th><th>상태</th></tr>
-      ${d.listings.map((l) => `<tr class="${l.status === "deleted" ? "off" : ""}"><td>${esc(l.store_name)}</td><td>${esc(l.name)}<div class="p-sub">${num(l.price)}원</div></td>
+      ${d.listings.map((l) => `<tr class="${l.status === "deleted" ? "off" : "clickable"}" data-go="${l.id}"><td>${esc(l.store_name)}</td>
+        <td>${nameDiff(l.name, d.name, d.ctx.words, l.name_origin)}<div class="p-sub">${num(l.price)}원</div></td>
         <td>${esc(l.seller_code || "-")}<div class="p-sub">${l.round}회차</div></td>
         <td>${l.status === "deleted" ? `내림 ${ymd(l.deleted_at)}` : l.registered_at ? `${ymd(l.registered_at)}<div class="p-sub">${age(l.registered_at)}</div>` : "-"}</td>
-        <td>${statusBadge(l.status, l.op)}${link(l)}</td></tr>`).join("")}</table>`
-        : `<p class="muted">아직 어느 스토어에도 계획되지 않았습니다.</p>`) +
+        <td>${statusBadge(l.status, l.op)}</td></tr>`).join("")}</table>${ND_LEGEND}`
+        : `<p class="muted">아직 어느 스토어에도 복사하지 않았습니다.</p>`) +
       (d.history.length ? `<h3 class="sec-title">지난 회차 (지운 기록)</h3><table class="opt-table"><tr><th>스토어</th><th>관리코드</th><th>상품명</th><th>올린 날</th><th>지운 날</th><th>이유</th></tr>
         ${d.history.map((h) => `<tr><td>${esc(h.store_name)}</td><td>${esc(h.seller_code)}</td><td>${esc(h.name)}</td>
         <td>${ymd(h.registered_at)}</td><td>${ymd(h.deleted_at)}</td><td>${h.reason === "refresh" ? "최신화" : "내리기"}</td></tr>`).join("")}</table>` : "");
+    $$("tr[data-go]", b).forEach((tr) => tr.addEventListener("click", () => { App.closeDrawer(); App.pages.listings.goto(+tr.dataset.go); }));
   },
 });
