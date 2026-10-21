@@ -319,6 +319,9 @@ class Client:
                 out[st] = out.get(st, 0) + 1
                 if disp:   # 전시 상태: ON 전시 중 · SUSPENSION 전시중지(고구마) · WAIT 전시 대기
                     out["_disp_" + disp] = out.get("_disp_" + disp, 0) + 1
+                elif "_keys" not in out:   # 전시 상태 항목을 못 찾음 → 어떤 항목이 오는지 남겨 둠 (원인 찾기용)
+                    ch = (it.get("channelProducts") or [{}])[0]
+                    out["_keys"] = sorted(ch.keys())[:60]
                 total += 1
             pages = int(j.get("totalPages") or 0)
             if not items or page >= pages or page >= 200:

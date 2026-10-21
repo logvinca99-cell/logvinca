@@ -44,7 +44,8 @@ DEFAULTS = {
 
     # ── 주문(판매 이력): 판매자센터 주문을 커머스API로 가져온다
     # 프로그램이 켜져 있는 동안 이 간격(분)마다 모든 스토어 주문을 가져옴 (0이면 끔)
-    "orders_auto_sync_minutes": 60,
+    "orders_auto_sync_minutes": 0,   # 0 = 끔. 최신화·내리기 전에는 늘 그 스토어 주문을 먼저 가져옴
+    "orders_auto_off_v1": True,
     # 처음 가져올 때 며칠 전부터
     "orders_initial_days": 30,
     # 판매 이력이 있는 복사본은 자동으로 잠금 (최신화·내리기로 지우지 않음)
@@ -203,6 +204,8 @@ def load():
             saved["max_copies"] = 2   # 맥락 키워드 방식부터 원본당 최대 2곳 (예전 기본 3을 쓰던 설정도 바꿈)
         if "kipris_block_pending" not in saved:
             saved.pop("use_category_words", None)  # 이 버전부터 상품명에 카테고리를 쓰지 않음 (예전 설정도 끔)
+        if "orders_auto_off_v1" not in saved:
+            saved["orders_auto_sync_minutes"] = 0   # 주문은 다른 프로그램으로 봄 → 자동 가져오기 끔 (최신화·내리기 전에만 가져옴)
         cfg.update(saved)
     cfg["customs_tax_type"] = customs_code(cfg.get("customs_tax_type"))
     return cfg

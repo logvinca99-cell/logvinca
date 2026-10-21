@@ -121,7 +121,9 @@ App.page("stores", {
       title: `${s.name} · 고구마 상품 수`,
       body: `<div class="form"><p class="muted small" style="margin:0">전시중지한 상품(고구마)도 스토어 한도를 차지합니다. 연결 확인 때 네이버에서
           전시중지 상품 수를 받아 자동으로 넣습니다${s.naver_suspended != null ? ` (지난 확인: <b>${num(s.naver_suspended)}개</b>, 그 외 ${num(s.naver_sale)}개)` : " (아직 확인 전)"}.
-          다르면 직접 넣으세요. 비우면 자동 값으로 돌아갑니다.</p>
+          다르면 직접 넣으세요. 비우면 자동 값으로 돌아갑니다.</p>${(() => { let st = {}; try { st = JSON.parse(s.naver_status || "{}"); } catch (e) { /* 없음 */ }
+          return st._keys ? `<p class="c-warn small" style="margin:0">지난 연결 확인에서 네이버가 전시 상태를 보내지 않았습니다. 아래 줄을 그대로 보내 주시면 고치겠습니다.<br>
+            <code class="keys">${esc(st._keys.join(", "))}</code></p>` : ""; })()}
         <label class="field">고구마 상품 수<input type="number" id="g-n" min="0" value="${s.goguma_manual ?? ""}" placeholder="자동 (${num(s.naver_suspended || 0)})" autofocus></label></div>`,
       buttons: [{ label: "취소" }, { label: "저장", primary: true, onClick: async (m) => {
         try { await App.api(`/api/stores/${s.id}/goguma`, { json: { count: $("#g-n", m).value } }); await this.load(); App.refreshState(); }

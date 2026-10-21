@@ -608,6 +608,7 @@ function naverStatusLine(s) {
   try { st = JSON.parse(s.naver_status || "{}"); } catch (e) { st = {}; }
   const parts = Object.entries(st).filter(([k, v]) => !k.startsWith("_") && v).sort((a, b) => b[1] - a[1])
     .map(([k, v]) => `${NAVER_STATUS[k] || k} ${num(v)}`);
-  const disp = st._disp_SUSPENSION != null ? ` · 전시중지(고구마) ${num(st._disp_SUSPENSION)}` : "";
+  const hasDisp = Object.keys(st).some((k) => k.startsWith("_disp_"));
+  const disp = hasDisp ? ` · 전시중지(고구마) ${num(st._disp_SUSPENSION || 0)}` : st._keys ? " · ⚠ 전시 상태를 못 받음 (고구마는 ✎로 직접)" : "";
   return parts.length ? `네이버 ${num(st._total || s.naver_count)}개: ${parts.join(" · ")}${disp}` : "";
 }
