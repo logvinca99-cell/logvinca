@@ -25,6 +25,10 @@ def _filter_from(src):
     f = {k: src.get(k) for k in FILTER_KEYS if src.get(k) not in (None, "")}
     if src.get("ids"):
         f["ids"] = [int(i) for i in src["ids"]]
+    if src.get("kinds"):
+        f["kinds"] = [str(k) for k in src["kinds"]]
+    if src.get("visible"):
+        f["visible"] = True
     return f
 
 
@@ -123,7 +127,7 @@ def create_app(db=None):
         v = body()
         ints = ("recombine_fixed_prefix", "recombine_new_min", "recombine_new_max", "max_word_repeat", "opendict_daily_limit", "kipris_limit", "bait_amount", "kw_daily_limit", "kw_min_volume", "kw_related_max", "kw_refresh_days", "kw_max_words", "core_scan_words", "orders_auto_sync_minutes", "orders_initial_days", "max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
                 "name_max_len", "ai_names_per_product", "ai_products_per_call", "ai_workers")
-        floats = ("wm_size_pct", "wm_opacity", "wm_margin_pct", "recombine_replace_ratio", "delay_sec", "price_jitter_pct", "recombine_max_overlap", "image_cache_gb")
+        floats = ("wm_size_pct", "wm_opacity", "wm_margin_pct", "recombine_replace_ratio", "delay_sec", "price_jitter_pct", "price_jitter_min", "price_jitter_max", "display_discount_pct", "recombine_max_overlap", "image_cache_gb")
         for k in ints:
             if k in v:
                 v[k] = convert.to_int(v[k], config.DEFAULTS[k])
@@ -153,13 +157,13 @@ def create_app(db=None):
         what = body().get("what")
         cfg = config.load()
         if what == "prices":
-            rows = db.q("""SELECT l.id, l.store_id, s.price, s.source_key, st.tpl_price_pct FROM listings l
+            rows = db.q("""SELECT l.id, l.store_id, s.price, s.source_key, st.tpl_price_pct, st.tpl_jitter_min, st.tpl_jitter_max FROM listings l
                 JOIN sources s ON s.id=l.source_id JOIN stores st ON st.id=l.store_id
                 WHERE l.origin_no='' AND l.status IN ('planned','fail')""")
             with db.tx() as c:
                 for r in rows:
                     c.execute("UPDATE listings SET price=? WHERE id=?",
-                              (convert.adjusted_price(r["price"], f"{r['source_key']}|{r['store_id']}", cfg, r["tpl_price_pct"]),
+                              (convert.store_price(r["price"], f"{r['source_key']}|{r['store_id']}", cfg, r),
                                r["id"]))
             return jsonify({"count": len(rows)})
         if what == "names":
@@ -801,6 +805,9 @@ def create_app(db=None):
         store = db.store(l["store_id"])
         nxt = {**l, "round": l["round"] + (1 if l["op"] == "refresh" and l["origin_no"] else 0)}
         l["next_seller_code"] = engine.seller_code(cfg, store, nxt)
+        unit = max(1, convert.to_int(cfg.get("price_round"), 100))
+        l["disc_pct"] = convert.store_discount_pct(store, cfg)
+        l["shown"], l["off"], l["final"] = convert.display_prices(l["price"], l["disc_pct"], unit)
         l["history"] = db.q("SELECT * FROM listing_history WHERE listing_id=? ORDER BY round DESC", (lid,))
         l["orders"] = db.q("SELECT * FROM orders WHERE listing_id=? ORDER BY ordered_at DESC LIMIT 50", (lid,))
         l["siblings"] = db.q("""SELECT l.id, l.name, l.status, l.round, l.store_id, t.name AS store_name FROM listings l
@@ -832,8 +839,18 @@ def create_app(db=None):
             return fail("등록이 끝난 뒤에 예약할 수 있습니다.")
         f = _filter_from(b)
         f.pop("op", None)  # 'op'는 여기서 거르기 조건이 아니라 걸 작업
-        n, skipped = inventory.schedule_op(db, f, op)
-        return jsonify({"scheduled": n, "skipped_sold": skipped})
+        n, skipped, ids = inventory.schedule_op(db, f, op)
+        out = {"scheduled": n, "skipped_sold": skipped, "started": False}
+        if b.get("now") and ids:   # '바로 하기': 방금 건 것만 바로 처리 (다른 대기 건은 그대로)
+            if runner.snapshot().get("running"):
+                out["busy"] = True
+            else:
+                try:
+                    runner.start({"ids": ids, "kinds": [op]})
+                    out["started"] = True
+                except (RuntimeError, naver.ApiError) as e:
+                    out["error"] = str(e)
+        return jsonify(out)
 
     # ── 판매 이력
 
@@ -1085,6 +1102,15 @@ def create_app(db=None):
             return fail(str(e))
         return jsonify({"task": tid})
 
+    @app.post("/api/bait/fix")
+    def bait_fix():
+        """예전 버그로 할인이 두 번 빠진(30% → 42%) 되돌린 상품 바로잡기."""
+        try:
+            tid = tasks.start("bait", "되돌린 가격 바로잡기", lambda **kw: bait.fix_restored(db, **kw))
+        except RuntimeError as e:
+            return fail(str(e))
+        return jsonify({"task": tid})
+
     # ── 스토어 템플릿: 상세 상단·하단(이미지 + HTML), 관부가세 코드, 가격 조정 %, 표시 할인율 %
 
     @app.get("/api/stores/<int:sid>/template")
@@ -1118,19 +1144,29 @@ def create_app(db=None):
                 raise ValueError(f"숫자를 넣어 주세요: {v}") from None
         try:
             price_pct, disc = num_or_none(b.get("price_pct")), num_or_none(b.get("discount_pct"))
+            jlo, jhi = num_or_none(b.get("jitter_min")), num_or_none(b.get("jitter_max"))
         except ValueError as e:
             return fail(str(e))
+        if (jlo is None) != (jhi is None):
+            return fail("가격 흔들기는 최소·최대를 둘 다 넣거나 둘 다 비워 주세요.")
+        if jlo is not None and (jlo > jhi or abs(jlo) > 30 or abs(jhi) > 30):
+            return fail("가격 흔들기는 -30~+30% 사이, 최소 ≤ 최대로 넣어 주세요.")
         if disc is not None and not 0 <= disc < 90:
             return fail("표시 할인율은 0~89% 사이로 넣어 주세요.")
         try:
             ship, ret = (int(num_or_none(b.get(k)) or 0) or None for k in ("ship_addr", "return_addr"))
         except ValueError:
             return fail("출고지·반품지는 주소록 번호(숫자)로 넣어 주세요.")
+        old = db.store(sid) or {}
+        repriced = (old.get("tpl_price_pct"), old.get("tpl_jitter_min"), old.get("tpl_jitter_max")) != (price_pct, jlo, jhi)
+        db.x("""UPDATE stores SET tpl_jitter_min=?, tpl_jitter_max=?, wm_text=? WHERE id=?""",
+             (jlo, jhi, str((b.get("wm_text") if "wm_text" in b else old.get("wm_text")) or "").strip(), sid))
         db.x("""UPDATE stores SET tpl_top_html=?, tpl_bottom_html=?, tpl_customs=?, tpl_price_pct=?, tpl_discount_pct=?,
             tpl_ship_addr=?, tpl_return_addr=? WHERE id=?""",
              (str(b.get("top_html") or ""), str(b.get("bottom_html") or ""), config.customs_code(b.get("customs")),
               price_pct, disc, ship, ret, sid))
-        return jsonify(templates.summary(db.store(sid)))
+        n = inventory.reprice_pending(db, sid) if repriced else 0   # 가격 조정·흔들기를 바꾸면 아직 안 올린 복사본 가격도 다시
+        return jsonify({**templates.summary(db.store(sid)), "repriced": n})
 
     @app.post("/api/stores/<int:sid>/template/image")
     def store_template_image(sid):
@@ -1353,9 +1389,15 @@ def create_app(db=None):
     def run_estimate():
         f = _filter_from(body())
         targets = engine.listing_targets(db, f)
-        where, args = inventory.listing_where({**f, "status": "noname"})
-        noname = db.one(f"SELECT COUNT(*) AS n FROM listings l JOIN sources s ON s.id=l.source_id{where}", args)["n"]
-        return jsonify({**engine.estimate(db, targets, config.load()), "noname": noname})
+        where, args = inventory.listing_where({**f, "status": "noname"} if not f.get("visible") else f)
+        noname = db.one(f"""SELECT COUNT(*) AS n FROM listings l JOIN sources s ON s.id=l.source_id{where}
+            {'AND' if where else 'WHERE'} l.name_id IS NULL AND l.status!='deleted' AND l.origin_no=''""", args)["n"]
+        # 종류별 건수 (지금 범위 안에서, 종류 고르기와 무관하게)
+        kinds = {}
+        for t in engine.listing_targets(db, {**f, "kinds": None}):
+            k = "fail" if t["status"] == "fail" else t["op"]
+            kinds[k] = kinds.get(k, 0) + 1
+        return jsonify({**engine.estimate(db, targets, config.load()), "noname": noname, "count": len(targets), "kinds": kinds})
 
     @app.post("/api/run")
     def run_start():
@@ -1421,9 +1463,9 @@ def create_app(db=None):
         """켤 때 data/사전 폴더에 새 사전 파일이 있으면 뒤에서 읽는다."""
         time.sleep(3)
         try:  # 이번 업데이트에서 카테고리 찾기·동영상 경고가 바뀜 → 한 번 전체 다시 검사
-            if not db.one("SELECT 1 FROM meta WHERE k='revalidate_cat_v3'") and db.one("SELECT 1 FROM sources LIMIT 1"):
-                tasks.start("revalidate", "카테고리 찾기 변경 · 전체 다시 검사", lambda **kw: inventory.revalidate(db, **kw))
-            db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('revalidate_cat_v3', '1')")
+            if not db.one("SELECT 1 FROM meta WHERE k='revalidate_v4'") and db.one("SELECT 1 FROM sources LIMIT 1"):
+                tasks.start("revalidate", "검사 방식 변경(카테고리·동영상·반복) · 전체 다시 검사", lambda **kw: inventory.revalidate(db, **kw))
+            db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('revalidate_v4', '1')")
         except Exception:  # noqa: BLE001
             pass
         time.sleep(5)
@@ -1433,9 +1475,9 @@ def create_app(db=None):
         except Exception:  # noqa: BLE001
             pass
 
-    if not db.one("SELECT 1 FROM meta WHERE k='price_exact_v1'"):
-        inventory.reprice_net(db)   # 가격 흔들기(±3%)를 끈 뒤 아직 안 올린 복사본 가격을 판매가 - 할인가로 다시 (한 번만)
-        db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('price_exact_v1', '1')")
+    if not db.one("SELECT 1 FROM meta WHERE k='price_store_v2'"):
+        inventory.reprice_net(db)   # 가격 흔들기를 스토어 템플릿 범위로 옮김 → 아직 안 올린 복사본 가격 다시 (한 번만)
+        db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('price_store_v2', '1')")
         db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('price_net_v1', '1')")
     if not db.one("SELECT 1 FROM meta WHERE k='price_net_v1'"):
         inventory.reprice_net(db)   # 이번 버전부터 원본가 = 판매가 - 할인가 (예전 원본·대기 복사본 가격을 한 번 다시 계산)

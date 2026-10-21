@@ -252,11 +252,27 @@ App.page("stores", {
         <div class="two">
           <label class="field">관부가세 코드 <span class="muted">(출고지가 해외면 필수 · 공통값: ${esc((CUSTOMS_OPTS.find(([v]) => v === cfg.customs_tax_type) || [, "없음"])[1])})</span>
             <select id="t-customs">${CUSTOMS_OPTS.map(([v, l]) => `<option value="${v}" ${v === (t.customs || "") ? "selected" : ""}>${esc(v ? l : `설정 공통값 따름`)}</option>`).join("")}</select></label>
-          <label class="field">가격 조정 % <span class="muted">(원본가 대비, 예: 10 = 10% 올림, -5 = 5% 내림 · 그 뒤 ±${cfg.price_jitter_pct}%, 100원 올림)</span>
+          <label class="field">수입사·A/S 전화 <span class="muted">스토어 '수정'에서 정합니다</span></label>
+        </div>
+        <h3 class="sec-title">가격</h3>
+        <p class="muted small" style="margin:0">손님 가격 = (판매가 - 할인가) × (1 + 가격 조정 %) × 흔들기(범위 안에서 상품마다 다르게, 원본가와 같은 값은 안 나옴), 100원 올림.
+          표시 할인율은 금액으로 걸어 <b>정확히 그 %</b>가 되게 판매가를 정합니다. 칸을 비우면 설정의 기본값입니다.</p>
+        <div class="four">
+          <label class="field">가격 조정 % <span class="muted">(마진, 예: 10)</span>
             <input id="t-price" type="number" step="0.5" value="${t.price_pct ?? ""}" placeholder="0"></label>
-          <label class="field">표시 할인율 % <span class="muted">(예: 30이면 판매가를 올리고 30% 즉시할인으로 같은 최종가 · 비우면 할인 없이 그 가격 그대로)</span>
-            <input id="t-disc" type="number" min="0" max="89" step="1" value="${t.discount_pct ?? ""}" placeholder="없음"></label>
-          <label class="field">수입사·A/S 전화·워터마크 <span class="muted">스토어 '수정'에서 정합니다</span></label>
+          <label class="field">흔들기 최소 % <span class="muted">(예: -3)</span><input id="t-jlo" type="number" step="0.5" value="${t.jitter_min ?? ""}" placeholder="기본 ${cfg.price_jitter_min ?? -3}"></label>
+          <label class="field">흔들기 최대 % <span class="muted">(예: 3)</span><input id="t-jhi" type="number" step="0.5" value="${t.jitter_max ?? ""}" placeholder="기본 ${cfg.price_jitter_max ?? 3}"></label>
+          <label class="field">표시 할인율 % <span class="muted">(0 = 할인 없음)</span>
+            <input id="t-disc" type="number" min="0" max="89" step="1" value="${t.discount_pct ?? ""}" placeholder="기본 ${cfg.display_discount_pct ?? 30}"></label>
+        </div>
+        <div class="muted small" id="t-price-ex"></div>
+        <h3 class="sec-title">워터마크</h3>
+        <div class="two">
+          <label class="field">워터마크 글자 <span class="muted">(비우면 스토어 이름 · 아래 로고를 올리면 로고를 씀)</span><input id="t-wm" value="${esc(t.wm_text || "")}" placeholder="${esc(s.name)}"></label>
+          <div class="field">워터마크 로고 <span class="muted">(PNG 투명 배경 권장)</span>
+            <div class="wm-store"><img id="wm-prev" src="/api/watermark/preview?store_id=${s.id}&w=1000&h=1000&_=${Date.now()}" alt="워터마크 미리보기">
+              <div><label class="btn"><input type="file" id="wm-file" accept=".png,.jpg,.jpeg,.webp" hidden>로고 올리기</label>
+              <button type="button" class="btn ghost" id="wm-del">로고 지우기</button></div></div></div>
         </div>
         <h3 class="sec-title">출고지 · 반품지</h3>
         <p class="muted small">판매자센터 주소록에 등록한 주소의 번호입니다. 비우면 판매자센터의 기본 출고지·반품지로 올라갑니다. 해외 출고지는 판매자센터 주소록에 먼저 등록해 두세요.</p>
@@ -270,13 +286,37 @@ App.page("stores", {
       </div>`,
       buttons: [{ label: "닫기" }, { label: "저장", primary: true, onClick: async (b) => {
         try {
-          await App.api(`/api/stores/${s.id}/template`, { json: { top_html: $("#t-top", b).value, bottom_html: $("#t-bottom", b).value,
-            customs: $("#t-customs", b).value, ship_addr: $("#t-ship", b).value, return_addr: $("#t-ret", b).value, price_pct: $("#t-price", b).value, discount_pct: $("#t-disc", b).value } });
-          App.toast(`${s.name} 템플릿을 저장했습니다`);
+          const r = await App.api(`/api/stores/${s.id}/template`, { json: { top_html: $("#t-top", b).value, bottom_html: $("#t-bottom", b).value,
+            customs: $("#t-customs", b).value, jitter_min: $("#t-jlo", b).value, jitter_max: $("#t-jhi", b).value, wm_text: $("#t-wm", b).value, ship_addr: $("#t-ship", b).value, return_addr: $("#t-ret", b).value, price_pct: $("#t-price", b).value, discount_pct: $("#t-disc", b).value } });
+          App.toast(`${s.name} 템플릿을 저장했습니다` + (r.repriced ? ` · 아직 안 올린 복사본 ${num(r.repriced)}건 가격을 다시 정했습니다` : ""));
         } catch (e) { App.toast(e.message, true); return false; }
       } }],
     });
     const body = $("#tpl-box");   // 창을 다시 그릴 때마다 새 요소라 이벤트가 겹치지 않음
+    const prev = () => { const im = $("#wm-prev"); if (im) im.src = `/api/watermark/preview?store_id=${s.id}&w=1000&h=1000&_=${Date.now()}`; };
+    $("#wm-file")?.addEventListener("change", async (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      const fd = new FormData(); fd.append("file", f);
+      try { await App.api(`/api/stores/${s.id}/watermark`, { method: "POST", body: fd }); prev(); App.toast("로고를 올렸습니다"); }
+      catch (err) { App.toast(err.message, true); }
+      e.target.value = "";
+    });
+    $("#wm-del")?.addEventListener("click", async () => {
+      try { await App.api(`/api/stores/${s.id}/watermark`, { method: "DELETE" }); prev(); } catch (err) { App.toast(err.message, true); }
+    });
+    // 가격 예시 (원본가 50,000원 기준)
+    const ex = () => {
+      const pct = (id, d) => { const v = $(id).value; return v === "" ? +d : +v; };
+      const m = pct("#t-price", 0), lo = pct("#t-jlo", cfg.price_jitter_min ?? -3), hi = pct("#t-jhi", cfg.price_jitter_max ?? 3), dp = pct("#t-disc", cfg.display_discount_pct ?? 30);
+      const r100 = (x) => Math.ceil(x / 100) * 100;
+      const a = r100(50000 * (1 + m / 100) * (1 + lo / 100)), z = r100(50000 * (1 + m / 100) * (1 + hi / 100));
+      let shown = "";
+      if (dp > 0 && dp < 90) { const sh = Math.ceil(a / (1 - dp / 100) / 1000) * 1000; shown = ` · 표시 예: 판매가 ${num(sh)}원 → ${dp}% 할인 (${num(Math.round(sh * dp / 100))}원)`; }
+      $("#t-price-ex").textContent = `예) 원본가 50,000원 → 손님 가격 ${num(a)}~${num(z)}원${shown}`;
+    };
+    ["#t-price", "#t-jlo", "#t-jhi", "#t-disc"].forEach((id) => $(id).addEventListener("input", ex));
+    ex();
     body.addEventListener("click", async (e) => {
       if (e.target.id === "t-addr-load") {
         e.target.disabled = true; e.target.textContent = "불러오는 중";
@@ -333,11 +373,7 @@ App.page("stores", {
         <div class="two">
           <label class="field">A/S 전화번호 <span class="muted">(비우면 설정의 기본값)</span><input name="as_phone" value="${esc(s.as_phone || "")}"></label>
           <label class="field">수입사 <span class="muted">(원산지 수입사 칸 · 비우면 설정의 틀, 기본 '${esc(App.state.settings.importer_template || "")}')</span><input name="importer" value="${esc(s.importer || "")}" placeholder="${esc((App.state.settings.importer_template || "").replace("{store}", s.name || "스토어"))}"></label>
-          <label class="field">워터마크 글자 <span class="muted">(비우면 스토어 이름 · 아래 로고를 올리면 로고를 씀)</span><input name="wm_text" value="${esc(s.wm_text || "")}"></label>
-          ${s.id ? `<div class="field">워터마크 로고 <span class="muted">(PNG 투명 배경 권장)</span>
-            <div class="wm-store"><img id="wm-prev" src="/api/watermark/preview?store_id=${s.id}&w=1000&h=1000&_=${Date.now()}" alt="워터마크 미리보기">
-              <div><label class="btn"><input type="file" id="wm-file" accept=".png,.jpg,.jpeg,.webp" hidden>로고 올리기</label>
-              <button type="button" class="btn ghost" id="wm-del">로고 지우기</button></div></div></div>` : ""}
+          <label class="field">워터마크 <span class="muted">스토어 '템플릿'에서 정합니다</span></label>
           <label class="field">상품 수 한도<input name="capacity" type="number" min="0" value="${s.capacity ?? 10000}"></label>
         </div>
         <label class="field">메모<input name="memo" value="${esc(s.memo || "")}"></label>
@@ -358,18 +394,6 @@ App.page("stores", {
         } },
       ],
     });
-    const prev = () => { const im = $("#wm-prev"); if (im) im.src = `/api/watermark/preview?store_id=${s.id}&w=1000&h=1000&_=${Date.now()}`; };
-    $("#wm-file")?.addEventListener("change", async (e) => {
-      const f = e.target.files[0];
-      if (!f) return;
-      const fd = new FormData(); fd.append("file", f);
-      try { await App.api(`/api/stores/${s.id}/watermark`, { method: "POST", body: fd }); prev(); App.toast("로고를 올렸습니다"); }
-      catch (err) { App.toast(err.message, true); }
-      e.target.value = "";
-    });
-    $("#wm-del")?.addEventListener("click", async () => {
-      try { await App.api(`/api/stores/${s.id}/watermark`, { method: "DELETE" }); prev(); } catch (err) { App.toast(err.message, true); }
-    });
   },
 
   /* 스토어 하나 최신화: 올린 지 N일 넘은 판매 중 복사본(잠금 제외)을 지우고 다시 올린다 */
@@ -382,6 +406,17 @@ App.page("stores", {
       ]);
       return { all: all.total, open: open.total };
     };
+    const go = async (b, now) => {
+      const days = $("#rf-days", b).value;
+      try {
+        const r = await App.api("/api/listings/schedule", { json: { store_id: s.id, op: "refresh", now, ...(days ? { age_days: days } : {}) } });
+        if (!r.scheduled) { App.toast("최신화할 건이 없습니다."); return; }
+        if (r.started) { App.run = await App.api("/api/run"); App.toast(`${s.name}: ${num(r.scheduled)}건 최신화를 시작했습니다 (이 건들만).`); }
+        else if (r.busy) App.toast(`${num(r.scheduled)}건을 대기에 넣었습니다. 지금 다른 작업이 진행 중이라, 끝난 뒤 복사본 화면에서 시작하세요.`);
+        else App.toast(`${num(r.scheduled)}건을 대기에 넣었습니다. 복사본 화면 시작에서 '최신화'를 골라 처리하세요.`);
+        App.go(`#listings?store_id=${s.id}`);
+      } catch (e) { App.toast(e.message, true); return false; }
+    };
     App.openModal({
       title: `${s.name} 최신화`,
       body: `<p class="muted small">이 스토어의 판매 중 복사본을 네이버에서 지우고 같은 내용으로 다시 올립니다. 회차가 1 오르고 관리코드 끝 숫자가 바뀝니다.
@@ -390,20 +425,7 @@ App.page("stores", {
           <option value="30">올린 지 30일 넘은 것</option><option value="60">60일 넘은 것</option>
           <option value="90">90일 넘은 것</option><option value="7">7일 넘은 것</option><option value="">판매 중 전체</option></select></label>
         <div class="plan-sum" id="rf-sum">세는 중…</div>`,
-      buttons: [{ label: "취소" }, { label: "예약하고 바로 시작", primary: true, onClick: async (b) => {
-        const days = $("#rf-days", b).value;
-        try {
-          const r = await App.api("/api/listings/schedule", { json: { store_id: s.id, op: "refresh", ...(days ? { age_days: days } : {}) } });
-          if (!r.scheduled) { App.toast("최신화할 건이 없습니다."); return; }
-          if (App.run?.running) {
-            App.toast(`${num(r.scheduled)}건 예약했습니다. 지금 다른 작업이 진행 중이라, 끝난 뒤 복사본 화면에서 시작하세요.`);
-          } else {
-            App.run = await App.api("/api/run", { json: { store_id: s.id } });
-            App.toast(`${s.name}: ${num(r.scheduled)}건 최신화를 시작했습니다.`);
-          }
-          App.go(`#listings?store_id=${s.id}`);
-        } catch (e) { App.toast(e.message, true); return false; }
-      } }],
+      buttons: [{ label: "취소" }, { label: "대기에 넣기", onClick: (b) => go(b, false) }, { label: "바로 하기", primary: true, onClick: (b) => go(b, true) }],
     });
     const upd = async () => {
       const days = $("#rf-days").value;

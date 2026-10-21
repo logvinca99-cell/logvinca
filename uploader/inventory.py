@@ -134,7 +134,7 @@ def _name_warnings(name, lex):
                    + " (일반 명칭으로 쓴 것인지 확인하세요)")
     rep = lexicon.repeated_word(namegen.tokens(name), lex, 2)
     if rep:
-        out.append(f"원본 상품명에 '{rep}'가 3번 이상 나옵니다")
+        out.append(f"반복: 원본 상품명에 '{rep}'가 3번 이상 나옵니다")
     return out
 
 
@@ -752,7 +752,7 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
                         st["capacity"] += 1
                         continue
                     old = dead.get(s["id"], {}).get(sid)
-                    price = convert.adjusted_price(s["price"], f"{s['source_key']}|{sid}", cfg, stores[sid].get("tpl_price_pct"))
+                    price = convert.store_price(s["price"], f"{s['source_key']}|{sid}", cfg, stores[sid])
                     if old:
                         # 전에 내렸던 스토어: 같은 줄을 다음 회차로 (이름 그대로, 설정하면 원본 상품명으로 돌려 다시 바꾸게)
                         if cfg.get("refresh_new_name"):
@@ -1009,7 +1009,7 @@ def set_listing_name(db, lid, name):
 
 def schedule_op(db, f, op):
     """올라가 있는 건에 할 일을 건다. op: refresh(지우고 다시 올리기) / delete(내리기).
-    판매 이력이 있는 건은 건너뛴다. (예약한 수, 판매 이력으로 건너뛴 수)"""
+    판매 이력이 있는 건은 건너뛴다. (예약한 수, 판매 이력으로 건너뛴 수, 예약한 복사본 번호들)"""
     where, args = listing_where({**f, "status": "live"})
     rows = db.q(f"SELECT l.id, l.source_id, l.locked FROM listings l JOIN sources s ON s.id=l.source_id{where}", args)
     # 잠긴 복사본(판매 이력 또는 직접 잠금)은 지우지 않는다.
@@ -1021,7 +1021,7 @@ def schedule_op(db, f, op):
             chunk = ids[i:i + 900]
             c.execute(f"UPDATE listings SET status='planned', op=?, message='', updated_at=? "
                       f"WHERE id IN ({','.join('?' * len(chunk))})", (op, now, *chunk))
-    return len(ids), skipped
+    return len(ids), skipped, ids
 
 
 def cancel_listings(db, where_sql, args):
@@ -1082,11 +1082,28 @@ def reprice_net(db):
     with db.tx() as c:
         for r in c.execute("SELECT id, data FROM sources").fetchall():
             c.execute("UPDATE sources SET price=? WHERE id=?", (convert.net_price(unpack(r["data"])), r["id"]))
-        for r in c.execute("""SELECT l.id, l.store_id, s.price, s.source_key, st.tpl_price_pct FROM listings l
+        for r in c.execute("""SELECT l.id, l.store_id, s.price, s.source_key, st.tpl_price_pct, st.tpl_jitter_min, st.tpl_jitter_max FROM listings l
                 JOIN sources s ON s.id=l.source_id JOIN stores st ON st.id=l.store_id
                 WHERE l.origin_no='' AND l.status IN ('planned','fail')""").fetchall():
             c.execute("UPDATE listings SET price=? WHERE id=?",
-                      (convert.adjusted_price(r["price"], f"{r['source_key']}|{r['store_id']}", cfg, r["tpl_price_pct"]), r["id"]))
+                      (convert.store_price(r["price"], f"{r['source_key']}|{r['store_id']}", cfg, dict(r)), r["id"]))
+
+
+def reprice_pending(db, store_id=None):
+    """아직 안 올린(대기·실패) 복사본 가격을 지금 스토어 템플릿 기준으로 다시 정한다. 바꾼 수."""
+    cfg = config.load()
+    rows = db.q("""SELECT l.id, l.store_id, l.price AS cur, s.price, s.source_key, st.tpl_price_pct, st.tpl_jitter_min, st.tpl_jitter_max
+        FROM listings l JOIN sources s ON s.id=l.source_id JOIN stores st ON st.id=l.store_id
+        WHERE l.origin_no='' AND l.status IN ('planned','fail')""" + (" AND l.store_id=?" if store_id else ""),
+                (int(store_id),) if store_id else ())
+    n = 0
+    with db.tx() as c:
+        for r in rows:
+            p = convert.store_price(r["price"], f"{r['source_key']}|{r['store_id']}", cfg, r)
+            if p != r["cur"]:
+                c.execute("UPDATE listings SET price=? WHERE id=?", (p, r["id"]))
+                n += 1
+    return n
 
 
 # ───────────────────────── 등록 목록 (화면)
@@ -1112,6 +1129,8 @@ def listing_where(f):
         w.append("l.locked=1 AND l.status!='deleted'")
     elif st == "noname":
         w.append("l.name_id IS NULL AND l.status!='deleted' AND l.origin_no=''")
+    elif st == "named":   # 상품명 변경 완료 (아직 안 올린 것 중 새 이름을 붙인 것)
+        w.append("l.name_id IS NOT NULL AND l.status!='deleted' AND l.origin_no=''")
     elif st == "bait":
         w.append("l.bait_state IN ('on','fail') AND l.origin_no!=''")
     elif st != "all":
@@ -1174,15 +1193,21 @@ def store_summaries(db):
     """복사본 첫 화면: 스토어마다 복사본 수·이름 변경 필요·대기·판매 중·실패."""
     rows = {r["store_id"]: r for r in db.q("""SELECT store_id, COUNT(*) AS all_,
         SUM(name_id IS NULL AND status!='deleted' AND origin_no='') AS noname,
+        SUM(name_id IS NOT NULL AND status!='deleted' AND origin_no='') AS named,
         SUM(status IN ('planned','queued','running')) AS pending,
-        SUM(origin_no!='' AND status='success') AS live, SUM(status='fail') AS fail
+        SUM(status IN ('planned','queued','running') AND op='create') AS p_create,
+        SUM(status IN ('planned','queued','running') AND op='refresh') AS p_refresh,
+        SUM(status IN ('planned','queued','running') AND op='delete') AS p_delete,
+        SUM(origin_no!='' AND status='success') AS live, SUM(status='fail') AS fail,
+        MAX(updated_at) AS last_at
         FROM listings WHERE status!='deleted' GROUP BY store_id""")}
     out = []
     for s in db.stores():
         r = rows.get(s["id"], {})
         out.append({"id": s["id"], "name": s["name"], "code": s["code"], "enabled": s["enabled"], "capacity": s["capacity"],
-                    "business_name": s.get("business_name"), "store_url": s.get("store_url") or "",
-                    "free": s["free"], **{k: r.get(k) or 0 for k in ("all_", "noname", "pending", "live", "fail")}})
+                    "business_name": s.get("business_name"), "store_url": s.get("store_url") or "", "ship_region": s.get("ship_region") or "",
+                    "used": s["used"], "last_at": r.get("last_at"),
+                    "free": s["free"], **{k: r.get(k) or 0 for k in ("all_", "noname", "named", "pending", "p_create", "p_refresh", "p_delete", "live", "fail")}})
     return out
 
 
@@ -1211,6 +1236,7 @@ def listing_counts(db, store_id=None, plan_id=None):
         SUM(sold_count>0) AS sold, SUM(locked=1 AND status!='deleted') AS locked,
         SUM(bait_state IN ('on','fail') AND origin_no!='') AS bait,
         SUM(name_id IS NULL AND status!='deleted' AND origin_no='') AS noname,
+        SUM(name_id IS NOT NULL AND status!='deleted' AND origin_no='') AS named,
         SUM(origin_no!='' AND registered_at<=?) AS age30, SUM(origin_no!='' AND registered_at<=?) AS age60,
         SUM(origin_no!='' AND registered_at<=?) AS age90
         FROM listings{where}""", (now - 30 * day, now - 60 * day, now - 90 * day, *a))

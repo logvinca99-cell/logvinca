@@ -25,6 +25,7 @@ function when(ts) {
 
 function onImgError(img) {
   img.onerror = null;
+  img.dataset.broken = "1";   // 크게 보기에서 뺌
   img.src = "data:image/svg+xml;utf8," + encodeURIComponent(
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" fill="#e9edf0"/>' +
     '<path d="M12 27l6-7 4 5 3-3 5 5z" fill="#c3cbd2"/><circle cx="25" cy="15" r="3" fill="#c3cbd2"/></svg>');
@@ -74,8 +75,17 @@ const REGION = { overseas: "해외", domestic: "국내" };   // 스토어 출고
 const regionCls = (s) => (s.ship_region ? `reg-${s.ship_region}` : "");
 const SELLER_CENTER = "https://sell.smartstore.naver.com/";
 /* 스토어 바로 가기 · 판매자센터 바로 가기 (새 창). 스토어 주소가 없으면 '수정'에서 넣으라고 알려 줌 */
+const storeHome = (u) => (/^https?:\/\//.test(u || "") ? u.replace(/\/+$/, "") : u ? `https://smartstore.naver.com/${u.replace(/^\/+|\/+$/g, "")}` : "");
+/* 원본 줄·복사본 줄의 바로 가기 (늘 같은 자리): 새 상품 ↗ · 원본 ↗ */
+function goLinks({ storeUrl, channelNo, sourceId }) {
+  const p = storeHome(storeUrl) && channelNo ? `${storeHome(storeUrl)}/products/${channelNo}` : "";
+  return `<div class="go-links">
+    ${p ? `<a class="btn sm" href="${esc(p)}" target="_blank" rel="noopener noreferrer" title="네이버에 올라간 이 상품 (새 창)">새 상품 ↗</a>`
+      : channelNo === undefined ? "" : `<span class="btn sm disabled" title="${channelNo ? "스토어 주소가 없어 열 수 없음 (스토어 '수정')" : "아직 안 올림"}">새 상품 ↗</span>`}
+    <a class="btn sm" href="/api/sources/${sourceId}/origin" target="_blank" rel="noopener noreferrer" title="수집한 원본 상품 페이지 (새 창)">원본 ↗</a></div>`;
+}
 function storeLinks(s) {
-  const url = /^https?:\/\//.test(s.store_url || "") ? s.store_url : s.store_url ? `https://smartstore.naver.com/${s.store_url.replace(/^\/+/, "")}` : "";
+  const url = storeHome(s.store_url);
   return `<span class="st-links">${url
     ? `<a class="btn sm" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(url)}">스토어 ↗</a>`
     : `<span class="btn sm disabled" title="스토어 '수정'에서 스토어 주소를 넣으면 생깁니다 (연결 확인 때 자동으로 채워지기도 함)">스토어 ↗</span>`}
@@ -122,6 +132,7 @@ const App = {
     $$(".nav-item").forEach((a) => a.classList.toggle("on", a.dataset.page === page));
     if (this.current?.unmount) this.current.unmount();
     this.closeDrawer();
+    const z = $(".img-zoom"); if (z) z.hidden = true;
     const view = $("#view");
     view.innerHTML = "";
     view.scrollTop = 0;
@@ -215,7 +226,8 @@ const App = {
           : (r.kw_error ? `네이버 키워드를 못 받음(${r.kw_error}) · ` : "") + `상품명 바꾸기 끝: ${num(r.renamed)}건 바꿈` + (r.short ? ` · 후보를 못 만든 ${num(r.short)}건은 그대로 (단어가 적음 → 직접 입력이나 AI)` : "")
           + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
           + (r.few_words ? ` · 새 단어 후보가 설정보다 적은 원본 ${num(r.few_words)}개` : "") + aiMsg(r.ai),
-        bait: () => `원래 가격으로 ${num(r.restored)}건` + (r.failed ? ` · 실패 ${num(r.failed)}건 (${r.errors?.[0] || ""})` : ""),
+        bait: () => r.checked !== undefined ? `되돌린 가격 확인 ${num(r.checked)}건 · 고침 ${num(r.fixed)}건` + (r.failed ? ` · 실패 ${num(r.failed)}건 (${r.errors?.[0] || ""})` : "")
+          : `원래 가격으로 ${num(r.restored)}건` + (r.failed ? ` · 실패 ${num(r.failed)}건 (${r.errors?.[0] || ""})` : ""),
         dictfile: () => `사전 파일 넣기 끝: 명사 ${num(r.nouns)}개 · 비슷한말 있는 단어 ${num(r.syn_words)}개 (파일 ${num(r.files)}개)`,
         keywords: () => `네이버 키워드 끝: 원본 ${num(r.sources)}개 · 새 단어 ${num(r.words)}개 · 새로 물은 단어 ${num(r.tokens)}개 (저장한 결과 ${num(r.cached)}번)`
           + (r.not_in_dict ? ` · 사전에 없어 뺀 말 ${num(r.not_in_dict)}개` : "")
@@ -499,6 +511,22 @@ const App = {
       const b = e.target.closest("[data-stop-task]");
       if (b) { await this.api(`/api/tasks/${b.dataset.stopTask}/stop`, { method: "POST" }); this.toast("중단을 요청했습니다."); }
     });
+    // 목록의 상품 이미지에 마우스를 올리면 크게 보기
+    const zoom = document.createElement("div");
+    zoom.className = "img-zoom"; zoom.hidden = true;
+    document.body.appendChild(zoom);
+    document.addEventListener("mouseover", (e) => {
+      const im = e.target.closest?.("table.grid img.thumb");
+      if (!im || !im.src || im.dataset.broken) return;
+      zoom.innerHTML = `<img referrerpolicy="no-referrer" src="${esc(im.src)}" alt="">`;
+      const r = im.getBoundingClientRect(), W = 360;
+      const left = r.right + 12 + W < innerWidth ? r.right + 12 : Math.max(8, r.left - W - 12);
+      zoom.style.left = `${left}px`;
+      zoom.style.top = `${Math.max(8, Math.min(innerHeight - W - 8, r.top + r.height / 2 - W / 2))}px`;
+      zoom.hidden = false;
+    });
+    document.addEventListener("mouseout", (e) => { if (e.target.closest?.("table.grid img.thumb")) zoom.hidden = true; });
+    window.addEventListener("scroll", () => { zoom.hidden = true; }, { passive: true });
     // 화면 맨 위 제목·조작 줄은 스크롤해도 붙어 있다. 그 높이만큼 목록 막대·설정 탭을 아래에 붙인다.
     const head = () => $("#view .page-head");
     const ro = new ResizeObserver(() => { const h = head(); if (h) document.documentElement.style.setProperty("--head-h", h.offsetHeight + "px"); });

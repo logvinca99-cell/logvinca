@@ -30,7 +30,7 @@ def restore(db, ids, reason="직접 되돌림", progress=None, should_stop=None)
     rows = []
     for i in range(0, len(ids), 500):
         chunk = ids[i:i + 500]
-        rows += db.q(f"""SELECT id, store_id, origin_no, price, bait FROM listings
+        rows += db.q(f"""SELECT id, store_id, origin_no, price, bait, sale_shown FROM listings
             WHERE id IN ({','.join('?' * len(chunk))}) AND bait_state IN ('on','fail') AND origin_no!=''""", chunk)
     stores = {s["id"]: s for s in db.stores(with_secret=True)}
     clients = {}
@@ -41,7 +41,8 @@ def restore(db, ids, reason="직접 되돌림", progress=None, should_stop=None)
         try:
             if r["store_id"] not in clients:
                 clients[r["store_id"]] = naver.make_client(stores[r["store_id"]])
-            clients[r["store_id"]].update_sale_price(r["origin_no"], r["price"])
+            # 판매가에서 도둑방지 금액만 뺀다 (즉시할인 금액은 그대로 → 표시 할인율이 처음 계산 그대로)
+            clients[r["store_id"]].restore_price(r["origin_no"], shown=r["sale_shown"], minus=r["bait"])
             db.x("""UPDATE listings SET bait_state='restored', bait=0, bait_note=?, bait_restored_at=?, updated_at=?
                 WHERE id=?""", (reason, time.time(), time.time(), r["id"]))
             stats["restored"] += 1
@@ -53,6 +54,32 @@ def restore(db, ids, reason="직접 되돌림", progress=None, should_stop=None)
         if progress:
             progress(i, len(rows), f"원래 가격으로 {stats['restored']}건")
     return stats
+
+
+def fix_restored(db, progress=None, should_stop=None):
+    """예전 버그 바로잡기: 표시 할인이 있는 상품을 '원래 가격으로' 되돌릴 때 판매가를 할인 뒤 가격으로 넣어
+    할인이 두 번 빠진 것(예: 30% → 42%)을 '판매가 - 즉시할인 = 복사본 가격'이 되게 고친다."""
+    rows = db.q("""SELECT id, store_id, origin_no, price FROM listings
+        WHERE bait_state='restored' AND origin_no!='' AND status='success' AND sale_shown IS NULL""")
+    stores = {s["id"]: s for s in db.stores(with_secret=True)}
+    clients = {}
+    st = {"checked": 0, "fixed": 0, "failed": 0, "errors": []}
+    for i, r in enumerate(rows, 1):
+        if should_stop and should_stop():
+            break
+        try:
+            if r["store_id"] not in clients:
+                clients[r["store_id"]] = naver.make_client(stores[r["store_id"]])
+            if clients[r["store_id"]].fix_final_price(r["origin_no"], r["price"]):
+                st["fixed"] += 1
+            st["checked"] += 1
+        except Exception as e:  # noqa: BLE001
+            st["failed"] += 1
+            if len(st["errors"]) < 3:
+                st["errors"].append(str(e)[:200])
+        if progress:
+            progress(i, len(rows), f"확인 {st['checked']}건 · 고침 {st['fixed']}건")
+    return st
 
 
 def stats(db):

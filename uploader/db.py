@@ -262,6 +262,8 @@ class DB:
                    ("tpl_customs", "TEXT NOT NULL DEFAULT ''"), ("tpl_price_pct", "REAL"), ("tpl_discount_pct", "REAL"),
                    # 출고지·반품지 (네이버 판매자센터 주소록 번호, 비우면 판매자센터 기본 주소)
                    ("tpl_ship_addr", "INTEGER"), ("tpl_return_addr", "INTEGER"),
+                   # 가격 흔들기 범위 % (비우면 설정 기본 -3~+3), 흔들면 원본가와 같은 가격은 안 나옴
+                   ("tpl_jitter_min", "REAL"), ("tpl_jitter_max", "REAL"),
                    # 사업자 묶음과 순서 (사업자 하나에 스토어 최대 3개)
                    ("business_id", "INTEGER"), ("sort", "INTEGER NOT NULL DEFAULT 0"),
                    # 연결 확인 때 받은 전시중지(고구마)를 뺀 수·전시중지 수, 고구마 수를 직접 넣으면 그 값
@@ -269,7 +271,8 @@ class DB:
                    ("naver_status", "TEXT NOT NULL DEFAULT ''"),   # 연결 확인 때 센 상태별 수 (JSON)
                    # 지금 출고 형태 표시: '' 아직 안 정함 · overseas 해외(파란색) · domestic 국내(초록색). 표시만 하고 등록 내용은 바꾸지 않음
                    ("ship_region", "TEXT NOT NULL DEFAULT ''")],
-        "listings": [("sold_count", "INTEGER NOT NULL DEFAULT 0"), ("last_sold_at", "REAL"),
+        "listings": [("sale_shown", "INTEGER"),   # 네이버에 넣은 판매가(도둑방지 뺀 값, 표시 할인 전). 원래 가격으로 되돌릴 때 씀
+                     ("sold_count", "INTEGER NOT NULL DEFAULT 0"), ("last_sold_at", "REAL"),
                      ("cancel_count", "INTEGER NOT NULL DEFAULT 0"), ("manual_lock", "INTEGER NOT NULL DEFAULT 0"),
                      ("locked", "INTEGER NOT NULL DEFAULT 0"), ("lock_note", "TEXT NOT NULL DEFAULT ''"),("op", "TEXT NOT NULL DEFAULT 'create'"), ("round", "INTEGER NOT NULL DEFAULT 1"),
                      ("seller_code", "TEXT NOT NULL DEFAULT ''"), ("registered_at", "REAL"), ("deleted_at", "REAL"),

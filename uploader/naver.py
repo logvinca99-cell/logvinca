@@ -347,6 +347,43 @@ class Client:
             raise ApiError(f"상품 등록 실패: {explain_error(r)}")
         return r.json()
 
+    def _get_origin(self, origin_no, on_wait=None):
+        r = self.request("GET", f"/v2/products/origin-products/{origin_no}", on_wait=on_wait)
+        if r.status_code != 200:
+            raise ApiError(f"상품 읽기 실패: {explain_error(r)}")
+        body = r.json()
+        return {k: v for k, v in body.items() if k in ("originProduct", "smartstoreChannelProduct")}
+
+    def _put_origin(self, origin_no, body, on_wait=None):
+        r = self.request("PUT", f"/v2/products/origin-products/{origin_no}", json=body, on_wait=on_wait)
+        if r.status_code != 200:
+            raise ApiError(f"가격 바꾸기 실패: {explain_error(r)}")
+        return True
+
+    @staticmethod
+    def _discount_won(body):
+        """즉시할인 금액 (금액으로 건 것만, 없으면 0)."""
+        m = (((body.get("originProduct") or {}).get("customerBenefit") or {}).get("immediateDiscountPolicy") or {}).get("discountMethod") or {}
+        return int(m.get("value") or 0) if m.get("unitType") == "WON" else 0
+
+    def restore_price(self, origin_no, shown=None, minus=0, on_wait=None):
+        """도둑방지 되돌리기: 판매가를 shown으로 (없으면 지금 판매가 - minus). 즉시할인 금액은 그대로 둔다."""
+        body = self._get_origin(origin_no, on_wait)
+        cur = int(body["originProduct"]["salePrice"])
+        body["originProduct"]["salePrice"] = int(shown) if shown else cur - int(minus or 0)
+        return self._put_origin(origin_no, body, on_wait)
+
+    def fix_final_price(self, origin_no, final, on_wait=None):
+        """판매가 - 즉시할인 = final 이 되게 판매가를 맞춘다. 이미 맞으면 그대로 (False)."""
+        body = self._get_origin(origin_no, on_wait)
+        off = self._discount_won(body)
+        cur = int(body["originProduct"]["salePrice"])
+        if cur - off == int(final):
+            return False
+        body["originProduct"]["salePrice"] = int(final) + off
+        self._put_origin(origin_no, body, on_wait)
+        return True
+
     def update_sale_price(self, origin_no, price, on_wait=None):
         """판매가만 바꾼다: 원상품을 읽어 salePrice만 고쳐 그대로 다시 보냄 (도둑방지 원래 가격으로)."""
         r = self.request("GET", f"/v2/products/origin-products/{origin_no}", on_wait=on_wait)
@@ -494,6 +531,14 @@ class FakeClient:
     def update_sale_price(self, origin_no, price, on_wait=None):
         time.sleep(random.uniform(0.1, 0.3))
         return True
+
+    def restore_price(self, origin_no, shown=None, minus=0, on_wait=None):
+        time.sleep(random.uniform(0.1, 0.3))
+        return True
+
+    def fix_final_price(self, origin_no, final, on_wait=None):
+        time.sleep(random.uniform(0.1, 0.3))
+        return random.random() < 0.5
 
     def upload_images(self, items, on_wait=None):
         time.sleep(random.uniform(0.3, 0.8))

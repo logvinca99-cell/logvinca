@@ -39,7 +39,7 @@ App.page("inventory", {
       <div class="card table-card">
         <table class="grid"><thead><tr>
           <th class="w-check"></th>
-          <th class="w-thumb"></th><th>원본 상품</th><th class="w-cat">카테고리</th>
+          <th class="w-thumb"></th><th>원본 상품</th><th class="w-links">바로 가기</th><th class="w-cat">카테고리</th>
           <th class="w-num">원본가</th>
           <th class="w-copies" title="이 원본을 복사한 스토어 (원본당 최대 ${App.state.settings.max_copies}곳). 복사본은 원본 바로 아래 줄에 보입니다">복사</th>
         </tr></thead><tbody id="i-rows"></tbody></table>
@@ -70,7 +70,7 @@ App.page("inventory", {
     const c = res.counts || {};
     $("#i-tiles").innerHTML = tilesHtml(INV_TILES, { ...c, all: c.all_ }, this.tile);
     $("#i-rows").innerHTML = res.rows.length ? res.rows.map((p) => this.rowHtml(p)).join("")
-      : `<tr class="empty-row"><td colspan="6">${c.all_ ? "조건에 맞는 상품이 없습니다." :
+      : `<tr class="empty-row"><td colspan="7">${c.all_ ? "조건에 맞는 상품이 없습니다." :
         "아직 원본 상품이 없습니다. 오른쪽 위 <b>원본 엑셀 불러오기</b>를 누르거나 엑셀을 끌어다 놓으세요."}</td></tr>`;
     this.renderBar();
   },
@@ -112,16 +112,19 @@ App.page("inventory", {
       for (let i = p.copies.length; i < mx; i++) cells.push(`<span class="slot empty" title="빈 칸">·</span>`);
       slots = `<div class="slots">${cells.join("")}</div>`;
     }
+    const rep = p.warnings.filter((w) => w.startsWith("반복:"));   // 같은 단어 3번 이상
+    const warn = p.warnings.filter((w) => !w.startsWith("반복:"));   // 금지 키워드·상표 등
     const flags = [
-      p.warnings.length ? `<span class="flag warn" title="${esc(p.warnings.join("\n"))}">경고 ${p.warnings.length}</span>` : "",
+      warn.length ? `<span class="flag warn" title="${esc(warn.join("\n"))}">경고 ${warn.length}</span>` : "",
+      rep.length ? `<span class="flag rep" title="${esc(rep.join("\n"))}">반복</span>` : "",
       p.has_video ? `<span class="flag video" title="상세설명에 동영상 있음 (경고 아님)">동영상</span>` : "",
     ].join("");
     const on = this.selAll || this.sel.has(p.id);
     return `<tr data-id="${p.id}" class="${on ? "sel" : ""}">
       <td class="w-check" data-stop><input type="checkbox" ${on ? "checked" : ""} ${this.selAll ? "disabled" : ""} aria-label="고르기"></td>
       <td>${img(p.thumb)}</td>
-      <td><div class="p-name">${esc(p.name)}</div><div class="p-sub"><span>원본 #${p.id}</span>${p.seller_code ? `<span>${esc(p.seller_code)}</span>` : ""}${flags}
-        <a class="src-link" href="/api/sources/${p.id}/origin" target="_blank" rel="noopener noreferrer" title="수집한 원본 상품 페이지 (새 창)">원본 ↗</a></div></td>
+      <td><div class="p-name">${esc(p.name)}</div><div class="p-sub"><span>원본 #${p.id}</span>${p.seller_code ? `<span>${esc(p.seller_code)}</span>` : ""}${flags}</div></td>
+      <td class="w-links">${goLinks({ sourceId: p.id })}</td>
       <td class="cat-td"><div class="cat">${cat.length > 2 ? `<div class="cat-top">${esc(cat.slice(0, -2).join(" › "))}</div>` : ""}${esc(cat.slice(-2).join(" › "))}</div></td>
       <td class="num">${num(p.price)}원</td>
       <td>${slots}${p.deleted_copies ? `<div class="p-sub">내림 ${p.deleted_copies}</div>` : ""}</td></tr>`
@@ -134,7 +137,7 @@ App.page("inventory", {
     const msg = c.status === "fail" || (c.status === "success" && c.message) ? c.message : "";
     return `<tr class="copy-row" data-copy="${c.id}" title="이 스토어의 복사본으로 가기">
       <td></td><td class="copy-arrow">↳</td>
-      <td colspan="2"><div class="copy-name"><span class="code">${esc(c.code)}</span> <span class="muted">${esc(c.store)}</span> ${esc(c.name)}</div>
+      <td colspan="3"><div class="copy-name"><span class="code">${esc(c.code)}</span> <span class="muted">${esc(c.store)}</span> ${esc(c.name)}</div>
         <div class="p-sub">${esc(c.seller_code || "관리코드는 등록할 때 붙음")} · ${c.round}회차${c.registered_at && c.channel_no ? ` · ${ymd(c.registered_at)} 올림 (${age(c.registered_at)})` : ""}</div></td>
       <td class="num">${num(c.price)}원<div class="p-sub r">${diff ? (diff > 0 ? "+" : "") + diff.toFixed(1) + "%" : "원본가"}</div></td>
       <td>${statusBadge(c.status, c.op)}${lockFlag(c)}${msg ? `<div class="s-msg ${c.status === "fail" ? "err" : ""}" title="${esc(msg)}">${esc(msg)}</div>` : ""}</td></tr>`;

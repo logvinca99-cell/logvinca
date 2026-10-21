@@ -339,16 +339,57 @@ def round_up(price, unit=100):
     return -((-int(price)) // unit) * unit
 
 
-def adjusted_price(price, key, cfg, store_pct=0):
-    """원본가를 ±price_jitter_pct% 안에서 바꾼다. key(상품+스토어)가 같으면 항상 같은 값. 100원 단위 올림.
-    store_pct: 스토어 템플릿의 가격 조정 % (예: 10이면 원본가의 110% 기준)."""
-    pct = float(cfg.get("price_jitter_pct") or 0)
+def adjusted_price(price, key, cfg, store_pct=0, jitter=None):
+    """스토어에 올릴 최종 가격 (할인 뒤 손님이 내는 값). 100원 단위 올림.
+    1) 원본가(판매가 - 할인가) × (1 + 스토어 가격 조정 %)
+    2) 스토어 템플릿의 흔들기 범위(jitter=(최소%, 최대%), 예: (-3, 3)) 안에서 상품마다 다르게. key(상품+스토어)가 같으면 늘 같은 값.
+       흔들기를 넣은 스토어는 원본가와 똑같은 가격이 나오지 않게 한 단위(100원) 비킨다."""
     unit = max(1, to_int(cfg.get("price_round"), 100))
     if price <= 0:
         return price
+    lo, hi = (jitter or (0, 0))
+    lo, hi = float(lo or 0), float(hi or 0)
+    if lo > hi:
+        lo, hi = hi, lo
     h = int(hashlib.sha1(str(key).encode()).hexdigest()[:8], 16) / 0xFFFFFFFF  # 0~1
-    p = price * (1 + float(store_pct or 0) / 100) * (1 + (h * 2 - 1) * pct / 100)
-    return max(unit, round_up(math.ceil(p), unit))
+    p = price * (1 + float(store_pct or 0) / 100) * (1 + (lo + (hi - lo) * h) / 100)
+    out = max(unit, round_up(math.ceil(p), unit))
+    if (lo or hi) and out == round_up(price, unit):
+        out = out - unit if hi <= 0 and out - unit > 0 else out + unit
+    return out
+
+
+def display_prices(final, pct, unit=100):
+    """표시 할인율: 손님이 내는 값이 final 이상이고, 할인율이 정확히 pct%가 되는 (판매가, 할인 금액, 최종가).
+    판매가·할인 금액 모두 unit(100원) 단위. 30%면 판매가가 1,000원 단위가 되어 최종가가 final보다 조금(최대 수백 원) 높을 수 있다."""
+    from fractions import Fraction
+    p = Fraction(str(pct or 0)) / 100
+    if final <= 0 or not 0 < p < 1:
+        return final, 0, final
+    shown = round_up(math.ceil(Fraction(final) / (1 - p)), unit)
+    for _ in range(10000):
+        off = shown * p
+        if off.denominator == 1 and off % unit == 0:
+            return shown, int(off), shown - int(off)
+        shown += unit
+    off = round_up(math.ceil(shown * p), unit)   # 못 맞추면 할인 금액만 올림 (거의 없음)
+    return shown, off, shown - off
+
+
+def store_price(net, key, cfg, store):
+    """원본가 → 이 스토어에 올릴 최종 가격 (스토어 템플릿의 가격 조정 %·흔들기 범위, 비우면 설정 기본 범위)."""
+    store = store or {}
+    lo = store.get("tpl_jitter_min")
+    hi = store.get("tpl_jitter_max")
+    lo = cfg.get("price_jitter_min", -3) if lo is None else lo
+    hi = cfg.get("price_jitter_max", 3) if hi is None else hi
+    return adjusted_price(net, key, cfg, store.get("tpl_price_pct"), (lo, hi))
+
+
+def store_discount_pct(store, cfg):
+    """스토어 표시 할인율: 템플릿에 넣었으면 그 값(0이면 할인 없음), 비우면 설정 기본값(30)."""
+    v = (store or {}).get("tpl_discount_pct")
+    return float(cfg.get("display_discount_pct", 30) if v is None else v or 0)
 
 
 def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_phone=None, seller_code=None, bait=0,
@@ -442,16 +483,14 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
     if images[1:]:
         origin["images"]["optionalImages"] = [{"url": u} for u in images[1:]]
 
-    # 엑셀 할인가는 원본가(net_price)에 이미 빼서 반영했으므로 따로 즉시할인을 걸지 않는다.
-    # 스토어 표시 할인율이 있으면: 지금 가격이 할인된 최종가가 되도록 판매가를 올리고 그만큼 즉시할인 (100원 단위)
-    disc_pct = float(store.get("tpl_discount_pct") or 0)
-    if 0 < disc_pct < 90:
-        shown = round_up(math.ceil(sale_price / (1 - disc_pct / 100)), unit)
-        off = shown - sale_price
-        if off > 0:
-            origin["salePrice"] = shown + round_up(bait or 0, unit)
-            origin["customerBenefit"] = {"immediateDiscountPolicy": {
-                "discountMethod": {"value": off, "unitType": "WON"}}}
+    # 엑셀 할인가는 원본가(net_price)에 이미 빼서 반영했으므로 엑셀 할인가로는 즉시할인을 걸지 않는다.
+    # 표시 할인율(기본 30%, 스토어 템플릿에서 바꿈): 할인율이 정확히 그 %가 되도록 판매가를 올리고 그만큼 '금액으로' 즉시할인.
+    # 도둑방지는 판매가에만 더한다 → 할인 금액은 그대로라, 원래 가격으로 되돌리면 정확히 그 %.
+    shown, off, _ = display_prices(sale_price, store_discount_pct(store, cfg), unit)
+    if off > 0:
+        origin["salePrice"] = shown + round_up(bait or 0, unit)
+        origin["customerBenefit"] = {"immediateDiscountPolicy": {
+            "discountMethod": {"value": off, "unitType": "WON"}}}
 
     body = {
         "originProduct": origin,

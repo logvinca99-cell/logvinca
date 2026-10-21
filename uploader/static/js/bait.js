@@ -19,6 +19,7 @@ App.page("bait", {
     this.el.innerHTML = `<div class="page">
       <header class="page-head"><h1>도둑방지</h1>
         <div class="head-actions">
+          <button class="btn" id="b-fix" title="예전 버전에서 원래 가격으로 되돌릴 때 표시 할인이 두 번 빠진 상품(예: 30% → 42%)을 바로잡습니다">되돌린 가격 바로잡기</button>
           <button class="btn" id="b-sel" disabled>고른 것 원래 가격으로</button>
           <button class="btn primary" id="b-all" ${d.on.length ? "" : "disabled"}>전부 원래 가격으로 (${num(d.on.length)})</button></div></header>
 
@@ -60,6 +61,10 @@ App.page("bait", {
     $("#b-all").addEventListener("click", () => {
       if (confirm(`높인 가격으로 올라가 있는 ${d.on.length}건을 모두 원래 가격으로 되돌릴까요?`))
         App.startTask(App.api("/api/bait/restore", { json: { all: true } }));
+    });
+    $("#b-fix").addEventListener("click", () => {
+      if (confirm(`원래 가격으로 되돌린 상품을 네이버에서 하나씩 확인해, '판매가 - 즉시할인'이 복사본 가격과 다르면 판매가를 고칩니다.\n(예전 버그로 할인이 두 번 빠져 42%처럼 보이는 상품)\n상품 하나에 요청 1~2번이 갑니다. 진행할까요?`))
+        App.startTask(App.api("/api/bait/fix", { json: {} }));
     });
     $("#b-sel").addEventListener("click", () => App.startTask(App.api("/api/bait/restore", { json: { ids: [...this.sel] } })));
     $("#b-check-all")?.addEventListener("change", (e) => {
