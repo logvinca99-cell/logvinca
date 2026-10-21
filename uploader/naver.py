@@ -34,6 +34,8 @@ def explain_error(r):
         return f"{r.status_code}: {r.text[:300]}"
     bad = [f"{x.get('name')}: {x.get('message')}" for x in j.get("invalidInputs") or []]
     msg = f"{r.status_code} {j.get('code', '')} {j.get('message', '')}".strip()
+    if "QUOTA_LIMIT" in str(j.get("code", "")):
+        msg += " → 이 스토어 API 애플리케이션의 시간당 요청 한도를 다 썼습니다. 1시간쯤 뒤 다시 하세요 (주문 가져오기·연결 확인이 몰리면 생김)"
     return msg + (" / " + " / ".join(bad) if bad else "")
 
 
@@ -61,9 +63,16 @@ def _save_category_cache(table):
         json.dump(table, f, ensure_ascii=False)
 
 
+def category_cache_time():
+    return os.path.getmtime(CATEGORY_CACHE) if os.path.exists(CATEGORY_CACHE) else None
+
+
 def cached_categories():
-    """API 호출 없이 저장된 카테고리 목록만 돌려준다 (없으면 None)."""
-    return _load_category_cache()
+    """API 호출 없이 저장된 카테고리 목록만 돌려준다 (없으면 None). 오래된 목록이어도 돌려준다."""
+    if not os.path.exists(CATEGORY_CACHE):
+        return None
+    with open(CATEGORY_CACHE, encoding="utf-8") as f:
+        return json.load(f)
 
 
 def kst_iso(ts):
@@ -237,6 +246,8 @@ class Client:
             refresh = r.status_code == 401
             if refresh:
                 continue
+            if r.status_code == 429 and "QUOTA_LIMIT" in r.text:
+                return r   # 시간당 한도 초과: 몇 초 기다려서는 안 풀림 → 바로 알림
             if r.status_code == 429 or r.status_code >= 500:
                 wait = min(2 ** attempt, 30) + random.random()
                 if on_wait:
@@ -290,8 +301,8 @@ class Client:
         return int(r.json().get("totalElements", 0))
 
     def status_counts(self, on_wait=None):
-        """상품 목록을 끝까지 받아 상태별로 센다 {SALE: n, SUSPENSION: n(고구마), OUTOFSTOCK: n, …, _total: n}.
-        상태로 걸러 묻는 방식은 판매 중·판매중지를 못 가르는 경우가 있어, 받은 상품마다 상태를 직접 본다."""
+        """상품 목록을 끝까지 받아 판매 상태별로 센다 {SALE: n, SUSPENSION: n(판매중지), OUTOFSTOCK: n, …, _total: n}.
+        전시 상태도 같이 센다 {_disp_ON: n, _disp_SUSPENSION: n(전시중지 = 고구마), …}."""
         out, page, total = {}, 1, 0
         while True:
             r = self.request("POST", "/v1/products/search", json={"page": page, "size": 500}, on_wait=on_wait)
@@ -300,13 +311,14 @@ class Client:
             j = r.json()
             items = j.get("contents") or []
             for it in items:
-                st = None
+                st = disp = None
                 for ch in it.get("channelProducts") or []:
-                    st = ch.get("statusType") or st
-                    if st:
-                        break
+                    st = st or ch.get("statusType")
+                    disp = disp or ch.get("channelProductDisplayStatusType") or ch.get("displayStatusType")
                 st = st or (it.get("originProduct") or {}).get("statusType") or it.get("statusType") or "UNKNOWN"
                 out[st] = out.get(st, 0) + 1
+                if disp:   # 전시 상태: ON 전시 중 · SUSPENSION 전시중지(고구마) · WAIT 전시 대기
+                    out["_disp_" + disp] = out.get("_disp_" + disp, 0) + 1
                 total += 1
             pages = int(j.get("totalPages") or 0)
             if not items or page >= pages or page >= 200:
@@ -347,11 +359,13 @@ class Client:
 
     # ── 주문 (판매 이력)
 
-    def changed_product_order_ids(self, since_ts, until_ts, change_type=None, on_progress=None):
+    def changed_product_order_ids(self, since_ts, until_ts, change_type=None, on_progress=None, should_stop=None):
         """since~until 사이에 상태가 바뀐(결제·발송·취소·반품·구매확정 등) 상품주문번호들.
         change_type을 주면 그 변경만 (예: PAYED). 네이버는 한 번에 24시간까지만 조회된다."""
         ids, t = [], since_ts
         while t < until_ts:
+            if should_stop and should_stop():
+                raise ApiError("중단함")
             end = min(t + 86400 - 1, until_ts)
             params = {"lastChangedFrom": kst_iso(t), "lastChangedTo": kst_iso(end)}
             if change_type:
@@ -466,7 +480,9 @@ class FakeClient:
 
     def status_counts(self, on_wait=None):
         sale, sus, oos = random.randint(0, 250), random.randint(0, 60), random.randint(0, 20)
-        return {"SALE": sale, "SUSPENSION": sus, "OUTOFSTOCK": oos, "_total": sale + sus + oos}
+        hidden = random.randint(0, sale)
+        return {"SALE": sale, "SUSPENSION": sus, "OUTOFSTOCK": oos, "_total": sale + sus + oos,
+                "_disp_ON": sale + sus + oos - hidden, "_disp_SUSPENSION": hidden}
 
     def delete_product(self, origin_no, on_wait=None):
         time.sleep(random.uniform(0.2, 0.5))

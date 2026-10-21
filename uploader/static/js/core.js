@@ -192,6 +192,7 @@ const App = {
 
   taskFinished(t) {
     if (t.status === "error") { this.toast(`${t.title}: ${t.error}`, true); }
+    else if (t.status === "stopped" && t.title.includes("자동 가져오기")) this.toast("주문 자동 가져오기를 중단하고 껐습니다. 다시 켜려면 설정 → 판매 이력의 자동 가져오기 간격을 넣으세요.");
     else {
       const r = t.result || {};
       const msg = {
@@ -578,7 +579,7 @@ function byBusiness(stores) {
   return out;
 }
 
-const NAVER_STATUS = { SALE: "판매 중", SUSPENSION: "판매중지(고구마)", OUTOFSTOCK: "품절", WAIT: "판매 대기", CLOSE: "판매 종료",
+const NAVER_STATUS = { SALE: "판매 중", SUSPENSION: "판매중지", OUTOFSTOCK: "품절", WAIT: "판매 대기", CLOSE: "판매 종료",
   PROHIBITION: "판매 금지", UNADMISSION: "승인 대기", REJECTION: "승인 거부", DELETE: "삭제", UNKNOWN: "상태 모름" };
 
 /* 스토어 사용량: 큰 숫자 + 막대(판매 중 / 고구마 / 등록 대기) + 범례. edit=true면 고구마 수 고치기 버튼 */
@@ -595,8 +596,8 @@ function storeUsage(s, edit = false) {
     <div class="us-top"><b>${num(s.used)}</b><span class="muted"> / ${num(s.capacity)}</span><span class="us-pct">${pct}%</span></div>
     <div class="us-bar"><i class="u-sale" style="width:${w(sale)}"></i><i class="u-goguma" style="width:${w(goguma)}"></i><i class="u-pend" style="width:${w(pend)}"></i></div>
     <div class="us-free">남은 자리 <b>${num(s.free)}</b></div>
-    <div class="us-legend"><span><i class="u-sale"></i>판매 중 ${num(sale)}</span>
-      ${edit ? `<button class="us-goguma" data-goguma="${s.id}" title="판매중지(고구마) 상품 수 고치기"><i class="u-goguma"></i>${gtxt} ✎</button>` : `<span><i class="u-goguma"></i>${gtxt}</span>`}
+    <div class="us-legend"><span title="네이버에 있는 상품 중 전시중지(고구마)를 뺀 것 (판매 중·판매중지·품절 등)"><i class="u-sale"></i>상품 ${num(sale)}</span>
+      ${edit ? `<button class="us-goguma" data-goguma="${s.id}" title="전시중지(고구마) 상품 수 고치기"><i class="u-goguma"></i>${gtxt} ✎</button>` : `<span><i class="u-goguma"></i>${gtxt}</span>`}
       <span><i class="u-pend"></i>등록 대기 ${num(pend)}</span></div>
   </div>`;
 }
@@ -607,5 +608,6 @@ function naverStatusLine(s) {
   try { st = JSON.parse(s.naver_status || "{}"); } catch (e) { st = {}; }
   const parts = Object.entries(st).filter(([k, v]) => !k.startsWith("_") && v).sort((a, b) => b[1] - a[1])
     .map(([k, v]) => `${NAVER_STATUS[k] || k} ${num(v)}`);
-  return parts.length ? `네이버 ${num(st._total || s.naver_count)}개: ${parts.join(" · ")}` : "";
+  const disp = st._disp_SUSPENSION != null ? ` · 전시중지(고구마) ${num(st._disp_SUSPENSION)}` : "";
+  return parts.length ? `네이버 ${num(st._total || s.naver_count)}개: ${parts.join(" · ")}${disp}` : "";
 }

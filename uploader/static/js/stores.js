@@ -115,12 +115,12 @@ App.page("stores", {
     }
   },
 
-  /* 고구마(판매중지) 상품 수: 직접 넣거나, 비우면 연결 확인 때 받은 수 */
+  /* 고구마(전시중지) 상품 수: 직접 넣거나, 비우면 연결 확인 때 받은 수 */
   goguma(s) {
     App.openModal({
       title: `${s.name} · 고구마 상품 수`,
-      body: `<div class="form"><p class="muted small" style="margin:0">판매중지한 상품(고구마)도 스토어 한도를 차지합니다. 연결 확인 때 네이버에서
-          판매중지 상품 수를 받아 자동으로 넣습니다${s.naver_suspended != null ? ` (지난 확인: <b>${num(s.naver_suspended)}개</b>, 판매 중 ${num(s.naver_sale)}개)` : " (아직 확인 전)"}.
+      body: `<div class="form"><p class="muted small" style="margin:0">전시중지한 상품(고구마)도 스토어 한도를 차지합니다. 연결 확인 때 네이버에서
+          전시중지 상품 수를 받아 자동으로 넣습니다${s.naver_suspended != null ? ` (지난 확인: <b>${num(s.naver_suspended)}개</b>, 그 외 ${num(s.naver_sale)}개)` : " (아직 확인 전)"}.
           다르면 직접 넣으세요. 비우면 자동 값으로 돌아갑니다.</p>
         <label class="field">고구마 상품 수<input type="number" id="g-n" min="0" value="${s.goguma_manual ?? ""}" placeholder="자동 (${num(s.naver_suspended || 0)})" autofocus></label></div>`,
       buttons: [{ label: "취소" }, { label: "저장", primary: true, onClick: async (m) => {
@@ -434,8 +434,8 @@ App.page("stores", {
     btn.textContent = "확인 중… (상품을 다 세느라 몇십 초)";
     try {
       const r = await App.api(`/api/stores/${s.id}/test`, { json: {} });
-      App.toast(`${s.name}: 연결됨 · 네이버 상품 ${num(r.naver_count)}개 (판매 중 ${num(r.sale)} · 판매중지(고구마) ${num(r.suspended)}` +
-        Object.entries(r.status || {}).filter(([k, v]) => !["SALE", "SUSPENSION"].includes(k) && v).map(([k, v]) => ` · ${NAVER_STATUS[k] || k} ${num(v)}`).join("") + ")");
+      App.toast(`${s.name}: 연결됨 · 네이버 상품 ${num(r.naver_count)}개 (전시중지(고구마) ${num(r.suspended)}` +
+        Object.entries(r.status || {}).filter(([k, v]) => !k.startsWith("_") && v).map(([k, v]) => ` · ${NAVER_STATUS[k] || k} ${num(v)}`).join("") + ")");
       await this.load(); App.refreshState();
     } catch (e) { App.toast(`${s.name}: ${e.message}`, true); btn.disabled = false; btn.textContent = "연결 확인"; }
   },

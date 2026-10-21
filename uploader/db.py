@@ -264,7 +264,7 @@ class DB:
                    ("tpl_ship_addr", "INTEGER"), ("tpl_return_addr", "INTEGER"),
                    # 사업자 묶음과 순서 (사업자 하나에 스토어 최대 3개)
                    ("business_id", "INTEGER"), ("sort", "INTEGER NOT NULL DEFAULT 0"),
-                   # 연결 확인 때 받은 판매 중·판매중지(고구마) 수, 고구마 수를 직접 넣으면 그 값
+                   # 연결 확인 때 받은 전시중지(고구마)를 뺀 수·전시중지 수, 고구마 수를 직접 넣으면 그 값
                    ("naver_sale", "INTEGER"), ("naver_suspended", "INTEGER"), ("goguma_manual", "INTEGER"),
                    ("naver_status", "TEXT NOT NULL DEFAULT ''"),   # 연결 확인 때 센 상태별 수 (JSON)
                    # 지금 출고 형태 표시: '' 아직 안 정함 · overseas 해외(파란색) · domestic 국내(초록색). 표시만 하고 등록 내용은 바꾸지 않음
@@ -405,11 +405,11 @@ class DB:
             r["n_success"] = r["n_live"]
             # 사용량 = 네이버에 있는 수 + 새로 올릴 대기 수
             #   네이버 수를 확인했다면: 확인 때 수 + 그 뒤 올린 수 - 그 뒤 지운 수 (다른 데서 올린 상품 포함)
-            #   고구마(판매중지) 상품도 한도를 차지한다: 직접 넣은 수가 있으면 그 수, 없으면 연결 확인 때 받은 수
+            #   고구마(전시중지) 상품도 한도를 차지한다: 직접 넣은 수가 있으면 그 수, 없으면 연결 확인 때 받은 수
             r["goguma"] = r["goguma_manual"] if r["goguma_manual"] is not None else (r["naver_suspended"] or 0)
             if r["naver_count"] is not None:
                 base = r["naver_count"]
-                if r["naver_sale"] is not None:   # 전체 조회 수에 판매중지가 빠져 있어도 맞게
+                if r["naver_sale"] is not None:   # 전체 조회 수에 전시중지가 빠져 있어도 맞게
                     base = max(base, r["naver_sale"] + r["goguma"])
                 elif r["goguma_manual"] is not None:
                     base = base + r["goguma_manual"]

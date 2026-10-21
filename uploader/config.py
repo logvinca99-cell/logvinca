@@ -28,6 +28,8 @@ DEFAULTS = {
     # 관부가세 (출고지가 해외 주소면 네이버가 필수로 요구): 커머스API 상품 등록 detailAttribute.customsTaxType 코드
     # NOT_APPLICABLE 부과 대상 아님 · INCLUDED 관부가세 포함(해외직구 노출이면 이것만) · EXCLUDED 관부가세 미포함(구매자 납부)
     "customs_tax_type": "EXCLUDED",
+    # 엑셀 카테고리 → 네이버 카테고리 (원본 상품 → '카테고리 맞추기'에서 고른 것)
+    "category_map": {},
     "delivery_company": "CJGLS",
     "return_fee": 5000,
     "exchange_fee": 10000,

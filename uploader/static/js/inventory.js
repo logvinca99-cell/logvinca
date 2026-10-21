@@ -21,6 +21,7 @@ App.page("inventory", {
     el.innerHTML = `<div class="page">
       <header class="page-head"><h1>원본 상품</h1>
         <div class="head-actions">
+          <button class="btn" id="i-catmap" title="엑셀 카테고리를 스마트스토어 카테고리에 맞추기">카테고리 맞추기</button>
           <button class="btn ghost" id="i-revalidate" title="설정이나 카테고리가 바뀐 뒤 전체를 다시 검사">다시 검사</button>
           <label class="btn primary"><input type="file" id="i-file" accept=".xlsx,.xlsm,.csv" hidden>
             <svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>원본 엑셀 불러오기</label>
@@ -113,13 +114,14 @@ App.page("inventory", {
     }
     const flags = [
       p.warnings.length ? `<span class="flag warn" title="${esc(p.warnings.join("\n"))}">경고 ${p.warnings.length}</span>` : "",
-      p.has_video ? `<span class="flag video">동영상</span>` : "",
+      p.has_video ? `<span class="flag video" title="상세설명에 동영상 있음 (경고 아님)">동영상</span>` : "",
     ].join("");
     const on = this.selAll || this.sel.has(p.id);
     return `<tr data-id="${p.id}" class="${on ? "sel" : ""}">
       <td class="w-check" data-stop><input type="checkbox" ${on ? "checked" : ""} ${this.selAll ? "disabled" : ""} aria-label="고르기"></td>
       <td>${img(p.thumb)}</td>
-      <td><div class="p-name">${esc(p.name)}</div><div class="p-sub"><span>원본 #${p.id}</span>${p.seller_code ? `<span>${esc(p.seller_code)}</span>` : ""}${flags}</div></td>
+      <td><div class="p-name">${esc(p.name)}</div><div class="p-sub"><span>원본 #${p.id}</span>${p.seller_code ? `<span>${esc(p.seller_code)}</span>` : ""}${flags}
+        <a class="src-link" href="/api/sources/${p.id}/origin" target="_blank" rel="noopener noreferrer" title="수집한 원본 상품 페이지 (새 창)">원본 ↗</a></div></td>
       <td class="cat-td"><div class="cat">${cat.length > 2 ? `<div class="cat-top">${esc(cat.slice(0, -2).join(" › "))}</div>` : ""}${esc(cat.slice(-2).join(" › "))}</div></td>
       <td class="num">${num(p.price)}원</td>
       <td>${slots}${p.deleted_copies ? `<div class="p-sub">내림 ${p.deleted_copies}</div>` : ""}</td></tr>`
@@ -146,6 +148,7 @@ App.page("inventory", {
 
   bind() {
     $("#i-file").addEventListener("change", (e) => { if (e.target.files[0]) App.upload("/api/sources/import", e.target.files[0]); e.target.value = ""; });
+    $("#i-catmap").addEventListener("click", () => this.catMap());
     $("#i-revalidate").addEventListener("click", () => App.startTask(App.api("/api/sources/revalidate", { json: {} })));
     $("#i-tiles").addEventListener("click", (e) => {
       const t = e.target.closest("[data-filter]");
@@ -169,7 +172,7 @@ App.page("inventory", {
       const cr = e.target.closest("tr[data-copy]");
       if (cr) { App.pages.listings.goto(+cr.dataset.copy); return; }
       const tr = e.target.closest("tr[data-id]");
-      if (!tr) return;
+      if (!tr || e.target.closest("a")) return;   // '원본 ↗' 링크는 그대로 새 창
       const id = +tr.dataset.id;
       if (e.target.closest("[data-stop]")) {
         if (this.selAll) return;
@@ -273,6 +276,7 @@ App.page("inventory", {
     const self = this;
     App.openDrawer({
       title: d.name, sub: `원본 #${d.id}${d.seller_code ? " · " + d.seller_code : ""} · 원본가 ${num(d.price)}원`, tab,
+      foot: d.source_url ? `<a class="btn" href="${esc(d.source_url)}" target="_blank" rel="noopener noreferrer">원본 상품 페이지 ↗</a>` : "",
       tabs: [
         { key: "info", label: "정보", render: (b) => self.renderInfo(b, d) },
         { key: "stores", label: `복사본 ${d.listings.filter((l) => l.status !== "deleted").length}/${d.max_copies}`, render: (b) => self.renderListings(b, d) },
@@ -346,5 +350,63 @@ App.page("inventory", {
         ${d.history.map((h) => `<tr><td>${esc(h.store_name)}</td><td>${esc(h.seller_code)}</td><td>${esc(h.name)}</td>
         <td>${ymd(h.registered_at)}</td><td>${ymd(h.deleted_at)}</td><td>${h.reason === "refresh" ? "최신화" : "내리기"}</td></tr>`).join("")}</table>` : "");
     $$("tr[data-go]", b).forEach((tr) => tr.addEventListener("click", () => { App.closeDrawer(); App.pages.listings.goto(+tr.dataset.go); }));
+  },
+
+  /* 카테고리 맞추기: 스마트스토어에서 못 찾은 엑셀 카테고리를 네이버 카테고리에 하나씩 맞춘다 */
+  async catMap() {
+    let d;
+    try { d = await App.api("/api/categories/unmatched"); } catch (e) { return App.toast(e.message, true); }
+    const miss = d.items.filter((x) => !x.how);
+    const auto = d.items.filter((x) => x.how);
+    const row = (x, i) => `<div class="cm-row" data-i="${i}">
+        <div class="cm-src"><b>${esc(x.category)}</b> <span class="muted small">원본 ${num(x.count)}개</span></div>
+        <div class="cm-pick"><select class="sel cm-sel"><option value="">— 고르기 —</option>${x.suggest.map((s) => `<option>${esc(s)}</option>`).join("")}</select>
+          <input class="cm-q" placeholder="검색해서 고르기 (예: 모자 사파리)"><div class="cm-hits"></div></div></div>`;
+    App.openModal({
+      title: "카테고리 맞추기", wide: true,
+      body: `<div id="cm-box">
+        <p class="muted small">스마트스토어 카테고리 ${num(d.cached)}개${d.cached_at ? ` · ${when(d.cached_at)}에 받음` : ""}
+          <button type="button" class="btn sm" id="cm-refresh">카테고리 목록 다시 받기</button></p>
+        ${!d.cached ? '<p class="c-err">카테고리 목록이 아직 없습니다. 위 버튼으로 먼저 받아 주세요 (API 키가 있는 스토어 필요).</p>'
+          : miss.length ? `<p>못 찾은 카테고리 <b>${num(miss.length)}</b>가지 · 원본 <b>${num(miss.reduce((a, x) => a + x.count, 0))}</b>개. 비슷한 것을 고르거나 검색해서 고른 뒤 저장하세요. 같은 엑셀 카테고리는 다음 파일에도 그대로 맞춰집니다.</p>
+            <div class="cm-list">${miss.map(row).join("")}</div>` : '<p>못 찾은 카테고리가 없습니다.</p>'}
+        ${auto.length ? `<details><summary class="muted small">이름으로 자동으로 맞춘 것 ${num(auto.length)}가지</summary>
+          <ul class="small">${auto.map((x) => `<li>${esc(x.category)} (${num(x.count)}개) · ${esc(x.how)}</li>`).join("")}</ul></details>` : ""}
+      </div>`,
+      buttons: [{ label: "닫기" }, { label: "저장하고 다시 검사", primary: true, onClick: async (b) => {
+        const items = $$(".cm-row", b).map((r) => ({ from: miss[+r.dataset.i].category, to: $(".cm-sel", r).value })).filter((x) => x.to);
+        if (!items.length) { App.toast("고른 카테고리가 없습니다.", true); return false; }
+        try {
+          await App.api("/api/categories/map", { json: { items } });
+          App.toast(`카테고리 ${num(items.length)}가지를 맞췄습니다. 전체 원본을 다시 검사합니다.`);
+        } catch (e) { App.toast(e.message, true); return false; }
+      } }],
+    });
+    const box = $("#cm-box");
+    $("#cm-refresh", box).addEventListener("click", async () => {
+      try {
+        const r = await App.startTask(App.api("/api/categories/refresh", { json: {} }));
+        if (r) { App.toast(`카테고리 ${num(r.categories)}개를 받았습니다. 다시 검사 뒤 이 창을 다시 열어 보세요.`); App.closeModal(); }
+      } catch (e) { App.toast(e.message, true); }
+    });
+    let timer;
+    box.addEventListener("input", (e) => {
+      const q = e.target.closest(".cm-q");
+      if (!q) return;
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        const hits = q.value.trim() ? await App.api(`/api/categories/search?q=${encodeURIComponent(q.value.trim())}`) : [];
+        q.nextElementSibling.innerHTML = hits.map((h) => `<button type="button" class="cm-hit">${esc(h)}</button>`).join("")
+          || (q.value.trim() ? '<span class="muted small">없음</span>' : "");
+      }, 250);
+    });
+    box.addEventListener("click", (e) => {
+      const h = e.target.closest(".cm-hit");
+      if (!h) return;
+      const sel = $(".cm-sel", h.closest(".cm-row"));
+      if (![...sel.options].some((o) => o.value === h.textContent)) sel.add(new Option(h.textContent, h.textContent));
+      sel.value = h.textContent;
+      h.parentElement.innerHTML = "";
+    });
   },
 });

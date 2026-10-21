@@ -205,8 +205,12 @@ def validate(row, cfg, categories=None):
     cat = str(row.get("카테고리") or "").strip()
     if not cat:
         errors.append("카테고리가 비어 있습니다.")
-    elif categories is not None and cat not in categories:
-        errors.append(f"카테고리 '{cat}'를 스마트스토어에서 찾지 못했습니다.")
+    elif categories is not None:
+        cid, how = find_category(cat, categories, cfg)
+        if not cid:
+            errors.append(f"카테고리 '{cat}'를 스마트스토어에서 찾지 못했습니다. 원본 상품 → '카테고리 맞추기'에서 고를 수 있습니다.")
+        elif how.startswith("이름으로"):
+            warnings.append(f"카테고리 {how}")
     try:
         origin_info(row.get("원산지"), cfg)
     except ConvertError as e:
@@ -222,15 +226,84 @@ def validate(row, cfg, categories=None):
                             + (f" 외 {len(bad) - 3}개" if len(bad) > 3 else ""))
     if len(tags(row)) > 10:
         warnings.append(f"태그 {len(tags(row))}개 중 앞 10개만 등록됩니다.")
-    if "<video" in (row.get("상세설명") or "").lower():
-        warnings.append("상세설명에 동영상이 있습니다. 동영상은 네이버 서버에 올릴 수 없어 원래 주소 그대로 둡니다"
-                        if cfg.get("detail_video") != "remove" else "상세설명의 동영상은 지우고 등록합니다.")
     if len(thumbnails(row)) > 10:
         warnings.append("썸네일이 10장을 넘어 앞 10장만 등록됩니다.")
     return errors, warnings
 
 
 # ───────────────────────── 등록 요청
+
+# ───────────────────────── 카테고리 찾기
+
+_CAT_SEP = re.compile(r"\s*(?:>|＞|›|»)\s*")   # '/'는 네이버 이름 안에도 있음 (가구/인테리어)
+_cat_index = {"src": None}
+
+
+def cat_norm(s):
+    """'패션잡화 > 모자 > 사파리 모자' → '패션잡화>모자>사파리모자' (띄어쓰기·구분자 차이 무시)"""
+    return ">".join(re.sub(r"\s+", "", p) for p in _CAT_SEP.split(str(s or "").strip()) if p.strip())
+
+
+def _index(categories):
+    if _cat_index["src"] is not categories:
+        norm, leaf, ids = {}, {}, set()
+        for name, cid in categories.items():
+            n = cat_norm(name)
+            norm[n] = cid
+            leaf.setdefault(n.rsplit(">", 1)[-1], []).append(name)
+            ids.add(str(cid))
+        _cat_index.update(src=categories, norm=norm, leaf=leaf, ids=ids)
+    return _cat_index
+
+
+def find_category(cat, categories, cfg=None):
+    """엑셀 카테고리 → (네이버 카테고리 번호, 맞춘 방법). 못 찾으면 (None, '').
+    순서: 그대로 → 직접 맞춰 둔 것(설정 category_map) → 띄어쓰기·구분자 무시 → 카테고리 번호 → 대분류·마지막 이름이 같은 것이 하나뿐이면 그것."""
+    cat = str(cat or "").strip()
+    if not cat or not categories:
+        return None, ""
+    if cat in categories:
+        return categories[cat], ""
+    ix = _index(categories)
+    mapped = ((cfg or {}).get("category_map") or {}).get(cat) or ((cfg or {}).get("category_map") or {}).get(cat_norm(cat))
+    if mapped:
+        mapped = str(mapped).strip()
+        if mapped in ix["ids"]:
+            return mapped, "직접 맞춤"
+        hit = categories.get(mapped) or ix["norm"].get(cat_norm(mapped))
+        if hit:
+            return hit, "직접 맞춤"
+    n = cat_norm(cat)
+    if n in ix["norm"]:
+        return ix["norm"][n], ""
+    if cat.isdigit() and cat in ix["ids"]:
+        return cat, ""
+    parts = n.split(">")
+    # 마지막 이름과 첫 단계(대분류)가 같은 네이버 카테고리가 딱 하나면 그것 (중간 단계 이름이 바뀐 경우)
+    same = [x for x in ix["leaf"].get(parts[-1], []) if cat_norm(x).split(">")[0] == parts[0]]
+    if len(same) == 1:
+        return categories[same[0]], f"이름으로 맞춤 → {same[0]}"
+    return None, ""
+
+
+def category_suggestions(cat, categories, limit=6):
+    """못 찾은 카테고리와 비슷한 네이버 카테고리 이름 (고르기용)."""
+    import difflib
+    n = cat_norm(cat)
+    parts = n.split(">")
+    leaf = parts[-1]
+    scored = []
+    for name in categories:
+        m = cat_norm(name)
+        mp = m.split(">")
+        s = difflib.SequenceMatcher(None, leaf, mp[-1]).ratio() * 2
+        s += sum(1 for p in parts[:-1] if p in mp) * 0.4
+        if leaf and (leaf in m or mp[-1] in leaf):
+            s += 0.8
+        scored.append((s, name))
+    scored.sort(reverse=True)
+    return [x for _, x in scored[:limit]]
+
 
 def detail_html(row, cfg, url_map, top="", bottom=""):
     """상세설명 (이미지 주소를 네이버 주소로). top/bottom: 스토어 템플릿 상단·하단 HTML을 앞뒤에 붙인다."""

@@ -12,11 +12,14 @@
 import hashlib
 import os
 import random
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from . import excel, naver
 
 INITIAL_DAYS = 30
+SYNC_PARALLEL = 8   # 주문 가져오기를 동시에 돌릴 스토어 수
 
 # 네이버 상품주문 상태 → 화면 글자
 STATUS_KO = {
@@ -150,7 +153,7 @@ def rematch(db):
 
 # ───────────────────────── 네이버 주문 가져오기
 
-def sync_store(db, store, client, days=None, since=None, until=None):
+def sync_store(db, store, client, days=None, since=None, until=None, should_stop=None):
     """스토어 하나의 주문(상태가 바뀐 것 모두)을 가져온다.
 
     기간을 안 주면: 마지막으로 가져온 때부터 지금까지 (처음이면 days일 전부터) → 이어 받기 표시를 옮긴다.
@@ -166,7 +169,7 @@ def sync_store(db, store, client, days=None, since=None, until=None):
     if os.environ.get("UPLOADER_FAKE_API") == "1":
         orders = _fake_orders(db, store)
     else:
-        ids = client.changed_product_order_ids(since, until)
+        ids = client.changed_product_order_ids(since, until, should_stop=should_stop)
         orders = client.product_order_details(ids) if ids else []
     for o in orders:
         o["store_id"] = store["id"]
@@ -177,19 +180,32 @@ def sync_store(db, store, client, days=None, since=None, until=None):
 
 
 def sync_stores(db, stores_with_clients, progress=None, should_stop=None, days=None, since=None, until=None):
+    """여러 스토어를 동시에 가져온다 (스토어마다 API 애플리케이션이 따로라 한도도 따로). 중단하면 하던 날짜에서 바로 멈춘다."""
     total = {"stores": 0, "orders": 0, "new": 0, "matched": 0, "errors": []}
-    for i, (store, client) in enumerate(stores_with_clients, 1):
+    lock = threading.Lock()
+    n = len(stores_with_clients)
+
+    def one(pair):
+        store, client = pair
         if should_stop and should_stop():
-            break
+            return
         try:
-            r = sync_store(db, store, client, days, since, until)
-            for k in ("orders", "new", "matched"):
-                total[k] += r[k]
+            r = sync_store(db, store, client, days, since, until, should_stop=should_stop)
         except Exception as e:  # noqa: BLE001 - 스토어 하나 실패는 기록하고 계속
-            total["errors"].append(f"{store['name']}: {e}")
-        total["stores"] += 1
-        if progress:
-            progress(i, len(stores_with_clients), f"{store['name']} · 새 주문 {total['new']:,}건")
+            r = None
+            if not (should_stop and should_stop()):
+                with lock:
+                    total["errors"].append(f"{store['name']}: {e}")
+        with lock:
+            if r:
+                for k in ("orders", "new", "matched"):
+                    total[k] += r[k]
+            total["stores"] += 1
+            if progress:
+                progress(total["stores"], n, f"{store['name']} · 새 주문 {total['new']:,}건")
+
+    with ThreadPoolExecutor(max_workers=max(1, min(SYNC_PARALLEL, n))) as ex:
+        list(ex.map(one, stores_with_clients))
     return total
 
 

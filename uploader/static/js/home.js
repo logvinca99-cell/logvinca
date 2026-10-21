@@ -9,7 +9,7 @@ App.page("home", {
       <div class="tiles" id="h-tiles"></div>
       <div id="h-steps"></div>
       <section class="card pad">
-        <div class="sec-head"><h2>스토어별 사용량</h2><span class="muted small">사업자별 · 판매 중·고구마(판매중지)·등록 대기 포함 · 누르면 그 스토어 복사본</span></div>
+        <div class="sec-head"><h2>스토어별 사용량</h2><span class="muted small">사업자별 · 네이버 상품·고구마(전시중지)·등록 대기 포함 · 누르면 그 스토어 복사본</span></div>
         <div id="h-stores" class="h-stores"></div>
       </section>
     </div>`;

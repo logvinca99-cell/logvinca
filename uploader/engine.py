@@ -324,7 +324,7 @@ class Runner:
                 return
 
             row = self.db.source_row(t["source_id"])
-            cat_id = categories.get(str(row.get("카테고리") or "").strip())
+            cat_id, _ = convert.find_category(row.get("카테고리"), categories, cfg)
             if not cat_id:
                 raise convert.ConvertError(f"카테고리 '{row.get('카테고리')}'를 스마트스토어에서 찾지 못했습니다.")
             code = seller_code(cfg, store, t)

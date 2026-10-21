@@ -631,3 +631,14 @@ span.kw-chip { cursor: default; }
 .st-links .btn.disabled { opacity: .45; cursor: help; }
 .h-store, .store-card { cursor: pointer; }
 .h-store .st-links, .store-card .st-links { margin-top: 2px; }
+/* 카테고리 맞추기 */
+.cm-list { display: flex; flex-direction: column; gap: 8px; max-height: 56vh; overflow: auto; }
+.cm-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
+.cm-pick { display: flex; flex-direction: column; gap: 6px; }
+.cm-pick .sel, .cm-q { width: 100%; }
+.cm-hits { display: flex; flex-direction: column; gap: 2px; max-height: 160px; overflow: auto; }
+.cm-hit { text-align: left; border: 0; background: var(--panel-2); border-radius: 6px; padding: 4px 8px; cursor: pointer; font-size: 13px; }
+.cm-hit:hover { background: var(--accent-soft); }
+@media (max-width: 760px) { .cm-row { grid-template-columns: 1fr; } }
+.src-link { font-size: 12px; font-weight: 600; color: var(--info); text-decoration: none; }
+.src-link:hover { text-decoration: underline; }

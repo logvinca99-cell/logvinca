@@ -182,6 +182,58 @@ def create_app(db=None):
         tid = tasks.start("revalidate", "카테고리 받은 뒤 전체 다시 검사", lambda **kw: inventory.revalidate(db, **kw))
         return jsonify({"categories": len(cats), "task": tid})
 
+    @app.get("/api/categories/unmatched")
+    def categories_unmatched():
+        """원본 카테고리 중 네이버에서 못 찾은 것 (개수 많은 순) + 비슷한 네이버 카테고리."""
+        cats = naver.cached_categories()
+        info = {"cached": len(cats or {}), "cached_at": naver.category_cache_time()}
+        if not cats:
+            return jsonify({**info, "items": []})
+        cfg = config.load()
+        items = []
+        for r in db.q("SELECT category, COUNT(*) AS n FROM sources GROUP BY category ORDER BY n DESC"):
+            if not r["category"]:
+                continue
+            cid, how = convert.find_category(r["category"], cats, cfg)
+            if not cid or how:
+                items.append({"category": r["category"], "count": r["n"], "how": how,
+                              "suggest": [] if cid else convert.category_suggestions(r["category"], cats)})
+        return jsonify({**info, "items": items})
+
+    @app.get("/api/categories/search")
+    def categories_search():
+        cats = naver.cached_categories() or {}
+        words = [w for w in (request.args.get("q") or "").split() if w]
+        if not words:
+            return jsonify([])
+        out = [n for n in cats if all(w in n for w in words)]
+        out.sort(key=len)
+        return jsonify(out[:40])
+
+    @app.post("/api/categories/map")
+    def categories_map():
+        """엑셀 카테고리를 네이버 카테고리로 맞춰 두기 (to를 비우면 지움). 저장 뒤 전체 다시 검사."""
+        b = body()
+        pairs = b.get("items") or [{"from": b.get("from"), "to": b.get("to")}]
+        cats = naver.cached_categories() or {}
+        m = dict(config.load().get("category_map") or {})
+        for p in pairs:
+            src, to = str(p.get("from") or "").strip(), str(p.get("to") or "").strip()
+            if not src:
+                continue
+            if to and to not in cats:
+                return fail(f"네이버 카테고리 '{to}'가 목록에 없습니다.")
+            if to:
+                m[src] = to
+            else:
+                m.pop(src, None)
+        config.save({"category_map": m})
+        try:
+            tasks.start("revalidate", "카테고리 맞춘 뒤 전체 다시 검사", lambda **kw: inventory.revalidate(db, **kw))
+        except RuntimeError:
+            pass
+        return jsonify({"ok": True, "count": len(m)})
+
     # ── 스토어
 
     @app.get("/api/stores")
@@ -317,8 +369,9 @@ def create_app(db=None):
             count = st.get("_total", 0)
         except naver.ApiError as e:
             return fail(str(e))
+        hidden = st.get("_disp_SUSPENSION", 0)   # 고구마 = 전시중지 상품 (판매중지는 고구마가 아님)
         db.x("UPDATE stores SET naver_count=?, naver_count_at=?, naver_sale=?, naver_suspended=?, naver_status=? WHERE id=?",
-             (count, time.time(), st.get("SALE", 0), st.get("SUSPENSION", 0), json.dumps(st), sid))
+             (count, time.time(), count - hidden, hidden, json.dumps(st), sid))
         if not s.get("store_url"):   # 스토어 주소를 아직 안 넣었으면 네이버에서 받아 채움 (스토어 바로 가기 버튼)
             url = client.store_url()
             if url:
@@ -331,7 +384,7 @@ def create_app(db=None):
                             lambda **kw: inventory.revalidate(db, **kw))
             except (naver.ApiError, RuntimeError):
                 pass
-        return jsonify({"ok": True, "naver_count": count, "sale": st.get("SALE", 0), "suspended": st.get("SUSPENSION", 0),
+        return jsonify({"ok": True, "naver_count": count, "sale": count - hidden, "suspended": hidden,
                         "status": {k: v for k, v in st.items() if not k.startswith("_")}, "store": db.store(sid)})
 
     @app.post("/api/stores/<int:sid>/goguma")
@@ -358,6 +411,19 @@ def create_app(db=None):
         page, size = int(request.args.get("page", 0)), min(int(request.args.get("size", 100)), 500)
         return jsonify({**inventory.query_sources(db, f, page, size), "counts": inventory.source_counts(db)})
 
+    def _source_url(row):
+        u = str(row.get("수집URL") or row.get("상품URL") or row.get("원본URL") or "").strip()
+        return u if u.lower().startswith(("http://", "https://")) else ""
+
+    @app.get("/api/sources/<int:sid>/origin")
+    def source_origin(sid):
+        """원본 상품 페이지(엑셀 '수집URL')로 바로 이동."""
+        row = db.source_row(sid)
+        url = _source_url(row or {})
+        if not url:
+            return Response("<meta charset=utf-8><p>이 원본에는 수집URL이 없습니다.</p>", status=404, mimetype="text/html")
+        return Response(status=302, headers={"Location": url})
+
     @app.get("/api/sources/<int:sid>")
     def source(sid):
         s = inventory.source_detail(db, sid)
@@ -374,6 +440,7 @@ def create_app(db=None):
             "fields": {k: row.get(k) for k in ("브랜드", "제조사", "모델명", "원산지", "재고수", "배송비", "판매상태")
                        if row.get(k) not in (None, "")},
             "detail_html": row.get("상세설명") or "",
+            "source_url": _source_url(row),
         })
         s["kw"] = _source_kw(sid, row)
         s["ai"] = _source_ai(sid, row)
@@ -1316,11 +1383,16 @@ def create_app(db=None):
 
     # ── 주문 자동 가져오기: 프로그램이 켜져 있는 동안 정해진 간격마다
 
-    auto = {"minutes": 0, "last_at": None, "next_at": None, "last_result": ""}
+    auto = {"minutes": 0, "last_at": None, "next_at": None, "last_result": "", "task": None}
 
     def auto_sync_loop():
         while True:
             try:
+                # 자동 가져오기를 화면에서 '중단'했으면 자동 가져오기를 끈다 (설정에서 다시 켬)
+                t = next((x for x in tasks.list() if x["id"] == auto["task"]), None)
+                if t and t["status"] == "stopped":
+                    config.save({"orders_auto_sync_minutes": 0})
+                    auto.update(task=None, last_result="중단해서 자동 가져오기를 껐습니다")
                 cfg = config.load()
                 minutes = int(cfg.get("orders_auto_sync_minutes") or 0)
                 auto["minutes"] = minutes
@@ -1335,8 +1407,9 @@ def create_app(db=None):
                         pairs = [(s, naver.make_client(s)) for s in db.stores(with_secret=True)
                                  if s["enabled"] and (s["has_keys"] or os.environ.get("UPLOADER_FAKE_API") == "1")]
                         if pairs:
-                            tasks.start("orders", f"주문 자동 가져오기 · 스토어 {len(pairs)}곳",
-                                        lambda **kw: orders.sync_stores(db, pairs, days=cfg.get("orders_initial_days"), **kw))
+                            auto["task"] = tasks.start(
+                                "orders", f"주문 자동 가져오기 · 스토어 {len(pairs)}곳 (중단하면 자동 가져오기 꺼짐)",
+                                lambda **kw: orders.sync_stores(db, pairs, days=cfg.get("orders_initial_days"), **kw))
                             auto["last_at"] = now
             except RuntimeError:
                 pass  # 이미 주문 가져오기가 돌고 있음 → 다음 차례에
@@ -1347,10 +1420,10 @@ def create_app(db=None):
     def dict_folder_check():
         """켤 때 data/사전 폴더에 새 사전 파일이 있으면 뒤에서 읽는다."""
         time.sleep(3)
-        try:  # 이번 업데이트에서 원산지 검사가 바뀜 → 한 번 전체 다시 검사
-            if not db.one("SELECT 1 FROM meta WHERE k='revalidate_origin_v2'") and db.one("SELECT 1 FROM sources LIMIT 1"):
-                tasks.start("revalidate", "원산지 검사 변경 · 전체 다시 검사", lambda **kw: inventory.revalidate(db, **kw))
-            db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('revalidate_origin_v2', '1')")
+        try:  # 이번 업데이트에서 카테고리 찾기·동영상 경고가 바뀜 → 한 번 전체 다시 검사
+            if not db.one("SELECT 1 FROM meta WHERE k='revalidate_cat_v3'") and db.one("SELECT 1 FROM sources LIMIT 1"):
+                tasks.start("revalidate", "카테고리 찾기 변경 · 전체 다시 검사", lambda **kw: inventory.revalidate(db, **kw))
+            db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('revalidate_cat_v3', '1')")
         except Exception:  # noqa: BLE001
             pass
         time.sleep(5)
