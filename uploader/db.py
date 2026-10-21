@@ -263,7 +263,8 @@ class DB:
                    # 사업자 묶음과 순서 (사업자 하나에 스토어 최대 3개)
                    ("business_id", "INTEGER"), ("sort", "INTEGER NOT NULL DEFAULT 0"),
                    # 연결 확인 때 받은 판매 중·판매중지(고구마) 수, 고구마 수를 직접 넣으면 그 값
-                   ("naver_sale", "INTEGER"), ("naver_suspended", "INTEGER"), ("goguma_manual", "INTEGER")],
+                   ("naver_sale", "INTEGER"), ("naver_suspended", "INTEGER"), ("goguma_manual", "INTEGER"),
+                   ("naver_status", "TEXT NOT NULL DEFAULT ''")],   # 연결 확인 때 센 상태별 수 (JSON)
         "listings": [("sold_count", "INTEGER NOT NULL DEFAULT 0"), ("last_sold_at", "REAL"),
                      ("cancel_count", "INTEGER NOT NULL DEFAULT 0"), ("manual_lock", "INTEGER NOT NULL DEFAULT 0"),
                      ("locked", "INTEGER NOT NULL DEFAULT 0"), ("lock_note", "TEXT NOT NULL DEFAULT ''"),("op", "TEXT NOT NULL DEFAULT 'create'"), ("round", "INTEGER NOT NULL DEFAULT 1"),

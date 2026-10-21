@@ -2,6 +2,7 @@
 
 import csv
 import io
+import json
 import os
 import tempfile
 import threading
@@ -312,15 +313,12 @@ def create_app(db=None):
         try:
             client = naver.make_client(s)
             client.test()
-            count = client.product_count()
-            try:
-                st = client.status_counts() or {}
-            except naver.ApiError:
-                st = {}
+            st = client.status_counts()   # 상품 목록을 끝까지 받아 상태별로 셈 (판매 중·판매중지 구분)
+            count = st.get("_total", 0)
         except naver.ApiError as e:
             return fail(str(e))
-        db.x("UPDATE stores SET naver_count=?, naver_count_at=?, naver_sale=?, naver_suspended=? WHERE id=?",
-             (count, time.time(), st.get("SALE"), st.get("SUSPENSION"), sid))
+        db.x("UPDATE stores SET naver_count=?, naver_count_at=?, naver_sale=?, naver_suspended=?, naver_status=? WHERE id=?",
+             (count, time.time(), st.get("SALE", 0), st.get("SUSPENSION", 0), json.dumps(st), sid))
         if not naver.cached_categories():
             try:
                 client.categories(refresh=True)
@@ -329,8 +327,8 @@ def create_app(db=None):
                             lambda **kw: inventory.revalidate(db, **kw))
             except (naver.ApiError, RuntimeError):
                 pass
-        return jsonify({"ok": True, "naver_count": count, "sale": st.get("SALE"), "suspended": st.get("SUSPENSION"),
-                        "store": db.store(sid)})
+        return jsonify({"ok": True, "naver_count": count, "sale": st.get("SALE", 0), "suspended": st.get("SUSPENSION", 0),
+                        "status": {k: v for k, v in st.items() if not k.startswith("_")}, "store": db.store(sid)})
 
     @app.post("/api/stores/<int:sid>/goguma")
     def store_goguma(sid):

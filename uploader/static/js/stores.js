@@ -39,25 +39,6 @@ App.page("stores", {
     this.render();
   },
 
-  /* 사용량 막대: 판매 중 / 고구마(판매중지) / 등록 대기 / 남은 자리 */
-  usage(s) {
-    const cap = Math.max(1, s.capacity);
-    const goguma = Math.min(s.goguma || 0, s.on_naver);
-    const sale = Math.max(0, s.on_naver - goguma);
-    const pend = s.n_pending || 0;
-    const pct = Math.round((s.used / cap) * 1000) / 10;
-    const cls = pct >= 95 ? "full" : pct >= 80 ? "warn" : "";
-    const w = (n) => `${Math.min(100, (n / cap) * 100)}%`;
-    return `<div class="us ${cls}">
-      <div class="us-top"><b>${num(s.used)}</b><span class="muted"> / ${num(s.capacity)}</span><span class="us-pct">${pct}%</span>
-        <span class="us-free">남은 자리 <b>${num(s.free)}</b></span></div>
-      <div class="us-bar"><i class="u-sale" style="width:${w(sale)}"></i><i class="u-goguma" style="width:${w(goguma)}"></i><i class="u-pend" style="width:${w(pend)}"></i></div>
-      <div class="us-legend"><span><i class="u-sale"></i>판매 중 ${num(sale)}</span>
-        <button class="us-goguma" data-goguma="${s.id}" title="판매중지(고구마) 상품 수 고치기"><i class="u-goguma"></i>고구마 ${num(goguma)}${s.goguma_manual != null ? " (직접)" : s.naver_suspended != null ? "" : " (확인 전)"} ✎</button>
-        <span><i class="u-pend"></i>등록 대기 ${num(pend)}</span></div>
-    </div>`;
-  },
-
   render() {
     const all = this.rows;
     const tot = (k) => all.reduce((a, s) => a + (s[k] || 0), 0);
@@ -84,19 +65,19 @@ App.page("stores", {
   },
 
   rowHtml(s) {
-    return `<div class="st-row ${s.enabled ? "" : "off"}" data-store="${s.id}" data-drag="store">
-      <span class="grip" title="끌어서 순서 바꾸기·다른 사업자로 옮기기">⠿</span>
-      <div class="st-name"><div><span class="code">${esc(s.code)}</span> <b>${esc(s.name)}</b>${s.enabled ? "" : ' <span class="flag">사용 안 함</span>'}${s.has_keys ? "" : ' <span class="flag warn">키 없음</span>'}</div>
-        <div class="p-sub">${s.store_url ? `<a href="${esc(s.store_url)}" target="_blank" rel="noopener">${esc(s.store_url.replace(/^https?:\/\//, ""))}</a>` : "주소 없음"}${s.memo ? ` · ${esc(s.memo)}` : ""}</div>
-        <div class="p-sub">${s.naver_count_at ? `네이버 확인 ${when(s.naver_count_at)}` : '<span class="c-warn">연결 확인 전 (사용량이 정확하지 않음)</span>'}</div></div>
-      ${this.usage(s)}
-      <div class="st-stats"><a href="#listings?store_id=${s.id}">복사본 보기</a>
-        <span>실패 <b class="${s.n_fail ? "c-err" : ""}">${num(s.n_fail)}</b> · 판매 이력 <b>${num(s.n_sold)}</b></span>
-        <span>내림 ${num(s.n_deleted)}${s.n_locked ? ` · 잠금 ${num(s.n_locked)}` : ""}</span></div>
+    const line = naverStatusLine(s);
+    return `<div class="st-card ${s.enabled ? "" : "off"}" data-store="${s.id}" data-drag="store">
+      <div class="st-card-head"><span class="grip" title="끌어서 순서 바꾸기·다른 사업자로 옮기기">⠿</span>
+        <span class="code">${esc(s.code)}</span><b>${esc(s.name)}</b>
+        ${s.enabled ? "" : '<span class="flag">사용 안 함</span>'}${s.has_keys ? "" : '<span class="flag warn">키 없음</span>'}</div>
+      ${storeUsage(s, true)}
+      <div class="st-meta">${s.naver_count_at ? `연결 확인 ${when(s.naver_count_at)}${line ? `<br>${esc(line)}` : ""}` : '<span class="c-warn">연결 확인 전 (사용량이 정확하지 않음)</span>'}</div>
+      <div class="st-meta">실패 <b class="${s.n_fail ? "c-err" : ""}">${num(s.n_fail)}</b> · 판매 이력 <b>${num(s.n_sold)}</b> · 내림 ${num(s.n_deleted)}${s.n_locked ? ` · 잠금 ${num(s.n_locked)}` : ""}
+        · <a href="#listings?store_id=${s.id}">복사본 보기</a></div>
       <div class="store-acts"><button class="btn sm" data-act="edit" data-id="${s.id}">수정</button>
         <button class="btn sm" data-act="tpl" data-id="${s.id}">템플릿</button>
-        <button class="btn sm ghost" data-act="test" data-id="${s.id}">연결 확인</button>
-        <button class="btn sm ghost" data-act="refresh" data-id="${s.id}" ${s.n_live ? "" : "disabled"}>최신화</button></div>
+        <button class="btn sm" data-act="test" data-id="${s.id}">연결 확인</button>
+        <button class="btn sm" data-act="refresh" data-id="${s.id}" ${s.n_live ? "" : "disabled"}>최신화</button></div>
     </div>`;
   },
 
@@ -169,7 +150,7 @@ App.page("stores", {
       const row = e.target.closest("[data-drag=store]");
       if (row && row !== drag.el) {
         const r = row.getBoundingClientRect();
-        return { el: row, pos: e.clientY < r.top + r.height / 2 ? "before" : "after" };
+        return { el: row, pos: e.clientX < r.left + r.width / 2 ? "before" : "after" };   // 카드가 가로로 놓임
       }
       const sec = e.target.closest("[data-biz]");
       return sec && !row ? { el: sec, pos: "into" } : null;
@@ -410,10 +391,11 @@ App.page("stores", {
 
   async test(s, btn) {
     btn.disabled = true;
-    btn.textContent = "확인 중…";
+    btn.textContent = "확인 중… (상품을 다 세느라 몇십 초)";
     try {
       const r = await App.api(`/api/stores/${s.id}/test`, { json: {} });
-      App.toast(`${s.name}: 연결됨 · 네이버 상품 ${num(r.naver_count)}개` + (r.sale != null ? ` (판매 중 ${num(r.sale)} · 고구마 ${num(r.suspended)})` : ""));
+      App.toast(`${s.name}: 연결됨 · 네이버 상품 ${num(r.naver_count)}개 (판매 중 ${num(r.sale)} · 판매중지(고구마) ${num(r.suspended)}` +
+        Object.entries(r.status || {}).filter(([k, v]) => !["SALE", "SUSPENSION"].includes(k) && v).map(([k, v]) => ` · ${NAVER_STATUS[k] || k} ${num(v)}`).join("") + ")");
       await this.load(); App.refreshState();
     } catch (e) { App.toast(`${s.name}: ${e.message}`, true); btn.disabled = false; btn.textContent = "연결 확인"; }
   },

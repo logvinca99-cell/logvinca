@@ -9,8 +9,8 @@ App.page("home", {
       <div class="tiles" id="h-tiles"></div>
       <div id="h-steps"></div>
       <section class="card pad">
-        <div class="sec-head"><h2>스토어별 사용량</h2><span class="muted small">스토어당 한도 대비 · 누르면 그 스토어의 등록 목록</span></div>
-        <div class="store-grid" id="h-stores"></div>
+        <div class="sec-head"><h2>스토어별 사용량</h2><span class="muted small">사업자별 · 판매 중·고구마(판매중지)·등록 대기 포함 · 누르면 그 스토어 복사본</span></div>
+        <div id="h-stores" class="h-stores"></div>
       </section>
     </div>`;
     this.el = el;
@@ -42,13 +42,12 @@ App.page("home", {
       <h2>시작 순서</h2><ol>${steps.map(([done, t, d, href]) =>
         `<li class="${done ? "done" : ""}"><a href="${href}"><b>${t}</b><span class="muted small">${d}</span></a></li>`).join("")}</ol></section>`;
 
-    $("#h-stores").innerHTML = stores.length ? stores.map((x) => `
-      <a class="store-card ${x.enabled ? "" : "off"}" href="#listings?store_id=${x.id}">
-        <div class="sc-top"><b><span class="code">${esc(x.code)}</span> ${esc(x.name)}</b>${x.has_keys ? "" : '<span class="flag warn">키 없음</span>'}</div>
-        ${usageBar(x.used, x.capacity)}
-        <div class="sc-num"><span>${num(x.used)}</span><span class="muted">/ ${num(x.capacity)}</span></div>
-        <div class="sc-sub muted small">판매 중 ${num(x.n_live)}${x.n_sold ? ` · 판매됨 ${num(x.n_sold)}` : ""} · 대기 ${num(x.n_pending + x.n_ops)}${x.n_fail ? ` · <span class="c-err">실패 ${num(x.n_fail)}</span>` : ""}
-          ${x.oldest_at ? `<br>가장 오래된 것 ${age(x.oldest_at)}` : ""}</div>
-      </a>`).join("") : `<p class="muted">아직 스토어가 없습니다. <a href="#stores">스토어 추가</a></p>`;
+    $("#h-stores").innerHTML = stores.length ? byBusiness(stores).map(([biz, ss]) => `<div class="h-biz">
+        <div class="h-biz-title">${esc(biz)} <span class="muted small">스토어 ${ss.length}</span></div>
+        <div class="h-biz-cards">${ss.map((x) => `<a class="h-store ${x.enabled ? "" : "off"}" href="#listings?store_id=${x.id}">
+          <div class="st-card-head"><span class="code">${esc(x.code)}</span><b>${esc(x.name)}</b>${x.has_keys ? "" : '<span class="flag warn">키 없음</span>'}</div>
+          ${storeUsage(x)}
+          <div class="st-meta">대기 ${num(x.n_pending + x.n_ops)}${x.n_fail ? ` · <span class="c-err">실패 ${num(x.n_fail)}</span>` : ""}${x.n_sold ? ` · 판매됨 ${num(x.n_sold)}` : ""}${x.oldest_at ? ` · 가장 오래된 것 ${age(x.oldest_at)}` : ""}</div>
+        </a>`).join("")}</div></div>`).join("") : `<p class="muted">아직 스토어가 없습니다. <a href="#stores">스토어 추가</a></p>`;
   },
 });

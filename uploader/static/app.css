@@ -62,7 +62,9 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 
 main { padding: 22px 28px 60px; min-width: 0; }
 .page { max-width: 1320px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
-.page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  position: sticky; top: 0; z-index: 8; background: var(--bg); margin: -22px -28px 0; padding: 14px 28px 10px; border-bottom: 1px solid transparent; }
+.page-head.stuck { border-bottom-color: var(--line); box-shadow: 0 4px 12px rgba(16, 24, 40, .05); }
 .page-head h1 { font-size: 20px; margin: 0; }
 .head-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .batch-pick { display: flex; align-items: center; gap: 12px; min-width: 0; }
@@ -469,7 +471,7 @@ span.kw-chip { cursor: default; }
 /* ── 대량 관리용 목록: 위에 붙는 선택·쪽 넘기기 막대, 큰 체크박스 */
 .grid input[type=checkbox], .listbar input[type=checkbox], .store-pick input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; vertical-align: middle; }
 .grid td.w-check, .grid th.w-check { width: 46px; text-align: center; }
-.listbar { position: sticky; top: 0; z-index: 6; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 4px 14px rgba(16, 24, 40, .06); display: flex; flex-direction: column; }
+.listbar { position: sticky; top: var(--head-h, 62px); z-index: 6; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 4px 14px rgba(16, 24, 40, .06); display: flex; flex-direction: column; }
 .lb-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 14px; }
 .lb-row + .lb-row { border-top: 1px solid var(--line-2); padding-top: 8px; padding-bottom: 8px; }
 .lb-left, .lb-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -522,7 +524,7 @@ span.kw-chip { cursor: default; }
 .store-head .sel { font-weight: 700; font-size: 15px; height: 40px; }
 
 /* 설정 탭 */
-.set-tabs { display: flex; gap: 6px; flex-wrap: wrap; position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 6px 0; }
+.set-tabs { display: flex; gap: 6px; flex-wrap: wrap; position: sticky; top: var(--head-h, 62px); z-index: 5; background: var(--bg); padding: 6px 0; }
 .set-tabs button { height: 36px; padding: 0 14px; border-radius: 99px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; font-weight: 600; color: var(--text-2); }
 .set-tabs button.on { background: var(--text); color: var(--panel); border-color: var(--text); }
 
@@ -574,7 +576,7 @@ span.kw-chip { cursor: default; }
 .us-top b { font-size: 17px; }
 .us-pct { margin-left: 8px; font-weight: 700; color: var(--accent-strong); }
 .us.warn .us-pct { color: var(--warn); } .us.full .us-pct { color: var(--err); }
-.us-free { margin-left: auto; font-size: 13px; color: var(--text-2); }
+.us-free { font-size: 13px; color: var(--text-2); margin-bottom: 4px; }
 .us.full .us-free b { color: var(--err); }
 .us-bar { height: 14px; border-radius: 7px; background: var(--line-2); overflow: hidden; display: flex; margin: 6px 0; }
 .us-bar i { display: block; height: 100%; }
@@ -587,4 +589,24 @@ span.kw-chip { cursor: default; }
 .drop-before { box-shadow: inset 0 3px 0 var(--accent); }
 .drop-after { box-shadow: inset 0 -3px 0 var(--accent); }
 .drop-into { outline: 2px dashed var(--accent); outline-offset: -2px; }
+/* 스토어 카드 (스토어 화면 · 한눈에 보기 공용) */
+.biz-body { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 12px; min-height: 60px; }
+.st-card { display: flex; flex-direction: column; gap: 8px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); min-width: 0; }
+.st-card.off { opacity: .55; }
+.st-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.st-card-head b { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.st-card-head .code { font-size: 12px; padding: 2px 8px; border-radius: 6px; background: var(--text); border-color: var(--text); color: var(--panel); flex: none; }
+.st-card-head .flag { margin-left: auto; flex: none; }
+.st-meta { font-size: 12.5px; color: var(--text-2); line-height: 1.6; }
+.st-meta b { font-variant-numeric: tabular-nums; }
+.st-card .store-acts { margin-top: auto; }
+.h-stores { display: flex; flex-direction: column; gap: 14px; }
+.h-biz { background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.h-biz-title { font-weight: 700; font-size: 15px; margin: 0 2px 10px; }
+.h-biz-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.h-store { display: flex; flex-direction: column; gap: 6px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); text-decoration: none; min-width: 0; }
+.h-store:hover { border-color: var(--accent); box-shadow: var(--shadow); }
+.h-store.off { opacity: .55; }
+@media (max-width: 1200px) { .biz-body, .h-biz-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .biz-body, .h-biz-cards { grid-template-columns: 1fr; } }
 @media (max-width: 1100px) { .st-row { grid-template-columns: 24px 1fr; } .st-row > .us, .st-row > .st-stats, .st-row > .store-acts { grid-column: 2; } .st-summary { grid-template-columns: repeat(2, 1fr); } }

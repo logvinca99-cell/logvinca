@@ -272,14 +272,30 @@ class Client:
             raise ApiError(f"상품 수 조회 실패: {explain_error(r)}")
         return int(r.json().get("totalElements", 0))
 
-    def status_counts(self):
-        """판매 중(SALE)·판매중지(SUSPENSION, '고구마 상품') 상품 수. 조회가 안 되면 None."""
-        out = {}
-        for st in ("SALE", "SUSPENSION"):
-            r = self.request("POST", "/v1/products/search", json={"page": 1, "size": 1, "productStatusTypes": [st]})
+    def status_counts(self, on_wait=None):
+        """상품 목록을 끝까지 받아 상태별로 센다 {SALE: n, SUSPENSION: n(고구마), OUTOFSTOCK: n, …, _total: n}.
+        상태로 걸러 묻는 방식은 판매 중·판매중지를 못 가르는 경우가 있어, 받은 상품마다 상태를 직접 본다."""
+        out, page, total = {}, 1, 0
+        while True:
+            r = self.request("POST", "/v1/products/search", json={"page": page, "size": 500}, on_wait=on_wait)
             if r.status_code != 200:
-                return None
-            out[st] = int(r.json().get("totalElements", 0))
+                raise ApiError(f"상품 목록 조회 실패: {explain_error(r)}")
+            j = r.json()
+            items = j.get("contents") or []
+            for it in items:
+                st = None
+                for ch in it.get("channelProducts") or []:
+                    st = ch.get("statusType") or st
+                    if st:
+                        break
+                st = st or (it.get("originProduct") or {}).get("statusType") or it.get("statusType") or "UNKNOWN"
+                out[st] = out.get(st, 0) + 1
+                total += 1
+            pages = int(j.get("totalPages") or 0)
+            if not items or page >= pages or page >= 200:
+                break
+            page += 1
+        out["_total"] = total
         return out
 
     def upload_images(self, items, on_wait=None):
@@ -387,8 +403,9 @@ class FakeClient:
     def product_count(self):
         return random.randint(0, 300)
 
-    def status_counts(self):
-        return {"SALE": random.randint(0, 250), "SUSPENSION": random.randint(0, 60)}
+    def status_counts(self, on_wait=None):
+        sale, sus, oos = random.randint(0, 250), random.randint(0, 60), random.randint(0, 20)
+        return {"SALE": sale, "SUSPENSION": sus, "OUTOFSTOCK": oos, "_total": sale + sus + oos}
 
     def delete_product(self, origin_no, on_wait=None):
         time.sleep(random.uniform(0.2, 0.5))

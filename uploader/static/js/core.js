@@ -486,6 +486,11 @@ const App = {
       const b = e.target.closest("[data-stop-task]");
       if (b) { await this.api(`/api/tasks/${b.dataset.stopTask}/stop`, { method: "POST" }); this.toast("중단을 요청했습니다."); }
     });
+    // 화면 맨 위 제목·조작 줄은 스크롤해도 붙어 있다. 그 높이만큼 목록 막대·설정 탭을 아래에 붙인다.
+    const head = () => $("#view .page-head");
+    const ro = new ResizeObserver(() => { const h = head(); if (h) document.documentElement.style.setProperty("--head-h", h.offsetHeight + "px"); });
+    new MutationObserver(() => { ro.disconnect(); const h = head(); if (h) ro.observe(h); }).observe($("#view"), { childList: true });
+    window.addEventListener("scroll", () => head()?.classList.toggle("stuck", window.scrollY > 4), { passive: true });
     let depth = 0;
     document.addEventListener("dragenter", (e) => { if (e.dataTransfer.types.includes("Files")) { depth++; document.body.classList.add("dragging"); } });
     document.addEventListener("dragleave", () => { if (--depth <= 0) { depth = 0; document.body.classList.remove("dragging"); } });
@@ -559,4 +564,36 @@ function byBusiness(stores) {
     if (last && last[0] === k) last[1].push(s); else out.push([k, [s]]);
   }
   return out;
+}
+
+const NAVER_STATUS = { SALE: "판매 중", SUSPENSION: "판매중지(고구마)", OUTOFSTOCK: "품절", WAIT: "판매 대기", CLOSE: "판매 종료",
+  PROHIBITION: "판매 금지", UNADMISSION: "승인 대기", REJECTION: "승인 거부", DELETE: "삭제", UNKNOWN: "상태 모름" };
+
+/* 스토어 사용량: 큰 숫자 + 막대(판매 중 / 고구마 / 등록 대기) + 범례. edit=true면 고구마 수 고치기 버튼 */
+function storeUsage(s, edit = false) {
+  const cap = Math.max(1, s.capacity);
+  const goguma = Math.min(s.goguma || 0, s.on_naver);
+  const sale = Math.max(0, s.on_naver - goguma);
+  const pend = s.n_pending || 0;
+  const pct = Math.round((s.used / cap) * 1000) / 10;
+  const cls = pct >= 95 ? "full" : pct >= 80 ? "warn" : "";
+  const w = (n) => `${Math.min(100, (n / cap) * 100)}%`;
+  const gtxt = `고구마 ${num(goguma)}${s.goguma_manual != null ? " (직접)" : s.naver_suspended != null ? "" : " (확인 전)"}`;
+  return `<div class="us ${cls}">
+    <div class="us-top"><b>${num(s.used)}</b><span class="muted"> / ${num(s.capacity)}</span><span class="us-pct">${pct}%</span></div>
+    <div class="us-bar"><i class="u-sale" style="width:${w(sale)}"></i><i class="u-goguma" style="width:${w(goguma)}"></i><i class="u-pend" style="width:${w(pend)}"></i></div>
+    <div class="us-free">남은 자리 <b>${num(s.free)}</b></div>
+    <div class="us-legend"><span><i class="u-sale"></i>판매 중 ${num(sale)}</span>
+      ${edit ? `<button class="us-goguma" data-goguma="${s.id}" title="판매중지(고구마) 상품 수 고치기"><i class="u-goguma"></i>${gtxt} ✎</button>` : `<span><i class="u-goguma"></i>${gtxt}</span>`}
+      <span><i class="u-pend"></i>등록 대기 ${num(pend)}</span></div>
+  </div>`;
+}
+
+/* 연결 확인 때 센 네이버 상태별 상품 수 (판매자센터와 비교용) */
+function naverStatusLine(s) {
+  let st = {};
+  try { st = JSON.parse(s.naver_status || "{}"); } catch (e) { st = {}; }
+  const parts = Object.entries(st).filter(([k, v]) => !k.startsWith("_") && v).sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `${NAVER_STATUS[k] || k} ${num(v)}`);
+  return parts.length ? `네이버 ${num(st._total || s.naver_count)}개: ${parts.join(" · ")}` : "";
 }
