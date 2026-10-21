@@ -49,6 +49,7 @@ DEFAULTS = {
     "price_exact_v1": True,
     # 처음 가져올 때 며칠 전부터
     "orders_initial_days": 30,
+    "orders_refresh_days": 7,    # 최신화·내리기 전 주문 확인: 그 스토어를 처음 확인할 때 며칠 전부터 (그 뒤엔 마지막 확인부터)
     # 판매 이력이 있는 복사본은 자동으로 잠금 (최신화·내리기로 지우지 않음)
     "lock_sold": True,
     # 취소·반품만 있는 복사본도 잠글지 (끄면 실제 판매가 1건이라도 있어야 잠금)
@@ -62,6 +63,8 @@ DEFAULTS = {
     "price_jitter_max": 3.0,
     # 표시 할인율 기본 % (스토어 템플릿에서 바꿈, 0이면 할인 없음). 금액으로 걸어 정확히 이 %가 되게 함
     "display_discount_pct": 30.0,
+    # 등록 재고: 상품·옵션 모두 늘 이 수 (0이면 엑셀 재고수 그대로)
+    "stock_fixed": 1000,
     "price_round": 100,
 
     # ── 상품명
@@ -115,7 +118,7 @@ DEFAULTS = {
     # 등록 계획 창의 '도둑방지로 올리기' 기본값. 할인 금액은 도둑방지 전 가격으로 계산.
     "bait_default": True,
     "bait_amount": 30000,
-    "bait_on_refresh": False,        # 최신화(다시 등록) 때도 높여서 올릴지
+    "bait_on_refresh": False,        # (예전 설정, 안 씀) 이제 최신화·다시 올리기에도 늘 붙음
     # 대표 이미지 워터마크 (스토어마다: 스토어 화면에서 로고 PNG 또는 글자)
     "wm_enabled": False,
     "wm_scope": "main",              # main(대표 이미지만) / all(대표+추가 이미지)

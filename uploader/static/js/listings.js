@@ -210,7 +210,6 @@ App.page("listings", {
   },
 
   rowHtml(l) {
-    const diff = l.source_price ? ((l.price - l.source_price) / l.source_price) * 100 : 0;
     let msg = "", cls = "";
     if (l.status === "fail") { msg = l.message; cls = "err"; }
     else if (l.status === "success") msg = `상품번호 ${l.channel_no}`;
@@ -234,7 +233,7 @@ App.page("listings", {
       <td class="w-links" data-stop>${goLinks({ storeUrl: l.store_url, channelNo: l.origin_no ? l.channel_no : "", sourceId: l.source_id })}
         <button class="btn sm" data-src="${l.source_id}" title="원본 상품 정보 (이 프로그램)">원본 정보</button></td>
       <td>${esc(l.seller_code || "-")}<div class="p-sub">${l.round}회차${l.registered_at && l.origin_no ? ` · ${ymd(l.registered_at)} (${age(l.registered_at)})` : ""}</div></td>
-      <td class="num">${num(l.price)}원<div class="p-sub r">${diff ? (diff > 0 ? "+" : "") + diff.toFixed(1) + "%" : "원본가"}</div></td>
+      ${priceCell(l, l.source_price)}
       <td>${statusBadge(l.status, l.op)}${msg ? `<div class="s-msg ${cls}" title="${esc(msg)}">${esc(msg)}</div>` : ""}</td></tr>`;
   },
 
@@ -528,7 +527,7 @@ App.page("listings", {
               <td>${o.source === "naver" ? "네이버 주문" : "주문 파일"}</td></tr>`).join("")}</table></div>` : "")
             + (l.history.length ? `<div><h3 class="sec-title">지난 회차</h3><table class="opt-table"><tr><th>회차</th><th>관리코드</th><th>상품번호</th><th>올린 날</th><th>지운 날</th></tr>
               ${l.history.map((h) => `<tr><td>${h.round}</td><td>${esc(h.seller_code)}</td><td>${esc(h.channel_no)}</td><td>${ymd(h.registered_at)}</td>
-              <td>${ymd(h.deleted_at)} <span class="muted">${OP[h.reason] || "내리기"}</span></td></tr>`).join("")}</table></div>` : "");
+              <td>${h.deleted_at ? ymd(h.deleted_at) : "스토어에서 이미 지움"} <span class="muted">${OP[h.reason] || "내리기"}</span></td></tr>`).join("")}</table></div>` : "");
           $("#d-name-save", b)?.addEventListener("click", async () => {
             try {
               const r = await App.api(`/api/listings/${id}/name`, { json: { name: $("#d-name", b).value } });

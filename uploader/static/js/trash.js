@@ -57,7 +57,7 @@ App.page("trash", {
     let d;
     try { d = await App.api(`/api/trash/${id}`); } catch (e) { return App.toast(e.message, true); }
     const hist = (h) => h.length ? `<h3 class="sec-title">지난 회차</h3><table class="opt-table"><tr><th>회차</th><th>관리코드</th><th>상품번호</th><th>올린 날</th><th>지운 날</th><th>이유</th></tr>
-      ${h.map((x) => `<tr><td>${x.round}</td><td>${esc(x.seller_code)}</td><td>${esc(x.channel_no)}</td><td>${ymd(x.registered_at)}</td><td>${ymd(x.deleted_at)}</td>
+      ${h.map((x) => `<tr><td>${x.round}</td><td>${esc(x.seller_code)}</td><td>${esc(x.channel_no)}</td><td>${ymd(x.registered_at)}</td><td>${x.deleted_at ? ymd(x.deleted_at) : "스토어에서 이미 지움"}</td>
         <td>${OP[x.reason] || "내리기"}</td></tr>`).join("")}</table>` : `<p class="muted small">지난 회차 기록 없음</p>`;
     const row = (l) => `<tr><td>${esc(l.store || "")}</td><td>${esc(l.name)}</td><td>${esc(l.seller_code || "-")}<div class="p-sub">${l.round}회차</div></td>
       <td>${l.status === "deleted" ? `내림 ${ymd(l.deleted_at)}` : STATUS[l.status] || l.status}</td><td>${l.registered_at ? ymd(l.registered_at) : "-"}</td><td class="r">${num(l.price)}원</td></tr>`;

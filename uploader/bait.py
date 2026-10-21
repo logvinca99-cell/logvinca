@@ -14,11 +14,12 @@ from . import naver
 
 
 def applies(cfg, t, op):
-    """이번 등록에 더할 금액. 설정에서 도둑방지가 켜져 있고 계획 때 켠 복사본만, 처음 올릴 때만 (설정하면 최신화 때도)."""
-    if not t.get("bait_want") or not cfg.get("bait_default", True):
-        return 0   # 설정에서 도둑방지를 끄면 아직 안 올린 복사본도 원래 가격으로 올림
-    first = op == "create" and int(t.get("round") or 1) == 1
-    if not first and not cfg.get("bait_on_refresh"):
+    """이번 등록에 더할 금액. 새로 올라가는 모든 경우(처음 등록·최신화·다시 올리기)에 붙인다
+    — 새 상품번호로 올라가면 다시 베껴 가기 쉬우므로. 설정에서 도둑방지를 끄면 하나도 안 붙고,
+    복사할 때 '도둑방지로 올리기'를 끈 복사본도 안 붙는다."""
+    if not cfg.get("bait_default", True) or not t.get("bait_want"):
+        return 0
+    if op not in ("create", "refresh", "reupload"):
         return 0
     return max(0, int(cfg.get("bait_amount") or 0))
 

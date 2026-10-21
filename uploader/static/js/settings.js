@@ -32,11 +32,11 @@ const SETTING_SECTIONS = [
     ["price_jitter_max", "흔들기 최대 %", "number", { step: 0.5 }],
     ["display_discount_pct", "표시 할인율 % (0이면 할인 없음)", "number", { step: 1 }],
     ["price_round", "단위 (원, 올림)", "number", { step: 10 }],
+    ["stock_fixed", "등록 재고 (상품·옵션 모두 늘 이 수, 0이면 엑셀 재고수)", "number", { step: 100 }],
   ] },
   { tab: "price", title: "도둑방지", note: "처음 올릴 때 판매가에 금액을 더해 올리고, 원래 가격으로는 도둑방지·복사본 화면에서 직접 되돌립니다. 할인 금액은 도둑방지 전 가격 기준이라 되돌리면 표시 할인율·마진이 처음 그대로입니다.", fields: [
-    ["bait_default", "도둑방지 사용 (끄면 아직 안 올린 복사본도 원래 가격으로 올림)", "check"],
+    ["bait_default", "도둑방지 사용 (처음 등록·최신화·다시 올리기 모두. 끄면 아직 안 올린 복사본도 원래 가격으로 올림)", "check"],
     ["bait_amount", "더할 금액 (원)", "number"],
-    ["bait_on_refresh", "최신화(다시 등록) 때도 높여서 올림", "check"],
   ] },
   { tab: "name", title: "상품명 공통", note: "모든 상품명은 모든 스토어를 통틀어 겹치지 않습니다 (띄어쓰기·기호·대소문자 무시). 금지어는 왼쪽 메뉴 '금지어'.", fields: [
     ["name_max_len", "상품명 최대 글자 수 (공백 포함)", "number"],

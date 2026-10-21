@@ -112,6 +112,7 @@ def import_products(db, fileobj, filename, progress=None, should_stop=None):
     if batch:
         flush()
     db.recount_sources(touched)
+    reprice_pending(db)   # 원본가가 바뀐 원본의 아직 안 올린 복사본 가격도 다시
     db.x("UPDATE imports SET total=?, added=?, updated=?, skipped=?, note=? WHERE id=?",
          (stats["total"], stats["added"], stats["updated"], stats["invalid"],
           f"원본 상품명 중복 {stats['name_dup']}개", iid))
@@ -240,16 +241,17 @@ def query_sources(db, f, page=0, size=100):
     # 이 쪽에 보이는 원본들의 복사본을 한 번에 가져와 원본 아래에 붙인다.
     by_id = {r["id"]: r for r in rows}
     if by_id:
-        for c in db.q(f"""SELECT l.id, l.source_id, l.name, l.price, l.status, l.op, l.round, l.seller_code,
+        pv = price_viewer(db)
+        for c in db.q(f"""SELECT l.id, l.source_id, l.store_id, l.name, l.price, l.sale_shown, l.status, l.op, l.round, l.seller_code,
                 l.channel_no, l.registered_at, l.deleted_at, l.sold_count, l.cancel_count, l.locked, l.lock_note,
                 l.message, t.name AS store,
                 t.store_url, COALESCE(NULLIF(t.code,''), 'S'||printf('%02d', t.id)) AS code
                 FROM listings l JOIN stores t ON t.id=l.store_id
                 WHERE l.source_id IN ({','.join('?' * len(by_id))}) ORDER BY l.status='deleted', l.id""", list(by_id)):
-            if c["status"] == "deleted":
+            c.update(pv(c["price"], c["store_id"], bool(c["channel_no"]), c.get("sale_shown")))
+            if c["status"] == "deleted":   # 내림도 원본당 자리를 차지하므로 칸에 같이 보인다
                 by_id[c["source_id"]]["deleted_copies"] += 1
-            else:
-                by_id[c["source_id"]]["copies"].append(c)
+            by_id[c["source_id"]]["copies"].append(c)
     return {"rows": rows, "total": total}
 
 
@@ -730,20 +732,26 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
                     st["invalid"] += 1
                     continue
                 act = active.get(s["id"], {})
-                slots = max_copies - len(act)
+                gone = dead.get(s["id"], {})
+                # 내린(내림) 복사본도 그 스토어 자리를 차지한다 → 원본당 최대 max_copies곳은 내림까지 센다.
+                # 내림이 있는 스토어로 다시 복사하면 그 줄을 다음 회차로 되살리므로 새 자리를 쓰지 않는다.
+                slots = max_copies - len(set(act) | set(gone))
                 cand = [sid for sid in stores if sid not in act]
                 st["exists"] += len(stores) - len(cand)
-                if slots <= 0:
+                revive = [sid for sid in cand if sid in gone]
+                fresh = [sid for sid in cand if sid not in gone]
+                if slots <= 0 and not revive:
                     st["full"] += 1
                     continue
                 rot += 1
-                cand.sort(key=lambda sid: (-free[sid], (sid + rot) % len(stores)))
-                cand = [sid for sid in cand if free[sid] > 0] or cand
+                fresh.sort(key=lambda sid: (-free[sid], (sid + rot) % len(stores)))
+                fresh = [sid for sid in fresh if free[sid] > 0] or fresh
                 if mode == "spread":
-                    targets = spread.get(s["id"], [])   # 점수 규칙으로 미리 고른 스토어 (plan_spread)
+                    pick = spread.get(s["id"], [])   # 점수 규칙으로 미리 고른 스토어 (plan_spread)
+                    targets = [x for x in pick if x in gone] + [x for x in pick if x not in gone][:max(0, slots)]
                 else:
-                    targets = cand[:slots]
-                if mode == "all" and len(cand) > slots:
+                    targets = revive + fresh[:max(0, slots)]
+                if mode == "all" and len(fresh) > max(0, slots):
                     st["full"] += 1  # 고른 스토어가 남은 칸보다 많아 일부만
                 if not targets:
                     continue
@@ -1196,7 +1204,7 @@ def query_listings(db, f, page=0, size=100):
     where, args = listing_where(f)
     base = "FROM listings l JOIN sources s ON s.id=l.source_id JOIN stores t ON t.id=l.store_id"
     total = db.one(f"SELECT COUNT(*) AS n {base}{where}", args)["n"]
-    rows = db.q(f"""SELECT l.id, l.name, l.name_id, l.price, l.status, l.op, l.round, l.stage, l.message, l.origin_no, l.sold_count,
+    rows = db.q(f"""SELECT l.id, l.name, l.name_id, l.price, l.sale_shown, l.status, l.op, l.round, l.stage, l.message, l.origin_no, l.sold_count,
         l.cancel_count, l.locked, l.lock_note, l.manual_lock,
         l.channel_no, l.seller_code, l.registered_at, l.deleted_at, l.seconds, l.plan_id, l.updated_at,
         s.id AS source_id, s.source_key, s.seller_code AS source_code, s.name AS source_name,
@@ -1215,10 +1223,28 @@ def query_listings(db, f, page=0, size=100):
                 FROM listings l JOIN stores t ON t.id=l.store_id
                 WHERE l.status!='deleted' AND l.source_id IN ({','.join('?' * len(sids))})""", sids):
             sib.setdefault(c["source_id"], []).append(c)
+    pv = price_viewer(db)
     for r in rows:
         r["ctx_words"] = json.loads(r["ctx_words"]) if r["ctx_words"] else []
         r["others"] = [c for c in sib.get(r["source_id"], []) if c["id"] != r["id"]]
+        r.update(pv(r["price"], r["store_id"], bool(r["origin_no"]), r.get("sale_shown")))
     return {"rows": rows, "total": total}
+
+
+def price_viewer(db):
+    """복사본 가격(목표가) → 화면용 {final 손님 가격, shown 네이버 판매가, off 즉시할인, disc_pct}. 스토어 표시 할인율 기준."""
+    cfg = config.load()
+    unit = max(1, convert.to_int(cfg.get("price_round"), 100))
+    pct = {r["id"]: convert.store_discount_pct(r, cfg) for r in db.q("SELECT id, tpl_discount_pct FROM stores")}
+
+    def view(price, store_id, live=False, sale_shown=None):
+        p = pct.get(store_id, 0)
+        shown, off, final = convert.display_prices(price or 0, p, unit)
+        if live and shown != sale_shown:
+            # 이미 올라간 상품인데 지금 기준과 판매가가 다르면(예전 규칙으로 올림 등) 계산값을 보이지 않는다
+            return {"final": price, "shown": sale_shown or 0, "off": 0, "disc_pct": 0, "old_rule": True}
+        return {"final": final, "shown": shown, "off": off, "disc_pct": p}
+    return view
 
 
 def store_summaries(db):

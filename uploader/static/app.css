@@ -693,3 +693,4 @@ td.w-links > .btn { margin-top: 4px; }
 #l-tiles .t-label { display: block; font-size: 11.5px; line-height: 1.35; word-break: keep-all; }
 #l-tiles .t-label::before { display: inline-block; margin-right: 5px; vertical-align: 0; }
 .s-reupload { background: var(--accent-soft); color: var(--accent-strong); }
+.nowrap { white-space: nowrap; }

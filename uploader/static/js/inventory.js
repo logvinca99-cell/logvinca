@@ -133,13 +133,12 @@ App.page("inventory", {
 
   /* 원본 바로 아래에 붙는 복사본 한 줄 (누르면 그 스토어 복사본으로) */
   copyRowHtml(c, p) {
-    const diff = p.price ? ((c.price - p.price) / p.price) * 100 : 0;
     const msg = c.status === "fail" || (c.status === "success" && c.message) ? c.message : "";
     return `<tr class="copy-row" data-copy="${c.id}" title="이 스토어의 복사본으로 가기">
       <td></td><td class="copy-arrow">↳</td>
       <td colspan="3"><div class="copy-name"><span class="code">${esc(c.code)}</span> <span class="muted">${esc(c.store)}</span> ${esc(c.name)}</div>
         <div class="p-sub">${esc(c.seller_code || "관리코드는 등록할 때 붙음")} · ${c.round}회차${c.registered_at && c.channel_no ? ` · ${ymd(c.registered_at)} 올림 (${age(c.registered_at)})` : ""}</div></td>
-      <td class="num">${num(c.price)}원<div class="p-sub r">${diff ? (diff > 0 ? "+" : "") + diff.toFixed(1) + "%" : "원본가"}</div></td>
+      ${priceCell(c, p.price)}
       <td>${statusBadge(c.status, c.op)}${lockFlag(c)}${msg ? `<div class="s-msg ${c.status === "fail" ? "err" : ""}" title="${esc(msg)}">${esc(msg)}</div>` : ""}</td></tr>`;
   },
 
@@ -242,8 +241,8 @@ App.page("inventory", {
             <span class="sp-name"><span class="code">${esc(s.code)}</span> ${esc(s.name)}${s.has_keys ? "" : ' <span class="flag warn">키 없음</span>'}</span>
             ${usageBar(s.used, s.capacity)}<span class="sp-free ${s.free < 100 ? "c-err" : "muted"}">남은 자리 ${num(s.free)}</span></label>`).join("")).join("")
           || '<p class="muted">스토어가 없습니다. 스토어 화면에서 먼저 추가하세요.</p>'}</div>
-        <label class="check bait-check"><input type="checkbox" id="p-bait" ${App.state.settings.bait_default ? "checked" : ""}>
-          <span><b>도둑방지로 올리기</b> · 처음 올릴 때 판매가 +${num(App.state.settings.bait_amount)}원 (원래 가격으로는 직접 되돌림)</span></label>
+        ${App.state.settings.bait_default ? `<label class="check bait-check"><input type="checkbox" id="p-bait" checked>
+          <span><b>도둑방지로 올리기</b> · 새로 올릴 때마다(등록·최신화·다시 올리기) 판매가 +${num(App.state.settings.bait_amount)}원 (원래 가격으로는 직접 되돌림)</span></label>` : ""}
         <div class="plan-sum" id="p-sum"></div>
         <p class="muted small">상품명: AI 맥락 키워드로 만들어 둔 이름 후보가 있으면 바로 붙고, 없으면 복사본 화면에서 '이름 변경 필요'로 보입니다.
           가격은 스토어 템플릿의 가격 조정과 ±${App.state.settings.price_jitter_pct}%, 100원 단위 올림.</p></div>`,
@@ -252,7 +251,7 @@ App.page("inventory", {
           const store_ids = $$(".store-pick input:checked", b).map((x) => +x.value);
           if (!store_ids.length) { App.toast("스토어를 하나 이상 고르세요.", true); return false; }
           const r = await App.startTask(App.api("/api/plans", {
-            json: { ...this.target(), store_ids, mode: "all", bait: $("#p-bait", b).checked },
+            json: { ...this.target(), store_ids, mode: "all", bait: $("#p-bait", b)?.checked ?? true },
           }));
           if (r) this.clearSel();
           return !!r;
@@ -351,7 +350,7 @@ App.page("inventory", {
         : `<p class="muted">아직 어느 스토어에도 복사하지 않았습니다.</p>`) +
       (d.history.length ? `<h3 class="sec-title">지난 회차 (지운 기록)</h3><table class="opt-table"><tr><th>스토어</th><th>관리코드</th><th>상품명</th><th>올린 날</th><th>지운 날</th><th>이유</th></tr>
         ${d.history.map((h) => `<tr><td>${esc(h.store_name)}</td><td>${esc(h.seller_code)}</td><td>${esc(h.name)}</td>
-        <td>${ymd(h.registered_at)}</td><td>${ymd(h.deleted_at)}</td><td>${OP[h.reason] || "내리기"}</td></tr>`).join("")}</table>` : "");
+        <td>${ymd(h.registered_at)}</td><td>${h.deleted_at ? ymd(h.deleted_at) : "스토어에서 이미 지움"}</td><td>${OP[h.reason] || "내리기"}</td></tr>`).join("")}</table>` : "");
     $$("tr[data-go]", b).forEach((tr) => tr.addEventListener("click", () => { App.closeDrawer(); App.pages.listings.goto(+tr.dataset.go); }));
   },
 
@@ -360,10 +359,10 @@ App.page("inventory", {
     let d;
     try { d = await App.api("/api/categories/unmatched"); } catch (e) { return App.toast(e.message, true); }
     const miss = d.items.filter((x) => !x.how);
-    const auto = d.items.filter((x) => x.how);
     const row = (x, i) => `<div class="cm-row" data-i="${i}">
         <div class="cm-src"><b>${esc(x.category)}</b> <span class="muted small">원본 ${num(x.count)}개</span></div>
-        <div class="cm-pick"><select class="sel cm-sel"><option value="">— 고르기 —</option>${x.suggest.map((s) => `<option>${esc(s)}</option>`).join("")}</select>
+        <div class="cm-pick"><select class="sel cm-sel"><option value="">— 고르기 —</option>${x.suggest.map((s) => `<option ${s === x.guess ? "selected" : ""}>${esc(s)}</option>`).join("")}</select>
+          ${x.guess ? `<span class="muted small">이름이 거의 같은 카테고리를 미리 골라 두었습니다. 맞으면 그대로 저장하세요.</span>` : ""}
           <input class="cm-q" placeholder="검색해서 고르기 (예: 모자 사파리)"><div class="cm-hits"></div></div></div>`;
     App.openModal({
       title: "카테고리 맞추기", wide: true,
@@ -373,8 +372,6 @@ App.page("inventory", {
         ${!d.cached ? '<p class="c-err">카테고리 목록이 아직 없습니다. 위 버튼으로 먼저 받아 주세요 (API 키가 있는 스토어 필요).</p>'
           : miss.length ? `<p>못 찾은 카테고리 <b>${num(miss.length)}</b>가지 · 원본 <b>${num(miss.reduce((a, x) => a + x.count, 0))}</b>개. 비슷한 것을 고르거나 검색해서 고른 뒤 저장하세요. 같은 엑셀 카테고리는 다음 파일에도 그대로 맞춰집니다.</p>
             <div class="cm-list">${miss.map(row).join("")}</div>` : '<p>못 찾은 카테고리가 없습니다.</p>'}
-        ${auto.length ? `<details><summary class="muted small">이름으로 자동으로 맞춘 것 ${num(auto.length)}가지</summary>
-          <ul class="small">${auto.map((x) => `<li>${esc(x.category)} (${num(x.count)}개) · ${esc(x.how)}</li>`).join("")}</ul></details>` : ""}
       </div>`,
       buttons: [{ label: "닫기" }, { label: "저장하고 다시 검사", primary: true, onClick: async (b) => {
         const items = $$(".cm-row", b).map((r) => ({ from: miss[+r.dataset.i].category, to: $(".cm-sel", r).value })).filter((x) => x.to);

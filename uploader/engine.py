@@ -250,7 +250,8 @@ class Runner:
                 with self.lock:
                     self.state["stores"][sid]["status"] = "판매 이력 확인 중"
                 try:
-                    r = orders.sync_store(self.db, self.db.store(sid), client)
+                    # 처음이면 최근 며칠만 (요청 수·시간당 한도를 아끼려고, 설정 orders_refresh_days 기본 7일)
+                    r = orders.sync_store(self.db, self.db.store(sid), client, days=int(cfg.get("orders_refresh_days") or 7))
                     if r["new"]:
                         self._log("info", f"새 주문 {r['new']}건을 가져왔습니다", store["name"])
                 except Exception as e:  # noqa: BLE001
@@ -316,8 +317,9 @@ class Runner:
                     self._count(sid, lid, None)
                     return
                 self._stage(lid, label, "네이버에서 지우는 중")
-                client.delete_product(t["origin_no"], on_wait=on_wait)
-                self._archive(t, op)
+                removed = client.delete_product(t["origin_no"], on_wait=on_wait)
+                # 이미 스토어에서 지운 상품이면 지난 연결 확인 수에 이미 빠져 있을 수 있어, 남은 자리 계산에 '지움'으로 세지 않는다
+                self._archive(t, op, counted=removed is not False)
                 if op == "delete":
                     self.db.set_listing(lid, "deleted", op="create", stage="", message="", origin_no="",
                                         channel_no="", deleted_at=time.time(), seconds=time.time() - t0)
@@ -340,7 +342,13 @@ class Runner:
             if not cat_id:
                 raise convert.ConvertError(f"카테고리 '{row.get('카테고리')}'를 스마트스토어에서 찾지 못했습니다.")
             code = seller_code(cfg, store, t)
-            # 도둑방지: 처음 올릴 때 가격을 높여 둠 (나중에 원래 가격으로)
+            # 가격은 올리는 이 순간의 기준으로 다시 정한다 (원본가·스토어 가격 조정·흔들기). 등록·최신화·다시 올리기 모두 같게.
+            key = (self.db.one("SELECT source_key FROM sources WHERE id=?", (t["source_id"],)) or {}).get("source_key", "")
+            price = convert.store_price(convert.net_price(row), f"{key}|{sid}", cfg, store)
+            if price != t["price"]:
+                self.db.set_listing(lid, None, price=price)
+                t = {**t, "price": price}
+            # 도둑방지: 새로 올라가는 모든 경우 가격을 높여 둠 (나중에 원래 가격으로)
             bait_amt = bait.applies(cfg, t, op)
             kw = dict(name=t["name"], price=t["price"], bait=bait_amt, importer=convert.importer_for(store, cfg),
                       as_phone=store.get("as_phone") or cfg.get("as_phone"), seller_code=code, store=store)
@@ -394,12 +402,12 @@ class Runner:
             ss[key] += 1
             s["current"].pop(lid, None)
 
-    def _archive(self, t, reason):
-        """지운 회차를 기록에 남긴다."""
+    def _archive(self, t, reason, counted=True):
+        """지운 회차를 기록에 남긴다. counted=False면 남은 자리 계산(연결 확인 뒤 지운 수)에 넣지 않는다."""
         self.db.x("""INSERT INTO listing_history(listing_id, round, name, price, seller_code, origin_no, channel_no,
             registered_at, deleted_at, reason) VALUES(?,?,?,?,?,?,?,?,?,?)""",
                   (t["id"], t["round"], t["name"], t["price"], t["seller_code"] or "", t["origin_no"],
-                   t["channel_no"] or "", t["registered_at"], time.time(), reason))
+                   t["channel_no"] or "", t["registered_at"], time.time() if counted else 0, reason))
 
     def _new_name(self, cfg, t):
         """최신화 때 새 이름을 쓰는 설정이면: 안 쓴 AI 맥락 후보, 없으면 셔플로 새 이름 (AI를 부르지 않음)."""

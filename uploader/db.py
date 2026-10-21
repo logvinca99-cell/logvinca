@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS sources (
     errors TEXT NOT NULL DEFAULT '[]',
     warnings TEXT NOT NULL DEFAULT '[]',
     valid INTEGER NOT NULL,
-    n_listings INTEGER NOT NULL DEFAULT 0,   -- 이 원본이 차지한 스토어 수 (내린 것 제외)
+    n_listings INTEGER NOT NULL DEFAULT 0,   -- 이 원본이 차지한 스토어 수 (내림 포함)
     n_success INTEGER NOT NULL DEFAULT 0,    -- 그중 네이버에 올라가 있는 수
     n_free_names INTEGER NOT NULL DEFAULT 0, -- 아직 안 쓴 이름 후보 수
     core_kw TEXT NOT NULL DEFAULT '',        -- 핵심 키워드 (네이버 검색으로 찾거나 직접 정함)
@@ -375,7 +375,7 @@ class DB:
 
     def _recount(self, where, args):
         self.x(f"""UPDATE sources SET
-            n_listings=(SELECT COUNT(*) FROM listings l WHERE l.source_id=sources.id AND l.status!='deleted'),
+            n_listings=(SELECT COUNT(*) FROM listings l WHERE l.source_id=sources.id),   -- 내림도 자리를 차지 (원본당 최대 수에 셈)
             n_success=(SELECT COUNT(*) FROM listings l WHERE l.source_id=sources.id AND l.origin_no!=''),
             n_free_names=(SELECT COUNT(*) FROM names n WHERE n.source_id=sources.id AND n.listing_id IS NULL
                           AND (n.origin!='original' OR ?))

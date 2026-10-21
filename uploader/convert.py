@@ -206,11 +206,12 @@ def validate(row, cfg, categories=None):
     if not cat:
         errors.append("카테고리가 비어 있습니다.")
     elif categories is not None:
-        cid, how = find_category(cat, categories, cfg)
+        cid, _ = find_category(cat, categories, cfg)
         if not cid:
-            errors.append(f"카테고리 '{cat}'를 스마트스토어에서 찾지 못했습니다. 원본 상품 → '카테고리 맞추기'에서 고를 수 있습니다.")
-        elif how.startswith("이름으로"):
-            warnings.append(f"카테고리 {how}")
+            g, gname = find_category(cat, categories, cfg, guess=True)
+            errors.append(f"카테고리 '{cat}'를 스마트스토어에서 찾지 못했습니다."
+                          + (f" '{gname}'로 보입니다 —" if g else "")
+                          + " 원본 상품 → '카테고리 맞추기'에서 확인해 주세요.")
     try:
         origin_info(row.get("원산지"), cfg)
     except ConvertError as e:
@@ -256,9 +257,10 @@ def _index(categories):
     return _cat_index
 
 
-def find_category(cat, categories, cfg=None):
+def find_category(cat, categories, cfg=None, guess=False):
     """엑셀 카테고리 → (네이버 카테고리 번호, 맞춘 방법). 못 찾으면 (None, '').
-    순서: 그대로 → 직접 맞춰 둔 것(설정 category_map) → 띄어쓰기·구분자 무시 → 카테고리 번호 → 대분류·마지막 이름이 같은 것이 하나뿐이면 그것."""
+    순서: 그대로 → 직접 맞춰 둔 것(설정 category_map) → 띄어쓰기·구분자 무시 → 카테고리 번호.
+    guess=True면 대분류·마지막 이름이 같은 것이 하나뿐일 때 그것도 돌려준다 (추천용 — 등록에는 '카테고리 맞추기'에서 확인한 것만 씀)."""
     cat = str(cat or "").strip()
     if not cat or not categories:
         return None, ""
@@ -281,8 +283,8 @@ def find_category(cat, categories, cfg=None):
     parts = n.split(">")
     # 마지막 이름과 첫 단계(대분류)가 같은 네이버 카테고리가 딱 하나면 그것 (중간 단계 이름이 바뀐 경우)
     same = [x for x in ix["leaf"].get(parts[-1], []) if cat_norm(x).split(">")[0] == parts[0]]
-    if len(same) == 1:
-        return categories[same[0]], f"이름으로 맞춤 → {same[0]}"
+    if guess and len(same) == 1:
+        return categories[same[0]], same[0]
     return None, ""
 
 
@@ -357,6 +359,12 @@ def adjusted_price(price, key, cfg, store_pct=0, jitter=None):
     if (lo or hi) and out == round_up(price, unit):
         out = out - unit if hi <= 0 and out - unit > 0 else out + unit
     return out
+
+
+def stock_qty(row, cfg):
+    """등록 재고: 설정 stock_fixed(기본 1,000)가 있으면 늘 그 수, 0이면 엑셀 재고수."""
+    fixed = to_int(cfg.get("stock_fixed"), 0)
+    return fixed if fixed > 0 else to_int(row.get("재고수"), 999)
 
 
 def display_prices(final, pct, unit=100):
@@ -453,6 +461,12 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
         for c in o.get("optionCombinations") or []:
             if c.get("price"):
                 c["price"] = round_up(to_int(c["price"]), unit)   # 옵션 추가금도 100원 단위 올림
+        fixed = to_int(cfg.get("stock_fixed"), 0)
+        if fixed > 0:   # 재고는 상품·옵션 모두 늘 같은 수 (엑셀 값과 상관없이)
+            for key in ("optionCombinations", "optionStandards"):
+                for x in o.get(key) or []:
+                    if isinstance(x, dict):
+                        x["stockQuantity"] = fixed
         detail["optionInfo"] = _strip_empty(o)
     t = tags(row)
     if t:
@@ -470,7 +484,7 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
                                      store.get("_tpl_bottom", store.get("tpl_bottom_html", ""))),
         "images": {"representativeImage": {"url": images[0]}},
         "salePrice": sale_price + round_up(bait or 0, unit),
-        "stockQuantity": to_int(row.get("재고수"), 999),
+        "stockQuantity": stock_qty(row, cfg),
         "deliveryInfo": {
             "deliveryType": "DELIVERY",
             "deliveryAttributeType": "NORMAL",

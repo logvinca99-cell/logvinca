@@ -447,11 +447,11 @@ class Client:
         return out
 
     def delete_product(self, origin_no, on_wait=None):
-        """원상품 삭제. 이미 없는 상품(404)이면 지운 것으로 본다."""
+        """원상품 삭제. 지웠으면 True, 이미 없던 상품(404, 스토어에서 직접 지운 것)이면 False."""
         r = self.request("DELETE", f"/v2/products/origin-products/{origin_no}", on_wait=on_wait)
         if r.status_code not in (200, 204, 404):
             raise ApiError(f"상품 삭제 실패: {explain_error(r)}")
-        return True
+        return r.status_code != 404
 
 
 def find_store_url(data):

@@ -134,9 +134,16 @@ def create_app(db=None):
         for k in floats:
             if k in v:
                 try:
-                    v[k] = max(0.0, float(v[k]))
+                    f = float(v[k])
+                    v[k] = max(-30.0, min(30.0, f)) if k in ("price_jitter_min", "price_jitter_max") else max(0.0, f)   # 흔들기는 음수 허용
                 except (TypeError, ValueError):
                     v[k] = config.DEFAULTS[k]
+        if "stock_fixed" in v:
+            v["stock_fixed"] = max(0, convert.to_int(v["stock_fixed"], 1000))
+        if "display_discount_pct" in v and not 0 <= v["display_discount_pct"] < 90:
+            return fail("표시 할인율은 0~89% 사이로 넣어 주세요.")
+        if v.get("price_jitter_min", 0) > v.get("price_jitter_max", 0) and "price_jitter_min" in v and "price_jitter_max" in v:
+            return fail("흔들기 최소 %가 최대 %보다 클 수 없습니다.")
         before = config.load()
         cfg = config.save(v)
         if any(before.get(k) != cfg.get(k) for k in ("lock_sold", "lock_canceled_too")):
@@ -146,6 +153,8 @@ def create_app(db=None):
                 tasks.start("revalidate", "원산지 설정이 바뀌어 전체 다시 검사", lambda **kw: inventory.revalidate(db, **kw))
             except RuntimeError:
                 pass
+        if any(before.get(k) != cfg.get(k) for k in ("price_jitter_min", "price_jitter_max", "price_round")):
+            inventory.reprice_pending(db)   # 가격 기본값이 바뀌면 아직 안 올린 복사본 가격도 바로 (템플릿을 바꿀 때와 같게)
         if before.get("kipris_block_pending") != cfg.get("kipris_block_pending"):
             with db.tx() as c:
                 lexicon._bump(c)  # 상표 단어 기준이 바뀌었으면 사전 다시 읽게
@@ -198,10 +207,13 @@ def create_app(db=None):
         for r in db.q("SELECT category, COUNT(*) AS n FROM sources GROUP BY category ORDER BY n DESC"):
             if not r["category"]:
                 continue
-            cid, how = convert.find_category(r["category"], cats, cfg)
-            if not cid or how:
-                items.append({"category": r["category"], "count": r["n"], "how": how,
-                              "suggest": [] if cid else convert.category_suggestions(r["category"], cats)})
+            cid, _ = convert.find_category(r["category"], cats, cfg)
+            if not cid:
+                g, gname = convert.find_category(r["category"], cats, cfg, guess=True)
+                sug = convert.category_suggestions(r["category"], cats)
+                if g:   # 이름이 거의 같은 네이버 카테고리 → 맨 앞에 두고 미리 골라 둠 (저장해야 등록됨)
+                    sug = [gname] + [x for x in sug if x != gname]
+                items.append({"category": r["category"], "count": r["n"], "how": "", "guess": gname if g else "", "suggest": sug})
         return jsonify({**info, "items": items})
 
     @app.get("/api/categories/search")
@@ -1463,9 +1475,9 @@ def create_app(db=None):
         """켤 때 data/사전 폴더에 새 사전 파일이 있으면 뒤에서 읽는다."""
         time.sleep(3)
         try:  # 이번 업데이트에서 카테고리 찾기·동영상 경고가 바뀜 → 한 번 전체 다시 검사
-            if not db.one("SELECT 1 FROM meta WHERE k='revalidate_v4'") and db.one("SELECT 1 FROM sources LIMIT 1"):
-                tasks.start("revalidate", "검사 방식 변경(카테고리·동영상·반복) · 전체 다시 검사", lambda **kw: inventory.revalidate(db, **kw))
-            db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('revalidate_v4', '1')")
+            if not db.one("SELECT 1 FROM meta WHERE k='revalidate_v5'") and db.one("SELECT 1 FROM sources LIMIT 1"):
+                tasks.start("revalidate", "검사 방식 변경(카테고리 확인·동영상·반복) · 전체 다시 검사", lambda **kw: inventory.revalidate(db, **kw))
+            db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('revalidate_v5', '1')")
         except Exception:  # noqa: BLE001
             pass
         time.sleep(5)
@@ -1475,6 +1487,9 @@ def create_app(db=None):
         except Exception:  # noqa: BLE001
             pass
 
+    if not db.one("SELECT 1 FROM meta WHERE k='copies_dead_v1'"):
+        db.recount_sources()   # 내림도 원본당 최대 수에 세도록 바뀜 → 복사 수 다시 세기 (한 번만)
+        db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('copies_dead_v1', '1')")
     if not db.one("SELECT 1 FROM meta WHERE k='price_store_v2'"):
         inventory.reprice_net(db)   # 가격 흔들기를 스토어 템플릿 범위로 옮김 → 아직 안 올린 복사본 가격 다시 (한 번만)
         db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('price_store_v2', '1')")

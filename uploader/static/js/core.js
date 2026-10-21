@@ -91,6 +91,14 @@ function storeLinks(s) {
     : `<span class="btn sm disabled" title="스토어 '수정'에서 스토어 주소를 넣으면 생깁니다 (연결 확인 때 자동으로 채워지기도 함)">스토어 ↗</span>`}
     <a class="btn sm" href="${SELLER_CENTER}" target="_blank" rel="noopener" title="판매자센터 (지금 로그인한 계정의 스토어로 열림)">판매자센터 ↗</a></span>`;
 }
+/* 가격 칸: 손님 가격(크게) + 원본 대비 % + 네이버 판매가·표시 할인 (작게) */
+function priceCell(x, srcPrice) {
+  const fin = x.final ?? x.price;
+  const diff = srcPrice ? ((fin - srcPrice) / srcPrice) * 100 : 0;
+  return `<td class="num"><b>${num(fin)}원</b><div class="p-sub r">${diff ? (diff > 0 ? "+" : "") + diff.toFixed(1) + "%" : "원본가"}</div>
+    ${x.off ? `<div class="p-sub r nowrap" title="네이버 판매가 ${num(x.shown)}원 · 즉시할인 ${num(x.off)}원 → 손님 가격 ${num(fin)}원">판매가 ${num(x.shown)} · ${x.disc_pct}%</div>`
+      : x.old_rule ? `<div class="p-sub r" title="예전 규칙으로 올라간 상품이라 네이버 판매가·할인은 판매자센터에서 확인하세요. 최신화·다시 올리기를 하면 지금 기준으로 올라갑니다">예전 규칙</div>` : ""}</td>`;
+}
 const ORIGIN = { original: "원본", ctx: "AI 맥락", shuffle: "셔플", recombine: "재조합(예전)", import: "가져옴", ai: "AI", manual: "직접" };
 
 const App = {
