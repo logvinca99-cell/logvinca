@@ -87,8 +87,11 @@ def trash_sources(db, ids):
                         "names": _rows(c, "SELECT * FROM names WHERE source_id=?", (sid,)),
                         "history": _rows(c, f"SELECT * FROM listing_history WHERE listing_id IN ({lm})", lids),
                         "ctx_kw": _rows(c, "SELECT * FROM ctx_kw WHERE source_id=?", (sid,))}
+                stores = [r["name"] for r in c.execute(f"""SELECT t.name FROM listings l JOIN stores t ON t.id=l.store_id
+                    WHERE l.id IN ({lm})""", lids).fetchall()]
+                extra = f"원본가 {src[0]['price']:,}원 · 복사본 {len(lids)}개 함께" + (f" ({', '.join(stores)})" if stores else "")
                 c.execute("INSERT INTO trash(kind, ref_id, title, extra, deleted_at, data) VALUES('source',?,?,?,?,?)",
-                          (sid, src[0]["name"], f"복사본 {len(lids)}개 함께", now, pack(snap)))
+                          (sid, src[0]["name"], extra, now, pack(snap)))
                 c.execute(f"UPDATE orders SET listing_id=NULL WHERE listing_id IN ({lm})", lids)
                 c.execute(f"DELETE FROM listing_history WHERE listing_id IN ({lm})", lids)
                 for t in ("listings", "names", "ctx_kw", "ai_words", "ai_asked", "source_kw"):
@@ -106,16 +109,25 @@ def trash_listings(db, ids):
     touched = set()
     for chunk in _chunks(ids):
         m = ",".join("?" * len(chunk))
-        rows = db.q(f"""SELECT l.id, l.source_id, l.origin_no, l.status, l.name, t.name AS store
-            FROM listings l JOIN stores t ON t.id=l.store_id WHERE l.id IN ({m})""", chunk)
+        rows = db.q(f"""SELECT l.id, l.source_id, l.origin_no, l.status, l.name, l.price, l.round, l.seller_code,
+            l.registered_at, l.deleted_at, t.name AS store, s.name AS source_name
+            FROM listings l JOIN stores t ON t.id=l.store_id JOIN sources s ON s.id=l.source_id WHERE l.id IN ({m})""", chunk)
         go = [r for r in rows if not _busy_listing(r)]
         st["skipped_live"] += len(rows) - len(go)
         with db.tx() as c:
             for r in go:
                 snap = {"listing": _rows(c, "SELECT * FROM listings WHERE id=?", (r["id"],))[0],
                         "history": _rows(c, "SELECT * FROM listing_history WHERE listing_id=?", (r["id"],))}
+                snap["source_name"] = r["source_name"]
+                day = (lambda t: time.strftime("%Y-%m-%d", time.localtime(t)) if t else "")
+                state = (f"내림 {day(r['deleted_at'])}" if r["status"] == "deleted"
+                         else "실패" if r["status"] == "fail" else "등록 대기")
+                extra = " · ".join(x for x in (
+                    f"원본 #{r['source_id']}", r["seller_code"] or "관리코드 없음(안 올림)", f"{r['round']}회차", state,
+                    f"올린 날 {day(r['registered_at'])}" if r["registered_at"] else "", f"{r['price']:,}원",
+                    f"지난 회차 {len(snap['history'])}개" if snap["history"] else "") if x)
                 c.execute("INSERT INTO trash(kind, ref_id, title, store, extra, deleted_at, data) VALUES('listing',?,?,?,?,?,?)",
-                          (r["id"], r["name"], r["store"], f"원본 #{r['source_id']}", now, pack(snap)))
+                          (r["id"], r["name"], r["store"], extra, now, pack(snap)))
                 c.execute("UPDATE names SET listing_id=NULL WHERE listing_id=?", (r["id"],))
                 c.execute("UPDATE orders SET listing_id=NULL WHERE listing_id=?", (r["id"],))
                 c.execute("DELETE FROM listing_history WHERE listing_id=?", (r["id"],))
@@ -231,6 +243,25 @@ def ids(db, kind, q=""):
         w.append("(title LIKE ? OR store LIKE ? OR ref_id=?)")
         a += [f"%{q}%", f"%{q}%", int(q) if q.isdigit() else -1]
     return [r["id"] for r in db.q(f"SELECT id FROM trash WHERE {' AND '.join(w)}", a)]
+
+
+def detail(db, tid):
+    """휴지통 한 항목의 내용 (지운 때의 기록 그대로)."""
+    t = db.one("SELECT * FROM trash WHERE id=?", (tid,))
+    if not t:
+        return None
+    d = unpack(t.pop("data"))
+    keep = ("id", "store_id", "name", "price", "status", "round", "seller_code", "origin_no", "channel_no",
+            "registered_at", "deleted_at", "sold_count")
+    if t["kind"] == "source":
+        src = {k: d["source"].get(k) for k in ("id", "name", "price", "category", "seller_code")}
+        ls = [{k: l.get(k) for k in keep} for l in d["listings"]]
+        names = {s["id"]: s["name"] for s in db.q("SELECT id, name FROM stores")}
+        for l in ls:
+            l["store"] = names.get(l["store_id"], f"스토어 #{l['store_id']}")
+        return {**t, "source": src, "listings": ls, "history": d["history"], "names": [n["name"] for n in d["names"]]}
+    l = {k: d["listing"].get(k) for k in keep}
+    return {**t, "listing": l, "source_name": d.get("source_name", ""), "history": d.get("history", [])}
 
 
 def counts(db):

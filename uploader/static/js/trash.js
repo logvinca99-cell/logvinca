@@ -18,7 +18,7 @@ App.page("trash", {
         <input id="t-q" placeholder="상품명·스토어·번호 검색"></div></div>
       <div class="listbar" id="t-bar"></div>
       <div class="card table-card"><table class="grid"><thead><tr><th class="w-check"></th><th>상품명</th><th class="w-store">스토어</th>
-        <th class="w-round">내용</th><th class="w-round">지운 때</th></tr></thead><tbody id="t-rows"></tbody></table>
+        <th>지울 때 기록</th><th class="w-round">지운 때</th></tr></thead><tbody id="t-rows"></tbody></table>
         <div class="pg-foot"><div class="pg" id="t-pager"></div></div></div>
     </div>`;
     $("#t-tiles").addEventListener("click", (e) => {
@@ -28,6 +28,8 @@ App.page("trash", {
     let timer;
     $("#t-q").addEventListener("input", (e) => { clearTimeout(timer); timer = setTimeout(() => { this.q = e.target.value.trim(); this.page = 0; this.clear(); this.load(); }, 300); });
     $("#t-rows").addEventListener("click", (e) => {
+      const dt = e.target.closest("[data-detail]");
+      if (dt) return this.detail(+dt.dataset.detail);
       const tr = e.target.closest("tr[data-id]");
       if (!tr || this.selAll) return;
       const id = +tr.dataset.id;
@@ -49,6 +51,31 @@ App.page("trash", {
   },
 
   clear() { this.sel.clear(); this.selAll = false; },
+
+  /* 지울 때의 기록 그대로: 복사본이면 스토어·관리코드·회차·올린 날·지난 회차, 원본이면 함께 지운 복사본들 */
+  async detail(id) {
+    let d;
+    try { d = await App.api(`/api/trash/${id}`); } catch (e) { return App.toast(e.message, true); }
+    const hist = (h) => h.length ? `<h3 class="sec-title">지난 회차</h3><table class="opt-table"><tr><th>회차</th><th>관리코드</th><th>상품번호</th><th>올린 날</th><th>지운 날</th><th>이유</th></tr>
+      ${h.map((x) => `<tr><td>${x.round}</td><td>${esc(x.seller_code)}</td><td>${esc(x.channel_no)}</td><td>${ymd(x.registered_at)}</td><td>${ymd(x.deleted_at)}</td>
+        <td>${x.reason === "refresh" ? "최신화" : "내리기"}</td></tr>`).join("")}</table>` : `<p class="muted small">지난 회차 기록 없음</p>`;
+    const row = (l) => `<tr><td>${esc(l.store || "")}</td><td>${esc(l.name)}</td><td>${esc(l.seller_code || "-")}<div class="p-sub">${l.round}회차</div></td>
+      <td>${l.status === "deleted" ? `내림 ${ymd(l.deleted_at)}` : STATUS[l.status] || l.status}</td><td>${l.registered_at ? ymd(l.registered_at) : "-"}</td><td class="r">${num(l.price)}원</td></tr>`;
+    App.openDrawer({
+      title: d.title, sub: `휴지통 · ${d.kind === "source" ? "원본" : "복사본"} #${d.ref_id} · ${when(d.deleted_at)}에 지움`,
+      tabs: [{ key: "info", label: "지울 때 기록", render: (b) => {
+        b.innerHTML = d.kind === "source"
+          ? `<dl class="kv"><dt>원본</dt><dd>#${d.source.id} ${esc(d.source.name)}</dd><dt>원본가</dt><dd>${num(d.source.price)}원</dd><dt>카테고리</dt><dd>${esc(d.source.category)}</dd></dl>
+            <h3 class="sec-title">함께 지운 복사본 ${d.listings.length}개</h3>${d.listings.length ? `<table class="opt-table"><tr><th>스토어</th><th>상품명</th><th>관리코드</th><th>상태</th><th>올린 날</th><th class="r">가격</th></tr>${d.listings.map(row).join("")}</table>` : '<p class="muted small">없음</p>'}
+            ${hist(d.history)}<h3 class="sec-title">이름 후보 ${d.names.length}개</h3><ul class="name-list">${d.names.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>`
+          : `<dl class="kv"><dt>스토어</dt><dd>${esc(d.store)}</dd><dt>상품명</dt><dd>${esc(d.listing.name)}</dd><dt>원본</dt><dd>${esc(d.source_name)}</dd>
+            <dt>관리코드</dt><dd>${esc(d.listing.seller_code || "없음 (올린 적 없음)")} · ${d.listing.round}회차</dd>
+            <dt>상태</dt><dd>${d.listing.status === "deleted" ? `내림 ${ymd(d.listing.deleted_at)}` : STATUS[d.listing.status] || d.listing.status}</dd>
+            <dt>올린 날</dt><dd>${d.listing.registered_at ? ymd(d.listing.registered_at) : "-"}</dd><dt>가격</dt><dd>${num(d.listing.price)}원</dd>
+            ${d.listing.sold_count ? `<dt>판매</dt><dd>${num(d.listing.sold_count)}개</dd>` : ""}</dl>${hist(d.history)}`;
+      } }],
+    });
+  },
   target() { return this.selAll ? { all: true, kind: this.kind, q: this.q } : { ids: [...this.sel] }; },
 
   async load() {
@@ -61,7 +88,7 @@ App.page("trash", {
       const on = this.selAll || this.sel.has(x.id);
       return `<tr data-id="${x.id}" class="${on ? "sel" : ""}"><td class="w-check"><input type="checkbox" ${on ? "checked" : ""} ${this.selAll ? "disabled" : ""}></td>
         <td><div class="p-name">${esc(x.title)}</div><div class="p-sub">${x.kind === "source" ? "원본" : "복사본"} #${x.ref_id}</div></td>
-        <td>${esc(x.store || "-")}</td><td class="muted small">${esc(x.extra)}</td><td>${when(x.deleted_at)}</td></tr>`;
+        <td>${esc(x.store || "-")}</td><td class="small">${esc(x.extra)} <button class="link-btn" data-detail="${x.id}">자세히</button></td><td>${when(x.deleted_at)}</td></tr>`;
     }).join("") : `<tr class="empty-row"><td colspan="5">휴지통이 비어 있습니다.</td></tr>`;
     this.renderBar();
   },

@@ -89,12 +89,13 @@ App.page("inventory", {
         { id: "ctx", label: "AI 맥락 키워드 받기", title: "고른 원본마다 AI에게 맥락 키워드를 한 번 받아 이름 후보를 만들어 둡니다 (실행 전에 비용 안내)" },
         { id: "copy", label: "다른 스토어로 복사", primary: true },
         "|",
+        { id: "edit", label: "일괄 수정", title: "판매자코드 비우기, 재고수(상품·옵션 모두) 바꾸기" },
         { id: "delete", label: "삭제", danger: true, title: "휴지통으로 옮김 (휴지통에서 되살리거나 완전히 지울 수 있음)" },
       ],
       onPageCheck: (on) => { this.selAll = false; this.rows.forEach((p) => (on ? this.sel.add(p.id) : this.sel.delete(p.id))); this.load(); },
       onAll: () => { this.selAll = true; this.sel.clear(); this.load(); },
       onClear: () => { this.clearSel(); this.load(); },
-      onAction: (id) => { if (id === "ctx") App.ctxConfirm(this.target()); if (id === "copy") this.copyModal(); if (id === "delete") this.remove(); },
+      onAction: (id) => { if (id === "ctx") App.ctxConfirm(this.target()); if (id === "copy") this.copyModal(); if (id === "delete") this.remove(); if (id === "edit") this.editModal(); },
     });
     App.pagerBar($("#i-pager"), this.pagerOpts());
   },
@@ -179,6 +180,26 @@ App.page("inventory", {
         return;
       }
       this.openSource(id);
+    });
+  },
+
+  editModal() {
+    const n = this.targetCount();
+    App.openModal({
+      title: `원본 일괄 수정 · ${num(n)}개`,
+      body: `<div class="form">
+        <label class="check"><input type="checkbox" id="e-code" checked><span><b>판매자코드 비우기</b> <span class="muted small">(나중에 일괄로 채울 때. 등록할 때는 프로그램이 스토어별 관리코드를 따로 붙입니다)</span></span></label>
+        <label class="check"><input type="checkbox" id="e-stock-on" checked><span><b>재고수 바꾸기</b> · 상품 재고와 <b>옵션 재고 모두</b>
+          <input type="number" id="e-stock" min="0" value="1000" class="inline-num" style="width:90px">개로</span></label>
+        <p class="muted small">원본 엑셀을 다시 불러오면 그 파일의 값으로 돌아갑니다. 이미 네이버에 올라간 복사본은 바뀌지 않고, 앞으로 올리는 것부터 적용됩니다.</p></div>`,
+      buttons: [{ label: "취소" }, { label: "바꾸기", primary: true, onClick: async (b) => {
+        const body = { ...this.target(), clear_seller_code: $("#e-code", b).checked, stock: $("#e-stock-on", b).checked ? $("#e-stock", b).value : "" };
+        try {
+          const r = await App.api("/api/sources/bulk_edit", { json: body });
+          App.toast(`원본 ${num(r.edited)}개를 바꿨습니다`);
+          this.load();
+        } catch (e) { App.toast(e.message, true); return false; }
+      } }],
     });
   },
 

@@ -562,6 +562,20 @@ def create_app(db=None):
 
     # ── 휴지통: 지우면 휴지통으로 옮기고, 되살리거나 완전히 지운다
 
+    @app.post("/api/sources/bulk_edit")
+    def sources_bulk_edit():
+        """원본 일괄 수정: 판매자코드 비우기, 재고수(상품·옵션 모두) 바꾸기."""
+        b = body()
+        ids = inventory.source_ids(db, _filter_from(b))
+        if not ids:
+            return fail("고른 원본이 없습니다.")
+        stock = b.get("stock")
+        stock = None if stock in (None, "") else max(0, int(stock))
+        clear = bool(b.get("clear_seller_code"))
+        if stock is None and not clear:
+            return fail("바꿀 항목을 고르세요.")
+        return jsonify(inventory.bulk_edit_sources(db, ids, clear, stock))
+
     @app.post("/api/sources/delete")
     def sources_delete():
         if runner.state["running"]:
@@ -587,6 +601,11 @@ def create_app(db=None):
         a = request.args
         page, size = int(a.get("page", 0)), min(int(a.get("size", 100)), 500)
         return jsonify(trash.listing(db, a.get("kind") or "source", (a.get("q") or "").strip(), page, size))
+
+    @app.get("/api/trash/<int:tid>")
+    def trash_detail(tid):
+        d = trash.detail(db, tid)
+        return jsonify(d) if d else fail("휴지통에 없습니다.", 404)
 
     def _trash_ids(b):
         if b.get("all"):
@@ -648,7 +667,7 @@ def create_app(db=None):
             l["body"] = {"검사 오류": str(e)}
         l["thumb"] = (convert.thumbnails(row) or [""])[0]
         l["source_name"] = row.get("상품명")
-        l["source_price"] = convert.to_int(row.get("판매가"))
+        l["source_price"] = convert.net_price(row)
         return jsonify(l)
 
     @app.post("/api/listings/schedule")
@@ -1240,6 +1259,10 @@ def create_app(db=None):
                 tasks.start("dictfile", "사전 폴더 읽기 (새 파일)", lambda **kw: lexicon.import_dict_folder(db, **kw))
         except Exception:  # noqa: BLE001
             pass
+
+    if not db.one("SELECT 1 FROM meta WHERE k='price_net_v1'"):
+        inventory.reprice_net(db)   # 이번 버전부터 원본가 = 판매가 - 할인가 (예전 원본·대기 복사본 가격을 한 번 다시 계산)
+        db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('price_net_v1', '1')")
 
     if not app.config.get("TESTING"):
         threading.Thread(target=auto_sync_loop, daemon=True).start()

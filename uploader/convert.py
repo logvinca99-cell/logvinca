@@ -121,6 +121,13 @@ def images_to_upload(row, cfg):
     return thumbnails(row)[:10] + detail_images_to_upload(row, cfg)
 
 
+def net_price(row):
+    """원본가 = 엑셀 판매가(R열) - 할인가(S열). 할인가는 '할인 금액'이다 (할인된 가격이 아님).
+    할인가가 없거나 판매가보다 크면 판매가 그대로. 프로그램은 이 금액만 원본가로 쓴다."""
+    price, off = to_int(row.get("판매가")), to_int(row.get("할인가"))
+    return price - off if 0 < off < price else price
+
+
 def summary(row, cfg):
     """목록 화면에 보여줄 값."""
     cat = str(row.get("카테고리") or "").strip()
@@ -130,7 +137,7 @@ def summary(row, cfg):
         "source_key": source_fingerprint(row),
         "seller_code": str(row.get("판매자코드") or ""),
         "name": str(row.get("상품명") or "").strip(),
-        "price": to_int(row.get("판매가")),
+        "price": net_price(row),
         "category": cat,
         "thumb": th[0] if th else "",
         "option_count": option_count(row),
@@ -184,7 +191,7 @@ def validate(row, cfg, categories=None):
     """
     errors, warnings = [], []
     name = str(row.get("상품명") or "").strip()
-    price = to_int(row.get("판매가"))
+    price = net_price(row)
     if not name:
         errors.append("상품명이 비어 있습니다.")
     elif len(name) > 100:
@@ -282,7 +289,7 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
     if errors:
         raise ConvertError(" / ".join(errors))
 
-    base_price = to_int(row.get("판매가"))
+    base_price = net_price(row)   # 판매가 - 할인가 (엑셀 할인가는 이미 빼서 원본가로 씀)
     name = str(name or row["상품명"]).strip()
     unit = to_int(cfg.get("price_round"), 100) or 100
     sale_price = round_up(price or base_price, unit)   # 도둑방지 전 가격 (할인·옵션 계산 기준)
@@ -355,22 +362,14 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
     if images[1:]:
         origin["images"]["optionalImages"] = [{"url": u} for u in images[1:]]
 
-    discount = to_int(row.get("할인가"))
+    # 엑셀 할인가는 원본가(net_price)에 이미 빼서 반영했으므로 따로 즉시할인을 걸지 않는다.
+    # 스토어 표시 할인율이 있으면: 지금 가격이 할인된 최종가가 되도록 판매가를 올리고 그만큼 즉시할인 (100원 단위)
     disc_pct = float(store.get("tpl_discount_pct") or 0)
     if 0 < disc_pct < 90:
-        # 스토어 표시 할인율: 지금 가격(price)이 할인된 최종가가 되도록 판매가를 올리고 그만큼 즉시할인 (100원 단위)
         shown = round_up(math.ceil(sale_price / (1 - disc_pct / 100)), unit)
         off = shown - sale_price
         if off > 0:
             origin["salePrice"] = shown + round_up(bait or 0, unit)
-            origin["customerBenefit"] = {"immediateDiscountPolicy": {
-                "discountMethod": {"value": off, "unitType": "WON"}}}
-    elif 0 < discount < base_price:
-        # 엑셀의 할인가는 '할인된 판매가'로 본다. 가격을 바꿨으면 할인율이 같도록, 도둑방지 전 가격 기준으로.
-        # 할인된 가격도 100원 단위 올림 → 할인 금액도 100원 단위.
-        final = round_up(math.ceil(sale_price * discount / base_price), unit)
-        off = sale_price - final
-        if 0 < off < sale_price:
             origin["customerBenefit"] = {"immediateDiscountPolicy": {
                 "discountMethod": {"value": off, "unitType": "WON"}}}
 

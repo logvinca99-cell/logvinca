@@ -110,7 +110,7 @@ CREATE TABLE IF NOT EXISTS stores (
     tpl_bottom_html TEXT NOT NULL DEFAULT '',
     tpl_customs TEXT NOT NULL DEFAULT '',   -- 관부가세 코드 (비우면 설정값)
     tpl_price_pct REAL,                     -- 가격 조정 % (원본가 대비, 비우면 0)
-    tpl_discount_pct REAL,                  -- 표시 할인율 % (비우면 엑셀 할인가 기준)
+    tpl_discount_pct REAL,                  -- 표시 할인율 % (비우면 할인 없이 원본가 그대로)
     wm_text TEXT NOT NULL DEFAULT '',       -- 워터마크 글자 (비우면 스토어 이름, 로고 PNG가 있으면 로고)
     created_at REAL NOT NULL
 );

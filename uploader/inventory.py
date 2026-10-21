@@ -1047,6 +1047,48 @@ def cancel_listings(db, where_sql, args):
     return len(rows)
 
 
+# ───────────────────────── 원본 일괄 수정
+
+def bulk_edit_sources(db, ids, clear_seller_code=False, stock=None):
+    """판매자코드 비우기(나중에 일괄로 채움), 재고수를 상품·옵션 모두 stock개로.
+    엑셀 원본을 다시 불러오면 그 파일 값으로 돌아간다."""
+    n = 0
+    for i in range(0, len(ids), 500):
+        chunk = list(ids)[i:i + 500]
+        with db.tx() as c:
+            for r in c.execute(f"SELECT id, data FROM sources WHERE id IN ({','.join('?' * len(chunk))})", chunk).fetchall():
+                row = unpack(r["data"])
+                if clear_seller_code:
+                    row["판매자코드"] = ""
+                if stock is not None:
+                    row["재고수"] = stock
+                    o = row.get("옵션상품")
+                    if isinstance(o, dict):
+                        for key in ("optionCombinations", "optionStandards"):
+                            for x in o.get(key) or []:
+                                if isinstance(x, dict):
+                                    x["stockQuantity"] = stock
+                sets, args = ["data=?", "updated_at=?"], [pack(row), time.time()]
+                if clear_seller_code:
+                    sets.append("seller_code=''")
+                c.execute(f"UPDATE sources SET {', '.join(sets)} WHERE id=?", (*args, r["id"]))
+                n += 1
+    return {"edited": n}
+
+
+def reprice_net(db):
+    """원본가를 '판매가 - 할인가'로 다시 계산하고, 아직 안 올린 복사본 가격도 다시 정한다 (한 번만)."""
+    cfg = config.load()
+    with db.tx() as c:
+        for r in c.execute("SELECT id, data FROM sources").fetchall():
+            c.execute("UPDATE sources SET price=? WHERE id=?", (convert.net_price(unpack(r["data"])), r["id"]))
+        for r in c.execute("""SELECT l.id, l.store_id, s.price, s.source_key, st.tpl_price_pct FROM listings l
+                JOIN sources s ON s.id=l.source_id JOIN stores st ON st.id=l.store_id
+                WHERE l.origin_no='' AND l.status IN ('planned','fail')""").fetchall():
+            c.execute("UPDATE listings SET price=? WHERE id=?",
+                      (convert.adjusted_price(r["price"], f"{r['source_key']}|{r['store_id']}", cfg, r["tpl_price_pct"]), r["id"]))
+
+
 # ───────────────────────── 등록 목록 (화면)
 
 def listing_where(f):
