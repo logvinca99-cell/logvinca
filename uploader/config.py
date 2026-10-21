@@ -26,7 +26,8 @@ DEFAULTS = {
     "origin_default": "중국",          # origin_force를 끄고 엑셀 원산지가 비었을 때
     "origin_codes": {"중국": "0200037", "상세페이지 참조": "03"},
     # 관부가세 (출고지가 해외 주소면 네이버가 필수로 요구): 커머스API 상품 등록 detailAttribute.customsTaxType 코드
-    "customs_tax_type": "",
+    # NOT_APPLICABLE 부과 대상 아님 · INCLUDED 관부가세 포함(해외직구 노출이면 이것만) · EXCLUDED 관부가세 미포함(구매자 납부)
+    "customs_tax_type": "EXCLUDED",
     "delivery_company": "CJGLS",
     "return_fee": 5000,
     "exchange_fee": 10000,
@@ -201,7 +202,27 @@ def load():
         if "kipris_block_pending" not in saved:
             saved.pop("use_category_words", None)  # 이 버전부터 상품명에 카테고리를 쓰지 않음 (예전 설정도 끔)
         cfg.update(saved)
+    cfg["customs_tax_type"] = customs_code(cfg.get("customs_tax_type"))
     return cfg
+
+
+CUSTOMS_CODES = ("NOT_APPLICABLE", "INCLUDED", "EXCLUDED")
+
+
+def customs_code(v):
+    """관부가세 코드를 네이버 값으로 맞춘다. 오타(EXCLUED 등)·한글도 받아 준다. 모르는 값은 빈 문자열(보내지 않음)."""
+    s = str(v or "").strip().upper().replace(" ", "_")
+    if not s:
+        return ""
+    if s in CUSTOMS_CODES:
+        return s
+    if s.startswith("EXC") or "미포함" in s or "납부" in s:
+        return "EXCLUDED"
+    if s.startswith("INC") or "포함" in s:
+        return "INCLUDED"
+    if s.startswith("NOT") or "대상" in s:
+        return "NOT_APPLICABLE"
+    return ""
 
 
 def save(values):

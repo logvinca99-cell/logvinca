@@ -85,5 +85,5 @@ def summary(store):
     sid = store["id"]
     return {"top": [f for f, _ in images(sid, "top")], "bottom": [f for f, _ in images(sid, "bottom")],
             "top_html": store.get("tpl_top_html") or "", "bottom_html": store.get("tpl_bottom_html") or "",
-            "customs": store.get("tpl_customs") or "", "price_pct": store.get("tpl_price_pct"),
+            "customs": config.customs_code(store.get("tpl_customs")), "price_pct": store.get("tpl_price_pct"),
             "discount_pct": store.get("tpl_discount_pct")}

@@ -235,8 +235,8 @@ App.page("stores", {
             <label class="field">하단 HTML <span class="muted">(이미지 위에 붙음, 비워도 됨)</span><textarea id="t-bottom" rows="4" spellcheck="false">${esc(t.bottom_html)}</textarea></label></div>
         </div>
         <div class="two">
-          <label class="field">관부가세 코드 <span class="muted">(출고지가 해외면 필수 · 비우면 설정 공통값 '${esc(cfg.customs_tax_type || "없음")}')</span>
-            <input id="t-customs" value="${esc(t.customs)}" placeholder="커머스API customsTaxType 값"></label>
+          <label class="field">관부가세 코드 <span class="muted">(출고지가 해외면 필수 · 공통값: ${esc((CUSTOMS_OPTS.find(([v]) => v === cfg.customs_tax_type) || [, "없음"])[1])})</span>
+            <select id="t-customs">${CUSTOMS_OPTS.map(([v, l]) => `<option value="${v}" ${v === (t.customs || "") ? "selected" : ""}>${esc(v ? l : `설정 공통값 따름`)}</option>`).join("")}</select></label>
           <label class="field">가격 조정 % <span class="muted">(원본가 대비, 예: 10 = 10% 올림, -5 = 5% 내림 · 그 뒤 ±${cfg.price_jitter_pct}%, 100원 올림)</span>
             <input id="t-price" type="number" step="0.5" value="${t.price_pct ?? ""}" placeholder="0"></label>
           <label class="field">표시 할인율 % <span class="muted">(예: 30이면 판매가를 올리고 30% 즉시할인으로 같은 최종가 · 비우면 할인 없이 그 가격 그대로)</span>

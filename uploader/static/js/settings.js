@@ -15,7 +15,7 @@ const SETTING_SECTIONS = [
     ["importer_template", "수입사 (스토어별)", "text", { hint: "{store} 자리에 스토어 이름이 들어감. 예: {store}협력사 → 가나스토어협력사" }],
     ["origin_codes", "원산지 코드", "json", { hint: "이름: 네이버 원산지 코드" }],
     ["origin_default", "엑셀 원산지가 비었을 때 (일괄 지정을 끈 경우)"],
-    ["customs_tax_type", "관부가세 코드 (공통)", "text", { hint: "출고지가 해외 주소면 필수. 커머스API 상품 등록 문서 detailAttribute.customsTaxType의 값. 스토어 템플릿에 넣으면 그 스토어는 그 값" }],
+    ["customs_tax_type", "관부가세 (공통)", "select", { options: CUSTOMS_OPTS, hint: "출고지가 해외 주소면 필수. 스토어 템플릿에서 스토어마다 따로 정할 수 있음" }],
   ] },
   { tab: "product", title: "배송", fields: [
     ["delivery_company", "택배사", "select", { options: [["CJGLS", "CJ대한통운"], ["HANJIN", "한진택배"], ["LOTTE", "롯데택배"],

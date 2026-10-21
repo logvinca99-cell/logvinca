@@ -1032,7 +1032,7 @@ def create_app(db=None):
         if disc is not None and not 0 <= disc < 90:
             return fail("표시 할인율은 0~89% 사이로 넣어 주세요.")
         db.x("""UPDATE stores SET tpl_top_html=?, tpl_bottom_html=?, tpl_customs=?, tpl_price_pct=?, tpl_discount_pct=?
-            WHERE id=?""", (str(b.get("top_html") or ""), str(b.get("bottom_html") or ""), str(b.get("customs") or "").strip(),
+            WHERE id=?""", (str(b.get("top_html") or ""), str(b.get("bottom_html") or ""), config.customs_code(b.get("customs")),
                             price_pct, disc, sid))
         return jsonify(templates.summary(db.store(sid)))
 
