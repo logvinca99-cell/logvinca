@@ -229,12 +229,13 @@ class DB:
         self._migrate_columns()
         self.c.executescript(SCHEMA)
         self._migrate_data()
-        from . import aiwords, ctxkw, keywords, kipris, lexicon
+        from . import aiwords, ctxkw, keywords, kipris, lexicon, trash
         lexicon.ensure(self)
         kipris.ensure(self)
         keywords.ensure(self)
         aiwords.ensure(self)
         ctxkw.ensure(self)
+        trash.ensure(self)
         # 프로그램이 등록 도중 꺼졌으면 남은 상태를 되돌린다.
         self.c.execute("UPDATE listings SET status='fail', stage='', message='프로그램이 등록 도중 종료됨' "
                        "WHERE status='running'")
@@ -445,6 +446,7 @@ class DB:
             (SELECT COUNT(*) FROM names) AS names,
             (SELECT COUNT(*) FROM names WHERE listing_id IS NULL) AS names_free,
             (SELECT COUNT(*) FROM ctx_kw WHERE status='pending') AS ctx_pending,
+            (SELECT COUNT(*) FROM trash) AS trash,
             (SELECT COUNT(*) FROM listings WHERE origin_no!='') AS registered,
             (SELECT COUNT(*) FROM listings WHERE status IN ('planned','queued','running')) AS pending,
             (SELECT COUNT(*) FROM listings WHERE status='deleted') AS deleted,

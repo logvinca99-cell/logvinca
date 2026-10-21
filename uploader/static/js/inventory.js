@@ -88,11 +88,13 @@ App.page("inventory", {
       actions: [
         { id: "ctx", label: "AI 맥락 키워드 받기", title: "고른 원본마다 AI에게 맥락 키워드를 한 번 받아 이름 후보를 만들어 둡니다 (실행 전에 비용 안내)" },
         { id: "copy", label: "다른 스토어로 복사", primary: true },
+        "|",
+        { id: "delete", label: "삭제", danger: true, title: "휴지통으로 옮김 (휴지통에서 되살리거나 완전히 지울 수 있음)" },
       ],
       onPageCheck: (on) => { this.selAll = false; this.rows.forEach((p) => (on ? this.sel.add(p.id) : this.sel.delete(p.id))); this.load(); },
       onAll: () => { this.selAll = true; this.sel.clear(); this.load(); },
       onClear: () => { this.clearSel(); this.load(); },
-      onAction: (id) => { if (id === "ctx") App.ctxConfirm(this.target()); if (id === "copy") this.copyModal(); },
+      onAction: (id) => { if (id === "ctx") App.ctxConfirm(this.target()); if (id === "copy") this.copyModal(); if (id === "delete") this.remove(); },
     });
     App.pagerBar($("#i-pager"), this.pagerOpts());
   },
@@ -178,6 +180,22 @@ App.page("inventory", {
       }
       this.openSource(id);
     });
+  },
+
+  async remove() {
+    const n = this.targetCount();
+    const ok = await App.confirmDanger({
+      title: `원본 ${num(n)}개 삭제`,
+      body: `<p>고른 원본 <b>${num(n)}개</b>를 <b>휴지통</b>으로 옮깁니다. 그 원본의 복사본(아직 안 올린 것·내린 것)과 이름 후보도 함께 옮겨집니다.</p>
+        <p class="muted small">네이버에 올라가 있거나 처리 중인 복사본이 있는 원본은 지우지 않습니다(먼저 복사본에서 '내리기').
+          휴지통에서 되살리거나 완전히 지울 수 있습니다.</p>`,
+    });
+    if (!ok) return;
+    try {
+      const r = await App.api("/api/sources/delete", { json: this.target() });
+      App.toast(`원본 ${num(r.moved)}개를 휴지통으로 옮겼습니다` + (r.skipped_live ? ` · 네이버에 올라가 있는 복사본이 있어 뺀 원본 ${num(r.skipped_live)}개` : ""));
+      this.clearSel(); this.load(); App.refreshState();
+    } catch (e) { App.toast(e.message, true); }
   },
 
   // ── 다른 스토어로 복사: 고른 원본을 고른 스토어(1~2곳)에 그대로 복사

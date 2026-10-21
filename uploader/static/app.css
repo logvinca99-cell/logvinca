@@ -536,3 +536,7 @@ span.kw-chip { cursor: default; }
 /* 복사본 목록: 상품명 비교 칸을 넓게 */
 .grid .w-round { width: 150px; }
 .grid .w-status { width: 170px; }
+
+/* 위험한 확인 버튼 (빨강) */
+.btn.primary.danger { background: var(--err); border-color: var(--err); color: #fff; }
+.btn.primary.danger:hover { filter: brightness(.92); }

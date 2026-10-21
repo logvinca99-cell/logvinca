@@ -9,7 +9,7 @@ import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import VERSION, aiwords, bait, ctxkw, templates, config, convert, engine, inventory, keywords, lexicon, naver, orders, watermark
+from . import VERSION, aiwords, bait, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, orders, watermark
 from .db import DB
 from .tasks import Tasks
 
@@ -559,6 +559,58 @@ def create_app(db=None):
         page, size = int(request.args.get("page", 0)), min(int(request.args.get("size", 100)), 500)
         return jsonify({**inventory.query_listings(db, f, page, size),
                         "counts": inventory.listing_counts(db, f.get("store_id"), f.get("plan_id"))})
+
+    # ── 휴지통: 지우면 휴지통으로 옮기고, 되살리거나 완전히 지운다
+
+    @app.post("/api/sources/delete")
+    def sources_delete():
+        if runner.state["running"]:
+            return fail("등록이 진행 중일 때는 지울 수 없습니다. 끝난 뒤에 다시 시도하세요.")
+        ids = inventory.source_ids(db, _filter_from(body()))
+        if not ids:
+            return fail("고른 원본이 없습니다.")
+        return jsonify(trash.trash_sources(db, ids))
+
+    @app.post("/api/listings/delete")
+    def listings_delete():
+        if runner.state["running"]:
+            return fail("등록이 진행 중일 때는 지울 수 없습니다. 끝난 뒤에 다시 시도하세요.")
+        f = _filter_from(body())
+        f.pop("op", None)
+        ids = inventory.listing_ids(db, f)
+        if not ids:
+            return fail("고른 복사본이 없습니다.")
+        return jsonify(trash.trash_listings(db, ids))
+
+    @app.get("/api/trash")
+    def trash_list():
+        a = request.args
+        page, size = int(a.get("page", 0)), min(int(a.get("size", 100)), 500)
+        return jsonify(trash.listing(db, a.get("kind") or "source", (a.get("q") or "").strip(), page, size))
+
+    def _trash_ids(b):
+        if b.get("all"):
+            return trash.ids(db, b.get("kind") or "source", (b.get("q") or "").strip())
+        return [int(i) for i in b.get("ids") or []]
+
+    @app.post("/api/trash/restore")
+    def trash_restore():
+        if runner.state["running"]:
+            return fail("등록이 진행 중일 때는 되살릴 수 없습니다.")
+        ids = _trash_ids(body())
+        if not ids:
+            return fail("고른 항목이 없습니다.")
+        return jsonify(trash.restore(db, ids))
+
+    @app.post("/api/trash/purge")
+    def trash_purge():
+        b = body()
+        if b.get("empty"):
+            return jsonify(trash.purge(db))
+        ids = _trash_ids(b)
+        if not ids:
+            return fail("고른 항목이 없습니다.")
+        return jsonify(trash.purge(db, ids))
 
     @app.get("/api/listings/stores")
     def listing_stores():

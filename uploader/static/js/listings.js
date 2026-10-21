@@ -137,6 +137,8 @@ App.page("listings", {
         "|",
         { id: "lock", label: "잠금", title: "판매 이력과 상관없이 지우지 못하게 잠금" },
         { id: "unlock", label: "잠금 풀기" },
+        "|",
+        { id: "remove", label: "삭제", danger: true, title: "아직 안 올린 복사본·내린 복사본을 휴지통으로 (네이버에 올라간 것은 먼저 내리기)" },
         ...(this.f.status === "bait" ? ["|", { id: "restore", label: "원래 가격으로", primary: true }] : []),
       ],
       onPageCheck: (on) => { this.selAll = false; this.rows.forEach((l) => (on ? this.sel.add(l.id) : this.sel.delete(l.id))); this.load(); },
@@ -151,6 +153,20 @@ App.page("listings", {
     if (id === "rename") this.renameModal();
     if (id === "refresh" || id === "delete") this.schedule(id);
     if (id === "lock" || id === "unlock") this.lock(id === "lock");
+    if (id === "remove") {
+      const n = this.selAll ? this.total : this.sel.size;
+      const ok = await App.confirmDanger({
+        title: `복사본 ${num(n)}건 삭제`,
+        body: `<p>고른 복사본 <b>${num(n)}건</b>을 <b>휴지통</b>으로 옮깁니다. 붙어 있던 상품명은 원본의 안 쓴 후보로 돌아갑니다.</p>
+          <p class="muted small">네이버에 올라가 있거나 처리 중인 복사본은 지우지 않습니다(먼저 '내리기 예약'으로 내리세요). 휴지통에서 되살릴 수 있습니다.</p>`,
+      });
+      if (!ok) return;
+      try {
+        const r = await App.api("/api/listings/delete", { json: this.target() });
+        App.toast(`복사본 ${num(r.moved)}건을 휴지통으로 옮겼습니다` + (r.skipped_live ? ` · 네이버에 올라가 있거나 처리 중이라 뺀 ${num(r.skipped_live)}건` : ""));
+        this.clearSel(); this.estKey = ""; this.load(); App.refreshState();
+      } catch (err) { App.toast(err.message, true); }
+    }
     if (id === "restore") App.startTask(App.api("/api/bait/restore", { json: this.selAll ? { filter: this.query() } : { ids: [...this.sel] } }));
     if (id === "cancel") {
       if (!confirm("고른 건 중 대기·실패 할 일을 취소할까요?\n새 등록이면 계획을 지우고 이름을 후보로 돌립니다. 최신화·내리기면 판매 중으로 되돌립니다.")) return;

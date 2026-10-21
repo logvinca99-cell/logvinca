@@ -133,6 +133,7 @@ const App = {
       `원본 ${num(st.sources)}개 · 이름 후보 ${num(st.names_free)}개<br>` +
       `등록 완료 ${num(st.registered)}건 · 대기 ${num(st.pending)}건<br>` +
       `카테고리 ${this.state.categories ? num(this.state.categories) + "개" : "아직 안 받음"}` +
+      (st.trash ? `<br><a href="#trash">휴지통 ${num(st.trash)}개</a>` : "") +
       (st.ctx_pending ? `<br><span class="c-warn">AI 맥락 키워드 일괄 처리 중 ${num(st.ctx_pending)}개</span>
         <button class="link-btn" id="ctx-check">지금 확인</button> · <button class="link-btn" id="ctx-cancel">중지</button>` : "");
     $("#ctx-check")?.addEventListener("click", async () => {
@@ -388,6 +389,20 @@ const App = {
       <input type="number" min="1" max="${pages}" value="${page + 1}" aria-label="쪽"> <span class="muted small">/ ${num(pages)}쪽</span>`;
     $$("button", el).forEach((b) => b.addEventListener("click", () => onPage(+b.dataset.p)));
     $("input", el).addEventListener("change", (e) => onPage(Math.min(pages, Math.max(1, +e.target.value)) - 1));
+  },
+
+  /* 한 번 더 묻는 창: 확인 버튼(빨강)을 눌러야 true */
+  confirmDanger({ title, body, ok = "삭제합니다" }) {
+    return new Promise((resolve) => {
+      let done = false;
+      const end = (v) => { if (!done) { done = true; resolve(v); } };
+      this.openModal({
+        title, body: `<div class="form">${body}</div>`,
+        buttons: [{ label: "취소", onClick: () => { end(false); } }, { label: ok, danger: true, primary: true, onClick: () => { end(true); } }],
+      });
+      const obs = new MutationObserver(() => { if ($("#modal-bg").hidden) { obs.disconnect(); end(false); } });
+      obs.observe($("#modal-bg"), { attributes: true, attributeFilter: ["hidden"] });
+    });
   },
 
   // ── 대량 목록: 위에 붙는 막대 (선택 상태 + 할 일 버튼 + 쪽 넘기기)
