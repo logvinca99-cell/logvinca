@@ -304,7 +304,7 @@ App.page("listings", {
       try {
         const r = await App.api("/api/listings/schedule", { json: { ...this.target(), op, now } });
         const skip = r.skipped_sold ? ` 잠긴 ${num(r.skipped_sold)}건(판매 이력·직접 잠금)은 뺐습니다.` : "";
-        if (!r.scheduled) App.toast("판매 중인 건이 없어 걸 일이 없습니다." + skip, true);
+        if (!r.scheduled) App.toast((op === "refresh" ? "판매 중이거나 내린 건이 없어 걸 일이 없습니다." : "판매 중인 건이 없어 걸 일이 없습니다.") + skip, true);
         else if (r.started) { App.toast(`${num(r.scheduled)}건 ${op === "refresh" ? "최신화" : "내리기"}를 시작했습니다.` + skip); App.run = await App.api("/api/run"); this.renderRun(App.run); App.renderSideRun(); }
         else if (r.busy) App.toast(`${num(r.scheduled)}건을 대기에 넣었습니다. 지금 다른 작업이 돌고 있어, 끝난 뒤 시작하세요.` + skip);
         else if (r.error) App.toast(`대기에 넣었지만 시작하지 못했습니다: ${r.error}`, true);
@@ -315,7 +315,7 @@ App.page("listings", {
     };
     App.openModal({
       title: `${num(n)}건 ${op === "refresh" ? "최신화" : "내리기"}`,
-      body: `<p>고른 건 중 <b>판매 중인 건</b>에 ${label}를 겁니다. 잠긴 건(판매 이력·직접 잠금)은 빠지고, 지우기 직전에 이 스토어 주문을 한 번 더 확인합니다.</p>
+      body: `<p>고른 건 중 <b>판매 중인 건</b>에 ${label}를 겁니다.${op === "refresh" ? " <b>이미 내린(내림) 건은 다시 올립니다</b>(다음 회차, 같은 상품명, 가격은 지금 스토어 기준)." : ""} 잠긴 건(판매 이력·직접 잠금)은 빠지고, 지우기 직전에 이 스토어 주문을 한 번 더 확인합니다.</p>
         <ul class="muted small"><li><b>바로 하기</b>: 방금 고른 것만 지금 처리합니다 (다른 대기 건은 건드리지 않음).</li>
         <li><b>대기에 넣기</b>: 걸어만 두고, 나중에 위 시작에서 '${op === "refresh" ? "최신화" : "내리기"}'를 골라 처리합니다.</li></ul>`,
       buttons: [{ label: "취소" }, { label: "대기에 넣기", onClick: () => go(false) }, { label: "바로 하기", primary: true, onClick: () => go(true) }],

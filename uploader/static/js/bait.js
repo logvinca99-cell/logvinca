@@ -47,7 +47,7 @@ App.page("bait", {
       </section>
 
       <section class="card pad">
-        <div class="sec-head"><h2>대표 이미지 워터마크</h2><span class="muted small">${s.wm_enabled ? "켜짐" : "꺼짐"} · 스토어마다 로고나 글자는 <a href="#stores">스토어</a> 화면에서 · 위치·크기는 <a href="#settings">설정 → 워터마크</a></span></div>
+        <div class="sec-head"><h2>대표 이미지 워터마크</h2><span class="muted small">${s.wm_enabled ? "켜짐" : "꺼짐"} · 스토어마다 로고나 글자는 <a href="#stores">스토어 → 템플릿</a>에서 · 위치·크기는 <a href="#settings">설정 → 워터마크</a></span></div>
         <div class="wm-previews">
           ${[[1000, 1000, "정사각형"], [1000, 1400, "세로로 긴 이미지"], [1400, 1000, "가로로 긴 이미지"]].map(([w, h, t]) =>
             `<figure><img src="/api/watermark/preview?w=${w}&h=${h}&_=${Date.now()}" alt="${t} 워터마크 미리보기"><figcaption>${t} ${w}×${h}</figcaption></figure>`).join("")}

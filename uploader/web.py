@@ -846,7 +846,7 @@ def create_app(db=None):
                 out["busy"] = True
             else:
                 try:
-                    runner.start({"ids": ids, "kinds": [op]})
+                    runner.start({"ids": ids, "kinds": [op, "create"] if op == "refresh" else [op]})
                     out["started"] = True
                 except (RuntimeError, naver.ApiError) as e:
                     out["error"] = str(e)

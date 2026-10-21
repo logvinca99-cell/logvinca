@@ -1021,7 +1021,38 @@ def schedule_op(db, f, op):
             chunk = ids[i:i + 900]
             c.execute(f"UPDATE listings SET status='planned', op=?, message='', updated_at=? "
                       f"WHERE id IN ({','.join('?' * len(chunk))})", (op, now, *chunk))
+    # 이미 내린 복사본에 최신화 = 다시 올리기 (다음 회차, 이름 그대로, 가격은 지금 기준).
+    # 직접 고른 것이거나 '내림'으로 거른 때만 (전체 고르기로 내림까지 되살아나지 않게)
+    if op == "refresh" and (f.get("ids") or f.get("status") == "deleted"):
+        rev = relist(db, f)
+        ids += rev
     return len(ids), skipped, ids
+
+
+def relist(db, f):
+    """내린(내림) 복사본을 다시 올릴 대기로 되돌린다: 다음 회차·같은 이름, 가격은 지금 스토어 기준으로 다시. 스토어 남은 자리만큼만."""
+    cfg = config.load()
+    where, args = listing_where({**f, "status": "deleted"})
+    rows = db.q(f"""SELECT l.id, l.store_id, s.price, s.source_key FROM listings l JOIN sources s ON s.id=l.source_id{where}
+        ORDER BY l.id""", args)
+    if not rows:
+        return []
+    stores = {s["id"]: s for s in db.stores()}
+    free = {sid: s["free"] for sid, s in stores.items()}
+    bait_want = int(bool(cfg.get("bait_default", True)))
+    now, out = time.time(), []
+    with db.tx() as c:
+        for r in rows:
+            st = stores.get(r["store_id"])
+            if not st or free.get(r["store_id"], 0) <= 0:
+                continue
+            free[r["store_id"]] -= 1
+            price = convert.store_price(r["price"], f"{r['source_key']}|{r['store_id']}", cfg, st)
+            c.execute("""UPDATE listings SET status='planned', op='create', round=round+1, price=?, message='', stage='',
+                bait_want=?, bait=0, bait_state='', sale_shown=NULL, updated_at=? WHERE id=?""", (price, bait_want, now, r["id"]))
+            out.append(r["id"])
+    db.recount_sources([r["id"] for r in db.q(f"SELECT DISTINCT source_id AS id FROM listings WHERE id IN ({','.join('?' * len(out))})", out)] if out else [])
+    return out
 
 
 def cancel_listings(db, where_sql, args):
