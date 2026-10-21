@@ -1,6 +1,8 @@
 /* 스토어: 추가·수정, 여러 개 한 번에 추가, 연결 확인(네이버 상품 수), 사용량 */
 "use strict";
 
+const ADDR_TYPE = { RELEASE: "출고지", REFUND_OR_EXCHANGE: "반품·교환지", GENERAL: "일반" };
+
 App.page("stores", {
   async mount(el) {
     try { this.closed = new Set(JSON.parse(localStorage.getItem("biz-closed") || "[]")); } catch (e) { this.closed = new Set(); }
@@ -243,17 +245,44 @@ App.page("stores", {
             <input id="t-disc" type="number" min="0" max="89" step="1" value="${t.discount_pct ?? ""}" placeholder="없음"></label>
           <label class="field">수입사·A/S 전화·워터마크 <span class="muted">스토어 '수정'에서 정합니다</span></label>
         </div>
+        <h3 class="sec-title">출고지 · 반품지</h3>
+        <p class="muted small">판매자센터 주소록에 등록한 주소의 번호입니다. 비우면 판매자센터의 기본 출고지·반품지로 올라갑니다. 해외 출고지는 판매자센터 주소록에 먼저 등록해 두세요.</p>
+        <div class="two">
+          <label class="field">출고지 번호 <input id="t-ship" type="number" value="${t.ship_addr ?? ""}" placeholder="기본 출고지"></label>
+          <label class="field">반품·교환지 번호 <input id="t-ret" type="number" value="${t.return_addr ?? ""}" placeholder="기본 반품지"></label>
+        </div>
+        <button type="button" class="btn sm" id="t-addr-load" style="align-self:flex-start">네이버 주소록 불러오기</button>
+        <div id="t-addr" class="addr-list"></div>
         <p class="muted small">가격 조정은 새로 복사하는 것부터, 이미 만든 대기 복사본은 설정 → '대기 중인 복사본 가격 다시 계산'. 상단·하단·관부가세·표시 할인율은 다음 등록부터.</p>
       </div>`,
       buttons: [{ label: "닫기" }, { label: "저장", primary: true, onClick: async (b) => {
         try {
           await App.api(`/api/stores/${s.id}/template`, { json: { top_html: $("#t-top", b).value, bottom_html: $("#t-bottom", b).value,
-            customs: $("#t-customs", b).value, price_pct: $("#t-price", b).value, discount_pct: $("#t-disc", b).value } });
+            customs: $("#t-customs", b).value, ship_addr: $("#t-ship", b).value, return_addr: $("#t-ret", b).value, price_pct: $("#t-price", b).value, discount_pct: $("#t-disc", b).value } });
           App.toast(`${s.name} 템플릿을 저장했습니다`);
         } catch (e) { App.toast(e.message, true); return false; }
       } }],
     });
     const body = $("#tpl-box");   // 창을 다시 그릴 때마다 새 요소라 이벤트가 겹치지 않음
+    body.addEventListener("click", async (e) => {
+      if (e.target.id === "t-addr-load") {
+        e.target.disabled = true; e.target.textContent = "불러오는 중";
+        try {
+          const list = await App.api(`/api/stores/${s.id}/addresses`);
+          $("#t-addr", body).innerHTML = list.length ? list.map((a) => `<div class="addr-row">
+              <span class="code">${a.id}</span><b>${esc(a.name || "이름 없음")}</b>${a.overseas ? '<span class="flag warn">해외</span>' : ""}
+              <span class="muted small">${esc(ADDR_TYPE[a.type] || a.type)} · ${esc(a.address)}</span>
+              <span class="addr-use"><button type="button" class="btn sm" data-addr="t-ship" data-id="${a.id}">출고지로</button>
+              <button type="button" class="btn sm" data-addr="t-ret" data-id="${a.id}">반품지로</button></span></div>`).join("")
+            : '<p class="muted">주소록이 비어 있습니다. 판매자센터 → 판매자 정보 → 주소록에서 먼저 등록하세요.</p>';
+        } catch (err) {
+          $("#t-addr", body).innerHTML = `<p class="c-err small">${esc(err.message)}<br>불러오지 못하면 판매자센터 주소록의 번호를 직접 넣어도 됩니다.</p>`;
+        }
+        e.target.disabled = false; e.target.textContent = "네이버 주소록 불러오기";
+      }
+      const pick = e.target.closest("[data-addr]");
+      if (pick) { $(`#${pick.dataset.addr}`, body).value = pick.dataset.id; App.toast(`${pick.textContent.replace("로", "")}: ${pick.dataset.id}번 (저장을 눌러야 적용)`); }
+    });
     body.addEventListener("change", async (e) => {
       const inp = e.target.closest("[data-up]");
       if (!inp) return;

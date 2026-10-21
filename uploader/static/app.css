@@ -610,3 +610,6 @@ span.kw-chip { cursor: default; }
 @media (max-width: 1200px) { .biz-body, .h-biz-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 760px) { .biz-body, .h-biz-cards { grid-template-columns: 1fr; } }
 @media (max-width: 1100px) { .st-row { grid-template-columns: 24px 1fr; } .st-row > .us, .st-row > .st-stats, .st-row > .store-acts { grid-column: 2; } .st-summary { grid-template-columns: repeat(2, 1fr); } }
+.addr-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.addr-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
+.addr-use { margin-left: auto; display: flex; gap: 6px; }

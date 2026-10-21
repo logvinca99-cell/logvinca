@@ -265,6 +265,13 @@ class Client:
         _save_category_cache(table)
         return table
 
+    def address_books(self):
+        """판매자센터 주소록 (출고지·반품지 고르기용). [{id, name, type, address}]"""
+        r = self.request("GET", "/v1/seller/addressbooks-for-page", params={"page": 1, "size": 100})
+        if r.status_code != 200:
+            raise ApiError(f"주소록 조회 실패: {explain_error(r)}")
+        return parse_address_books(r.json())
+
     def product_count(self):
         """이 스토어에 등록된 상품 수 (판매중·중지 등 모두)."""
         r = self.request("POST", "/v1/products/search", json={"page": 1, "size": 1})
@@ -383,6 +390,29 @@ class Client:
         return True
 
 
+def parse_address_books(data):
+    """주소록 응답에서 주소 목록을 꺼낸다. 응답 모양이 조금 달라도 첫 번째 주소 목록을 찾아 쓴다."""
+    def find(v):
+        if isinstance(v, list) and v and isinstance(v[0], dict):
+            return v
+        if isinstance(v, dict):
+            for x in v.values():
+                got = find(x)
+                if got:
+                    return got
+        return None
+    out = []
+    for a in find(data) or []:
+        aid = a.get("addressBookNo") or a.get("addressId") or a.get("id")
+        if not aid:
+            continue
+        addr = " ".join(str(a.get(k)) for k in ("baseAddress", "roadNameAddress", "address", "detailAddress") if a.get(k))
+        out.append({"id": int(aid), "name": a.get("name") or a.get("addressName") or "",
+                    "type": a.get("addressType") or a.get("type") or "", "address": addr,
+                    "overseas": bool(a.get("overseas") or a.get("isOverseas") or a.get("overseasAddress"))})
+    return out
+
+
 class FakeClient:
     """네이버에 접속하지 않고 그럴듯한 지연과 가끔의 실패를 흉내 낸다. 이미지 내려받기도 흉내 낸다."""
 
@@ -399,6 +429,12 @@ class FakeClient:
 
     def categories(self, refresh=False):
         return _load_category_cache() or {}
+
+    def address_books(self):
+        return parse_address_books({"addressBooks": [
+            {"addressBookNo": 100001, "name": "국내 사무실", "addressType": "RELEASE", "baseAddress": "서울시 중구 세종대로 1"},
+            {"addressBookNo": 100002, "name": "중국 창고", "addressType": "RELEASE", "baseAddress": "广东省 广州市 白云区 1号", "overseas": True},
+            {"addressBookNo": 100003, "name": "반품 센터", "addressType": "REFUND_OR_EXCHANGE", "baseAddress": "경기도 김포시 1"}]})
 
     def product_count(self):
         return random.randint(0, 300)

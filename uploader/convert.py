@@ -321,6 +321,12 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
                     "customerServicePhoneNumber": phone},
         },
     }
+    claim = {"returnDeliveryFee": to_int(cfg.get("return_fee"), 5000),
+             "exchangeDeliveryFee": to_int(cfg.get("exchange_fee"), 10000)}
+    if store.get("tpl_ship_addr"):     # 출고지 (판매자센터 주소록 번호, 없으면 판매자센터 기본 출고지)
+        claim["shippingAddressId"] = int(store["tpl_ship_addr"])
+    if store.get("tpl_return_addr"):   # 반품·교환지
+        claim["returnAddressId"] = int(store["tpl_return_addr"])
     customs = config.customs_code(store.get("tpl_customs") or cfg.get("customs_tax_type"))
     if customs:   # 해외 출고지 상품은 관부가세 항목이 필수
         detail["customsTaxType"] = customs
@@ -356,8 +362,7 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
             "deliveryAttributeType": "NORMAL",
             "deliveryCompany": cfg.get("delivery_company") or "CJGLS",
             "deliveryFee": delivery_fee,
-            "claimDeliveryInfo": {"returnDeliveryFee": to_int(cfg.get("return_fee"), 5000),
-                                  "exchangeDeliveryFee": to_int(cfg.get("exchange_fee"), 10000)},
+            "claimDeliveryInfo": claim,
         },
         "detailAttribute": detail,
     }

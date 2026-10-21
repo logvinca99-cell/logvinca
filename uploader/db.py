@@ -260,6 +260,8 @@ class DB:
                    # 스토어 템플릿: 상세 상단·하단(HTML), 관부가세 코드, 가격 조정 %, 표시 할인율 % (비우면 설정 공통값)
                    ("tpl_top_html", "TEXT NOT NULL DEFAULT ''"), ("tpl_bottom_html", "TEXT NOT NULL DEFAULT ''"),
                    ("tpl_customs", "TEXT NOT NULL DEFAULT ''"), ("tpl_price_pct", "REAL"), ("tpl_discount_pct", "REAL"),
+                   # 출고지·반품지 (네이버 판매자센터 주소록 번호, 비우면 판매자센터 기본 주소)
+                   ("tpl_ship_addr", "INTEGER"), ("tpl_return_addr", "INTEGER"),
                    # 사업자 묶음과 순서 (사업자 하나에 스토어 최대 3개)
                    ("business_id", "INTEGER"), ("sort", "INTEGER NOT NULL DEFAULT 0"),
                    # 연결 확인 때 받은 판매 중·판매중지(고구마) 수, 고구마 수를 직접 넣으면 그 값

@@ -1014,6 +1014,17 @@ def create_app(db=None):
             return fail("스토어가 없습니다.", 404)
         return jsonify({**templates.summary(st), "name": st["name"]})
 
+    @app.get("/api/stores/<int:sid>/addresses")
+    def store_addresses(sid):
+        """판매자센터 주소록 (템플릿에서 출고지·반품지 고르기)."""
+        s = db.store(sid, with_secret=True)
+        if not s:
+            return fail("스토어가 없습니다.", 404)
+        try:
+            return jsonify(naver.make_client(s).address_books())
+        except Exception as e:
+            return fail(f"{s['name']}: {e}")
+
     @app.post("/api/stores/<int:sid>/template")
     def store_template_save(sid):
         b = body()
@@ -1031,9 +1042,14 @@ def create_app(db=None):
             return fail(str(e))
         if disc is not None and not 0 <= disc < 90:
             return fail("표시 할인율은 0~89% 사이로 넣어 주세요.")
-        db.x("""UPDATE stores SET tpl_top_html=?, tpl_bottom_html=?, tpl_customs=?, tpl_price_pct=?, tpl_discount_pct=?
-            WHERE id=?""", (str(b.get("top_html") or ""), str(b.get("bottom_html") or ""), config.customs_code(b.get("customs")),
-                            price_pct, disc, sid))
+        try:
+            ship, ret = (int(num_or_none(b.get(k)) or 0) or None for k in ("ship_addr", "return_addr"))
+        except ValueError:
+            return fail("출고지·반품지는 주소록 번호(숫자)로 넣어 주세요.")
+        db.x("""UPDATE stores SET tpl_top_html=?, tpl_bottom_html=?, tpl_customs=?, tpl_price_pct=?, tpl_discount_pct=?,
+            tpl_ship_addr=?, tpl_return_addr=? WHERE id=?""",
+             (str(b.get("top_html") or ""), str(b.get("bottom_html") or ""), config.customs_code(b.get("customs")),
+              price_pct, disc, ship, ret, sid))
         return jsonify(templates.summary(db.store(sid)))
 
     @app.post("/api/stores/<int:sid>/template/image")
