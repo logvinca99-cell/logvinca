@@ -313,9 +313,14 @@ def create_app(db=None):
             client = naver.make_client(s)
             client.test()
             count = client.product_count()
+            try:
+                st = client.status_counts() or {}
+            except naver.ApiError:
+                st = {}
         except naver.ApiError as e:
             return fail(str(e))
-        db.x("UPDATE stores SET naver_count=?, naver_count_at=? WHERE id=?", (count, time.time(), sid))
+        db.x("UPDATE stores SET naver_count=?, naver_count_at=?, naver_sale=?, naver_suspended=? WHERE id=?",
+             (count, time.time(), st.get("SALE"), st.get("SUSPENSION"), sid))
         if not naver.cached_categories():
             try:
                 client.categories(refresh=True)
@@ -324,7 +329,15 @@ def create_app(db=None):
                             lambda **kw: inventory.revalidate(db, **kw))
             except (naver.ApiError, RuntimeError):
                 pass
-        return jsonify({"ok": True, "naver_count": count, "store": db.store(sid)})
+        return jsonify({"ok": True, "naver_count": count, "sale": st.get("SALE"), "suspended": st.get("SUSPENSION"),
+                        "store": db.store(sid)})
+
+    @app.post("/api/stores/<int:sid>/goguma")
+    def store_goguma(sid):
+        """고구마(판매중지) 상품 수를 직접 넣기. 비우면 연결 확인 때 받은 수를 씀."""
+        v = body().get("count")
+        db.x("UPDATE stores SET goguma_manual=? WHERE id=?", (None if v in (None, "") else max(0, int(v)), sid))
+        return jsonify(db.store(sid))
 
     # ── 원본 (인벤토리)
 

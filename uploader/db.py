@@ -261,7 +261,9 @@ class DB:
                    ("tpl_top_html", "TEXT NOT NULL DEFAULT ''"), ("tpl_bottom_html", "TEXT NOT NULL DEFAULT ''"),
                    ("tpl_customs", "TEXT NOT NULL DEFAULT ''"), ("tpl_price_pct", "REAL"), ("tpl_discount_pct", "REAL"),
                    # 사업자 묶음과 순서 (사업자 하나에 스토어 최대 3개)
-                   ("business_id", "INTEGER"), ("sort", "INTEGER NOT NULL DEFAULT 0")],
+                   ("business_id", "INTEGER"), ("sort", "INTEGER NOT NULL DEFAULT 0"),
+                   # 연결 확인 때 받은 판매 중·판매중지(고구마) 수, 고구마 수를 직접 넣으면 그 값
+                   ("naver_sale", "INTEGER"), ("naver_suspended", "INTEGER"), ("goguma_manual", "INTEGER")],
         "listings": [("sold_count", "INTEGER NOT NULL DEFAULT 0"), ("last_sold_at", "REAL"),
                      ("cancel_count", "INTEGER NOT NULL DEFAULT 0"), ("manual_lock", "INTEGER NOT NULL DEFAULT 0"),
                      ("locked", "INTEGER NOT NULL DEFAULT 0"), ("lock_note", "TEXT NOT NULL DEFAULT ''"),("op", "TEXT NOT NULL DEFAULT 'create'"), ("round", "INTEGER NOT NULL DEFAULT 1"),
@@ -398,11 +400,19 @@ class DB:
             r["n_success"] = r["n_live"]
             # 사용량 = 네이버에 있는 수 + 새로 올릴 대기 수
             #   네이버 수를 확인했다면: 확인 때 수 + 그 뒤 올린 수 - 그 뒤 지운 수 (다른 데서 올린 상품 포함)
+            #   고구마(판매중지) 상품도 한도를 차지한다: 직접 넣은 수가 있으면 그 수, 없으면 연결 확인 때 받은 수
+            r["goguma"] = r["goguma_manual"] if r["goguma_manual"] is not None else (r["naver_suspended"] or 0)
             if r["naver_count"] is not None:
-                live = max(0, r["naver_count"] + r["n_added_since"] - r["n_removed_since"])
+                base = r["naver_count"]
+                if r["naver_sale"] is not None:   # 전체 조회 수에 판매중지가 빠져 있어도 맞게
+                    base = max(base, r["naver_sale"] + r["goguma"])
+                elif r["goguma_manual"] is not None:
+                    base = base + r["goguma_manual"]
+                live = max(0, base + r["n_added_since"] - r["n_removed_since"])
             else:
-                live = r["n_live"]
+                live = r["n_live"] + r["goguma"]
             r["used"] = live + r["n_pending"]
+            r["on_naver"] = live
             r["free"] = max(0, r["capacity"] - r["used"])
             if not with_secret:
                 r.pop("client_secret")

@@ -3,36 +3,31 @@
 
 App.page("stores", {
   async mount(el) {
-    try { this.open = new Set(JSON.parse(localStorage.getItem("biz-open") || "[]")); } catch (e) { this.open = new Set(); }
+    try { this.closed = new Set(JSON.parse(localStorage.getItem("biz-closed") || "[]")); } catch (e) { this.closed = new Set(); }
     el.innerHTML = `<div class="page">
       <header class="page-head"><h1>스토어</h1>
         <div class="head-actions">
-          <button class="btn ghost" id="s-expand">모두 펼치기</button>
           <button class="btn" id="s-test-all">모두 연결 확인</button>
           <button class="btn" id="s-bulk">여러 개 한 번에 추가</button>
           <button class="btn" id="s-biz-add">사업자 추가</button>
           <button class="btn primary" id="s-add">스토어 추가</button>
         </div></header>
-      <p class="muted small" style="margin:0">사업자별로 묶여 있습니다(사업자 하나에 스토어 최대 3개). 사업자 줄을 누르면 그 안의 스토어가 펼쳐집니다.
-        ▲▼로 사업자와 스토어 순서를 바꾸면 복사·복사본 화면의 스토어 순서도 같이 바뀝니다.
-        스토어마다 커머스API센터에서 애플리케이션을 만들고 이 PC의 IP를 호출 허용 IP로 등록해야 합니다.</p>
+      <div class="st-summary" id="s-sum"></div>
+      <p class="muted small" style="margin:0">⠿ 손잡이를 꾹 눌러 끌면 사업자·스토어 순서를 바꿉니다. 스토어를 다른 사업자 칸으로 끌어 옮길 수도 있습니다(사업자 하나에 최대 3개).
+        이 순서가 복사·복사본 화면에도 그대로 쓰입니다. 사업자 이름을 누르면 접고 펼칩니다.</p>
       <div id="s-groups" class="biz-groups"></div>
     </div>`;
     $("#s-add").addEventListener("click", () => this.edit({ capacity: 10000, enabled: 1 }));
     $("#s-biz-add").addEventListener("click", () => this.editBiz({}));
     $("#s-bulk").addEventListener("click", () => this.bulk());
     $("#s-test-all").addEventListener("click", () => this.testAll());
-    $("#s-expand").addEventListener("click", () => {
-      const all = this.groups.map((g) => String(g.id));
-      const allOpen = all.every((k) => this.open.has(k));
-      this.open = new Set(allOpen ? [] : all);
-      this.saveOpen(); this.render();
-    });
-    $("#s-groups").addEventListener("click", (e) => this.onClick(e));
+    const box = $("#s-groups");
+    box.addEventListener("click", (e) => this.onClick(e));
+    this.bindDrag(box);
     await this.load();
   },
 
-  saveOpen() { try { localStorage.setItem("biz-open", JSON.stringify([...this.open])); } catch (e) { /* 무시 */ } },
+  saveClosed() { try { localStorage.setItem("biz-closed", JSON.stringify([...this.closed])); } catch (e) { /* 무시 */ } },
 
   async load() {
     const [stores, biz] = await Promise.all([App.loadStores(), App.api("/api/businesses")]);
@@ -44,58 +39,71 @@ App.page("stores", {
     this.render();
   },
 
+  /* 사용량 막대: 판매 중 / 고구마(판매중지) / 등록 대기 / 남은 자리 */
+  usage(s) {
+    const cap = Math.max(1, s.capacity);
+    const goguma = Math.min(s.goguma || 0, s.on_naver);
+    const sale = Math.max(0, s.on_naver - goguma);
+    const pend = s.n_pending || 0;
+    const pct = Math.round((s.used / cap) * 1000) / 10;
+    const cls = pct >= 95 ? "full" : pct >= 80 ? "warn" : "";
+    const w = (n) => `${Math.min(100, (n / cap) * 100)}%`;
+    return `<div class="us ${cls}">
+      <div class="us-top"><b>${num(s.used)}</b><span class="muted"> / ${num(s.capacity)}</span><span class="us-pct">${pct}%</span>
+        <span class="us-free">남은 자리 <b>${num(s.free)}</b></span></div>
+      <div class="us-bar"><i class="u-sale" style="width:${w(sale)}"></i><i class="u-goguma" style="width:${w(goguma)}"></i><i class="u-pend" style="width:${w(pend)}"></i></div>
+      <div class="us-legend"><span><i class="u-sale"></i>판매 중 ${num(sale)}</span>
+        <button class="us-goguma" data-goguma="${s.id}" title="판매중지(고구마) 상품 수 고치기"><i class="u-goguma"></i>고구마 ${num(goguma)}${s.goguma_manual != null ? " (직접)" : s.naver_suspended != null ? "" : " (확인 전)"} ✎</button>
+        <span><i class="u-pend"></i>등록 대기 ${num(pend)}</span></div>
+    </div>`;
+  },
+
   render() {
-    const sum = (g, k) => g.stores.reduce((a, s) => a + (s[k] || 0), 0);
-    $("#s-expand").textContent = this.groups.length && this.groups.every((g) => this.open.has(String(g.id))) ? "모두 접기" : "모두 펼치기";
-    $("#s-groups").innerHTML = this.groups.length ? this.groups.map((g, gi) => {
-      const open = this.open.has(String(g.id));
-      return `<section class="card biz ${open ? "open" : ""}" data-biz="${g.id}">
-        <div class="biz-head" data-toggle="${g.id}">
-          <span class="biz-caret">${open ? "▾" : "▸"}</span>
-          <div class="biz-title"><b>${esc(g.name)}</b>${g.reg_no ? ` <span class="muted small">${esc(g.reg_no)}</span>` : ""}
-            <div class="biz-chips">${g.stores.map((s) => `<span class="code">${esc(s.code)}</span>${esc(s.name)}`).join(" · ") || '<span class="muted small">스토어 없음</span>'}</div></div>
-          <div class="biz-nums"><span>스토어 <b>${g.stores.length}${g.none ? "" : "/3"}</b></span><span>판매 중 <b>${num(sum(g, "n_live"))}</b></span>
-            <span>대기 <b>${num(sum(g, "n_pending") + sum(g, "n_ops"))}</b></span><span class="${sum(g, "n_fail") ? "c-err" : ""}">실패 <b>${num(sum(g, "n_fail"))}</b></span>
-            <span>남은 자리 <b>${num(sum(g, "free"))}</b></span></div>
-          ${g.none ? "" : `<div class="biz-acts" data-stop>
-            <button class="icon-btn" data-bmove="-1" data-id="${g.id}" title="위로" ${gi === 0 ? "disabled" : ""}>▲</button>
-            <button class="icon-btn" data-bmove="1" data-id="${g.id}" title="아래로" ${gi >= this.biz.length - 1 ? "disabled" : ""}>▼</button>
-            <button class="btn sm" data-bedit="${g.id}">수정</button>
-            ${g.stores.length < 3 ? `<button class="btn sm" data-badd="${g.id}">스토어 추가</button>` : ""}</div>`}
+    const all = this.rows;
+    const tot = (k) => all.reduce((a, s) => a + (s[k] || 0), 0);
+    $("#s-sum").innerHTML = `<div><span>사업자</span><b>${num(this.biz.length)}</b></div><div><span>스토어</span><b>${num(all.length)}</b></div>
+      <div><span>판매 중·고구마 포함 사용량</span><b>${num(tot("used"))}</b></div><div><span>남은 자리 합계</span><b>${num(tot("free"))}</b></div>
+      <div><span>실패</span><b class="${tot("n_fail") ? "c-err" : ""}">${num(tot("n_fail"))}</b></div>`;
+    $("#s-groups").innerHTML = this.groups.length ? this.groups.map((g) => {
+      const open = !this.closed.has(String(g.id));
+      const used = g.stores.reduce((a, s) => a + s.used, 0), cap = g.stores.reduce((a, s) => a + s.capacity, 0);
+      return `<section class="biz ${open ? "open" : ""}" data-biz="${g.id}" ${g.none ? "" : `data-drag="biz"`}>
+        <div class="biz-head">
+          ${g.none ? `<span class="grip off"></span>` : `<span class="grip" title="끌어서 순서 바꾸기">⠿</span>`}
+          <button class="biz-name" data-toggle="${g.id}"><span class="biz-caret">${open ? "▾" : "▸"}</span>${esc(g.name)}</button>
+          ${g.reg_no ? `<span class="muted small">${esc(g.reg_no)}</span>` : ""}
+          <span class="pill ${g.stores.length >= 3 ? "full" : ""}">스토어 ${g.stores.length}${g.none ? "" : " / 3"}</span>
+          <span class="biz-use">${cap ? `사용 ${num(used)} / ${num(cap)}` : ""}</span>
+          <span class="spacer"></span>
+          ${g.none ? "" : `${g.stores.length < 3 ? `<button class="btn sm" data-badd="${g.id}">+ 스토어</button>` : ""}<button class="btn sm ghost" data-bedit="${g.id}">사업자 수정</button>`}
         </div>
-        ${open ? this.tableHtml(g) : ""}
+        ${open ? `<div class="biz-body" data-drop="${g.id}">${g.stores.map((s) => this.rowHtml(s)).join("")
+          || `<div class="st-empty">스토어를 여기로 끌어 오거나 '+ 스토어'를 누르세요.</div>`}</div>` : ""}
       </section>`;
     }).join("") : `<div class="card pad"><p class="muted">아직 사업자·스토어가 없습니다. <b>사업자 추가</b>로 사업자를 만들고 그 안에 스토어를 추가하세요.</p></div>`;
   },
 
-  tableHtml(g) {
-    if (!g.stores.length) return `<p class="muted pad">이 사업자에 스토어가 없습니다. 오른쪽 위 <b>스토어 추가</b>를 누르세요.</p>`;
-    return `<div class="table-card"><table class="grid"><thead><tr>
-        <th class="w-ord"></th><th class="w-code">코드</th><th class="w-sname">스토어</th><th class="w-usage">사용량 (대기 포함)</th><th class="w-num">남은 자리</th>
-        <th class="w-num">판매 중</th><th class="w-num">대기</th><th class="w-num">실패</th><th class="w-num">내림</th>
-        <th class="w-num">판매 이력</th><th class="w-num">네이버 상품 수</th><th class="w-act"></th>
-      </tr></thead><tbody>${g.stores.map((s, i) => `<tr class="${s.enabled ? "" : "off"}">
-      <td class="nowrap" data-stop><button class="icon-btn" data-smove="-1" data-id="${s.id}" data-biz="${g.id}" ${i === 0 ? "disabled" : ""} title="위로">▲</button><button class="icon-btn" data-smove="1" data-id="${s.id}" data-biz="${g.id}" ${i === g.stores.length - 1 ? "disabled" : ""} title="아래로">▼</button></td>
-      <td><b class="code">${esc(s.code)}</b></td>
-      <td><b>${esc(s.name)}</b>${s.enabled ? "" : ' <span class="flag">사용 안 함</span>'}${s.has_keys ? "" : ' <span class="flag warn">키 없음</span>'}
-        <div class="p-sub">${s.store_url ? `<a href="${esc(s.store_url)}" target="_blank" rel="noopener">${esc(s.store_url.replace(/^https?:\/\//, ""))}</a>` : "주소 없음"}
-        ${s.memo ? ` · ${esc(s.memo)}` : ""}${s.orders_synced_to ? ` · 주문 ${when(s.orders_synced_to)}까지` : ""}</div></td>
-      <td>${usageBar(s.used, s.capacity)}<div class="p-sub">${num(s.used)} / ${num(s.capacity)}</div></td>
-      <td class="num ${s.free < 500 ? "c-err" : ""}">${num(s.free)}</td>
-      <td class="num"><a href="#listings?store_id=${s.id}&status=live">${num(s.n_live)}</a></td>
-      <td class="num">${num(s.n_pending + s.n_ops)}</td>
-      <td class="num ${s.n_fail ? "c-err" : ""}">${num(s.n_fail)}</td><td class="num">${num(s.n_deleted)}</td>
-      <td class="num"><a href="#listings?store_id=${s.id}&status=sold">${num(s.n_sold)}</a>${s.n_locked ? `<div class="p-sub r"><a href="#listings?store_id=${s.id}&status=locked">잠금 ${num(s.n_locked)}</a></div>` : ""}</td>
-      <td class="num">${s.naver_count != null ? `${num(s.naver_count)}<div class="p-sub r">${when(s.naver_count_at)}</div>` : '<span class="muted">확인 전</span>'}</td>
-      <td><div class="store-acts"><button class="btn sm" data-act="edit" data-id="${s.id}">수정</button>
+  rowHtml(s) {
+    return `<div class="st-row ${s.enabled ? "" : "off"}" data-store="${s.id}" data-drag="store">
+      <span class="grip" title="끌어서 순서 바꾸기·다른 사업자로 옮기기">⠿</span>
+      <div class="st-name"><div><span class="code">${esc(s.code)}</span> <b>${esc(s.name)}</b>${s.enabled ? "" : ' <span class="flag">사용 안 함</span>'}${s.has_keys ? "" : ' <span class="flag warn">키 없음</span>'}</div>
+        <div class="p-sub">${s.store_url ? `<a href="${esc(s.store_url)}" target="_blank" rel="noopener">${esc(s.store_url.replace(/^https?:\/\//, ""))}</a>` : "주소 없음"}${s.memo ? ` · ${esc(s.memo)}` : ""}</div>
+        <div class="p-sub">${s.naver_count_at ? `네이버 확인 ${when(s.naver_count_at)}` : '<span class="c-warn">연결 확인 전 (사용량이 정확하지 않음)</span>'}</div></div>
+      ${this.usage(s)}
+      <div class="st-stats"><a href="#listings?store_id=${s.id}">복사본 보기</a>
+        <span>실패 <b class="${s.n_fail ? "c-err" : ""}">${num(s.n_fail)}</b> · 판매 이력 <b>${num(s.n_sold)}</b></span>
+        <span>내림 ${num(s.n_deleted)}${s.n_locked ? ` · 잠금 ${num(s.n_locked)}` : ""}</span></div>
+      <div class="store-acts"><button class="btn sm" data-act="edit" data-id="${s.id}">수정</button>
         <button class="btn sm" data-act="tpl" data-id="${s.id}">템플릿</button>
         <button class="btn sm ghost" data-act="test" data-id="${s.id}">연결 확인</button>
-        <button class="btn sm ghost" data-act="refresh" data-id="${s.id}" ${s.n_live ? "" : "disabled"}>최신화</button></div></td></tr>`).join("")}</tbody></table></div>`;
+        <button class="btn sm ghost" data-act="refresh" data-id="${s.id}" ${s.n_live ? "" : "disabled"}>최신화</button></div>
+    </div>`;
   },
 
   async onClick(e) {
     const b = e.target.closest("button");
-    if (b?.dataset.act) {
+    if (!b) return;
+    if (b.dataset.act) {
       const s = this.rows.find((x) => x.id === +b.dataset.id);
       if (b.dataset.act === "edit") this.edit(s);
       if (b.dataset.act === "tpl") this.template(s);
@@ -103,32 +111,99 @@ App.page("stores", {
       if (b.dataset.act === "refresh") this.refresh(s);
       return;
     }
-    if (b?.dataset.bmove) {
-      const ids = this.biz.map((x) => x.id);
-      const i = ids.indexOf(+b.dataset.id), j = i + +b.dataset.bmove;
-      if (j < 0 || j >= ids.length) return;
-      [ids[i], ids[j]] = [ids[j], ids[i]];
-      await App.api("/api/businesses/order", { json: { ids } });
-      return this.load();
+    if (b.dataset.goguma) return this.goguma(this.rows.find((x) => x.id === +b.dataset.goguma));
+    if (b.dataset.bedit) return this.editBiz(this.biz.find((x) => x.id === +b.dataset.bedit));
+    if (b.dataset.badd) return this.edit({ capacity: 10000, enabled: 1, business_id: +b.dataset.badd });
+    if (b.dataset.toggle) {
+      const k = b.dataset.toggle;
+      this.closed.has(k) ? this.closed.delete(k) : this.closed.add(k);
+      this.saveClosed(); this.render();
     }
-    if (b?.dataset.smove) {
-      const g = this.groups.find((x) => String(x.id) === b.dataset.biz);
-      const ids = g.stores.map((x) => x.id);
-      const i = ids.indexOf(+b.dataset.id), j = i + +b.dataset.smove;
-      if (j < 0 || j >= ids.length) return;
-      [ids[i], ids[j]] = [ids[j], ids[i]];
-      try { await App.api("/api/stores/order", { json: { ids } }); } catch (err) { return App.toast(err.message, true); }
-      return this.load();
-    }
-    if (b?.dataset.bedit) return this.editBiz(this.biz.find((x) => x.id === +b.dataset.bedit));
-    if (b?.dataset.badd) return this.edit({ capacity: 10000, enabled: 1, business_id: +b.dataset.badd });
-    if (e.target.closest("[data-stop]")) return;
-    const head = e.target.closest("[data-toggle]");
-    if (head) {
-      const k = head.dataset.toggle;
-      this.open.has(k) ? this.open.delete(k) : this.open.add(k);
-      this.saveOpen(); this.render();
-    }
+  },
+
+  /* 고구마(판매중지) 상품 수: 직접 넣거나, 비우면 연결 확인 때 받은 수 */
+  goguma(s) {
+    App.openModal({
+      title: `${s.name} · 고구마 상품 수`,
+      body: `<div class="form"><p class="muted small" style="margin:0">판매중지한 상품(고구마)도 스토어 한도를 차지합니다. 연결 확인 때 네이버에서
+          판매중지 상품 수를 받아 자동으로 넣습니다${s.naver_suspended != null ? ` (지난 확인: <b>${num(s.naver_suspended)}개</b>, 판매 중 ${num(s.naver_sale)}개)` : " (아직 확인 전)"}.
+          다르면 직접 넣으세요. 비우면 자동 값으로 돌아갑니다.</p>
+        <label class="field">고구마 상품 수<input type="number" id="g-n" min="0" value="${s.goguma_manual ?? ""}" placeholder="자동 (${num(s.naver_suspended || 0)})" autofocus></label></div>`,
+      buttons: [{ label: "취소" }, { label: "저장", primary: true, onClick: async (m) => {
+        try { await App.api(`/api/stores/${s.id}/goguma`, { json: { count: $("#g-n", m).value } }); await this.load(); App.refreshState(); }
+        catch (err) { App.toast(err.message, true); return false; }
+      } }],
+    });
+  },
+
+  /* 끌어서 옮기기: ⠿를 눌렀을 때만 끌 수 있음. 사업자끼리 / 스토어끼리(다른 사업자 칸으로도) */
+  bindDrag(box) {
+    let drag = null;
+    box.addEventListener("mousedown", (e) => {
+      const g = e.target.closest(".grip");
+      if (!g || g.classList.contains("off")) return;
+      const item = g.closest("[data-drag]");
+      if (item) item.draggable = true;
+    });
+    box.addEventListener("dragstart", (e) => {
+      const item = e.target.closest?.("[data-drag]");
+      if (!item || !item.draggable) return;
+      drag = { type: item.dataset.drag, el: item, id: item.dataset.drag === "biz" ? +item.dataset.biz : +item.dataset.store };
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", String(drag.id));
+      setTimeout(() => item.classList.add("dragging"), 0);
+    });
+    const clearMarks = () => $$(".drop-before,.drop-after,.drop-into", box).forEach((x) => x.classList.remove("drop-before", "drop-after", "drop-into"));
+    box.addEventListener("dragend", () => {
+      $$("[data-drag]", box).forEach((x) => { x.draggable = false; x.classList.remove("dragging"); });
+      clearMarks(); drag = null;
+    });
+    const target = (e) => {
+      if (!drag) return null;
+      if (drag.type === "biz") {
+        const t = e.target.closest("[data-drag=biz]");
+        if (!t || t === drag.el) return null;
+        const r = t.getBoundingClientRect();
+        return { el: t, pos: e.clientY < r.top + r.height / 2 ? "before" : "after" };
+      }
+      const row = e.target.closest("[data-drag=store]");
+      if (row && row !== drag.el) {
+        const r = row.getBoundingClientRect();
+        return { el: row, pos: e.clientY < r.top + r.height / 2 ? "before" : "after" };
+      }
+      const sec = e.target.closest("[data-biz]");
+      return sec && !row ? { el: sec, pos: "into" } : null;
+    };
+    box.addEventListener("dragover", (e) => {
+      const t = target(e);
+      if (!t) return;
+      e.preventDefault();
+      clearMarks();
+      t.el.classList.add(`drop-${t.pos}`);
+    });
+    box.addEventListener("drop", async (e) => {
+      const t = target(e);
+      if (!t) return;
+      e.preventDefault();
+      clearMarks();
+      try {
+        if (drag.type === "biz") {
+          const ids = this.biz.map((x) => x.id).filter((x) => x !== drag.id);
+          const at = ids.indexOf(+t.el.dataset.biz) + (t.pos === "after" ? 1 : 0);
+          ids.splice(at, 0, drag.id);
+          await App.api("/api/businesses/order", { json: { ids } });
+        } else {
+          const sec = t.el.closest("[data-biz]");
+          const g = this.groups.find((x) => String(x.id) === sec.dataset.biz);
+          const ids = g.stores.map((x) => x.id).filter((x) => x !== drag.id);
+          const at = t.pos === "into" ? ids.length : ids.indexOf(+t.el.dataset.store) + (t.pos === "after" ? 1 : 0);
+          ids.splice(at, 0, drag.id);
+          await App.api("/api/stores/order", { json: { ids, business_id: g.none ? "" : g.id } });
+        }
+      } catch (err) { App.toast(err.message, true); }
+      drag = null;
+      await this.load();
+    });
   },
 
   editBiz(b) {
@@ -150,7 +225,7 @@ App.page("stores", {
         { label: "저장", primary: true, onClick: async (m) => {
           try {
             const r = await App.api("/api/businesses", { json: { id: b.id, name: $("#b-name", m).value, reg_no: $("#b-reg", m).value, memo: $("#b-memo", m).value } });
-            this.open.add(String(r.id)); this.saveOpen();
+            this.closed.delete(String(r.id)); this.saveClosed();
             await this.load();
           } catch (e) { App.toast(e.message, true); return false; }
         } },
@@ -338,7 +413,7 @@ App.page("stores", {
     btn.textContent = "확인 중…";
     try {
       const r = await App.api(`/api/stores/${s.id}/test`, { json: {} });
-      App.toast(`${s.name}: 연결됨 · 네이버에 상품 ${num(r.naver_count)}개`);
+      App.toast(`${s.name}: 연결됨 · 네이버 상품 ${num(r.naver_count)}개` + (r.sale != null ? ` (판매 중 ${num(r.sale)} · 고구마 ${num(r.suspended)})` : ""));
       await this.load(); App.refreshState();
     } catch (e) { App.toast(`${s.name}: ${e.message}`, true); btn.disabled = false; btn.textContent = "연결 확인"; }
   },
