@@ -14,9 +14,9 @@ from . import naver
 
 
 def applies(cfg, t, op):
-    """이번 등록에 더할 금액. 계획 때 켠 복사본만, 처음 올릴 때만 (설정하면 최신화 때도)."""
-    if not t.get("bait_want"):
-        return 0
+    """이번 등록에 더할 금액. 설정에서 도둑방지가 켜져 있고 계획 때 켠 복사본만, 처음 올릴 때만 (설정하면 최신화 때도)."""
+    if not t.get("bait_want") or not cfg.get("bait_default", True):
+        return 0   # 설정에서 도둑방지를 끄면 아직 안 올린 복사본도 원래 가격으로 올림
     first = op == "create" and int(t.get("round") or 1) == 1
     if not first and not cfg.get("bait_on_refresh"):
         return 0

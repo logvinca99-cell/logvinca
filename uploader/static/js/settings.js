@@ -27,12 +27,12 @@ const SETTING_SECTIONS = [
     ["seller_code_format", "판매자 관리코드 형식", "text", { hint: "{store}=스토어 코드, {source:07d}=원본 번호, {round}=회차" }],
     ["refresh_new_name", "최신화 때 상품명을 새로 (안 쓴 AI 맥락 후보 → 없으면 셔플)", "check"],
   ] },
-  { tab: "price", title: "가격", note: "같은 상품도 스토어마다 원본가에서 조금씩 다르게 정합니다(같은 상품·같은 스토어는 늘 같은 가격). 스토어별 가격 조정 %와 표시 할인율은 스토어 → 템플릿.", fields: [
-    ["price_jitter_pct", "조정 범위 (± %)", "number", { step: 0.5 }],
+  { tab: "price", title: "가격", note: "올라가는 가격 = 엑셀 판매가 - 할인가 (100원 단위 올림). 스토어별 가격 조정 %와 표시 할인율은 스토어 → 템플릿 (넣은 스토어만).", fields: [
+    ["price_jitter_pct", "스토어마다 가격 흔들기 (± %, 0이면 끔 · 기본 0)", "number", { step: 0.5 }],
     ["price_round", "단위 (원, 올림)", "number", { step: 10 }],
   ] },
   { tab: "price", title: "도둑방지", note: "처음 올릴 때 판매가에 금액을 더해 올리고, 원래 가격으로는 도둑방지·복사본 화면에서 직접 되돌립니다. 할인 금액은 도둑방지 전 가격 기준이라 되돌리면 할인·마진이 처음 그대로입니다.", fields: [
-    ["bait_default", "복사할 때 '도둑방지로 올리기'를 기본으로 켬", "check"],
+    ["bait_default", "도둑방지 사용 (끄면 아직 안 올린 복사본도 원래 가격으로 올림)", "check"],
     ["bait_amount", "더할 금액 (원)", "number"],
     ["bait_on_refresh", "최신화(다시 등록) 때도 높여서 올림", "check"],
   ] },

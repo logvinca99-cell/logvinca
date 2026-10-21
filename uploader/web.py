@@ -1433,6 +1433,10 @@ def create_app(db=None):
         except Exception:  # noqa: BLE001
             pass
 
+    if not db.one("SELECT 1 FROM meta WHERE k='price_exact_v1'"):
+        inventory.reprice_net(db)   # 가격 흔들기(±3%)를 끈 뒤 아직 안 올린 복사본 가격을 판매가 - 할인가로 다시 (한 번만)
+        db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('price_exact_v1', '1')")
+        db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('price_net_v1', '1')")
     if not db.one("SELECT 1 FROM meta WHERE k='price_net_v1'"):
         inventory.reprice_net(db)   # 이번 버전부터 원본가 = 판매가 - 할인가 (예전 원본·대기 복사본 가격을 한 번 다시 계산)
         db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('price_net_v1', '1')")

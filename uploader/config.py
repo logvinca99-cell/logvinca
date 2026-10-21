@@ -46,6 +46,7 @@ DEFAULTS = {
     # 프로그램이 켜져 있는 동안 이 간격(분)마다 모든 스토어 주문을 가져옴 (0이면 끔)
     "orders_auto_sync_minutes": 0,   # 0 = 끔. 최신화·내리기 전에는 늘 그 스토어 주문을 먼저 가져옴
     "orders_auto_off_v1": True,
+    "price_exact_v1": True,
     # 처음 가져올 때 며칠 전부터
     "orders_initial_days": 30,
     # 판매 이력이 있는 복사본은 자동으로 잠금 (최신화·내리기로 지우지 않음)
@@ -55,7 +56,7 @@ DEFAULTS = {
 
     # ── 가격: 스토어마다 원본가에서 ±price_jitter_pct% 안에서 정하고 price_round(100원) 단위로 올림. 가격은 항상 100원 단위 올림.
     #    같은 상품·같은 스토어는 언제 계획해도 같은 가격이 나온다.
-    "price_jitter_pct": 3.0,
+    "price_jitter_pct": 0.0,   # 기본은 조정 없음: 올라가는 가격 = 판매가 - 할인가 (100원 올림)
     "price_round": 100,
 
     # ── 상품명
@@ -204,6 +205,8 @@ def load():
             saved["max_copies"] = 2   # 맥락 키워드 방식부터 원본당 최대 2곳 (예전 기본 3을 쓰던 설정도 바꿈)
         if "kipris_block_pending" not in saved:
             saved.pop("use_category_words", None)  # 이 버전부터 상품명에 카테고리를 쓰지 않음 (예전 설정도 끔)
+        if "price_exact_v1" not in saved:
+            saved["price_jitter_pct"] = 0.0   # 가격은 판매가 - 할인가 그대로 (예전 기본 ±3% 흔들기 끔)
         if "orders_auto_off_v1" not in saved:
             saved["orders_auto_sync_minutes"] = 0   # 주문은 다른 프로그램으로 봄 → 자동 가져오기 끔 (최신화·내리기 전에만 가져옴)
         cfg.update(saved)
