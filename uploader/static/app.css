@@ -686,3 +686,10 @@ td.w-links .btn { height: 26px; font-size: 12px; padding: 0 8px; justify-content
 td.w-links > .btn { margin-top: 4px; }
 .btn.disabled { opacity: .4; cursor: default; pointer-events: none; }
 .flag.rep { background: var(--panel-2); color: var(--text-2); border: 1px solid var(--line); }
+/* 복사본 화면 위 칸은 한 줄로 */
+#l-tiles { grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 8px; }
+#l-tiles .tile { padding: 10px 10px; min-width: 0; }
+@media (max-width: 1250px) { #l-tiles { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); } }
+#l-tiles .t-label { display: block; font-size: 11.5px; line-height: 1.35; word-break: keep-all; }
+#l-tiles .t-label::before { display: inline-block; margin-right: 5px; vertical-align: 0; }
+.s-reupload { background: var(--accent-soft); color: var(--accent-strong); }

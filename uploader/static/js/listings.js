@@ -1,14 +1,13 @@
 /* 등록: 계획된 건 목록, 등록 실행(여러 스토어 동시), 진행 상황 */
 "use strict";
 
-const RUN_KINDS = [["create", "등록"], ["refresh", "최신화"], ["delete", "내리기"], ["fail", "실패 재시도"]];
+const RUN_KINDS = [["create", "등록"], ["refresh", "최신화"], ["reupload", "다시 올리기"], ["delete", "내리기"], ["fail", "실패 재시도"]];
 
 const LST_TILES = [
   { key: "all", label: "전체", dot: "var(--text-2)", count: "all_" },
   { key: "noname", label: "상품명 변경 필요", dot: "var(--err)" },
   { key: "named", label: "상품명 변경 완료", dot: "var(--info)" },
   { key: "live", label: "판매 중", dot: "var(--ok)" },
-  { key: "pending", label: "할 일 대기", dot: "var(--idle)" },
   { key: "fail", label: "실패", dot: "var(--err)" },
   { key: "sold", label: "판매 이력 있음", dot: "var(--warn)" },
   { key: "locked", label: "잠금", dot: "var(--info)" },
@@ -162,6 +161,7 @@ App.page("listings", {
         { id: "rename", label: "상품명 바꾸기", primary: true, title: "아직 안 올린 복사본의 상품명을 AI 맥락 키워드·AI로 짓기·셔플로 바꿈" },
         "|",
         { id: "refresh", label: "최신화", title: "판매 중인 건을 네이버에서 지우고 같은 내용으로 다시 올림 (회차 +1) · 바로 하기 또는 대기에 넣기" },
+        { id: "reupload", label: "다시 올리기", title: "문제가 있어 지우고 같은 내용(같은 상품명)으로 다시 올림 · 판매 중인 건은 지우고 다시, 내린 건은 그냥 다시 · 최신화와 따로 기록" },
         { id: "delete", label: "내리기", title: "판매 중인 건을 네이버에서 지움 · 바로 하기 또는 대기에 넣기" },
         { id: "cancel", label: "대기·실패 취소", danger: true, title: "아직 처리 안 된 대기·실패 할 일을 취소" },
         "|",
@@ -182,7 +182,7 @@ App.page("listings", {
 
   async action(id) {
     if (id === "rename") this.renameModal();
-    if (id === "refresh" || id === "delete") this.schedule(id);
+    if (id === "refresh" || id === "delete" || id === "reupload") this.schedule(id);
     if (id === "lock" || id === "unlock") this.lock(id === "lock");
     if (id === "remove") {
       const n = this.selAll ? this.total : this.sel.size;
@@ -298,26 +298,32 @@ App.page("listings", {
 
   /* 최신화·내리기: 바로 하기(방금 고른 것만 지금 처리) 또는 대기에 넣기(나중에 시작에서 처리) */
   schedule(op) {
-    const label = op === "refresh" ? "최신화 (네이버에서 지우고 같은 내용으로 다시 올리기)" : "내리기 (네이버에서 지우기)";
+    const name = OP[op];
+    const label = {
+      refresh: "<b>최신화</b>: 올린 지 오래된 판매 중 상품을 네이버에서 지우고 다시 올립니다 (설정에 따라 새 상품명)",
+      reupload: "<b>다시 올리기</b>: 문제가 있는 상품을 네이버에서 지우고 <b>같은 상품명·지금 가격</b>으로 다시 올립니다. <b>이미 내린(내림) 건은 지우는 단계 없이 다시 올립니다.</b> 스토어에서 이미 지운 상품이어도 됩니다",
+      delete: "<b>내리기</b>: 판매 중인 상품을 네이버에서 지웁니다",
+    }[op];
     const n = this.selAll ? this.total : this.sel.size;
     const go = async (now) => {
       try {
         const r = await App.api("/api/listings/schedule", { json: { ...this.target(), op, now } });
         const skip = r.skipped_sold ? ` 잠긴 ${num(r.skipped_sold)}건(판매 이력·직접 잠금)은 뺐습니다.` : "";
-        if (!r.scheduled) App.toast((op === "refresh" ? "판매 중이거나 내린 건이 없어 걸 일이 없습니다." : "판매 중인 건이 없어 걸 일이 없습니다.") + skip, true);
-        else if (r.started) { App.toast(`${num(r.scheduled)}건 ${op === "refresh" ? "최신화" : "내리기"}를 시작했습니다.` + skip); App.run = await App.api("/api/run"); this.renderRun(App.run); App.renderSideRun(); }
+        if (!r.scheduled) App.toast((op === "reupload" ? "판매 중이거나 내린 건이 없어 걸 일이 없습니다." : `판매 중인 건이 없어 걸 일이 없습니다.${op === "refresh" ? " 내린 건은 '다시 올리기'를 쓰세요." : ""}`) + skip, true);
+        else if (r.started) { App.toast(`${num(r.scheduled)}건 ${name}를 시작했습니다.` + skip); App.run = await App.api("/api/run"); this.renderRun(App.run); App.renderSideRun(); }
         else if (r.busy) App.toast(`${num(r.scheduled)}건을 대기에 넣었습니다. 지금 다른 작업이 돌고 있어, 끝난 뒤 시작하세요.` + skip);
         else if (r.error) App.toast(`대기에 넣었지만 시작하지 못했습니다: ${r.error}`, true);
-        else App.toast(`${num(r.scheduled)}건을 대기에 넣었습니다. 위 시작에서 종류를 골라 처리하세요.` + skip);
+        else App.toast(`${num(r.scheduled)}건을 대기에 넣었습니다. 위 시작에서 '${name}'를 골라 처리하세요.` + skip);
         this.sel.clear(); this.selAll = false; this.estKey = "";
         this.load();
       } catch (e) { App.toast(e.message, true); }
     };
     App.openModal({
-      title: `${num(n)}건 ${op === "refresh" ? "최신화" : "내리기"}`,
-      body: `<p>고른 건 중 <b>판매 중인 건</b>에 ${label}를 겁니다.${op === "refresh" ? " <b>이미 내린(내림) 건은 다시 올립니다</b>(다음 회차, 같은 상품명, 가격은 지금 스토어 기준)." : ""} 잠긴 건(판매 이력·직접 잠금)은 빠지고, 지우기 직전에 이 스토어 주문을 한 번 더 확인합니다.</p>
+      title: `${num(n)}건 ${name}`,
+      body: `<p>${label}.</p>
+        <p class="muted small">잠긴 건(판매 이력·직접 잠금)은 빠지고, 지우기 직전에 이 스토어 주문을 한 번 더 확인합니다. 지난 회차 기록에 '${name}'로 남습니다.</p>
         <ul class="muted small"><li><b>바로 하기</b>: 방금 고른 것만 지금 처리합니다 (다른 대기 건은 건드리지 않음).</li>
-        <li><b>대기에 넣기</b>: 걸어만 두고, 나중에 위 시작에서 '${op === "refresh" ? "최신화" : "내리기"}'를 골라 처리합니다.</li></ul>`,
+        <li><b>대기에 넣기</b>: 걸어만 두고, 나중에 위 시작에서 '${name}'를 골라 처리합니다.</li></ul>`,
       buttons: [{ label: "취소" }, { label: "대기에 넣기", onClick: () => go(false) }, { label: "바로 하기", primary: true, onClick: () => go(true) }],
     });
   },
@@ -522,7 +528,7 @@ App.page("listings", {
               <td>${o.source === "naver" ? "네이버 주문" : "주문 파일"}</td></tr>`).join("")}</table></div>` : "")
             + (l.history.length ? `<div><h3 class="sec-title">지난 회차</h3><table class="opt-table"><tr><th>회차</th><th>관리코드</th><th>상품번호</th><th>올린 날</th><th>지운 날</th></tr>
               ${l.history.map((h) => `<tr><td>${h.round}</td><td>${esc(h.seller_code)}</td><td>${esc(h.channel_no)}</td><td>${ymd(h.registered_at)}</td>
-              <td>${ymd(h.deleted_at)} <span class="muted">${h.reason === "refresh" ? "최신화" : "내리기"}</span></td></tr>`).join("")}</table></div>` : "");
+              <td>${ymd(h.deleted_at)} <span class="muted">${OP[h.reason] || "내리기"}</span></td></tr>`).join("")}</table></div>` : "");
           $("#d-name-save", b)?.addEventListener("click", async () => {
             try {
               const r = await App.api(`/api/listings/${id}/name`, { json: { name: $("#d-name", b).value } });

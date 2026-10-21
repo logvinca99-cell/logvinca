@@ -23,6 +23,7 @@ KIND_COND = {   # 시작할 때 고르는 종류
     "create": "(l.status='planned' AND l.op='create')",
     "refresh": "(l.status='planned' AND l.op='refresh')",
     "delete": "(l.status='planned' AND l.op='delete')",
+    "reupload": "(l.status='planned' AND l.op='reupload')",
     "fail": "(l.status='fail')",
 }
 
@@ -35,7 +36,7 @@ def listing_targets(db, f):
     where, args = listing_where(f if f.get("visible") else {**f, "status": "all"})
     kinds = [k for k in (f.get("kinds") or KIND_COND) if k in KIND_COND]
     # 상품명을 아직 안 바꾼(원본 상품명 그대로인) 새 등록은 올리지 않는다 → 복사본 화면 '상품명 변경 필요'
-    cond = f"({' OR '.join(KIND_COND[k] for k in kinds) or '0'}) AND NOT (l.op='create' AND l.name_id IS NULL)"
+    cond = f"({' OR '.join(KIND_COND[k] for k in kinds) or '0'}) AND NOT (l.op IN ('create','reupload') AND l.name_id IS NULL)"
     where = (where + f" AND {cond}") if where else f" WHERE {cond}"
     return db.q(f"""SELECT l.id, l.store_id, l.source_id, l.name, l.price, l.status, l.message, l.op, l.round,
         l.origin_no, l.channel_no, l.seller_code, l.registered_at, l.bait_want, l.name_id, CASE WHEN l.op='delete' THEN 0 ELSE s.image_count END AS image_count
@@ -245,7 +246,7 @@ class Runner:
                 q.put(t)
             # 지우는 일(최신화·내리기)이 있으면 먼저 이 스토어의 주문을 가져와 판매 이력을 최신으로 만든다.
             sales_ok = True
-            if any(t["op"] in ("refresh", "delete") and t["origin_no"] for t in by_store[sid]):
+            if any(t["op"] in ("refresh", "delete", "reupload") and t["origin_no"] for t in by_store[sid]):
                 with self.lock:
                     self.state["stores"][sid]["status"] = "판매 이력 확인 중"
                 try:
@@ -301,9 +302,9 @@ class Runner:
         on_wait = lambda m: self._stage(lid, label, m)  # noqa: E731
         notes = []
         try:
-            if op == "create" and not t.get("name_id"):
+            if op in ("create", "reupload") and not t.get("name_id"):
                 raise naver.ApiError("이름 변경 필요 · 원본 상품명 그대로는 올리지 않습니다 (복사본 화면에서 상품명 바꾸기)")
-            if op in ("refresh", "delete") and t["origin_no"]:
+            if op in ("refresh", "delete", "reupload") and t["origin_no"]:
                 # 판매된 상품은 지우지 않는다 (예약 뒤에 팔렸을 수 있으니 실행 직전에 다시 확인).
                 if not store.get("_sales_ok", True):
                     raise naver.ApiError("주문(판매 이력)을 확인하지 못해 지우지 않았습니다. 다시 시도하세요.")
@@ -316,7 +317,7 @@ class Runner:
                     return
                 self._stage(lid, label, "네이버에서 지우는 중")
                 client.delete_product(t["origin_no"], on_wait=on_wait)
-                self._archive(t, "refresh" if op == "refresh" else "delete")
+                self._archive(t, op)
                 if op == "delete":
                     self.db.set_listing(lid, "deleted", op="create", stage="", message="", origin_no="",
                                         channel_no="", deleted_at=time.time(), seconds=time.time() - t0)
@@ -327,7 +328,7 @@ class Runner:
                 t = {**t, "round": t["round"] + 1, "origin_no": ""}
                 self.db.set_listing(lid, None, op="create", round=t["round"], origin_no="", channel_no="",
                                     deleted_at=time.time())
-                if cfg.get("refresh_new_name"):
+                if op == "refresh" and cfg.get("refresh_new_name"):   # 다시 올리기는 늘 같은 이름
                     t["name"] = self._new_name(cfg, t) or t["name"]
             elif op == "delete":
                 self.db.set_listing(lid, "deleted", op="create", stage="", deleted_at=time.time())
@@ -373,7 +374,7 @@ class Runner:
                                 bait=bait_amt, bait_state="on" if bait_amt else "", bait_note="", bait_restored_at=None, sale_shown=shown,
                                 origin_no=str(res.get("originProductNo", "")),
                                 channel_no=str(res.get("smartstoreChannelProductNo", "")))
-            what = "최신화" if op == "refresh" else "등록"
+            what = {"refresh": "최신화", "reupload": "다시 올리기"}.get(op, "등록")
             extra = f", 도둑방지 +{bait_amt:,}원" if bait_amt else ""
             self._log("ok", f"{what} 완료 · {t['name'][:40]} ({sec:.1f}초, 새 이미지 {n1 + n2}장{extra})", store["name"])
             self._count(sid, lid, True)

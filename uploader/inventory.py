@@ -1008,7 +1008,8 @@ def set_listing_name(db, lid, name):
 
 
 def schedule_op(db, f, op):
-    """올라가 있는 건에 할 일을 건다. op: refresh(지우고 다시 올리기) / delete(내리기).
+    """올라가 있는 건에 할 일을 건다. op: refresh(최신화: 오래된 상품 지우고 다시, 설정에 따라 새 이름)
+    / reupload(다시 올리기: 문제가 있어 지우고 같은 내용으로 다시, 내린 것도) / delete(내리기).
     판매 이력이 있는 건은 건너뛴다. (예약한 수, 판매 이력으로 건너뛴 수, 예약한 복사본 번호들)"""
     where, args = listing_where({**f, "status": "live"})
     rows = db.q(f"SELECT l.id, l.source_id, l.locked FROM listings l JOIN sources s ON s.id=l.source_id{where}", args)
@@ -1021,9 +1022,9 @@ def schedule_op(db, f, op):
             chunk = ids[i:i + 900]
             c.execute(f"UPDATE listings SET status='planned', op=?, message='', updated_at=? "
                       f"WHERE id IN ({','.join('?' * len(chunk))})", (op, now, *chunk))
-    # 이미 내린 복사본에 최신화 = 다시 올리기 (다음 회차, 이름 그대로, 가격은 지금 기준).
+    # 다시 올리기: 내린(내림) 복사본은 다음 회차 새 등록으로 (이름 그대로, 가격은 지금 기준).
     # 직접 고른 것이거나 '내림'으로 거른 때만 (전체 고르기로 내림까지 되살아나지 않게)
-    if op == "refresh" and (f.get("ids") or f.get("status") == "deleted"):
+    if op == "reupload" and (f.get("ids") or f.get("status") == "deleted"):
         rev = relist(db, f)
         ids += rev
     return len(ids), skipped, ids
@@ -1048,7 +1049,7 @@ def relist(db, f):
                 continue
             free[r["store_id"]] -= 1
             price = convert.store_price(r["price"], f"{r['source_key']}|{r['store_id']}", cfg, st)
-            c.execute("""UPDATE listings SET status='planned', op='create', round=round+1, price=?, message='', stage='',
+            c.execute("""UPDATE listings SET status='planned', op='reupload', round=round+1, price=?, message='', stage='',
                 bait_want=?, bait=0, bait_state='', sale_shown=NULL, updated_at=? WHERE id=?""", (price, bait_want, now, r["id"]))
             out.append(r["id"])
     db.recount_sources([r["id"] for r in db.q(f"SELECT DISTINCT source_id AS id FROM listings WHERE id IN ({','.join('?' * len(out))})", out)] if out else [])
@@ -1228,6 +1229,7 @@ def store_summaries(db):
         SUM(status IN ('planned','queued','running')) AS pending,
         SUM(status IN ('planned','queued','running') AND op='create') AS p_create,
         SUM(status IN ('planned','queued','running') AND op='refresh') AS p_refresh,
+        SUM(status IN ('planned','queued','running') AND op='reupload') AS p_reupload,
         SUM(status IN ('planned','queued','running') AND op='delete') AS p_delete,
         SUM(origin_no!='' AND status='success') AS live, SUM(status='fail') AS fail,
         MAX(updated_at) AS last_at
@@ -1238,7 +1240,7 @@ def store_summaries(db):
         out.append({"id": s["id"], "name": s["name"], "code": s["code"], "enabled": s["enabled"], "capacity": s["capacity"],
                     "business_name": s.get("business_name"), "store_url": s.get("store_url") or "", "ship_region": s.get("ship_region") or "",
                     "used": s["used"], "last_at": r.get("last_at"),
-                    "free": s["free"], **{k: r.get(k) or 0 for k in ("all_", "noname", "named", "pending", "p_create", "p_refresh", "p_delete", "live", "fail")}})
+                    "free": s["free"], **{k: r.get(k) or 0 for k in ("all_", "noname", "named", "pending", "p_create", "p_refresh", "p_reupload", "p_delete", "live", "fail")}})
     return out
 
 
@@ -1262,6 +1264,7 @@ def listing_counts(db, store_id=None, plan_id=None):
         SUM(status IN ('planned','queued','running')) AS pending,
         SUM(status IN ('planned','queued','running') AND op='create') AS pending_create,
         SUM(status IN ('planned','queued','running') AND op='refresh') AS pending_refresh,
+        SUM(status IN ('planned','queued','running') AND op='reupload') AS pending_reupload,
         SUM(status IN ('planned','queued','running') AND op='delete') AS pending_delete,
         SUM(origin_no!='' AND status='success') AS live, SUM(status='fail') AS fail, SUM(status='deleted') AS deleted,
         SUM(sold_count>0) AS sold, SUM(locked=1 AND status!='deleted') AS locked,

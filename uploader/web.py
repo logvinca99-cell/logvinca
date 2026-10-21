@@ -803,7 +803,7 @@ def create_app(db=None):
         url_map = {**db.image_map(l["store_id"], convert.thumbnails(row)[:10]),
                    **db.image_map(engine.DETAIL_SCOPE, convert.detail_images_to_upload(row, cfg))}
         store = db.store(l["store_id"])
-        nxt = {**l, "round": l["round"] + (1 if l["op"] == "refresh" and l["origin_no"] else 0)}
+        nxt = {**l, "round": l["round"] + (1 if l["op"] in ("refresh", "reupload") and l["origin_no"] else 0)}
         l["next_seller_code"] = engine.seller_code(cfg, store, nxt)
         unit = max(1, convert.to_int(cfg.get("price_round"), 100))
         l["disc_pct"] = convert.store_discount_pct(store, cfg)
@@ -833,7 +833,7 @@ def create_app(db=None):
         """올라가 있는 건에 최신화(지우고 다시 올리기) 또는 내리기를 예약한다."""
         b = body()
         op = b.get("op")
-        if op not in ("refresh", "delete"):
+        if op not in ("refresh", "delete", "reupload"):
             return fail("알 수 없는 작업입니다.")
         if runner.state["running"]:
             return fail("등록이 끝난 뒤에 예약할 수 있습니다.")
@@ -846,7 +846,7 @@ def create_app(db=None):
                 out["busy"] = True
             else:
                 try:
-                    runner.start({"ids": ids, "kinds": [op, "create"] if op == "refresh" else [op]})
+                    runner.start({"ids": ids, "kinds": [op]})
                     out["started"] = True
                 except (RuntimeError, naver.ApiError) as e:
                     out["error"] = str(e)

@@ -36,7 +36,7 @@ const img = (url, cls = "thumb") =>
 const STATUS = {
   planned: "등록 대기", queued: "순서 대기", running: "처리 중", success: "판매 중", fail: "실패", deleted: "내림",
 };
-const OP = { create: "등록", refresh: "최신화", delete: "내리기" };
+const OP = { create: "등록", refresh: "최신화", delete: "내리기", reupload: "다시 올리기" };
 
 /* 상태 + 할 일을 한 낱말로: "최신화 대기", "내리기 실패" … */
 function statusLabel(status, op = "create") {
