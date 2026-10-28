@@ -700,13 +700,15 @@ def import_dictionary(db, fh, filename, progress=None, should_stop=None):
 # ───────────────────────── 반복 검사
 
 def repeated_word(tokens, lex=None, max_repeat=2):
-    """같은 단어가 max_repeat번보다 많이 나오면 그 단어를, 아니면 None (띄어쓰기와 관계없이 단어 안에 든 것도 셈).
-    단어로 보는 것(사전 없이): 상품명의 각 단어, 다른 단어의 앞부분(탐지기 → 탐지), 앞에 2자 이상이 붙은 뒷부분(금속탐지 → 탐지),
+    """같은 단어가 max_repeat번보다 많이 나오면 그 단어를, 아니면 None (띄어쓰기와 관계없이 붙여 쓴 단어 속도 셈).
+    단어로 보는 것(사전 없이): 상품명의 각 단어, 다른 단어의 앞부분(탐지장비 → 탐지), 앞에 2자 이상이 붙은 뒷부분(금속탐지 → 탐지),
     '-용·형·식'을 뗀 말, 사전 단어. 뒷부분이 한 글자 뒤에 붙은 경우가 있으면(화|이트·집|진기) 소리만 겹친 것이라 단어로 안 봄.
-    '방수테이프 접착테이프 양면테이프'면 '테이프'가 3번, '보물탐지 탐지기 금속탐지'면 '탐지'가 3번, '화이트 헤드라이트'는 반복 아님."""
+    셀 때: 단어 뒤에 한 글자만 더 붙어 끝나면 다른 단어(탐지기·받침대·서랍장 ≠ 탐지·받침·서랍, 금속탐지기 = 금속+탐지기).
+    단 '-용·형·식'은 같은 단어(캠핑용 = 캠핑).
+    '보물탐지 금속탐지 탐지장비'면 '탐지' 3번, '보물탐지 탐지기 금속탐지'는 탐지 2번·탐지기 1번이라 반복 아님."""
     toks = [t.lower() for t in tokens if t]
     known = lex.words if lex else set()
-    cands, count, pre, suf2, suf1 = set(), {}, set(), set(), set()
+    cands, pre, suf2, suf1 = set(), set(), set(), set()
     for t in toks:
         if len(t) >= 2:
             cands.add(t)
@@ -716,17 +718,26 @@ def repeated_word(tokens, lex=None, max_repeat=2):
         for s in SUFFIXES:
             if t.endswith(s) and len(t) > len(s) + 1:
                 cands.add(t[: -len(s)])
-        subs = {t[i:j] for i in range(len(t)) for j in range(i + 2, min(len(t), i + 8) + 1)}
-        for s in subs:   # 이 단어 안에 든 2~8자 (단어마다 한 번만 셈)
-            count[s] = count.get(s, 0) + 1
-        cands |= {s for s in subs if s in known}
+        if known:
+            cands |= {t[i:j] for i in range(len(t)) for j in range(i + 2, min(len(t), i + 8) + 1) if t[i:j] in known}
     cands |= pre | (suf2 - suf1)
+
+    def has(t, w):
+        """t 안에 w가 '그 단어로' 들어 있나: 뒤에 아무것도 없거나, 2자 이상 붙거나, -용·형·식만 붙음."""
+        i = t.find(w)
+        while i >= 0:
+            after = t[i + len(w):]
+            if not after or len(after) >= 2 or after in SUFFIXES:
+                return True
+            i = t.find(w, i + 1)
+        return False
+
     best = None
     for w in cands:
         if len(w) < 2:
             continue
-        n = count.get(w) if len(w) <= 8 else sum(1 for t in toks if w in t)
-        if n and n > max_repeat and (best is None or (n, len(w)) > best[0]):
+        n = sum(1 for t in toks if has(t, w))
+        if n > max_repeat and (best is None or (n, len(w)) > best[0]):
             best = ((n, len(w)), w)
     return best[1] if best else None
 
