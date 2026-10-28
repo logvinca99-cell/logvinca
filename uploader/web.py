@@ -1640,6 +1640,11 @@ def create_app(db=None):
     if not db.one("SELECT 1 FROM meta WHERE k='ctx_v2_reset'"):
         ctxkw.reset_v1(db)   # AI 키워드 방식이 keep·core·ctx로 바뀜 → 예전 맥락 키워드 초기화 (한 번만)
         db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('ctx_v2_reset', '1')")
+    if not db.one("SELECT 1 FROM meta WHERE k='ab_split_v1'"):
+        # A·B가 덜 비슷하게 (보라·맥락 나눠 쓰기, B는 앞 3단어만 두고 섞기) → 안 올린 AI 이름을 받은 키워드로 한 번 다시 조립 (AI 안 부름)
+        ctxkw.rebuild_unused(db)
+        for k in ("ab_split_v1", "rep_compound_v2", "rep_compound_v1"):
+            db.x("INSERT OR REPLACE INTO meta(k, v) VALUES(?, '1')", (k,))
     if not db.one("SELECT 1 FROM meta WHERE k='rep_compound_v2'"):
         # 반복 검사가 붙여 쓴 단어 속까지 세고(보물탐지·금속탐지·탐지장비), 한 글자가 더 붙은 말은 다른 단어로 봄(탐지기 ≠ 탐지)
         # → 안 올린 AI 이름을 받은 키워드로 한 번 다시 조립 (AI 안 부름, 올린 것은 그대로)

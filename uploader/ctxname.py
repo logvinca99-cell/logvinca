@@ -148,7 +148,8 @@ def make_names(origin_name, ai_words, forbidden, copies=1, seed=0, reject=None, 
 
 
 # ───────────────────────── v2: keep · core · ctx 조립 (AI가 주는 세 묶음)
-# [원본 앞 4단어(숫자·수량·연식만 있는 단어는 뒤로)] + [keep] + [core 전부 + core2 앞 2개] + [ctx] + [남은 원본 단어] + [나머지 core2] + [숫자·수량·연식]
+# A: [원본 앞 4단어(숫자·수량·연식만 있는 단어는 뒤로)] + [keep] + [core 나눈 것 + core2 앞 2개] + [ctx] + [남은 원본 단어] + [나머지 core2] + [숫자·수량·연식]
+# B: 같은 방식으로 고른 단어(core·core2·ctx는 A와 나눠 씀)를 원본 앞 3단어만 두고 섞음
 # 넣는 순서(자리가 모자라면 뒤의 것부터 빠짐): keep → core → core2 2개 → ctx 2개 → 남은 원본 단어 → 나머지 core2 → ctx 2개 더 → 숫자·수량·연식.
 # 무작위 없이 정해진 순서라 같은 입력이면 늘 같은 이름. A(1번째 복사본)·B(2번째)는 core·ctx·원본 단어 고르는 위치만 다르다.
 
@@ -205,8 +206,24 @@ def _fit(head, picks, max_chars, rep=None):
     return " ".join(head + [x for _, x in ordered]), [x for k, x in ordered if k in ("core", "ctx", "more")]
 
 
+B_FIXED = 3       # B(2번째·짝수 번째 이름)는 원본 앞 3단어만 그대로 두고 나머지 단어 순서를 섞음
+
+
+def _ab(lst, p, r, share_first):
+    """A(p=0)·B(p=1)가 나눠 쓰기: r만큼 돌린 뒤 번갈아 나눔. share_first면 1번째(가장 확실한 것)는 둘 다."""
+    if not lst:
+        return []
+    r %= len(lst)
+    lst = lst[r:] + lst[:r]
+    if share_first:
+        return [lst[0]] + lst[1 + p::2]
+    return lst[p::2] or lst[:1]
+
+
 def make_names_v2(origin_name, kw, forbidden, copies=2, seed=0, reject=None, opts=None, bad=None, rep=None):
-    """원본 하나 → 이름 copies개 (1번째 = A, 2번째 = B). kw = {keep:[], core:[], ctx:[]} (AI가 준 그대로).
+    """원본 하나 → 이름 copies개 (1번째 = A, 2번째 = B, 3번째부터는 A·B 방식을 번갈아 다른 조합으로).
+    A·B가 덜 비슷하게: 보라(core)는 가장 확실한 1개만 둘 다 쓰고 나머지는 번갈아 나눔, 용도·조합(core2)·맥락(ctx)은 반씩 나눔.
+    A는 원본 앞 4단어 → keep → 보라 → 맥락 → 남은 원본 단어 순서, B는 원본 앞 3단어만 두고 나머지를 섞음 (숫자·수량·연식은 늘 맨 뒤).
     못 만든 자리는 None (→ 복사본 화면 '상품명 변경 필요'). reject(name)=True면 그 조합을 버리고 다음 조합."""
     o = {"max_chars": MAX_CHARS, "head_n": HEAD_N, **(opts or {})}
     bad = bad or (lambda w: False)
@@ -233,21 +250,30 @@ def make_names_v2(origin_name, kw, forbidden, copies=2, seed=0, reject=None, opt
     made, results = [], []
     for k in range(copies):
         got = None
-        for t in range(10):   # 같은 이름·중복이면 고르는 위치를 바꿔 최대 10번
-            v = k + t
-            c0 = v % len(core) if core else 0
-            d0 = v % len(core2) if core2 else 0
-            # A·B는 순서만 다름 (A는 1번째부터, B는 2번째부터). core 전부 + core2 앞 2개는 맥락 앞에, 나머지 core2는 원본 단어 뒤에
-            c_pick = core[c0:] + core[:c0]
-            c2 = core2[d0:] + core2[:d0]
-            start = (v * CTX_FIRST) % len(ctx) if ctx else 0
-            cx = (ctx[start:] + ctx[:start]) if ctx else []
-            r0 = (v * 2) % len(rest) if rest else 0
-            rs = rest[r0:] + rest[:r0]
-            picks = ([("keep", w) for w in keep] + [("core", w) for w in c_pick + c2[:CORE2_FIRST]]
+        for t in range(10):   # 같은 이름·중복·반복이면 고르는 위치를 바꿔 최대 10번
+            v = k + 2 * t       # 짝·홀은 그대로 (A 방식·B 방식), 시도마다 돌리는 칸만 바뀜
+            p, r = v % 2, v // 2
+            c_pick = _ab(core, p, r, True)
+            c2 = _ab(core2, p, r, False)
+            cx = _ab(ctx, p, r, False)
+            kp = keep if p == 0 else keep[::-1]
+            rs = rest[r % len(rest):] + rest[:r % len(rest)] if rest else []
+            if p == 1:
+                rs = rs[::-1]
+            picks = ([("keep", w) for w in kp] + [("core", w) for w in c_pick + c2[:CORE2_FIRST]]
                      + [("ctx", w) for w in cx[:CTX_FIRST]] + [("rest", w) for w in rs] + [("more", w) for w in c2[CORE2_FIRST:]]
                      + [("ctx", w) for w in cx[CTX_FIRST:CTX_FIRST + CTX_MORE]] + [("num", w) for w in nums])
             name, used = _fit(head, picks, o["max_chars"], rep)
+            if p == 1:   # B: 앞 3단어만 두고 나머지(숫자 단어 빼고) 섞기 — A와 순서가 같으면 다시 섞음
+                ws = name.split()
+                fixed, tail = ws[:B_FIXED], [w for w in ws[B_FIXED:] if w not in nums]
+                tail_nums = [w for w in ws[B_FIXED:] if w in nums]
+                rnd = random.Random(f"{seed}:{v}")
+                for _ in range(5):
+                    rnd.shuffle(tail)
+                    name = " ".join(fixed + tail + tail_nums)
+                    if not any(name.split()[B_FIXED:] == m.split()[B_FIXED:] for m in made):
+                        break
             if rep and rep(name.split()):
                 continue   # 앞 단어만으로도 반복이면 (원본 자체 문제) 이 조합은 버림
             if name == orig or set(name.split()) == set(toks):
