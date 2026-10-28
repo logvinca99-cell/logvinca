@@ -476,11 +476,13 @@ OPTION_STYLES = ("strong", "basic")   # 예전 'original'(원본 그대로)은 b
 
 
 def detail_source(row, cfg):
-    """올릴 상세의 출발점: 엑셀 상세 − 방문 알림 − (설정이면) 동영상."""
+    """올릴 상세의 출발점: 엑셀 상세 − 방문 알림 − http(보안 아님) 동영상 − (설정이면) 동영상 전부."""
     html = row.get("상세설명") or f"<p>{row.get('상품명') or ''}</p>"
     html = strip_trackers(html)
     if cfg.get("detail_video") == "remove":
         html = VIDEO_RE.sub("", html)
+    else:   # 네이버(https) 화면에서 http 동영상은 막히거나 안 열림
+        html = VIDEO_RE.sub(lambda m: "" if re.search(r"""src\s*=\s*["']?http://""", m.group(0), re.I) else m.group(0), html)
     return html
 
 
