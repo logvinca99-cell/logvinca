@@ -329,6 +329,7 @@ _FLEX_COL = re.compile(r"""style\s*=\s*(["'])((?:(?!\1).)*flex-direction\s*:\s*c
 _IMG_TAG = re.compile(r"<img\b[^>]*>", re.I)
 _HEAD_BEFORE = re.compile(r"<(h[1-4])\b[^>]*>(.*?)</\1>\s*$", re.I | re.S)
 OPTION_COLOR = "#1F2937"
+SPACER = "<p><br></p>"   # 빈 줄 하나 (네이버가 지우지 않는 가장 단순한 간격)
 
 
 def _div_end(html, start):
@@ -423,9 +424,16 @@ def _layout(html, style, color, opt_urls):
         if not cards or (not grid and sum(1 for x, _ in cards if x) < 2):   # 줄바꿈 flex는 사진 칸이 둘 이상일 때만
             continue
         before, title = html[i:m.start()], ""
-        h = _HEAD_BEFORE.search(before) if style == "strong" else None
-        if h and _text(h.group(2)):
-            title, before = _text(h.group(2)), before[:h.start()]
+        h = _HEAD_BEFORE.search(before)
+        h = h if h and _text(h.group(2)) else None
+        cut = h.start() if h else len(before)   # 옵션표(제목 포함)가 시작하는 자리
+        # 앞에 동영상·사진·글이 있으면 한 줄 띄움 (맨 앞이면 스토어 상단과의 간격은 detail_html이 띄움)
+        prev = "".join(out) + before[:cut]
+        gap = SPACER if re.search(r"<(img|video|iframe)\b", prev, re.I) or _text(prev.replace("&nbsp;", " ")) else ""
+        if h and style == "strong":   # 제목은 그림의 색 띠로
+            title, before = _text(h.group(2)), before[:cut] + gap
+        else:
+            before = before[:cut] + gap + before[cut:]
         k = len(boxes)
         boxes.append({"title": title, "cards": cards})
         urls = (opt_urls[k] if opt_urls and k < len(opt_urls) else
@@ -503,7 +511,8 @@ def detail_html(row, cfg, url_map, top="", bottom="", store=None, opt_urls=None)
         src = m.group(3).strip()
         key = "https:" + src if src.startswith("//") else src
         return f"{m.group(1)}{m.group(2)}{url_map.get(key, src)}{m.group(2)}"
-    return (top or "") + IMG_SRC_RE.sub(repl, html) + (bottom or "")
+    # 스토어 상단·하단과 상세 사이 한 줄 (붙어 보이지 않게)
+    return (top + SPACER if top else "") + IMG_SRC_RE.sub(repl, html) + (SPACER + bottom if bottom else "")
 
 
 def certification_exclude(certs):
