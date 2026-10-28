@@ -872,6 +872,8 @@ def rename_ctx(db, ids, fallback=False, progress=None, should_stop=None):
     if progress:
         progress(0, len(todo), "맥락 키워드로 이름 후보 만드는 중")
     st["names"] = ctxkw.build_names(db, sorted(ok))
+    if progress:
+        progress(len(mine), max(1, len(todo)), "이름 후보를 복사본에 붙이는 중")
     with db.tx() as c:
         for r in mine:
             if r["name_id"] and r["origin"] == "ctx":
@@ -898,6 +900,14 @@ def rename_ctx(db, ids, fallback=False, progress=None, should_stop=None):
         else:
             st["no_kw"] = len({r["source_id"] for r in rest})
             st["no_kw_listings"] = len(rest)
+            rs = sorted({r["source_id"] for r in rest})
+            kst = {}
+            for i in range(0, len(rs), 900):
+                for r in db.q(f"SELECT status, COUNT(*) AS n FROM ctx_kw WHERE source_id IN ({','.join('?' * len(rs[i:i + 900]))}) GROUP BY status",
+                              rs[i:i + 900]):
+                    kst[r["status"]] = kst.get(r["status"], 0) + r["n"]
+            st["kw_pending"], st["kw_failed"] = kst.get("pending", 0), kst.get("retry", 0)
+            st["kw_none"] = st["no_kw"] - st["kw_pending"] - st["kw_failed"]
     return st
 
 

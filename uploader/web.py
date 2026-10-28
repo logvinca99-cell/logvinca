@@ -109,6 +109,7 @@ def create_app(db=None):
             "stats": db.stats(),
             "tasks": tasks.list(),
             "running": runner.state["running"],
+            "ctx": ctxkw.live_status(db),   # AI 키워드 일괄 처리·실패 현황 (오른쪽 아래)
         })
 
     @app.get("/api/tasks")
@@ -639,6 +640,8 @@ def create_app(db=None):
     # ── 맥락 키워드 (AI): 실행 전 비용 안내 → 일괄(기본)/즉시
 
     def _ctx_sources(b):
+        if b.get("retry"):   # 실패(재시도 대기)한 원본만 다시
+            return [r["source_id"] for r in db.q("SELECT source_id FROM ctx_kw WHERE status='retry' ORDER BY source_id")]
         if b.get("listing_filter"):
             f = _filter_from(b["listing_filter"])
             f.pop("op", None)
@@ -665,7 +668,7 @@ def create_app(db=None):
             return jsonify({"started": False, "message": "고른 원본은 모두 키워드가 있습니다 (요청 0건). AI를 부르지 않습니다."})
         try:
             if mode == "instant":
-                tid = tasks.start("ctxkw", f"맥락 키워드 받기(즉시) · 원본 {len(ids):,}개",
+                tid = tasks.start("ctxkw", f"AI 키워드 받기(즉시) · 원본 {len(ids):,}개",
                                   lambda **kw: ctxkw.run_instant(db, ids, **kw))
                 return jsonify({"task": tid})
             r = ctxkw.start_batch(db, ids)
@@ -929,7 +932,7 @@ def create_app(db=None):
         if method == "ctx":
             fb = False
             try:
-                tid = tasks.start("rename", f"상품명 바꾸기(맥락 키워드) · 복사본 {len(ids):,}건",
+                tid = tasks.start("rename", f"상품명 바꾸기(AI 키워드) · 복사본 {len(ids):,}건",
                                   lambda **kw: inventory.rename_ctx(db, ids, fb, **kw))
             except RuntimeError as e:
                 return fail(str(e))

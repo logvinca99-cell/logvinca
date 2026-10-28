@@ -164,20 +164,11 @@ const App = {
       `원본 ${num(st.sources)}개 · 이름 후보 ${num(st.names_free)}개<br>` +
       `등록 완료 ${num(st.registered)}건 · 대기 ${num(st.pending)}건<br>` +
       `카테고리 ${this.state.categories ? num(this.state.categories) + "개" : "아직 안 받음"}` +
-      (st.trash ? `<br><a href="#trash">휴지통 ${num(st.trash)}개</a>` : "") +
-      (st.ctx_pending ? `<br><span class="c-warn">AI 맥락 키워드 일괄 처리 중 ${num(st.ctx_pending)}개</span>
-        <button class="link-btn" id="ctx-check">지금 확인</button> · <button class="link-btn" id="ctx-cancel">중지</button>` : "");
-    $("#ctx-check")?.addEventListener("click", async () => {
-      const r = await this.api("/api/ctx/check", { json: {} });
-      this.toast(r.ended ? `일괄 처리 끝: 키워드 받은 원본 ${num(r.ok)}개` + (r.failed ? ` · 재시도 대기 ${num(r.failed)}개` : "") : "아직 처리 중입니다.");
-      this.refreshState();
-    });
-    $("#ctx-cancel")?.addEventListener("click", async () => {
-      if (!confirm("진행 중인 AI 맥락 키워드 일괄 처리를 중지할까요? 이미 끝난 결과는 저장하고, 나머지 원본은 재시도 대기로 둡니다.")) return;
-      await this.api("/api/ctx/cancel", { json: {} });
-      this.toast("중지를 요청했습니다. 끝난 결과는 다음 확인 때 저장합니다.");
-    });
+      (st.trash ? `<br><a href="#trash">휴지통 ${num(st.trash)}개</a>` : "");
     this.renderTasks(this.state.tasks);
+    const nb = this.state.ctx?.batches?.length || 0;
+    if (this._ctxBatches && !nb) this.emit("task-done", { kind: "ctxbatch", status: "done" });   // 일괄 처리가 끝나 이름이 붙음 → 화면 새로
+    this._ctxBatches = nb;
     return this.state;
   },
 
@@ -188,17 +179,24 @@ const App = {
 
   // ── 뒤에서 도는 작업
 
+  /* 오른쪽 아래 현황: 도는 작업, 끝난 작업(1분 동안 결과를, 오류는 닫을 때까지), AI 키워드 일괄 처리·실패 */
   renderTasks(list) {
     const box = $("#tasks");
-    const show = list.filter((t) => t.status === "running" || (t.ended_at && Date.now() / 1000 - t.ended_at < 8));
-    box.innerHTML = show.map((t) => {
-      const p = t.total ? Math.min(100, (t.done / t.total) * 100) : null;
+    const now = Date.now() / 1000;
+    this.taskClosed ||= new Set();
+    const show = list.filter((t) => !this.taskClosed.has(`t${t.id}`) && (t.status === "running"
+      || (t.ended_at && (t.status === "error" ? now - t.ended_at < 600 : now - t.ended_at < 60))));
+    const close = (key) => `<button class="link-btn" data-close-task="${key}" title="닫기">✕</button>`;
+    box.innerHTML = this.ctxCards(now, close) + show.map((t) => {
+      const p = t.total ? Math.min(100, (t.done / t.total) * 100) : t.status !== "running" ? 100 : null;
       const st = { running: "", done: "끝", error: "오류", stopped: "중단됨" }[t.status];
+      const msg = t.status === "running" ? (t.message || "준비 중…") + (t.total ? ` · ${num(t.done)}/${num(t.total)}` : "")
+        : t.status === "error" ? t.error : this.taskMsg(t);
       return `<div class="task ${t.status}">
         <div class="task-top"><b>${esc(t.title)}</b>${t.status === "running"
-          ? `<button class="link-btn" data-stop-task="${t.id}">중단</button>` : `<span>${st}</span>`}</div>
+          ? `<button class="link-btn" data-stop-task="${t.id}">중단</button>` : `<span>${st} ${close(`t${t.id}`)}</span>`}</div>
         <div class="bar thin">${p != null ? `<div class="bar-ok" style="width:${p}%"></div>` : `<div class="bar-indef"></div>`}</div>
-        <div class="task-msg">${esc(t.error || t.message || "준비 중…")}${t.total ? ` · ${num(t.done)}/${num(t.total)}` : ""}</div>
+        <div class="task-msg">${esc(msg)}</div>
       </div>`;
     }).join("");
     for (const t of list) {
@@ -209,55 +207,90 @@ const App = {
     this._tasksRunning = list.some((t) => t.status === "running");
   },
 
+  /* AI 키워드: 일괄 처리 중(보낸 지 몇 분, 마지막 확인), 실패(사유·다시 받기), 방금 끝남 */
+  ctxCards(now, close) {
+    const c = this.state?.ctx;
+    if (!c) return "";
+    const min = (s) => (s < 60 ? `${Math.round(s)}초` : s < 3600 ? `${Math.round(s / 60)}분` : `${(s / 3600).toFixed(1)}시간`);
+    let out = "";
+    const act = c.batches || [];
+    if (act.length) {
+      const n = act.reduce((a, b) => a + b.sources, 0), first = Math.min(...act.map((b) => b.created_at));
+      const chk = Math.max(...act.map((b) => b.checked_at || 0));
+      out += `<div class="task running">
+        <div class="task-top"><b>AI 키워드 받는 중 (일괄) · 원본 ${num(n)}개</b><span><button class="link-btn" data-ctx="check">지금 확인</button> · <button class="link-btn" data-ctx="cancel">중지</button></span></div>
+        <div class="bar thin"><div class="bar-indef"></div></div>
+        <div class="task-msg">보낸 지 ${min(c.now - first)} · 보통 1시간 안, 길면 24시간${chk ? ` · 마지막 확인 ${min(c.now - chk)} 전` : ""} · 끝나면 이름을 만들어 복사본에 자동으로 붙입니다</div></div>`;
+    }
+    if (c.retry && !this.taskClosed.has(`ctxfail${c.retry}`)) {
+      out += `<div class="task error">
+        <div class="task-top"><b>AI 키워드 실패 · 원본 ${num(c.retry)}개</b><span><button class="link-btn" data-ctx="retry">다시 받기</button> ${close(`ctxfail${c.retry}`)}</span></div>
+        <div class="task-msg">${c.retry_reasons.map((r) => `${esc(r.error || "사유 없음")} (${num(r.n)}개)`).join("<br>")}</div></div>`;
+    }
+    const l = c.last;
+    if (l && l.ended_at && c.now - l.ended_at < 300 && !act.length && !this.taskClosed.has(`ctxrun${l.id}`)) {
+      out += `<div class="task done"><div class="task-top"><b>AI 키워드 받기 끝 (${l.mode === "batch" ? "일괄" : "즉시"})</b><span>끝 ${close(`ctxrun${l.id}`)}</span></div>
+        <div class="bar thin"><div class="bar-ok" style="width:100%"></div></div>
+        <div class="task-msg">받음 ${num(l.ok)}개${l.failed ? ` · 실패 ${num(l.failed)}개` : ""} · 실제 약 ${num(Math.ceil(l.cost_usd * l.rate))}원 · 이름은 복사본에 자동으로 붙었습니다</div></div>`;
+    }
+    return out;
+  },
+
+  taskMsg(t) {
+    const r = t.result || {};
+    const msg = {
+      import: () => `원본 불러오기 끝: 새로 ${num(r.added)}개 · 갱신 ${num(r.updated)}개 · 오류 ${num(r.invalid)}개`,
+      names: () => r.not_found !== undefined
+        ? `상품명 가져오기 끝: 새 이름 ${num(r.added)}개 · 다른 이름과 중복 ${num(r.dup)}개 · 원본 못 찾음 ${num(r.not_found)}줄`
+          + (r.rejected ? ` · 반복·금지 단어로 버림 ${num(r.rejected)}개 (예: ${r.rejected_examples?.[0] || ""})` : "")
+        : (r.kw_error ? `네이버 키워드를 못 받음(${r.kw_error}) · ` : "") + `상품명 만들기 끝: 새 이름 ${num(r.added)}개` + (r.short ? ` · 단어가 적어 다 못 채운 상품 ${num(r.short)}개` : "")
+          + (r.few_words ? ` · 새 단어 후보가 설정보다 적은 원본 ${num(r.few_words)}개 (단어 사전·우리말샘·네이버 키워드로 늘리세요)` : "")
+          + (r.rejected ? ` · 반복·금지 단어로 버림 ${num(r.rejected)}개` : "")
+          + (r.failed ? ` · 실패 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : "") + aiMsg(r.ai),
+      ctxkw: () => `AI 키워드(즉시) 끝: 원본 ${num(r.ok)}개 받음` + (r.failed ? ` · 재시도 대기 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : "")
+        + ` · 실제 약 ${num(r.krw)}원 (예상 ${num(r.est_krw)}원)` + (r.names ? ` · 이름 후보 ${num(r.names.made)}개 · 복사본에 배정 ${num(r.names.assigned)}건` : ""),
+      rename: () => r.method === "shuffle" ? `상품명 바꾸기(셔플) 끝: ${num(r.renamed)}건 바꿈` + (r.short ? ` · 못 만든 ${num(r.short)}건은 '이름 변경 필요'` : "") + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
+        : r.method === "ctx"
+        ? `상품명 바꾸기(AI 키워드) 끝: ${num(r.renamed)}건 배정` + (r.kept ? ` · 이미 맥락 이름 ${num(r.kept)}건 그대로` : "")
+          + (r.fallback ? ` · 키워드 없는 원본은 예비 방식으로 ${num(r.fallback)}건` : "")
+          + (r.kw_pending ? ` · AI 키워드 받는 중인 원본 ${num(r.kw_pending)}개는 끝나면 자동으로 붙음 (오른쪽 아래 현황)` : "")
+          + (r.kw_failed ? ` · AI 키워드 실패 원본 ${num(r.kw_failed)}개 (오른쪽 아래에서 사유 보고 다시 받기)` : "")
+          + (r.kw_none ? ` · 키워드를 아직 안 받은 원본 ${num(r.kw_none)}개` : "")
+          + (r.short ? ` · 이름을 못 만든 ${num(r.short)}건은 '이름 변경 필요'` : "") + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
+        : (r.kw_error ? `네이버 키워드를 못 받음(${r.kw_error}) · ` : "") + `상품명 바꾸기 끝: ${num(r.renamed)}건 바꿈` + (r.short ? ` · 후보를 못 만든 ${num(r.short)}건은 그대로 (단어가 적음 → 직접 입력이나 AI)` : "")
+        + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
+        + (r.few_words ? ` · 새 단어 후보가 설정보다 적은 원본 ${num(r.few_words)}개` : "") + aiMsg(r.ai),
+      bait: () => r.checked !== undefined ? `되돌린 가격 확인 ${num(r.checked)}건 · 고침 ${num(r.fixed)}건` + (r.failed ? ` · 실패 ${num(r.failed)}건 (${r.errors?.[0] || ""})` : "")
+        : `원래 가격으로 ${num(r.restored)}건` + (r.failed ? ` · 실패 ${num(r.failed)}건 (${r.errors?.[0] || ""})` : ""),
+      dictfile: () => `사전 파일 넣기 끝: 명사 ${num(r.nouns)}개 · 비슷한말 있는 단어 ${num(r.syn_words)}개 (파일 ${num(r.files)}개)`,
+      keywords: () => `네이버 키워드 끝: 원본 ${num(r.sources)}개 · 새 단어 ${num(r.words)}개 · 새로 물은 단어 ${num(r.tokens)}개 (저장한 결과 ${num(r.cached)}번)`
+        + (r.not_in_dict ? ` · 사전에 없어 뺀 말 ${num(r.not_in_dict)}개` : "")
+        + (r.dict_unknown ? ` · 사전 확인 못 해 뺀 말 ${num(r.dict_unknown)}개 (우리말샘 API 키나 사전 파일 필요)` : "")
+        + (r.errors ? ` · 실패 ${r.errors} (${r.error})` : ""),
+      kipris: () => `상표 확인 끝: 조어 ${num(r.checked)}개 확인 · 등록 상표 ${num(r.registered)}개 · 출원 중 ${num(r.pending)}개`
+        + (r.in_dict ? ` · 사전 단어라 건너뜀 ${num(r.in_dict)}개` : "")
+        + (r.examples?.length ? ` (예: ${r.examples.join(", ")})` : "") + (r.errors ? ` · 오류 ${r.errors}` : ""),
+      lexicon: () => `우리말샘: ${num(r.looked)}개 단어를 찾아 ${num(r.found)}개에 유의어가 있었습니다` + (r.errors ? ` · 오류 ${r.errors}` : ""),
+      plan: () => `복사 끝: 새 복사본 ${num(r.created)}건${r.revived ? ` · 다시 살림 ${num(r.revived)}건` : ""}`
+        + (r.exists ? ` · 그 스토어에 이미 있어 뺀 것 ${num(r.exists)}` : "")
+        + (r.full ? ` · 최대 ${App.state.settings.max_copies}회라 일부·전부 못 보낸 원본 ${num(r.full)}개` : "")
+        + (r.capacity ? ` · 스토어 자리 부족 ${num(r.capacity)}` : "") + (r.invalid ? ` · 오류 원본 ${num(r.invalid)}개는 뺌` : "")
+        + (r.named ? ` · AI 맥락 이름 바로 붙음 ${num(r.named)}건` : "")
+        + (r.created - (r.named || 0) > 0 ? " · 나머지는 복사본 화면 '이름 변경 필요'에서 상품명을 바꾼 뒤 올리세요" : ""),
+      revalidate: () => `다시 검사 끝: ${num(r.total)}개` + (r.invalid !== undefined ? ` · 오류 ${num(r.invalid)}개` : ""),
+      orders: () => r.rows !== undefined
+        ? `판매 이력 파일 끝: ${num(r.rows)}줄 중 복사본과 맞춘 주문 ${num(r.matched)}건 · 못 맞춘 ${num(r.unmatched)}건`
+        : `주문 가져오기 끝: 스토어 ${num(r.stores)}곳 · 새 주문 ${num(r.new)}건 · 복사본과 맞춤 ${num(r.matched)}건`
+          + (r.errors?.length ? ` · 실패 ${r.errors.length}곳 (${r.errors[0]})` : ""),
+    }[t.kind];
+    return msg ? msg() : `${t.title} 끝`;
+  },
+
   taskFinished(t) {
     if (t.status === "error") { this.toast(`${t.title}: ${t.error}`, true); }
     else if (t.status === "stopped" && t.title.includes("자동 가져오기")) this.toast("주문 자동 가져오기를 중단하고 껐습니다. 다시 켜려면 설정 → 판매 이력의 자동 가져오기 간격을 넣으세요.");
     else {
-      const r = t.result || {};
-      const msg = {
-        import: () => `원본 불러오기 끝: 새로 ${num(r.added)}개 · 갱신 ${num(r.updated)}개 · 오류 ${num(r.invalid)}개`,
-        names: () => r.not_found !== undefined
-          ? `상품명 가져오기 끝: 새 이름 ${num(r.added)}개 · 다른 이름과 중복 ${num(r.dup)}개 · 원본 못 찾음 ${num(r.not_found)}줄`
-            + (r.rejected ? ` · 반복·금지 단어로 버림 ${num(r.rejected)}개 (예: ${r.rejected_examples?.[0] || ""})` : "")
-          : (r.kw_error ? `네이버 키워드를 못 받음(${r.kw_error}) · ` : "") + `상품명 만들기 끝: 새 이름 ${num(r.added)}개` + (r.short ? ` · 단어가 적어 다 못 채운 상품 ${num(r.short)}개` : "")
-            + (r.few_words ? ` · 새 단어 후보가 설정보다 적은 원본 ${num(r.few_words)}개 (단어 사전·우리말샘·네이버 키워드로 늘리세요)` : "")
-            + (r.rejected ? ` · 반복·금지 단어로 버림 ${num(r.rejected)}개` : "")
-            + (r.failed ? ` · 실패 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : "") + aiMsg(r.ai),
-        ctxkw: () => `AI 맥락 키워드(즉시) 끝: 원본 ${num(r.ok)}개 받음` + (r.failed ? ` · 재시도 대기 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : "")
-          + ` · 실제 약 ${num(r.krw)}원 (예상 ${num(r.est_krw)}원)` + (r.names ? ` · 이름 후보 ${num(r.names.made)}개 · 복사본에 배정 ${num(r.names.assigned)}건` : ""),
-        rename: () => r.method === "shuffle" ? `상품명 바꾸기(셔플) 끝: ${num(r.renamed)}건 바꿈` + (r.short ? ` · 못 만든 ${num(r.short)}건은 '이름 변경 필요'` : "") + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
-          : r.method === "ctx"
-          ? `상품명 바꾸기(AI 맥락 키워드) 끝: ${num(r.renamed)}건 배정` + (r.kept ? ` · 이미 맥락 이름 ${num(r.kept)}건 그대로` : "")
-            + (r.fallback ? ` · 키워드 없는 원본은 예비 방식으로 ${num(r.fallback)}건` : "")
-            + (r.no_kw ? ` · 키워드 없는 원본 ${num(r.no_kw)}개(${num(r.no_kw_listings)}건)는 키워드를 받으면 자동 배정` : "")
-            + (r.short ? ` · 이름을 못 만든 ${num(r.short)}건은 '이름 변경 필요'` : "") + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
-          : (r.kw_error ? `네이버 키워드를 못 받음(${r.kw_error}) · ` : "") + `상품명 바꾸기 끝: ${num(r.renamed)}건 바꿈` + (r.short ? ` · 후보를 못 만든 ${num(r.short)}건은 그대로 (단어가 적음 → 직접 입력이나 AI)` : "")
-          + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
-          + (r.few_words ? ` · 새 단어 후보가 설정보다 적은 원본 ${num(r.few_words)}개` : "") + aiMsg(r.ai),
-        bait: () => r.checked !== undefined ? `되돌린 가격 확인 ${num(r.checked)}건 · 고침 ${num(r.fixed)}건` + (r.failed ? ` · 실패 ${num(r.failed)}건 (${r.errors?.[0] || ""})` : "")
-          : `원래 가격으로 ${num(r.restored)}건` + (r.failed ? ` · 실패 ${num(r.failed)}건 (${r.errors?.[0] || ""})` : ""),
-        dictfile: () => `사전 파일 넣기 끝: 명사 ${num(r.nouns)}개 · 비슷한말 있는 단어 ${num(r.syn_words)}개 (파일 ${num(r.files)}개)`,
-        keywords: () => `네이버 키워드 끝: 원본 ${num(r.sources)}개 · 새 단어 ${num(r.words)}개 · 새로 물은 단어 ${num(r.tokens)}개 (저장한 결과 ${num(r.cached)}번)`
-          + (r.not_in_dict ? ` · 사전에 없어 뺀 말 ${num(r.not_in_dict)}개` : "")
-          + (r.dict_unknown ? ` · 사전 확인 못 해 뺀 말 ${num(r.dict_unknown)}개 (우리말샘 API 키나 사전 파일 필요)` : "")
-          + (r.errors ? ` · 실패 ${r.errors} (${r.error})` : ""),
-        kipris: () => `상표 확인 끝: 조어 ${num(r.checked)}개 확인 · 등록 상표 ${num(r.registered)}개 · 출원 중 ${num(r.pending)}개`
-          + (r.in_dict ? ` · 사전 단어라 건너뜀 ${num(r.in_dict)}개` : "")
-          + (r.examples?.length ? ` (예: ${r.examples.join(", ")})` : "") + (r.errors ? ` · 오류 ${r.errors}` : ""),
-        lexicon: () => `우리말샘: ${num(r.looked)}개 단어를 찾아 ${num(r.found)}개에 유의어가 있었습니다` + (r.errors ? ` · 오류 ${r.errors}` : ""),
-        plan: () => `복사 끝: 새 복사본 ${num(r.created)}건${r.revived ? ` · 다시 살림 ${num(r.revived)}건` : ""}`
-          + (r.exists ? ` · 그 스토어에 이미 있어 뺀 것 ${num(r.exists)}` : "")
-          + (r.full ? ` · 최대 ${App.state.settings.max_copies}회라 일부·전부 못 보낸 원본 ${num(r.full)}개` : "")
-          + (r.capacity ? ` · 스토어 자리 부족 ${num(r.capacity)}` : "") + (r.invalid ? ` · 오류 원본 ${num(r.invalid)}개는 뺌` : "")
-          + (r.named ? ` · AI 맥락 이름 바로 붙음 ${num(r.named)}건` : "")
-          + (r.created - (r.named || 0) > 0 ? " · 나머지는 복사본 화면 '이름 변경 필요'에서 상품명을 바꾼 뒤 올리세요" : ""),
-        revalidate: () => `다시 검사 끝: ${num(r.total)}개` + (r.invalid !== undefined ? ` · 오류 ${num(r.invalid)}개` : ""),
-        orders: () => r.rows !== undefined
-          ? `판매 이력 파일 끝: ${num(r.rows)}줄 중 복사본과 맞춘 주문 ${num(r.matched)}건 · 못 맞춘 ${num(r.unmatched)}건`
-          : `주문 가져오기 끝: 스토어 ${num(r.stores)}곳 · 새 주문 ${num(r.new)}건 · 복사본과 맞춤 ${num(r.matched)}건`
-            + (r.errors?.length ? ` · 실패 ${r.errors.length}곳 (${r.errors[0]})` : ""),
-      }[t.kind];
-      this.toast(msg ? msg() : `${t.title} 끝`);
+      this.toast(this.taskMsg(t));
     }
     this.emit("task-done", t);
   },
@@ -374,23 +407,24 @@ const App = {
     const s = this.state.settings;
     const [b, i] = await Promise.all([this.api("/api/ctx/estimate", { json: { ...target, mode: "batch" } }),
       this.api("/api/ctx/estimate", { json: { ...target, mode: "instant" } })]);
+    const small = est.sources <= 200;   // 적으면 즉시가 기본 (몇 분~몇 시간 기다리지 않게, 차이는 몇십 원)
     const line = (e, label) => `${label} 약 <b>${num(e.krw)}원</b> <span class="muted small">(1천 개면 약 ${num(e.per_1k_krw)}원 · 1만 개면 약 ${num(e.per_10k_krw)}원)</span>`;
     this.openModal({
-      title: "AI 맥락 키워드 받기 · 비용 안내",
+      title: "AI 키워드 받기 · 비용 안내",
       body: `<div class="form">
         <dl class="kv">
           <dt>대상 원본</dt><dd><b>${num(est.sources)}개</b> <span class="muted small">(고른 ${num(est.selected)}개 중 이미 키워드가 있는 ${num(est.have)}개 제외)</span></dd>
           <dt>요청 수</dt><dd>${num(est.requests)}건 <span class="muted small">(요청 1건에 원본 ${num(s.ctx_per_request)}개)</span></dd>
           <dt>예상 토큰</dt><dd>입력 ${num(est.in_tok)} · 출력 ${num(est.out_tok)}</dd>
-          <dt>예상 비용</dt><dd>${line(b, "일괄")}<br>${line(i, "즉시")}<br><span class="muted small">${esc(est.model)} · 환율 ${num(est.rate)}원 · 원본당 입력 약 125, 출력 약 85토큰 기준</span></dd>
+          <dt>예상 비용</dt><dd>${line(b, "일괄")}<br>${line(i, "즉시")}<br><span class="muted small">${esc(est.model)} · 환율 ${num(est.rate)}원 · 원본당 입력 약 140, 출력 약 110토큰 기준</span></dd>
         </dl>
         ${est.has_key ? "" : `<p class="c-err small">설정 → AI 상품명에 Anthropic API 키를 먼저 넣어야 합니다.</p>`}
         ${est.pending ? `<p class="muted small">지금 일괄 처리 중인 원본 ${num(est.pending)}개는 다시 보내지 않습니다.</p>` : ""}
         <div class="radio-cards">
-          <label><input type="radio" name="cm" value="batch" ${s.ctx_mode !== "instant" ? "checked" : ""}><div><b>일괄 처리 (권장, 50% 할인)</b>
+          <label><input type="radio" name="cm" value="batch" ${!small ? "checked" : ""}><div><b>일괄 처리 (많을 때 권장, 50% 할인)</b>
             <span class="muted small">결과가 오기까지 몇 분~몇 시간. 프로그램을 꺼도 다시 켜면 이어서 확인합니다. 결과가 오면 이름 후보 2개를 만들고 이름 없는 복사본에 바로 배정합니다.</span></div></label>
-          <label><input type="radio" name="cm" value="instant" ${s.ctx_mode === "instant" ? "checked" : ""}><div><b>즉시</b>
-            <span class="muted small">바로 받습니다. 요청을 한꺼번에 보냅니다 (요금은 일괄의 2배).</span></div></label>
+          <label><input type="radio" name="cm" value="instant" ${small ? "checked" : ""}><div><b>즉시 (적을 때 권장)</b>
+            <span class="muted small">1~2분 안에 받습니다. 요청을 한꺼번에 보냅니다 (요금은 일괄의 2배 — 원본 ${num(est.sources)}개면 차이 약 ${num(Math.max(0, i.krw - b.krw))}원).</span></div></label>
         </div>
         <p class="muted small">끝나면 실제 비용(응답의 사용량 기준)을 실행 기록에 남깁니다.</p></div>`,
       buttons: [{ label: "취소", onClick: () => { if (after) after(false); } }, { label: "키워드 받기 시작", primary: true, onClick: async (m) => {
@@ -398,13 +432,13 @@ const App = {
         try {
           if (mode === "instant") {
             const t = await this.startTask(this.api("/api/ctx/start", { json: { ...target, mode } }));
-            if (after) after(!!t);
+            if (after) after(!!t, mode);
             return !!t;
           }
           const r = await this.api("/api/ctx/start", { json: { ...target, mode } });
-          this.toast(r.started ? `일괄 처리를 보냈습니다: 원본 ${num(r.sources)}개 · 요청 ${num(r.requests)}건 (예상 약 ${num(r.est_krw)}원). 결과는 1분마다 확인합니다.` : r.message);
+          this.toast(r.started ? `일괄 처리를 보냈습니다: 원본 ${num(r.sources)}개 · 요청 ${num(r.requests)}건 (예상 약 ${num(r.est_krw)}원). 오른쪽 아래에서 진행을 볼 수 있고, 끝나면 이름이 자동으로 붙습니다.` : r.message);
           this.refreshState();
-          if (after) after(true);
+          if (after) after(true, mode);
           return true;
         } catch (e) { this.toast(e.message, true); return false; }
       } }],
@@ -516,6 +550,25 @@ const App = {
     $("#modal-bg").addEventListener("mousedown", (e) => { if (e.target.id === "modal-bg") this.closeModal(); });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") { this.closeModal(); this.closeDrawer(); } });
     $("#tasks").addEventListener("click", async (e) => {
+      const cl = e.target.closest("[data-close-task]");
+      if (cl) { (this.taskClosed ||= new Set()).add(cl.dataset.closeTask); this.renderTasks(this.state.tasks); return; }
+      const cx = e.target.closest("[data-ctx]");
+      if (cx) {
+        try {
+          if (cx.dataset.ctx === "check") {
+            const r = await this.api("/api/ctx/check", { json: {} });
+            this.toast(r.ended ? `일괄 처리 끝: 키워드 받은 원본 ${num(r.ok)}개` + (r.failed ? ` · 실패 ${num(r.failed)}개` : "") : "아직 처리 중입니다 (Anthropic 쪽에서 처리 중).");
+          } else if (cx.dataset.ctx === "cancel") {
+            if (!confirm("진행 중인 AI 키워드 일괄 처리를 중지할까요? 이미 끝난 결과는 저장하고, 나머지 원본은 실패(다시 받기)로 둡니다.")) return;
+            await this.api("/api/ctx/cancel", { json: {} });
+            this.toast("중지를 요청했습니다.");
+          } else if (cx.dataset.ctx === "retry") {
+            this.ctxConfirm({ retry: true });
+          }
+        } catch (err) { this.toast(err.message, true); }
+        this.refreshState();
+        return;
+      }
       const b = e.target.closest("[data-stop-task]");
       if (b) { await this.api(`/api/tasks/${b.dataset.stopTask}/stop`, { method: "POST" }); this.toast("중단을 요청했습니다."); }
     });

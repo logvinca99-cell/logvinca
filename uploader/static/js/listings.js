@@ -261,8 +261,7 @@ App.page("listings", {
     App.openModal({
       title: `상품명 바꾸기 · 복사본 ${num(n)}건`,
       body: `<div class="form"><div class="radio-cards">
-          <label><input type="radio" name="rn" value="ctx" checked><div><b>AI 맥락 키워드 (기본)</b><span class="muted small">[원본 앞 ${num(s.ctx_head_n)}단어] + [AI 맥락 키워드 최대 ${num(s.ctx_ai_per_name)}개] + [원본 나머지 ${num(s.ctx_tail_min)}~${num(s.ctx_tail_max)}개], 최대 ${num(s.name_max_len)}자.
-            원본마다 AI를 한 번 부르고 이름 ${num(s.ctx_names_per_source)}개를 만들어 하나씩 붙입니다. 키워드가 없는 원본은 먼저 비용을 안내하고 받습니다.</span></div></label>
+          <label><input type="radio" name="rn" value="ctx" checked><div><b>AI 키워드 (기본)</b><span class="muted small">[원본 앞 ${num(s.ctx_head_n)}단어] + 원본 핵심 단어(keep) + 다른 이름 1개 + 맥락 + 남은 원본 단어, 최대 ${num(s.name_max_len)}자. 키워드가 없는 원본은 먼저 받습니다(비용 안내 후).</span></div></label>
           <label><input type="radio" name="rn" value="ai"><div><b>AI로 짓기</b><span class="muted small">AI(${esc(s.ai_model)})가 원본을 보고 이름 전체를 새로 짓습니다.</span></div></label>
           <label><input type="radio" name="rn" value="shuffle"><div><b>셔플 (AI 안 씀)</b><span class="muted small">앞 단어를 고정하고 나머지 단어 순서를 섞습니다. 넣을 단어를 적으면 그 단어도 고정 단어 뒤에서 함께 섞입니다.</span>
             <div class="shuffle-opts" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px">
@@ -285,7 +284,13 @@ App.page("listings", {
           if (est.sources) {
             // 키워드 없는 원본: 비용 안내 후 받기 → 키워드 있는 원본은 지금 붙이고, 나머지는 받는 대로 자동으로 붙음
             App.closeModal();
-            App.ctxConfirm({ listing_filter: target }, (ok) => { if (ok) go(); });
+            // 즉시면 키워드를 다 받은 뒤 이름을 붙이고, 일괄이면 키워드 있는 원본만 지금 붙인다 (나머지는 끝나면 자동)
+            App.ctxConfirm({ listing_filter: target }, (ok, mode) => {
+              if (!ok) return;
+              if (mode !== "instant") return go();
+              const h = (t) => { if (t.kind === "ctxkw") { App.off("task-done", h); go(); } };
+              App.on("task-done", h);
+            });
             return false;
           }
           return !!(await go());

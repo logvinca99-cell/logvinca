@@ -459,7 +459,12 @@ def run_instant(db, ids, progress=None, should_stop=None):
         rows = {r["id"]: r for r in db.q(f"SELECT id, name, category FROM sources WHERE id IN ({','.join('?' * len(sids))})", sids)}
         items = [rows[s] for s in sids]
         p = params(cfg, items)
-        resp = _FakeResp(items) if client is None else client.messages.create(**p)
+        if client is None:
+            resp = _FakeResp(items)
+        else:
+            # 구조화 출력은 extra_body로 보낸다 (설치된 anthropic 라이브러리가 예전 버전이라 output_config를 몰라도 그대로 전달됨)
+            oc = p.pop("output_config", None)
+            resp = client.messages.create(**p, **({"extra_body": {"output_config": oc}} if oc else {}))
         u = resp.usage
         in_tok = (getattr(u, "input_tokens", 0) or 0) + (getattr(u, "cache_read_input_tokens", 0) or 0) \
             + (getattr(u, "cache_creation_input_tokens", 0) or 0)
@@ -673,8 +678,10 @@ def poll(db):
                 st["failed"] += bad
                 saved += m["sids"]
             else:   # errored / expired / canceled → 재시도 대기 (과금 없음)
+                err = _get(_get(res, "error") or {}, "error") or _get(res, "error") or {}
+                detail = _get(err, "message") or ""
                 with db.tx() as c:
-                    _save_fail(c, m["sids"], f"일괄 처리 결과: {kind}", b["run_id"])
+                    _save_fail(c, m["sids"], f"일괄 처리 결과: {kind}" + (f" · {detail}" if detail else ""), b["run_id"])
                 _run_add(db, b["run_id"], failed=len(m["sids"]))
                 st["failed"] += len(m["sids"])
         missing = [cid for cid in mapping if cid not in seen]   # 결과에 없는 요청도 재시도 대기 (빠뜨리지 않게)
@@ -719,6 +726,19 @@ def status(db):
     st = db.one("""SELECT SUM(status='ok') AS ok, SUM(status='pending') AS pending, SUM(status='retry') AS retry,
         SUM(status='invalid') AS invalid FROM ctx_kw""")
     return {"batches": out, **{k: st[k] or 0 for k in ("ok", "pending", "retry", "invalid")}}
+
+
+def live_status(db):
+    """화면 오른쪽 아래 현황용: 진행 중인 일괄 처리, 실패(재시도 대기)와 그 사유, 최근에 끝난 실행."""
+    batches = []
+    for r in db.q("SELECT id, run_id, created_at, status, checked_at, requests FROM ctx_batch WHERE status!='ended' ORDER BY created_at"):
+        m = json.loads(r["requests"])
+        batches.append({"id": r["id"], "run_id": r["run_id"], "created_at": r["created_at"], "checked_at": r["checked_at"],
+                        "status": r["status"], "sources": sum(len(x["sids"]) for x in m.values())})
+    retry = db.q("SELECT error, COUNT(*) AS n FROM ctx_kw WHERE status='retry' GROUP BY error ORDER BY n DESC LIMIT 3")
+    last = db.one("SELECT * FROM ctx_run ORDER BY id DESC LIMIT 1")
+    return {"batches": batches, "retry": sum(r["n"] for r in retry), "retry_reasons": retry,
+            "last": last, "now": time.time()}
 
 
 def runs(db, limit=100):

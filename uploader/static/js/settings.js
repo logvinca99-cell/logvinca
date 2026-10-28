@@ -46,6 +46,7 @@ const SETTING_SECTIONS = [
     ["ctx_head_n", "앞 고정 단어 수 (숫자·수량·연식만 있는 단어는 세지 않고 뒤로)", "number"],
     ["ctx_names_per_source", "원본당 이름 수", "number"],
     ["ctx_per_request", "요청당 원본 수", "number"],
+    ["ctx_structured", "구조화 출력으로 받기 (JSON이 깨지지 않게 · 실패 사유에 output_config 오류가 보이면 끄기)", "check"],
     ["ctx_model", "모델", "select", { options: [["claude-sonnet-5-5", "Claude Sonnet 5.5 (기본)"], ["claude-haiku-5-5", "Claude Haiku 5.5 (가장 저렴)"]] }],
     ["ctx_mode", "처리 방식", "select", { options: [["batch", "일괄 (기본, 50% 할인, 몇 분~몇 시간)"], ["instant", "즉시 (바로, 요금 2배)"]] }],
     ["krw_rate", "비용 안내 환율 (원/달러)", "number"],
