@@ -553,8 +553,9 @@ def assign_ctx_names(db, sids, only=None, newest=False):
             for r in c.execute(f"""SELECT id, source_id, name FROM names WHERE origin='ctx' AND listing_id IS NULL
                     AND source_id IN ({marks}) ORDER BY id {'DESC' if newest else ''}""", chunk):
                 free.setdefault(r["source_id"], []).append(dict(r))
+            # 고른 복사본(only)이면 내린 것도 (다시 올리기 전 이름 바꾸기), 아니면 지금 있는 것만
             for l in c.execute(f"""SELECT id, source_id FROM listings WHERE name_id IS NULL AND origin_no=''
-                    AND status!='deleted' AND source_id IN ({marks}) ORDER BY id""", chunk).fetchall():
+                    AND (status!='deleted' OR ?) AND source_id IN ({marks}) ORDER BY id""", (int(only is not None), *chunk)).fetchall():
                 if only is not None and l["id"] not in only:
                     continue
                 pool = free.get(l["source_id"])
@@ -865,7 +866,7 @@ def rename_shuffle(db, ids, fixed_n=3, extra=(), progress=None, should_stop=None
         chunk = ids[i:i + 900]
         rows += db.q(f"""SELECT l.id, l.source_id, l.name_id, l.origin_no, l.status, s.name AS orig FROM listings l
             JOIN sources s ON s.id=l.source_id WHERE l.id IN ({','.join('?' * len(chunk))})""", chunk)
-    todo = [r for r in rows if not r["origin_no"] and r["status"] != "deleted"]
+    todo = [r for r in rows if not r["origin_no"]]   # 안 올린 것·내린 것(다시 올리기 전 이름 바꾸기)
     st = {"listings": len(rows), "live": len(rows) - len(todo), "renamed": 0, "short": 0, "method": "shuffle",
           "dropped_extra": dropped}
     now = time.time()
@@ -922,7 +923,7 @@ def rename_ctx(db, ids, fallback=False, progress=None, should_stop=None, redo=Tr
         chunk = ids[i:i + 900]
         rows += db.q(f"""SELECT l.id, l.source_id, l.name_id, l.origin_no, l.status, n.origin FROM listings l
             LEFT JOIN names n ON n.id=l.name_id WHERE l.id IN ({','.join('?' * len(chunk))})""", chunk)
-    todo = [r for r in rows if not r["origin_no"] and r["status"] != "deleted"]
+    todo = [r for r in rows if not r["origin_no"]]   # 안 올린 것·내린 것(다시 올리기 전 이름 바꾸기)
     st = {"listings": len(rows), "live": len(rows) - len(todo), "renamed": 0, "kept": 0, "short": 0, "no_kw": 0,
           "fallback": 0, "method": "ctx"}
     src = sorted({r["source_id"] for r in todo})
@@ -972,13 +973,13 @@ def rename_ctx(db, ids, fallback=False, progress=None, should_stop=None, redo=Tr
         need = {}
     # 후보(A·B)를 다 써서 아직 이름이 없는 복사본 → 그 원본 키워드로 다른 조합을 더 만든다
     need = {}
-    for r in db.q(f"""SELECT source_id, COUNT(*) AS n FROM listings WHERE name_id IS NULL AND origin_no='' AND status!='deleted'
+    for r in db.q(f"""SELECT source_id, COUNT(*) AS n FROM listings WHERE name_id IS NULL AND origin_no=''
             AND id IN ({','.join('?' * len(mine))}) GROUP BY source_id""", [r["id"] for r in mine]) if mine else []:
         need[r["source_id"]] = r["n"]
     if need:
         st["extra_made"] = st.get("extra_made", 0) + ctxkw.make_more(db, need, avoid)
-        st["renamed"] += assign_ctx_names(db, sorted(need))
-    left = db.q(f"""SELECT COUNT(*) AS n FROM listings WHERE name_id IS NULL AND origin_no='' AND status!='deleted'
+        st["renamed"] += assign_ctx_names(db, sorted(need), only=[r["id"] for r in mine])
+    left = db.q(f"""SELECT COUNT(*) AS n FROM listings WHERE name_id IS NULL AND origin_no=''
         AND id IN ({','.join('?' * len(mine))})""", [r["id"] for r in mine])[0]["n"] if mine else 0
     st["short"] = left
     if progress:
@@ -1018,7 +1019,7 @@ def rename_listings(db, ids, method="recombine", progress=None, should_stop=None
             WHERE id IN ({','.join('?' * len(chunk))})""", chunk)
     st = {"renamed": 0, "short": 0, "live": 0, "listings": len(rows), "few_words": 0}
     new_min = int(cfg.get("recombine_new_min") or 0)
-    todo = [r for r in rows if not r["origin_no"] and r["status"] != "deleted"]
+    todo = [r for r in rows if not r["origin_no"]]   # 안 올린 것·내린 것(다시 올리기 전 이름 바꾸기)
     st["live"] = len(rows) - len(todo)
     by_src = {}
     for r in todo:
