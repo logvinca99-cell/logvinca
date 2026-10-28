@@ -683,9 +683,10 @@ function aiMsg(a) {
 /* 상품명 비교 색칠: 서버가 정한 단어별 역할(nd = {parts:[[단어, 역할]], gone:[빠진 원본 단어]})을 그대로 그린다.
    목록·상세·원본 창 모두 같은 결과를 쓰므로 색이 화면마다 달라지지 않는다. */
 const ND_ROLE = {
-  same: ["nd-same", "원본 단어 (원본 순서 그대로)"], move: ["nd-move", "원본 단어 (자리만 바뀜)"],
-  core: ["nd-core", "AI 다른 이름 (원본에 없던 이름)"], ctx: ["nd-ai", "AI 맥락 (장소·사람·용도)"],
+  fixed: ["nd-fixed", "앞 고정 단어 (원본 앞 단어 그대로 · A는 4개, B는 3개)"], keep: ["nd-keep", "지킨 원본 핵심 단어 (AI가 고른 keep)"],
+  orig: ["nd-orig", "그 밖의 원본 단어"], core: ["nd-core", "AI 다른 이름·용도 (보라)"], ctx: ["nd-ai", "AI 맥락 (장소·사람·용도)"],
   ai: ["nd-ai", "AI로 짓기가 넣은 말"], add: ["nd-add", "직접·셔플로 넣은 단어"],
+  same: ["nd-orig", "원본 단어"], move: ["nd-orig", "원본 단어"],
 };
 function nameDiff(nd) {
   if (!nd || !nd.parts) return "";
@@ -693,9 +694,9 @@ function nameDiff(nd) {
   return `<div class="nd">${html}</div>${nd.gone?.length ? `<div class="nd-gone">빠진 원본 단어: ${nd.gone.map((w) => `<s>${esc(w)}</s>`).join("")}</div>` : ""}`;
 }
 
-const ND_LEGEND = `<div class="nd-legend"><span class="nd-same" style="border:1px solid var(--line)">원본 단어</span>
-  <span style="background:var(--info-soft);color:var(--info)">원본 단어 · 자리 바뀜</span><span class="nd-core">AI 다른 이름</span><span style="background:var(--accent-soft);color:var(--accent-strong)">AI 맥락</span>
-  <span style="background:var(--warn-soft);color:var(--warn)">직접 넣은 단어</span><span><s>빠진 원본 단어</s></span></div>`;
+const ND_LEGEND = `<div class="nd-legend"><span class="nd-fixed">앞 고정</span><span class="nd-keep">원본 핵심(keep)</span>
+  <span class="nd-orig">원본 단어</span><span class="nd-core">AI 다른 이름</span><span class="nd-ai">AI 맥락</span>
+  <span class="nd-add">직접 넣은 단어</span><span><s>빠진 원본 단어</s></span></div>`;
 
 /* 스토어 목록을 사업자별로 묶기 (순서는 서버가 사업자·스토어 순서대로 줌) → [[사업자 이름, [스토어…]], …] */
 function byBusiness(stores) {

@@ -503,10 +503,11 @@ span.kw-chip { cursor: default; }
 /* 상품명 비교: 원본과 같은 자리 / 자리만 바뀜 / AI 단어 / 직접 넣은 단어 / 빠진 원본 단어 */
 .nd { line-height: 1.7; }
 .nd span { padding: 1px 3px; border-radius: 4px; }
-.nd .nd-same { color: var(--text); }
-.nd .nd-move { background: var(--info-soft); color: var(--info); }
-.nd .nd-ai { background: var(--accent-soft); color: var(--accent-strong); font-weight: 700; }
-.nd .nd-add { background: var(--warn-soft); color: var(--warn); font-weight: 700; }
+.nd .nd-fixed, .nd-legend .nd-fixed { background: var(--err-soft); color: var(--err); font-weight: 700; }
+.nd .nd-keep, .nd-legend .nd-keep { background: var(--info-soft); color: var(--info); font-weight: 700; }
+.nd .nd-orig, .nd-legend .nd-orig { background: var(--idle-soft); color: var(--text); }
+.nd .nd-ai, .nd-legend .nd-ai { background: var(--accent-soft); color: var(--accent-strong); font-weight: 700; }
+.nd .nd-add, .nd-legend .nd-add { background: var(--warn-soft); color: var(--warn); font-weight: 700; }
 .nd-gone { color: var(--muted); font-size: 12px; margin-top: 2px; }
 .nd-gone s { margin-right: 6px; }
 .nd-legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }

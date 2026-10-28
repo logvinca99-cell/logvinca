@@ -592,29 +592,27 @@ def set_block(db, word, block=True):
 
 def name_parts(name, src_name, kw=None, origin=""):
     """상품명의 단어마다 어디서 왔는지 — 모든 화면이 이 결과 하나로 색을 칠한다 (화면마다 따로 추측하지 않게).
-    역할: same(원본 단어, 원본 순서 그대로) / move(원본 단어, 자리만 바뀜) / core(AI 다른 이름) / ctx(AI 맥락)
+    역할: fixed(앞 고정 단어: 원본 앞 단어와 같은 순서로 시작하는 부분, 최대 4개 — A는 4개, B는 3개)
+          / keep(AI가 고른 지킬 원본 단어) / orig(그 밖의 원본 단어) / core(AI 다른 이름·용도) / ctx(AI 맥락)
           / ai(AI로 짓기가 넣은 말) / add(직접·셔플로 넣은 말). gone = 이 이름에서 빠진 원본 단어."""
     nt, ot = str(name or "").split(), str(src_name or "").split()
     kw = kw or {}
+    keep = set(kw.get("keep") or [])
     core, ctx = set(kw.get("core") or []) | set(kw.get("core2") or []), set(kw.get("ctx") or [])
-    # 원본 순서를 그대로 따르는 단어 = 가장 긴 공통 순서 (숫자 단어를 뒤로 보내 칸이 밀린 것은 '자리 바뀜'이 아님)
-    L = [[0] * (len(ot) + 1) for _ in range(len(nt) + 1)]
-    for i in range(len(nt) - 1, -1, -1):
-        for j in range(len(ot) - 1, -1, -1):
-            L[i][j] = L[i + 1][j + 1] + 1 if nt[i] == ot[j] else max(L[i + 1][j], L[i][j + 1])
-    in_order, i, j = set(), 0, 0
-    while i < len(nt) and j < len(ot):
-        if nt[i] == ot[j]:
-            in_order.add(i)
-            i, j = i + 1, j + 1
-        elif L[i + 1][j] >= L[i][j + 1]:
-            i += 1
-        else:
-            j += 1
+    # 앞 고정: 원본 단어(숫자·수량·연식만 있는 단어는 뒤로 보내므로 빼고)를 원본 순서대로 따라가는 앞부분
+    head = []
+    for w in ot:
+        if not ctxname.is_numeric(w) and w not in head:
+            head.append(w)
+    fixed = 0
+    while fixed < min(4, len(nt), len(head)) and nt[fixed] == head[fixed]:
+        fixed += 1
     oset, parts = set(ot), []
     for k, w in enumerate(nt):
-        if w in oset:
-            role = "same" if k in in_order else "move"
+        if k < fixed:
+            role = "fixed"
+        elif w in oset:
+            role = "keep" if w in keep else "orig"
         elif w in core:
             role = "core"
         elif w in ctx:
