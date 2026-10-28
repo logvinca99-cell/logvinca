@@ -348,7 +348,7 @@ App.page("inventory", {
     b.innerHTML = `<p class="muted small" style="margin:0">이 원본은 <b>${live}/${d.max_copies}곳</b>에 있습니다. 줄을 누르면 그 스토어 복사본으로 갑니다.</p>` +
       (d.listings.length ? `<table class="opt-table"><tr><th>스토어</th><th>등록 상품명</th><th>관리코드·회차</th><th>올린 날</th><th>상태</th></tr>
       ${d.listings.map((l) => `<tr class="${l.status === "deleted" ? "off" : "clickable"}" data-go="${l.id}"><td>${esc(l.store_name)}</td>
-        <td>${nameDiff(l.name, d.name, d.ctx.kw?.ctx || d.ctx.words, l.name_origin, d.ctx.kw?.core || [])}<div class="p-sub">${num(l.price)}원</div></td>
+        <td>${nameDiff(l.nd)}<div class="p-sub">${num(l.price)}원</div></td>
         <td>${esc(l.seller_code || "-")}<div class="p-sub">${l.round}회차</div></td>
         <td>${l.status === "deleted" ? `내림 ${ymd(l.deleted_at)}` : l.registered_at ? `${ymd(l.registered_at)}<div class="p-sub">${age(l.registered_at)}</div>` : "-"}</td>
         <td>${statusBadge(l.status, l.op)}</td></tr>`).join("")}</table>${ND_LEGEND}`

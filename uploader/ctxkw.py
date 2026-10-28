@@ -283,8 +283,12 @@ def make_rejecter(c, cfg, lex):
     키프리스로 확인된 상표 단어. 85% 겹침·원본과 같은 이름은 make_names가, 금지어는 clean_origin·filter_ai_words가
     기준 구현대로 단어 단위로 본다 (금지어 목록에 '높이' 같은 짧은 말이 있어 글자 단위로 보면 '높이조절'까지 막힘)."""
 
+    rep = repeat_check(cfg, lex)
+
     def reject(name):
         if c.execute("SELECT 1 FROM names WHERE norm=?", (namegen.normalize(name),)).fetchone():
+            return True
+        if rep(name.split()):   # 같은 단어 3번 이상 (마지막 안전장치 — 조립 때 이미 빼지만 셔플 등 다른 길도 같게)
             return True
         return bool(lexicon.marks_in(name, lex))
     return reject
@@ -353,12 +357,57 @@ def set_block(db, word, block=True):
     return {"sources": len(sids), "renamed": renamed}
 
 
+def name_parts(name, src_name, kw=None, origin=""):
+    """상품명의 단어마다 어디서 왔는지 — 모든 화면이 이 결과 하나로 색을 칠한다 (화면마다 따로 추측하지 않게).
+    역할: same(원본 단어, 원본 순서 그대로) / move(원본 단어, 자리만 바뀜) / core(AI 다른 이름) / ctx(AI 맥락)
+          / ai(AI로 짓기가 넣은 말) / add(직접·셔플로 넣은 말). gone = 이 이름에서 빠진 원본 단어."""
+    nt, ot = str(name or "").split(), str(src_name or "").split()
+    kw = kw or {}
+    core, ctx = set(kw.get("core") or []), set(kw.get("ctx") or [])
+    # 원본 순서를 그대로 따르는 단어 = 가장 긴 공통 순서 (숫자 단어를 뒤로 보내 칸이 밀린 것은 '자리 바뀜'이 아님)
+    L = [[0] * (len(ot) + 1) for _ in range(len(nt) + 1)]
+    for i in range(len(nt) - 1, -1, -1):
+        for j in range(len(ot) - 1, -1, -1):
+            L[i][j] = L[i + 1][j + 1] + 1 if nt[i] == ot[j] else max(L[i + 1][j], L[i][j + 1])
+    in_order, i, j = set(), 0, 0
+    while i < len(nt) and j < len(ot):
+        if nt[i] == ot[j]:
+            in_order.add(i)
+            i, j = i + 1, j + 1
+        elif L[i + 1][j] >= L[i][j + 1]:
+            i += 1
+        else:
+            j += 1
+    oset, parts = set(ot), []
+    for k, w in enumerate(nt):
+        if w in oset:
+            role = "same" if k in in_order else "move"
+        elif w in core:
+            role = "core"
+        elif w in ctx:
+            role = "ctx"
+        elif origin == "ai":
+            role = "ai"
+        else:
+            role = "add"
+        parts.append([w, role])
+    nset = set(nt)
+    gone = [w for k, w in enumerate(ot) if w not in nset and ot.index(w) == k] if name != src_name else []
+    return {"parts": parts, "gone": gone}
+
+
 def kw_of(words_json):
     """저장된 키워드 → {keep, core, ctx}. 예전(맥락 단어 목록만) 형식은 ctx로 본다."""
     w = json.loads(words_json or "[]")
     if isinstance(w, list):
         return {"keep": [], "core": [], "ctx": w}
     return {k: list(w.get(k) or []) for k in ("keep", "core", "ctx")}
+
+
+def repeat_check(cfg, lex):
+    """같은 단어가 설정 수(기본 2)보다 많이 나오면 참 — 원본·AI 이름 모두 같은 기준 (lexicon.repeated_word)."""
+    n = int(cfg.get("max_word_repeat") or 2)
+    return lambda toks: bool(lexicon.repeated_word(toks, lex, n))
 
 
 def word_filter(cfg, lex):
@@ -377,7 +426,7 @@ def build_names(db, sids, cfg=None):
     copies = max(1, int(cfg.get("ctx_names_per_source") or 2))
     st = {"made": 0, "none": 0}
     o = opts(cfg)
-    bad = word_filter(cfg, lex)
+    bad, rep = word_filter(cfg, lex), repeat_check(cfg, lex)
     for i in range(0, len(sids), 500):
         chunk = list(sids)[i:i + 500]
         rows = db.q(f"""SELECT s.id, s.name, k.words FROM sources s JOIN ctx_kw k ON k.source_id=s.id
@@ -387,7 +436,7 @@ def build_names(db, sids, cfg=None):
             now = time.time()
             for r in rows:
                 res = ctxname.make_names_v2(r["name"], kw_of(r["words"]), forb, copies=copies, seed=r["id"],
-                                            reject=reject, opts=o, bad=bad)
+                                            reject=reject, opts=o, bad=bad, rep=rep)
                 for x in res:
                     if x is None:
                         st["none"] += 1
@@ -406,7 +455,7 @@ def make_more(db, need, avoid=None, cfg=None):
     cfg = cfg or config.load()
     lex = lexicon.get(db)
     forb = set(lex.blocked)
-    o, bad = opts(cfg), word_filter(cfg, lex)
+    o, bad, rep = opts(cfg), word_filter(cfg, lex), repeat_check(cfg, lex)
     made = 0
     sids = sorted(need)
     for i in range(0, len(sids), 500):
@@ -421,7 +470,7 @@ def make_more(db, need, avoid=None, cfg=None):
                 reject = (lambda nm, skip=skip: nm in skip or base(nm))
                 # 앞 번호 조합(A·B)은 이미 있으니 뒤 번호부터 — copies를 넉넉히 주고 새로 나온 것만 넣는다
                 res = ctxname.make_names_v2(r["name"], kw_of(r["words"]), forb, copies=need[r["id"]] + 2, seed=r["id"],
-                                            reject=reject, opts=o, bad=bad)
+                                            reject=reject, opts=o, bad=bad, rep=rep)
                 for x in [x for x in res if x][:need[r["id"]]]:
                     added, _ = add_names(c, r["id"], [x["name"]], "ctx", now)
                     made += added

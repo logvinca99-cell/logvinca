@@ -305,6 +305,11 @@ class Runner:
         try:
             if op in ("create", "reupload") and not t.get("name_id"):
                 raise naver.ApiError("이름 변경 필요 · 원본 상품명 그대로는 올리지 않습니다 (복사본 화면에서 상품명 바꾸기)")
+            if op in ("create", "reupload"):
+                from . import lexicon
+                rw = lexicon.repeated_word(str(t["name"] or "").split(), lexicon.get(self.db), int(cfg.get("max_word_repeat") or 2))
+                if rw:
+                    raise naver.ApiError(f"상품명에 '{rw}'가 3번 이상 나옵니다 · 복사본 화면에서 상품명 바꾸기로 다시 만드세요")
             if op in ("refresh", "delete", "reupload") and t["origin_no"]:
                 # 판매된 상품은 지우지 않는다 (예약 뒤에 팔렸을 수 있으니 실행 직전에 다시 확인).
                 if not store.get("_sales_ok", True):

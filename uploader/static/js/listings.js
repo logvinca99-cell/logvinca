@@ -219,11 +219,12 @@ App.page("listings", {
     const live = !!l.origin_no;
     const noname = !l.name_id && !live && l.status !== "deleted";
     const flags = (noname ? `<span class="flag bad" title="원본 상품명 그대로라 올리지 않습니다">상품명 변경 필요</span>` : "")
+      + (l.rep_word ? `<span class="flag warn" title="'${esc(l.rep_word)}'가 3번 이상 나옵니다 — 상품명 바꾸기로 다시 만드세요">반복: ${esc(l.rep_word)}</span>` : "")
       + (l.name_origin ? `<span class="org org-${l.name_origin}">${ORIGIN[l.name_origin] || l.name_origin}</span>` : "") + lockFlag(l) + salesFlag(l);
     return `<tr data-id="${l.id}" class="${on ? "sel" : ""} ${l.status === "deleted" ? "off" : ""}">
       <td class="w-check" data-stop><input type="checkbox" ${on ? "checked" : ""} ${this.selAll ? "disabled" : ""} aria-label="고르기"></td>
       <td>${img(l.thumb)}</td>
-      <td>${noname ? `<div class="p-name">${esc(l.name)}</div>` : nameDiff(l.name, l.source_name, l.ctx_words, l.name_origin, l.core_words)}
+      <td>${noname ? `<div class="p-name">${esc(l.name)}</div>` : nameDiff(l.nd)}
         ${!noname ? `<div class="orig-name">원본: ${esc(l.source_name)}</div>` : ""}
         <div class="p-sub"><span>원본 #${l.source_id}</span>${flags}</div>
         <div class="row-acts" data-stop>
@@ -515,7 +516,7 @@ App.page("listings", {
                 <div class="add-name"><input id="d-name" value="${esc(l.name)}" maxlength="100"><button class="btn primary" id="d-name-save">이 이름으로</button></div>
                 <span class="muted small">직접 고쳐 저장하거나 <button class="link-btn" id="d-rename">상품명 바꾸기</button>(AI 키워드·AI로 짓기·셔플). 금지어·상표·33개 스토어 중복을 검사합니다.</span></div>` : ""}
               <dl class="kv"><dt>스토어</dt><dd>${esc(l.store_name)}</dd>
-              <dt>등록 상품명</dt><dd>${l.name_id ? nameDiff(l.name, l.source_name, l.ctx_words, l.name_origin, l.core_words) + ND_LEGEND : `${esc(l.name)} <span class="flag bad">원본 상품명 그대로</span>`}</dd>
+              <dt>등록 상품명</dt><dd>${l.name_id ? nameDiff(l.nd) + ND_LEGEND : `${esc(l.name)} <span class="flag bad">원본 상품명 그대로</span>`}</dd>
               <dt>원본 상품명</dt><dd>${esc(l.source_name)} <button class="btn sm" id="d-src">원본 보기</button></dd>
               <dt>판매자 관리코드</dt><dd>${esc(l.seller_code || l.next_seller_code)} <span class="muted">(${l.round}회차${l.seller_code ? "" : ", 등록하면 붙음"})</span></dd>
               <dt>원본 번호</dt><dd>#${l.source_id}</dd>

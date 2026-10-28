@@ -188,26 +188,39 @@ def filter_words(words, origin_tokens, head, forbidden, bad=lambda w: False, lim
     return ok[:limit] if limit else ok
 
 
-def _fit(head, picks, max_chars):
-    """앞 단어 + (넣을 후보 [(묶음, 단어)] 우선순위 순) → 50자 안에 들어가는 것만 고른 뒤, 묶음 순서대로 늘어놓는다."""
+def _fit(head, picks, max_chars, rep=None):
+    """앞 단어 + (넣을 후보 [(묶음, 단어)] 우선순위 순) → 50자 안에 들어가는 것만 고른 뒤, 묶음 순서대로 늘어놓는다.
+    rep(단어 목록)이 참이면(같은 단어가 3번 이상 — 예: 커튼·린넨커튼·가리개커튼) 그 단어는 넣지 않는다."""
     order = {"keep": 0, "core": 1, "ctx": 2, "rest": 3, "num": 4}
     chosen = []
     for kind, w in picks:
         if w in head or any(w == x for _, x in chosen):
             continue
         trial = head + [x for _, x in sorted(chosen + [(kind, w)], key=lambda p: order[p[0]])]
-        if nchars(" ".join(trial)) <= max_chars:
-            chosen.append((kind, w))
+        if nchars(" ".join(trial)) > max_chars or (rep and rep(trial)):
+            continue
+        chosen.append((kind, w))
     ordered = sorted(chosen, key=lambda p: order[p[0]])   # sorted는 같은 묶음 안의 우선순위(넣은 순서)를 지킨다
     return " ".join(head + [x for _, x in ordered]), [x for k, x in ordered if k in ("core", "ctx")]
 
 
-def make_names_v2(origin_name, kw, forbidden, copies=2, seed=0, reject=None, opts=None, bad=None):
+def make_names_v2(origin_name, kw, forbidden, copies=2, seed=0, reject=None, opts=None, bad=None, rep=None):
     """원본 하나 → 이름 copies개 (1번째 = A, 2번째 = B). kw = {keep:[], core:[], ctx:[]} (AI가 준 그대로).
     못 만든 자리는 None (→ 복사본 화면 '상품명 변경 필요'). reject(name)=True면 그 조합을 버리고 다음 조합."""
     o = {"max_chars": MAX_CHARS, "head_n": HEAD_N, **(opts or {})}
     bad = bad or (lambda w: False)
     toks, head, pool, nums = split_origin(origin_name, forbidden, o["head_n"])
+    if rep and rep(head):
+        # 원본 앞 단어끼리 이미 같은 단어가 3번 이상이면 반복을 만드는 단어는 앞에서 빼고 다음 원본 단어로 채운다
+        words = [w for w in toks if not is_numeric(w)]
+        new = []
+        for w in words:
+            if len(new) >= o["head_n"]:
+                break
+            if not rep(new + [w]):
+                new.append(w)
+        pool = [w for w in words if w not in new and (w in pool or w in head)]
+        head = new
     if not head:
         return [None] * copies
     keep = [w for w in (kw.get("keep") or []) if w in toks and w not in head and not is_numeric(w)]
@@ -228,7 +241,9 @@ def make_names_v2(origin_name, kw, forbidden, copies=2, seed=0, reject=None, opt
             picks = ([("keep", w) for w in keep] + [("core", w) for w in c_pick[:CORE_PER_NAME]]
                      + [("ctx", w) for w in cx[:CTX_FIRST]] + [("rest", w) for w in rs]
                      + [("ctx", w) for w in cx[CTX_FIRST:CTX_FIRST + CTX_MORE]] + [("num", w) for w in nums])
-            name, used = _fit(head, picks, o["max_chars"])
+            name, used = _fit(head, picks, o["max_chars"], rep)
+            if rep and rep(name.split()):
+                continue   # 앞 단어만으로도 반복이면 (원본 자체 문제) 이 조합은 버림
             if name == orig or set(name.split()) == set(toks):
                 continue   # 원본과 같은 이름 금지
             if name in made or (reject and reject(name)):

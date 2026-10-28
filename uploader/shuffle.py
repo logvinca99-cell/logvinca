@@ -8,18 +8,18 @@
 import random
 
 
-def make(original, fixed_n=3, extra=(), forbidden=(), seed=0, reject=None, max_chars=50, tries=30):
-    """이름 하나 (못 만들면 None)."""
+def make(original, fixed_n=3, extra=(), forbidden=(), seed=0, reject=None, max_chars=50, tries=30, rep=None):
+    """이름 하나 (못 만들면 None). rep(단어 목록)이 참이면(같은 단어 3번 이상) 그 단어는 원본·넣은 단어에서 뺀다."""
     forbidden = set(forbidden)
     toks = []
     for w in str(original or "").split():
-        if w not in toks and w not in forbidden:
+        if w not in toks and w not in forbidden and not (rep and rep(toks + [w])):
             toks.append(w)
     head, rest = toks[:max(0, int(fixed_n))], toks[max(0, int(fixed_n)):]
     adds = []
     for w in extra or ():
         w = str(w).strip()
-        if w and w not in toks and w not in adds and w not in forbidden:
+        if w and w not in toks and w not in adds and w not in forbidden and not (rep and rep(toks + adds + [w])):
             adds.append(w)
     pool = rest + adds
     orig = " ".join(str(original or "").split())

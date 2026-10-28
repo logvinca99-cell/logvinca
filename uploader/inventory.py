@@ -478,6 +478,10 @@ def source_detail(db, sid):
         FROM listings l JOIN stores st ON st.id=l.store_id LEFT JOIN names n ON n.id=l.name_id
         WHERE l.source_id=? ORDER BY l.status='deleted', st.id""",
                          (sid,))
+    k = db.one("SELECT words FROM ctx_kw WHERE source_id=?", (sid,))
+    kw = ctxkw.kw_of(k["words"]) if k and k["words"] else {}
+    for l in s["listings"]:
+        l["nd"] = ctxkw.name_parts(l["name"], s["name"], kw, l["name_origin"])
     s["history"] = db.q("""SELECT h.*, st.name AS store_name FROM listing_history h
         JOIN listings l ON l.id=h.listing_id JOIN stores st ON st.id=l.store_id
         WHERE l.source_id=? ORDER BY h.deleted_at DESC""", (sid,))
@@ -818,7 +822,8 @@ def rename_shuffle(db, ids, fixed_n=3, extra=(), progress=None, should_stop=None
                 if r["name_id"]:
                     c.execute("DELETE FROM names WHERE id=? AND origin NOT IN ('original','manual','import')", (r["name_id"],))
                     c.execute("UPDATE names SET listing_id=NULL WHERE id=?", (r["name_id"],))
-                name = shuffle.make(r["orig"], fixed_n, extra, forb, seed=f"{r['id']}:{now}", reject=reject, max_chars=max_chars)
+                name = shuffle.make(r["orig"], fixed_n, extra, forb, seed=f"{r['id']}:{now}", reject=reject, max_chars=max_chars,
+                                    rep=ctxkw.repeat_check(cfg, lex))
                 if not name:
                     c.execute("UPDATE listings SET name_id=NULL, name=?, updated_at=? WHERE id=?", (r["orig"], now, r["id"]))
                     st["short"] += 1
@@ -1252,9 +1257,14 @@ def query_listings(db, f, page=0, size=100):
                 WHERE l.status!='deleted' AND l.source_id IN ({','.join('?' * len(sids))})""", sids):
             sib.setdefault(c["source_id"], []).append(c)
     pv = price_viewer(db)
+    lex = lexicon.get(db)
+    rep_n = int(config.load().get("max_word_repeat") or 2)
     for r in rows:
+        # 같은 단어 3번 이상인 이름 (예전에 만든 이름 등) → 목록에 '반복' 표시해 다시 바꾸게
+        r["rep_word"] = lexicon.repeated_word(str(r["name"] or "").split(), lex, rep_n) if r["name_id"] else None
         kw = ctxkw.kw_of(r["ctx_words"]) if r["ctx_words"] else {"core": [], "ctx": []}
         r["ctx_words"], r["core_words"] = kw["ctx"], kw["core"]
+        r["nd"] = ctxkw.name_parts(r["name"], r["source_name"], kw, r["name_origin"])
         r["others"] = [c for c in sib.get(r["source_id"], []) if c["id"] != r["id"]]
         r.update(pv(r["price"], r["store_id"], bool(r["origin_no"]), r.get("sale_shown")))
     return {"rows": rows, "total": total}

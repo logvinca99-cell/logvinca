@@ -843,7 +843,9 @@ def create_app(db=None):
                              (l["source_id"], lid))
         nm = db.one("SELECT origin FROM names WHERE id=?", (l["name_id"],)) if l["name_id"] else None
         l["name_origin"] = nm["origin"] if nm else ""
-        l["ctx_words"] = ctxkw.source_info(db, l["source_id"])["words"]
+        k = db.one("SELECT words FROM ctx_kw WHERE source_id=?", (l["source_id"],))
+        src = db.one("SELECT name FROM sources WHERE id=?", (l["source_id"],))["name"]
+        l["nd"] = ctxkw.name_parts(l["name"], src, ctxkw.kw_of(k["words"]) if k and k["words"] else {}, l["name_origin"])
         try:
             l["body"] = convert.build_body(row, cfg, cats.get(cat) or f"(카테고리 번호 확인 필요) {cat}", url_map,
                                            name=l["name"], price=l["price"], seller_code=l["next_seller_code"],
