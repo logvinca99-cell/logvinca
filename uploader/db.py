@@ -237,12 +237,15 @@ class DB:
         self._migrate_columns()
         self.c.executescript(SCHEMA)
         self._migrate_data()
-        from . import aiwords, ctxkw, keywords, kipris, lexicon, trash
+        from . import activity, aiwords, bulkedit, ctxkw, keywords, kipris, lexicon, mail, trash
         lexicon.ensure(self)
         kipris.ensure(self)
         keywords.ensure(self)
         aiwords.ensure(self)
         ctxkw.ensure(self)
+        activity.ensure(self)
+        bulkedit.ensure(self)
+        mail.ensure(self)
         trash.ensure(self)
         # 프로그램이 등록 도중 꺼졌으면 남은 상태를 되돌린다.
         self.c.execute("UPDATE listings SET status='fail', stage='', message='프로그램이 등록 도중 종료됨' "
@@ -270,7 +273,9 @@ class DB:
                    ("naver_sale", "INTEGER"), ("naver_suspended", "INTEGER"), ("goguma_manual", "INTEGER"),
                    ("naver_status", "TEXT NOT NULL DEFAULT ''"),   # 연결 확인 때 센 상태별 수 (JSON)
                    # 지금 출고 형태 표시: '' 아직 안 정함 · overseas 해외(파란색) · domestic 국내(초록색). 표시만 하고 등록 내용은 바꾸지 않음
-                   ("ship_region", "TEXT NOT NULL DEFAULT ''")],
+                   ("ship_region", "TEXT NOT NULL DEFAULT ''"),
+                   ("chrome_profile", "TEXT NOT NULL DEFAULT ''"),
+                   ("mail_to", "TEXT NOT NULL DEFAULT ''")],   # 이 스토어 메일을 받는 주소 (예: me+redcoco@gmail.com) — 메일함 스토어 구분용   # 판매자센터를 열 크롬 프로필 폴더 이름 (예: Profile 3)
         "listings": [("sale_shown", "INTEGER"),   # 네이버에 넣은 판매가(도둑방지 뺀 값, 표시 할인 전). 원래 가격으로 되돌릴 때 씀
                      ("sold_count", "INTEGER NOT NULL DEFAULT 0"), ("last_sold_at", "REAL"),
                      ("cancel_count", "INTEGER NOT NULL DEFAULT 0"), ("manual_lock", "INTEGER NOT NULL DEFAULT 0"),

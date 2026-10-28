@@ -1038,6 +1038,19 @@ def poll(db):
             if not c.execute("SELECT 1 FROM ctx_batch WHERE run_id=? AND status!='ended'", (b["run_id"],)).fetchone():
                 c.execute("UPDATE ctx_run SET ended_at=?, status=CASE WHEN status='canceling' THEN 'canceled' ELSE 'done' END WHERE id=?",
                           (time.time(), b["run_id"]))
+                done_run = b["run_id"]
+            else:
+                done_run = None
+        if done_run:
+            try:
+                from . import activity
+                r = db.one("SELECT * FROM ctx_run WHERE id=?", (done_run,))
+                activity.add(db, "AI 키워드", "ctxkw_batch", "AI 키워드 일괄 결과 도착", count=r["sources"],
+                             result=f"받음 {r['ok']:,}개 · 재시도 대기 {r['failed']:,}개 · 실제 약 {math.ceil(r['cost_usd'] * (r['rate'] or 1330)):,}원"
+                             f" · 캐시로 읽은 입력 {r['cache_tok']:,}토큰 · 보낸 뒤 {max(1, round((r['ended_at'] - r['started_at']) / 60)):,}분 만에 옴",
+                             status="stopped" if r["status"] == "canceled" else "done")
+            except Exception:  # noqa: BLE001
+                pass
         st["ended"] += 1
         after_saved(db, saved)
     return st

@@ -71,6 +71,16 @@ const SETTING_SECTIONS = [
     ["kipris_limit", "한 번에 확인할 단어 수", "number"],
   ] },
   { tab: "keys", title: "네이버 커머스 API", note: "스토어마다 애플리케이션 ID·시크릿은 스토어 화면에서 넣습니다.", fields: [] },
+  { tab: "keys", title: "구글 메일함", note: "네이버가 보낸 메일(판매금지·경고·제재, 주문·문의, 인증번호)을 지메일에서 읽어 '메일함' 화면에 스토어별로 모읍니다. 읽기만 하고 읽음 표시도 바꾸지 않습니다. 준비: 구글 계정 → 보안 → 2단계 인증 켜기 → '앱 비밀번호'에서 16자리 만들기, 지메일 설정 → 전달 및 POP/IMAP → IMAP 사용.", fields: [
+    ["gmail_user", "지메일 주소", "text"],
+    ["gmail_app_password", "앱 비밀번호 (16자리)", "secret"],
+    ["mail_from", "보낸 사람에 들어간 말 (이 말이 있는 메일만)", "text", { hint: "기본 naver" }],
+    ["mail_days", "가져올 기간 (일)", "number"],
+    ["mail_auto_minutes", "자동 가져오기 간격 (분, 0이면 끔)", "number"],
+  ] },
+  { tab: "keys", title: "판매자센터 열기 (크롬 프로필)", note: "스토어마다 크롬 프로필을 정해 두면(스토어 '수정') 판매자센터 버튼이 그 프로필로 열려 그 스토어 계정으로 바로 들어갑니다. 프로필마다 그 스토어 계정으로 한 번 로그인해 두세요.", fields: [
+    ["chrome_path", "크롬 위치 (chrome.exe)", "text", { hint: "비우면 자동으로 찾음 · 못 찾을 때만 예) C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" }],
+  ] },
   { tab: "image", title: "이미지", note: "대표·추가 이미지는 API 규칙상 스토어마다 네이버 서버에 올립니다. 한 번 내려받은 이미지는 디스크에 보관해 다시 받지 않습니다.", fields: [
     ["reupload_detail_images", "상세페이지 이미지도 네이버 서버에 올림", "check"],
     ["keep_pstatic_detail_images", "상세 이미지가 이미 네이버 이미지 서버(pstatic.net) 주소면 그대로 둠 (시간 크게 절약)", "check"],
@@ -121,7 +131,7 @@ const APPLY_WHEN = {
 };
 
 App.page("settings", {
-  async mount(el) {
+  async mount(el, params = {}) {
     const st = await App.refreshState();
     const s = st.settings;
     const field = ([key, label, type = "text", o = {}]) => {
@@ -153,6 +163,7 @@ App.page("settings", {
     };
     let first = "product";
     try { first = localStorage.getItem("settings-tab") || first; } catch (e) { /* 무시 */ }
+    if (params.tab && SETTING_TABS.some(([k]) => k === params.tab)) first = params.tab;   // #settings?tab=keys 로 바로
     $("#set-tabs", el).addEventListener("click", (e) => { const b = e.target.closest("[data-tab]"); if (b) show(b.dataset.tab); });
     show(SETTING_TABS.some(([k]) => k === first) ? first : "product");
     $(".settings", el).insertAdjacentHTML("beforebegin", `<div class="card pad reapply">

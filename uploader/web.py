@@ -10,7 +10,7 @@ import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import VERSION, aiwords, bait, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, orders, watermark
+from . import VERSION, activity, aiwords, bait, bulkedit, chrome, mail, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, orders, watermark
 from .db import DB
 from .tasks import Tasks
 
@@ -18,7 +18,7 @@ STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 FILTER_KEYS = ("q", "status", "category", "ai", "store_missing", "store_has", "import_id", "max_listings", "price_min", "price_max", "copies",
                "min_names", "store_id", "plan_id", "op", "age_days", "sold", "locked")
 STORE_FIELDS = ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "capacity", "enabled", "memo", "wm_text", "importer",
-                "business_id")
+                "business_id", "chrome_profile", "mail_to")
 
 
 def _filter_from(src):
@@ -50,7 +50,41 @@ def create_app(db=None):
     if getattr(db, "_v3", False):
         orders.recount_sold(db)
         db.x("PRAGMA user_version=3")
-    tasks = Tasks()
+    tasks = Tasks(*activity.task_hooks(db))
+
+    def _store_names(b, va):
+        """요청이 다룬 스토어 이름 (작업 기록용): 주소·본문의 스토어, 아니면 고른 복사본들의 스토어 (최대 3곳)."""
+        sid = va.get("sid") or b.get("store_id") or ((b.get("listing_filter") or {}).get("store_id") if isinstance(b.get("listing_filter"), dict) else None)
+        if sid and str(sid).isdigit():
+            return (db.store(int(sid)) or {}).get("name") or ""
+        lids = [int(x) for x in (b.get("ids") or [])[:2000] if str(x).isdigit()] if request.path.startswith("/api/listings") else []
+        if va.get("lid"):
+            lids = [int(va["lid"])]
+        if not lids:
+            return ""
+        names = [r["name"] for r in db.q(f"""SELECT DISTINCT t.name FROM listings l JOIN stores t ON t.id=l.store_id
+            WHERE l.id IN ({','.join('?' * len(lids))}) LIMIT 4""", lids)]
+        return ", ".join(names[:3]) + (" 외" if len(names) > 3 else "")
+
+    @app.after_request
+    def log_action(resp):
+        """성공한 요청(복사본 삭제·대기에 넣기·카테고리 저장 …)을 작업 기록에 한 줄 (작업을 시작한 요청은 작업 쪽에서)."""
+        if request.method in ("POST", "PUT", "DELETE") and resp.status_code < 400 and request.endpoint:
+            try:
+                b = request.get_json(silent=True) or {k: v for k, v in request.form.items()}
+                b = b if isinstance(b, dict) else {}
+                va = request.view_args or {}
+                r = resp.get_json(silent=True) if resp.is_json else None
+                store = _store_names(b, va)
+                if isinstance(r, dict) and r.get("task"):   # 작업을 시작한 요청: 작업 기록 줄에 스토어·대상 수만 채움
+                    n = next((len(b[k]) for k in ("ids", "listing_ids", "source_ids") if isinstance(b.get(k), list)), None)
+                    db.x("UPDATE activity SET store=CASE WHEN store='' THEN ? ELSE store END, count=COALESCE(count, ?) WHERE task_id=? "
+                         "AND id=(SELECT MAX(id) FROM activity WHERE task_id=?)", (store, n, r["task"], r["task"]))
+                else:
+                    activity.from_request(db, request.endpoint, va, b, r, store)
+            except Exception:  # noqa: BLE001 - 기록 실패로 응답을 막지 않는다
+                pass
+        return resp
 
     def fail(msg, code=400):
         return jsonify({"error": msg}), code
@@ -110,7 +144,86 @@ def create_app(db=None):
             "tasks": tasks.list(),
             "running": runner.state["running"],
             "ctx": ctxkw.live_status(db),   # AI 키워드 일괄 처리·실패 현황 (오른쪽 아래)
+            "mail_warn_open": db.one("SELECT COUNT(*) AS n FROM mails WHERE kind='warn' AND handled=0")["n"],
         })
+
+    # ── 구글 메일함
+
+    @app.get("/api/mails")
+    def mails():
+        a = request.args
+        return jsonify(mail.query(db, a.get("kind") or "", a.get("store_id") or None, (a.get("q") or "").strip(),
+                                  a.get("handled"), int(a.get("page") or 1), min(500, int(a.get("size") or 100))))
+
+    @app.post("/api/mails/fetch")
+    def mails_fetch():
+        cfg, days = config.load(), body().get("days")
+        try:
+            return jsonify({"task": tasks.start("mail", "구글 메일함 가져오기", lambda **kw: mail.fetch(db, cfg, days, **kw))})
+        except RuntimeError as e:
+            return fail(str(e))
+
+    @app.post("/api/mails/<int:mid>/handled")
+    def mail_handled(mid):
+        db.x("UPDATE mails SET handled=? WHERE id=?", (int(bool(body().get("handled", True))), mid))
+        return jsonify({"ok": True})
+
+    # ── 판매자센터를 스토어별 크롬 프로필로 열기
+
+    @app.get("/api/chrome/profiles")
+    def chrome_profiles():
+        return jsonify({"profiles": chrome.profiles(), "chrome": chrome.find_chrome()})
+
+    @app.post("/api/stores/<int:sid>/open_seller")
+    def store_open_seller(sid):
+        st = db.store(sid)
+        if not st:
+            return fail("스토어를 찾지 못했습니다.", 404)
+        url = str(body().get("url") or "https://sell.smartstore.naver.com/")
+        if not url.startswith("https://sell.smartstore.naver.com/"):
+            return fail("판매자센터 주소만 열 수 있습니다.")
+        if not st.get("chrome_profile"):
+            return jsonify({"opened": False, "reason": "이 스토어에 크롬 프로필이 정해져 있지 않습니다 (스토어 '수정')."})
+        return jsonify(chrome.open_url(url, st["chrome_profile"]))
+
+    # ── 올린 상품 일괄 변경
+
+    @app.get("/api/bulk")
+    def bulk_list():
+        return jsonify(bulkedit.jobs(db))
+
+    @app.post("/api/bulk")
+    def bulk_create():
+        b = body()
+        try:
+            return jsonify(bulkedit.create(db, b.get("spec") or {}, b.get("store_ids") or [], b.get("target")))
+        except ValueError as e:
+            return fail(str(e))
+
+    @app.post("/api/bulk/<int:jid>/<action>")
+    def bulk_action(jid, action):
+        j = bulkedit.job(db, jid)
+        if not j:
+            return fail("일괄 변경 작업을 찾지 못했습니다.", 404)
+        if action == "retry":
+            return jsonify(bulkedit.retry_failed(db, jid))
+        if action not in ("test", "run"):
+            return fail("알 수 없는 명령입니다.", 404)
+        test = action == "test"
+        try:
+            tid = tasks.start("bulkedit", f"올린 상품 일괄 변경 #{jid} · {'1개로 시험' if test else '전체'} · {j['summary'][:80]}",
+                              lambda **kw: bulkedit.run(db, jid, test=test, **kw))
+        except RuntimeError as e:
+            return fail(str(e))
+        db.x("UPDATE activity SET store=? WHERE task_id=? AND id=(SELECT MAX(id) FROM activity WHERE task_id=?)",
+             (", ".join(s["name"] for s in j["per_store"][:3]) + (" 외" if len(j["per_store"]) > 3 else ""), tid, tid))
+        return jsonify({"task": tid})
+
+    @app.get("/api/activity")
+    def activity_list():
+        a = request.args
+        return jsonify(activity.query(db, a.get("grp") or "", (a.get("q") or "").strip(), a.get("days") or None,
+                                      int(a.get("page") or 1), min(500, int(a.get("size") or 100))))
 
     @app.get("/api/tasks")
     def task_list():
@@ -126,7 +239,7 @@ def create_app(db=None):
     @app.post("/api/settings")
     def save_settings():
         v = body()
-        ints = ("recombine_fixed_prefix", "recombine_new_min", "recombine_new_max", "max_word_repeat", "opendict_daily_limit", "kipris_limit", "bait_amount", "kw_daily_limit", "kw_min_volume", "kw_related_max", "kw_refresh_days", "kw_max_words", "core_scan_words", "orders_auto_sync_minutes", "orders_initial_days", "max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
+        ints = ("recombine_fixed_prefix", "recombine_new_min", "recombine_new_max", "max_word_repeat", "opendict_daily_limit", "kipris_limit", "bait_amount", "kw_daily_limit", "kw_min_volume", "kw_related_max", "kw_refresh_days", "kw_max_words", "core_scan_words", "orders_auto_sync_minutes", "orders_initial_days", "mail_days", "mail_auto_minutes", "max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
                 "name_max_len", "ai_names_per_product", "ai_products_per_call", "ai_workers")
         floats = ("wm_size_pct", "wm_opacity", "wm_margin_pct", "recombine_replace_ratio", "delay_sec", "price_jitter_pct", "price_jitter_min", "price_jitter_max", "display_discount_pct", "recombine_max_overlap", "image_cache_gb")
         for k in ints:
@@ -147,6 +260,7 @@ def create_app(db=None):
             return fail("흔들기 최소 %가 최대 %보다 클 수 없습니다.")
         before = config.load()
         cfg = config.save(v)
+        activity.settings_changed(db, before, cfg)
         if any(before.get(k) != cfg.get(k) for k in ("lock_sold", "lock_canceled_too")):
             orders.recount_sold(db)  # 잠금 기준이 바뀌었으면 전체 다시 계산
         if any(before.get(k) != cfg.get(k) for k in ("origin_force", "origin_country", "origin_codes", "origin_default")):
@@ -271,7 +385,7 @@ def create_app(db=None):
                 n = db.one("SELECT COUNT(*) AS n FROM stores WHERE business_id=? AND id!=?", (v["business_id"], int(sid or 0)))["n"]
                 if n >= 3:
                     return fail("이 사업자에는 이미 스토어가 3개 있습니다 (사업자 하나에 최대 3개).")
-        for k in ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "memo", "wm_text", "importer"):
+        for k in ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "memo", "wm_text", "importer", "chrome_profile", "mail_to"):
             if k in v:
                 v[k] = str(v[k] or "").strip()
         if sid:
@@ -1196,6 +1310,7 @@ def create_app(db=None):
             tpl_ship_addr=?, tpl_return_addr=? WHERE id=?""",
              (str(b.get("top_html") or ""), str(b.get("bottom_html") or ""), config.customs_code(b.get("customs")),
               price_pct, disc, ship, ret, sid))
+        activity.template_changed(db, old, old, db.store(sid) or {})
         n = inventory.reprice_pending(db, sid) if repriced else 0   # 가격 조정·흔들기를 바꾸면 아직 안 올린 복사본 가격도 다시
         return jsonify({**templates.summary(db.store(sid)), "repriced": n})
 
@@ -1486,6 +1601,22 @@ def create_app(db=None):
                             auto["last_at"] = now
             except RuntimeError:
                 pass  # 이미 주문 가져오기가 돌고 있음 → 다음 차례에
+            except Exception as e:  # noqa: BLE001
+                auto["last_result"] = str(e)
+            try:   # 구글 메일함 자동 가져오기 (설정 간격, 0이면 끔)
+                cfg = config.load()
+                mm = int(cfg.get("mail_auto_minutes") or 0)
+                now = time.time()
+                if mm <= 0 or not (cfg.get("gmail_user") and cfg.get("gmail_app_password")):
+                    auto["mail_next"] = None
+                else:
+                    if not auto.get("mail_next"):
+                        auto["mail_next"] = now + 60
+                    if now >= auto["mail_next"]:
+                        auto["mail_next"] = now + mm * 60
+                        tasks.start("mail", "구글 메일함 자동 가져오기", lambda **kw: mail.fetch(db, cfg, **kw))
+            except RuntimeError:
+                pass
             except Exception as e:  # noqa: BLE001
                 auto["last_result"] = str(e)
             time.sleep(30)

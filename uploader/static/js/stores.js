@@ -376,6 +376,11 @@ App.page("stores", {
           <label class="field">워터마크 <span class="muted">스토어 '템플릿'에서 정합니다</span></label>
           <label class="field">상품 수 한도<input name="capacity" type="number" min="0" value="${s.capacity ?? 10000}"></label>
         </div>
+        <label class="field">판매자센터 크롬 프로필 <span class="muted">(그 프로필에 이 스토어 계정으로 로그인해 두면 '판매자센터' 버튼이 이 계정으로 바로 열림)</span>
+          <span class="cp-row"><select name="chrome_profile" id="s-cp"><option value="">정하지 않음 (지금 브라우저로 열기)</option>
+            ${s.chrome_profile ? `<option value="${esc(s.chrome_profile)}" selected>${esc(s.chrome_profile)}</option>` : ""}</select>
+            <span class="muted small" id="s-cp-note">크롬 프로필 불러오는 중…</span></span></label>
+        <label class="field">받는 메일 주소 <span class="muted">(메일함에서 이 스토어 메일을 구분 · 예: me+redcoco@gmail.com · 비우면 메일 안의 스토어 이름으로)</span><input name="mail_to" value="${esc(s.mail_to || "")}"></label>
         <label class="field">메모<input name="memo" value="${esc(s.memo || "")}"></label>
         <label class="check"><input type="checkbox" name="enabled" ${s.enabled ? "checked" : ""}> 사용 (끄면 새 계획에서 빠짐)</label>
       </div>`,
@@ -394,6 +399,16 @@ App.page("stores", {
         } },
       ],
     });
+    App.api("/api/chrome/profiles").then((r) => {
+      const sel = $("#s-cp"), note = $("#s-cp-note");
+      if (!sel) return;
+      const have = new Set([...sel.options].map((o) => o.value));
+      for (const p of r.profiles) {
+        if (have.has(p.dir)) { sel.querySelector(`option[value="${CSS.escape(p.dir)}"]`).textContent = `${p.name}${p.email ? " · " + p.email : ""} (${p.dir})`; continue; }
+        sel.insertAdjacentHTML("beforeend", `<option value="${esc(p.dir)}">${esc(p.name)}${p.email ? " · " + esc(p.email) : ""} (${esc(p.dir)})</option>`);
+      }
+      note.textContent = !r.chrome ? "크롬을 찾지 못함 (설정 → API 키 → 크롬 위치)" : r.profiles.length ? `프로필 ${r.profiles.length}개` : "크롬 프로필이 없습니다 — 크롬에서 프로필을 먼저 추가하세요";
+    }).catch(() => { const n = $("#s-cp-note"); if (n) n.textContent = ""; });
   },
 
   /* 스토어 하나 최신화: 올린 지 N일 넘은 판매 중 복사본(잠금 제외)을 지우고 다시 올린다 */

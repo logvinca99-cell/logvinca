@@ -703,3 +703,43 @@ th .nd-legend { font-weight: 400; margin-top: 4px; }
 .ai-name .an-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); min-width: 0; }
 .ai-name .an-st { flex: none; font-weight: 700; color: var(--muted); }
 .ai-name.free .an-st { color: var(--ok); }
+
+/* 작업 기록 */
+.act-filter { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding-bottom: 10px; }
+.act-filter .pager { margin-left: auto; }
+.act-table td { vertical-align: top; }
+.act-table .w-when { width: 150px; }
+.act-res { max-width: 520px; }
+.act-diff { margin: 0; padding-left: 16px; }
+.act-diff s { color: var(--muted); }
+.nowrap { white-space: nowrap; }
+.c-run { color: var(--info); font-weight: 600; }
+
+/* 올린 상품 일괄 변경 */
+.bk-stores { display: flex; flex-direction: column; max-height: 40vh; overflow: auto; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 14px; }
+.bk-stores .sp-row { display: flex; gap: 10px; align-items: center; padding: 6px 12px; border-top: 1px solid var(--line); cursor: pointer; }
+.bk-stores .sp-row .sp-name { flex: 1; }
+.bk-target { flex-direction: row; flex-wrap: wrap; margin-bottom: 14px; }
+.bk-target label { flex: 1; min-width: 240px; }
+.bk-fields { display: flex; flex-direction: column; gap: 8px; }
+.bk-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 0; border-top: 1px solid var(--line); }
+.bk-row > b { width: 120px; flex: none; }
+.bk-row input { padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); }
+.bk-row input:not([type=number]) { min-width: 280px; }
+.bk-row input[type=number] { width: 90px; }
+.bk-rp { display: flex; gap: 10px; flex-wrap: wrap; }
+.bk-rp label { display: flex; gap: 4px; align-items: center; font-size: 13px; }
+.bk-go { display: flex; gap: 10px; align-items: center; margin-top: 14px; }
+.bk-job { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+.bk-job-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; }
+.bk-err { margin-top: 8px; padding: 8px 10px; background: var(--err-soft, #fdecec); border-radius: 8px; }
+.bk-actions { display: flex; gap: 8px; margin-top: 10px; }
+.grid tr.sum td { font-weight: 700; border-top: 2px solid var(--line); }
+
+/* 메일함 */
+.nav-badge { margin-left: auto; min-width: 20px; padding: 0 6px; border-radius: 10px; background: var(--err); color: #fff; font-size: 11px; font-weight: 700; text-align: center; line-height: 18px; }
+.grid tr.row-warn td { background: var(--err-soft, #fdecec); }
+.mail-code { font-size: 18px; font-weight: 800; letter-spacing: 2px; color: var(--text); }
+.mail-snip { max-width: 640px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.cp-row { display: flex; gap: 10px; align-items: center; }
+.cp-row select { flex: 1; }

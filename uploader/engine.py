@@ -11,7 +11,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import bait, config, convert, naver, orders, templates, watermark
+from . import activity, bait, config, convert, naver, orders, templates, watermark
 
 IMAGE_DOWNLOAD_THREADS = 16
 DETAIL_SCOPE = 0
@@ -189,6 +189,9 @@ class Runner:
     def _main(self, cfg, stores, by_store):
         run_id = self.db.start_run(self.state["total"], len(stores),
                                    note=f"스토어 {len(stores)}곳 · 스토어당 {cfg.get('workers_per_store')}개")
+        names = [stores[k][0].get("name") or "" for k in list(stores)[:3]]
+        act = activity.add(self.db, "복사·등록", "upload", f"네이버 등록 · 스토어 {len(stores)}곳", count=self.state["total"],
+                           status="running", store=", ".join(n for n in names if n) + (" 외" if len(stores) > 3 else ""))
         try:
             self._log("info", f"{self.state['total']:,}건 등록 시작 · 스토어 {len(stores)}곳")
             categories = naver.cached_categories()
@@ -228,6 +231,13 @@ class Runner:
                 s.update(running=False, paused=False, paused_at=None, stopping=False,
                          ended_at=time.time(), current={})
                 self.db.end_run(run_id, s["ok"], s["fail"], s["images"])
+                try:
+                    self.db.x("UPDATE activity SET ended_at=?, status=?, result=?, error=? WHERE id=?",
+                              (s["ended_at"], "error" if s.get("error") else "done",
+                               f"성공 {s['ok']:,}건 · 실패 {s['fail']:,}건" + (f" · 판매 이력으로 건너뜀 {s['skipped']:,}건" if s["skipped"] else "")
+                               + f" · 새 이미지 {s['images']:,}장", str(s.get("error") or "")[:500], act))
+                except Exception:  # noqa: BLE001
+                    pass
                 self._log("ok" if not s["fail"] else "info",
                           f"끝: 성공 {s['ok']:,}건, 실패 {s['fail']:,}건"
                           + (f", 판매 이력으로 건너뜀 {s['skipped']:,}건" if s["skipped"] else "")

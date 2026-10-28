@@ -7,7 +7,8 @@ import time
 
 
 class Tasks:
-    def __init__(self):
+    def __init__(self, on_start=None, on_end=None):
+        self.on_start, self.on_end = on_start, on_end   # 작업 기록 (activity)
         self.lock = threading.Lock()
         self.items = {}
         self._ids = itertools.count(1)
@@ -23,6 +24,8 @@ class Tasks:
                  "message": "", "result": None, "error": "", "started_at": time.time(), "ended_at": None,
                  "_stop": stop}
             self.items[tid] = t
+        if self.on_start:
+            self.on_start(t)
 
         def progress(done, total, message=""):
             t.update(done=done, total=total, message=message)
@@ -36,6 +39,8 @@ class Tasks:
                 t["error"] = str(e)
                 logging.getLogger("uploader").exception("작업 실패: %s", title)
             t["ended_at"] = time.time()
+            if self.on_end:
+                self.on_end(t)
 
         threading.Thread(target=run, daemon=True).start()
         return tid

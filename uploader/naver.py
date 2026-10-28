@@ -384,6 +384,33 @@ class Client:
         self._put_origin(origin_no, body, on_wait)
         return True
 
+    def edit_origin(self, origin_no, apply, on_wait=None):
+        """올린 상품 고치기: 원상품을 읽어 apply(body)로 고친 뒤 그대로 다시 보냄. apply가 바꾼 항목 목록을 돌려줌."""
+        body = self._get_origin(origin_no, on_wait)
+        changed = apply(body)
+        if changed:
+            r = self.request("PUT", f"/v2/products/origin-products/{origin_no}", json=body, on_wait=on_wait)
+            if r.status_code != 200:
+                raise ApiError(f"상품 고치기 실패: {explain_error(r)}")
+        return changed
+
+    def origin_numbers(self, on_wait=None, should_stop=None):
+        """이 스토어에 등록된 모든 상품의 원상품 번호 (프로그램 밖에서 올린 것 포함)."""
+        out, page = [], 1
+        while True:
+            if should_stop and should_stop():
+                break
+            r = self.request("POST", "/v1/products/search", json={"page": page, "size": 500}, on_wait=on_wait)
+            if r.status_code != 200:
+                raise ApiError(f"상품 목록 조회 실패: {explain_error(r)}")
+            j = r.json()
+            items = j.get("contents") or []
+            out += [str(it.get("originProductNo")) for it in items if it.get("originProductNo")]
+            if not items or page >= int(j.get("totalPages") or 0) or page >= 400:
+                break
+            page += 1
+        return out
+
     def update_sale_price(self, origin_no, price, on_wait=None):
         """판매가만 바꾼다: 원상품을 읽어 salePrice만 고쳐 그대로 다시 보냄 (도둑방지 원래 가격으로)."""
         r = self.request("GET", f"/v2/products/origin-products/{origin_no}", on_wait=on_wait)
@@ -531,6 +558,20 @@ class FakeClient:
     def update_sale_price(self, origin_no, price, on_wait=None):
         time.sleep(random.uniform(0.1, 0.3))
         return True
+
+    def edit_origin(self, origin_no, apply, on_wait=None):
+        time.sleep(random.uniform(0.05, 0.2))
+        body = {"originProduct": {"salePrice": 30000, "detailAttribute": {"customsTaxType": "EXCLUDED"},
+                                  "customerBenefit": {"immediateDiscountPolicy": {"discountMethod": {"value": 9000, "unitType": "WON"}}},
+                                  "deliveryInfo": {"claimDeliveryInfo": {"shippingAddressId": 100002, "returnAddressId": 100003}}},
+                "smartstoreChannelProduct": {"naverShoppingRegistration": True}}
+        changed = apply(body)
+        if random.random() < 0.05:
+            raise ApiError("상품 고치기 실패: 400 BAD_REQUEST (시연 모드 일부러 낸 실패)")
+        return changed
+
+    def origin_numbers(self, on_wait=None, should_stop=None):
+        return [str(9100000000 + i) for i in range(random.randint(5, 15))]
 
     def restore_price(self, origin_no, shown=None, minus=0, on_wait=None):
         time.sleep(random.uniform(0.1, 0.3))

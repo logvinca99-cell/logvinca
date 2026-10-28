@@ -23,6 +23,13 @@ function when(ts) {
   return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+/* 초까지 시각 (작업 기록·메일함): 2026-10-28 11:44:05 */
+function stamp(ts) {
+  if (!ts) return "-";
+  const d = new Date(ts * 1000), p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
 function onImgError(img) {
   img.onerror = null;
   img.dataset.broken = "1";   // 크게 보기에서 뺌
@@ -89,7 +96,13 @@ function storeLinks(s) {
   return `<span class="st-links">${url
     ? `<a class="btn sm" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(url)}">스토어 ↗</a>`
     : `<span class="btn sm disabled" title="스토어 '수정'에서 스토어 주소를 넣으면 생깁니다 (연결 확인 때 자동으로 채워지기도 함)">스토어 ↗</span>`}
-    <a class="btn sm" href="${SELLER_CENTER}" target="_blank" rel="noopener" title="판매자센터 (지금 로그인한 계정의 스토어로 열림)">판매자센터 ↗</a></span>`;
+    ${sellerLink(s, SELLER_CENTER, "판매자센터 ↗", "btn sm")}</span>`;
+}
+/* 판매자센터 링크: 스토어에 크롬 프로필이 있으면 그 프로필로 크롬을 열고(그 스토어 계정), 없으면 지금 브라우저 새 창 */
+function sellerLink(s, url, label, cls = "") {
+  return s && s.chrome_profile
+    ? `<a class="${cls}" href="${esc(url)}" data-seller-sid="${s.id}" title="크롬 프로필 '${esc(s.chrome_profile)}'로 열기 (${esc(s.name)} 계정)">${label}</a>`
+    : `<a class="${cls}" href="${esc(url)}" target="_blank" rel="noopener" title="판매자센터 (지금 로그인한 계정으로 열림 · 스토어 '수정'에서 크롬 프로필을 정하면 이 스토어 계정으로 바로 열림)">${label}</a>`;
 }
 /* 가격 칸: 손님 가격(크게) + 원본 대비 % + 네이버 판매가·표시 할인 (작게) */
 function priceCell(x, srcPrice) {
@@ -160,6 +173,8 @@ const App = {
     if (this.state.fake_api) { c.className = "conn warn"; c.textContent = "시연 모드 (네이버 접속 안 함)"; }
     else if (!st.stores) { c.className = "conn warn"; c.innerHTML = '<a href="#stores">스토어를 추가하세요</a>'; }
     else { c.className = "conn ok"; c.textContent = `스토어 ${num(st.stores)}곳`; }
+    const mb = $("#nav-mail");
+    if (mb) { mb.hidden = !this.state.mail_warn_open; mb.textContent = this.state.mail_warn_open || ""; mb.title = "확인 안 한 경고·제재 메일"; }
     $("#side-stats").innerHTML =
       `원본 ${num(st.sources)}개 · 이름 후보 ${num(st.names_free)}개<br>` +
       `등록 완료 ${num(st.registered)}건 · 대기 ${num(st.pending)}건<br>` +
@@ -196,7 +211,7 @@ const App = {
         <div class="task-top"><b>${esc(t.title)}</b>${t.status === "running"
           ? `<button class="link-btn" data-stop-task="${t.id}">중단</button>` : `<span>${st} ${close(`t${t.id}`)}</span>`}</div>
         <div class="bar thin">${p != null ? `<div class="bar-ok" style="width:${p}%"></div>` : `<div class="bar-indef"></div>`}</div>
-        <div class="task-msg">${esc(msg)}</div>
+        <div class="task-msg">${esc(msg)}${t.status !== "running" ? ` <a href="#runs" class="small">작업 기록</a>` : ""}</div>
       </div>`;
     }).join("");
     for (const t of list) {
@@ -277,6 +292,13 @@ const App = {
         + (r.capacity ? ` · 스토어 자리 부족 ${num(r.capacity)}` : "") + (r.invalid ? ` · 오류 원본 ${num(r.invalid)}개는 뺌` : "")
         + (r.named ? ` · AI 키워드 이름 바로 붙음 ${num(r.named)}건` : "")
         + (r.created - (r.named || 0) > 0 ? " · 나머지는 복사본 화면 '이름 변경 필요'에서 상품명을 바꾼 뒤 올리세요" : ""),
+      mail: () => `메일함: 확인 ${num(r.checked)}통 · 새로 ${num(r.new)}통` + (r.warn ? ` · 경고·제재 ${num(r.warn)}통` : "") + (r.auth ? ` · 인증번호 ${num(r.auth)}통` : ""),
+      bulkedit: () => r.test
+        ? (r.empty ? "시험할 상품이 없습니다 (고른 스토어에 올린 상품 없음)"
+          : r.failed ? `1개로 시험 실패: ${r.store} ${r.origin_no} · ${r.errors?.[0] || ""}`
+          : `1개로 시험 끝: ${r.store} 상품 ${r.origin_no} · ${r.changed?.length ? "바꾼 항목 " + r.changed.join(", ") : "이미 같은 값이라 바꾼 것 없음"} · 판매자센터에서 확인 후 '전체 시작'`)
+        : `올린 상품 일괄 변경: 바꿈 ${num(r.done)}개 · 이미 같음 ${num(r.same)}개` + (r.failed ? ` · 실패 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : "")
+          + (r.left ? ` · 남은 ${num(r.left)}개는 '이어서'로` : ""),
       revalidate: () => `다시 검사 끝: ${num(r.total)}개` + (r.invalid !== undefined ? ` · 오류 ${num(r.invalid)}개` : ""),
       orders: () => r.rows !== undefined
         ? `판매 이력 파일 끝: ${num(r.rows)}줄 중 복사본과 맞춘 주문 ${num(r.matched)}건 · 못 맞춘 ${num(r.unmatched)}건`
@@ -613,6 +635,18 @@ const App = {
 
   async init() {
     this.bind();
+    // 판매자센터 링크(크롬 프로필이 정해진 스토어): 프로그램이 그 프로필로 크롬을 연다. 못 열면 지금 브라우저로
+    document.addEventListener("click", async (e) => {
+      const a = e.target.closest("a[data-seller-sid]");
+      if (!a) return;
+      e.preventDefault();
+      try {
+        const r = await this.api(`/api/stores/${a.dataset.sellerSid}/open_seller`, { json: { url: a.href } });
+        if (r.opened) { this.toast("크롬 프로필로 판매자센터를 열었습니다."); return; }
+        this.toast((r.reason || "크롬으로 열지 못했습니다.") + " 이 브라우저로 엽니다.", true);
+      } catch (err) { this.toast(err.message, true); }
+      if (!window.open(a.href, "_blank")) this.toast("팝업이 막혔습니다. 브라우저 주소창 오른쪽에서 팝업을 허용해 주세요.", true);
+    });
     await Promise.all([this.refreshState(), this.loadStores()]);
     for (const t of this.state.tasks) this.taskSeen[t.id] = t.status;
     this.route();

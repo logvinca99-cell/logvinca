@@ -17,6 +17,9 @@ CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
 DEFAULTS = {
     # ── 상품 기본값 (스토어에 A/S 전화가 없으면 이 값)
     "as_phone": "",
+    "chrome_path": "",
+    # 구글 메일함: 네이버가 보낸 메일(경고·제재, 주문·문의, 인증번호)을 지메일 IMAP으로 읽어 스토어별로 모음
+    "gmail_user": "", "gmail_app_password": "", "mail_from": "naver", "mail_days": 7, "mail_auto_minutes": 0,   # 판매자센터를 스토어별 크롬 프로필로 열 때 쓸 chrome.exe (비우면 자동으로 찾음)
     "as_guide": "상세페이지 참조",
     "importer": "상세페이지 참조",
     # 원산지: 기본은 엑셀 값과 상관없이 일괄로 origin_country(중국)로 등록, 수입사는 스토어별 '{store}협력사'
@@ -181,7 +184,7 @@ DEFAULTS = {
     "extra": {},
 }
 
-SECRET_KEYS = ("anthropic_api_key", "opendict_key", "kipris_key", "searchad_secret")
+SECRET_KEYS = ("anthropic_api_key", "opendict_key", "kipris_key", "searchad_secret", "gmail_app_password")
 _lock = threading.Lock()
 
 

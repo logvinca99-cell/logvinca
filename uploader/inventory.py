@@ -1261,8 +1261,8 @@ def listing_where(f):
         a.append(time.time() - float(f["age_days"]) * 86400)
     q = (f.get("q") or "").strip()
     if q:
-        w.append("(l.name LIKE ? OR l.seller_code LIKE ? OR s.seller_code LIKE ? OR l.channel_no=?)")
-        a += [f"%{q}%"] * 3 + [q]
+        w.append("(l.name LIKE ? OR l.seller_code LIKE ? OR s.seller_code LIKE ? OR l.channel_no=? OR l.origin_no=?)")
+        a += [f"%{q}%"] * 3 + [q, q]
     if f.get("ids"):
         ids = [int(i) for i in f["ids"]]
         w.append(f"l.id IN ({','.join('?' * len(ids))})")
