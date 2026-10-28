@@ -89,4 +89,5 @@ def summary(store):
             "discount_pct": store.get("tpl_discount_pct"),
             "ship_addr": store.get("tpl_ship_addr"), "return_addr": store.get("tpl_return_addr"),
             "jitter_min": store.get("tpl_jitter_min"), "jitter_max": store.get("tpl_jitter_max"), "wm_text": store.get("wm_text") or "",
-            "opt_style": store.get("tpl_opt_style") or "", "opt_color": store.get("tpl_opt_color") or ""}
+            "opt_style": {"original": "basic"}.get(store.get("tpl_opt_style") or "", store.get("tpl_opt_style") or ""),
+            "opt_color": store.get("tpl_opt_color") or ""}

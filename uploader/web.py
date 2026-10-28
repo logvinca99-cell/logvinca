@@ -1367,6 +1367,7 @@ def create_app(db=None):
         old = db.store(sid) or {}
         # 옵션표 모양·색 (보내지 않으면 그대로, 비우면 설정 공통값)
         opt_style = str((b.get("opt_style") if "opt_style" in b else old.get("tpl_opt_style")) or "")
+        opt_style = "basic" if opt_style == "original" else opt_style   # 예전 '원본 그대로' → 원본 모양 2열 표
         opt_color = str((b.get("opt_color") if "opt_color" in b else old.get("tpl_opt_color")) or "").strip()
         if opt_style and opt_style not in convert.OPTION_STYLES:
             return fail("옵션표 모양을 목록에서 골라 주세요.")
