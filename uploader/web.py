@@ -657,21 +657,22 @@ def create_app(db=None):
     def ctx_estimate():
         b = body()
         cfg = config.load()
-        return jsonify(ctxkw.estimate(db, cfg, _ctx_sources(b), b.get("mode")))
+        return jsonify(ctxkw.estimate(db, cfg, _ctx_sources(b), b.get("mode"), bool(b.get("refresh"))))
 
     @app.post("/api/ctx/start")
     def ctx_start():
         b = body()
         ids = _ctx_sources(b)
         mode = b.get("mode") or config.load().get("ctx_mode") or "batch"
-        if not ctxkw.targets(db, ids):
+        refresh = bool(b.get("refresh"))
+        if not ctxkw.targets(db, ids, refresh):
             return jsonify({"started": False, "message": "고른 원본은 모두 키워드가 있습니다 (요청 0건). AI를 부르지 않습니다."})
         try:
             if mode == "instant":
                 tid = tasks.start("ctxkw", f"AI 키워드 받기(즉시) · 원본 {len(ids):,}개",
-                                  lambda **kw: ctxkw.run_instant(db, ids, **kw))
+                                  lambda **kw: ctxkw.run_instant(db, ids, refresh=refresh, **kw))
                 return jsonify({"task": tid})
-            r = ctxkw.start_batch(db, ids)
+            r = ctxkw.start_batch(db, ids, refresh)
         except RuntimeError as e:
             return fail(str(e))
         return jsonify({"started": True, **r})
@@ -686,7 +687,7 @@ def create_app(db=None):
 
     @app.get("/api/ctx/review")
     def ctx_review():
-        kind = request.args.get("kind") if request.args.get("kind") in ("core", "ctx") else "core"
+        kind = request.args.get("kind") if request.args.get("kind") in ("core", "core2", "ctx") else "core"
         return jsonify(ctxkw.core_review(db, kind))
 
     @app.post("/api/ctx/block")

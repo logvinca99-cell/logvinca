@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS ctx_batch (
 );
 """
 
-PROMPT_VER = "v3"   # 프롬프트를 바꾸면 올린다 → 예전 버전으로 받은 원본은 다시 받을 대상
+PROMPT_VER = "v4"   # 프롬프트를 바꾸면 올린다 → 예전 버전으로 받은 원본은 직접 "예전 지시로 받은 것도 다시 받기"를 골랐을 때만 다시 받음
 
 SYSTEM = """너는 네이버 스마트스토어 상품명 키워드 작성자다. 각 상품마다 아래 3가지 목록을 만든다.
 상품 종류는 상품명과 카테고리를 함께 보고 판단한다.
@@ -69,12 +69,16 @@ SYSTEM = """너는 네이버 스마트스토어 상품명 키워드 작성자다
 * 원본에서 띄어쓰기로 나뉜 단어를 철자 그대로 쓴다. 쪼개거나 붙이지 않는다. 예: '린넨커튼'을 '린넨'으로 쪼개지 않는다.
 * 색상, 막연한 수식어(기본, 표준, 고급 등), 숫자·수량·연식만 있는 단어(1+1, 2024형, 10개 등)는 넣지 않는다.
 
-2. core: 이 상품을 부르는 다른 이름을 최대 4개, 가장 확실하고 검색이 많을 것부터.
-* 판단 기준: "이 상품은 ○○의 한 종류다"가 참인 ○○만 쓴다 (상위 이름·동의어). 예: 원터치텐트 → 텐트, 무선청소기 → 청소기 허용.
-* 이 상품보다 좁은 이름(하위 종류)이나 나란한 다른 물건은 쓰지 않는다. 예: 텐트 → 원터치텐트 금지, 무선 청소기 → 로봇청소기 금지, 파티션 → 방문 금지, 유압잭 → 차량리프트 금지.
-* 원본 단어의 자연스러운 변형도 허용한다. 예: 접이식 → 접이형.
-* 원본에 없는 재질·기능·형태·크기·용량·색을 붙이지 않는다. 예: 면 이불 → 극세사이불 금지, 일반 의자 → 안마의자 금지.
-* 무슨 물건인지 확실하지 않으면 빈 배열로 둔다.
+2. core: 이 상품을 부르는 다른 이름. 3개 이상을 목표로, core와 core2를 합쳐 최대 8개.
+* 판단 기준: "소비자가 이 단어로 검색해서 이 상품을 봤을 때 '내가 찾던 물건이 맞다'고 할까?" → 예일 때만 쓴다.
+* 허용하는 것 (위쪽일수록 확실):
+  ① 상위 이름·동의어. 예: 원터치텐트 → 텐트, 무선청소기 → 청소기.
+  ② 같은 물건을 부르는 다른 말·줄임말·표기 차이. 예: 그늘막 → 차양막, 매트리스 → 매트, 접이식 → 접이형.
+  ③ 실제로 쓰이는 용도형 이름. 예: 원터치 그늘막텐트 → 캠핑텐트, 피크닉텐트.
+* 확신 등급으로 나눈다: core = 확실한 것(①·② 중심), core2 = 그럴듯하지만 덜 확실한 것(③ 중심). 각각 확실하고 검색이 많을 것부터.
+* 금지: 이 상품보다 좁은 이름(하위 종류), 나란한 다른 물건. 예: 텐트 → 원터치텐트 금지, 무선 청소기 → 로봇청소기 금지, 파티션 → 방문 금지, 유압잭 → 차량리프트 금지.
+* 금지: 원본에 없는 재질·기능·형태·크기·용량·색. 예: 면 이불 → 극세사이불 금지, 일반 의자 → 안마의자 금지.
+* 3개가 안 되면 억지로 채우지 않는다. 무슨 물건인지 확실하지 않으면 둘 다 빈 배열.
 
 3. ctx: 이 상품을 쓰는 장소, 사용자, 용도, 사용 상황을 최대 8개, 가장 확실하고 검색이 많을 것부터.
 * 실제 상품에 적합한 검색어만 쓴다. 원본에 없는 재질·기능·사양을 암시하지 않는다.
@@ -88,21 +92,22 @@ SYSTEM = """너는 네이버 스마트스토어 상품명 키워드 작성자다
 * 원본 단어를 그대로 반복하지 않는다 (keep 제외).
 * 브랜드, 상표, 회사·서비스명, 캐릭터, 명품, 연예인, 지역명 등 권리 침해나 오해 위험이 있는 표현은 사용하지 않는다.
 * 인증, 특허, 최고, 프리미엄, 건강, 내구성 등 근거 없이 상품의 성능이나 품질을 주장하는 표현은 금지한다.
-* keep, core, ctx 사이에서 완전히 동일한 단어는 중복 생성하지 않는다.
+* keep, core, core2, ctx 사이에서 완전히 동일한 단어는 중복 생성하지 않는다.
 
-출력: 설명 없이 JSON 객체만. 최상위 키는 products로 하고, 각 상품은 입력받은 id와 keep, core, ctx 배열을 포함한다. 입력 상품의 id를 그대로 유지한다."""
+출력: 설명 없이 JSON 객체만. 최상위 키는 products로 하고, 각 상품은 입력받은 id와 keep, core, core2, ctx 배열을 포함한다. 입력 상품의 id를 그대로 유지한다."""
 
 # 구조화 출력 (output_config.format). maxItems·minLength 같은 제약은 API가 받지 않아 개수는 프롬프트와 코드에서 지킨다.
 _LIST = {"type": "array", "items": {"type": "string"}}
 OUTPUT_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["products"], "properties": {
     "products": {"type": "array", "items": {"type": "object", "additionalProperties": False,
-                                            "required": ["id", "keep", "core", "ctx"],
-                                            "properties": {"id": {"type": "string"}, "keep": _LIST, "core": _LIST, "ctx": _LIST}}}}}
-LIMITS = {"keep": 6, "core": 4, "ctx": 8}
+                                            "required": ["id", "keep", "core", "core2", "ctx"],
+                                            "properties": {"id": {"type": "string"}, "keep": _LIST, "core": _LIST, "core2": _LIST, "ctx": _LIST}}}}}
+LIMITS = {"keep": 6, "core": 8, "core2": 8, "ctx": 8}
+CORE_TOTAL = 8   # core + core2 합쳐서
 
 # 백만 토큰당 달러 (입력, 출력). 일괄 처리는 절반.
 PRICES = {"claude-sonnet-5-5": (2.0, 10.0), "claude-haiku-5-5": (0.10, 0.50), "claude-opus-5-5": (4.0, 20.0)}
-EST_IN, EST_OUT = 140, 110           # 원본당 예상 토큰 (v2 keep·core·ctx 기준 추정: 요청 10개에 입력 약 1,400, 출력 약 1,100)
+EST_IN, EST_OUT = 140, 130           # 원본당 예상 토큰 (v2 keep·core·ctx 기준 추정: 요청 10개에 입력 약 1,400, 출력 약 1,100)
 BATCH_MAX_REQUESTS = 5000            # 배치 하나에 넣을 요청 수 (원본 5만 개)
 _CUSTOM_ID = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 _lock = threading.Lock()
@@ -139,7 +144,8 @@ def params(cfg, items):
     p = {
         "model": model,
         "max_tokens": 3000,
-        "system": SYSTEM,
+        # 지시문(system)은 모든 요청에서 똑같으니 캐시: 처음 한 번 1.25배, 그 뒤 5분 안의 요청은 지시문 부분이 0.1배
+        "system": [{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}],
         "messages": [{"role": "user", "content": json.dumps({"products": rows}, ensure_ascii=False)}],
         # 생각 끄기: 안 끄면 생각이 max_tokens를 다 써서 빈 답이 오고 요금은 나간다. temperature는 보내지 않는다(400 오류).
         "thinking": {"type": "disabled"} if "haiku" in model else {"type": "between_tools"},
@@ -166,12 +172,14 @@ def parse(text, sids):
             continue   # 보내지 않은 id·형식이 틀린 항목은 버림
         kw = {}
         for k, lim in LIMITS.items():
-            v = x.get(k)
+            v = x.get(k, [] if k == "core2" else None)
             if not isinstance(v, list):
                 kw = None
                 break
             kw[k] = [str(w).strip() for w in v if isinstance(w, str) and str(w).strip()][:lim]
         if kw is not None:
+            kw["core2"] = [w for w in kw["core2"] if w not in kw["core"]][:max(0, CORE_TOTAL - len(kw["core"]))]
+            kw["core"] = kw["core"][:CORE_TOTAL]
             got[int(x["id"])] = kw
     return got, [s for s in sids if s not in got]
 
@@ -189,21 +197,32 @@ def cost(model, in_tok, out_tok, batch):
 
 # ───────────────────────── 대상·예상 비용
 
-def targets(db, ids):
-    """키워드를 받아야 할 원본 (받은 것·일괄 처리 중인 것 제외, 무효·재시도 대기는 포함)."""
+def targets(db, ids, refresh=False):
+    """키워드를 받아야 할 원본 (받은 것·일괄 처리 중인 것 제외, 무효·재시도 대기는 포함).
+    refresh=True면 예전 지시(버전)로 받은 원본도 — 자동으로는 다시 받지 않는다(비용)."""
     out = []
     for i in range(0, len(ids), 900):
         chunk = list(ids)[i:i + 900]
         out += [r["id"] for r in db.q(f"""SELECT s.id FROM sources s LEFT JOIN ctx_kw k ON k.source_id=s.id
             WHERE s.id IN ({','.join('?' * len(chunk))}) AND (k.status IS NULL OR k.status IN ('retry','invalid')
-              OR (k.status='ok' AND k.ver!=?))
-            ORDER BY s.id""", (*chunk, PROMPT_VER))]
+              OR (? AND k.status='ok' AND k.ver!=?))
+            ORDER BY s.id""", (*chunk, int(bool(refresh)), PROMPT_VER))]
     return out
 
 
-def estimate(db, cfg, ids, mode=None):
+def old_count(db, ids):
+    """예전 지시로 받은 원본 수 (고른 것 중)."""
+    n = 0
+    for i in range(0, len(ids), 900):
+        chunk = list(ids)[i:i + 900]
+        n += db.one(f"""SELECT COUNT(*) AS n FROM ctx_kw WHERE status='ok' AND ver!=?
+            AND source_id IN ({','.join('?' * len(chunk))})""", (PROMPT_VER, *chunk))["n"]
+    return n
+
+
+def estimate(db, cfg, ids, mode=None, refresh=False):
     mode = mode or cfg.get("ctx_mode") or "batch"
-    need = targets(db, ids)
+    need = targets(db, ids, refresh)
     per = max(1, int(cfg.get("ctx_per_request") or 10))
     n = len(need)
     in_tok, out_tok = EST_IN * n, EST_OUT * n
@@ -213,7 +232,8 @@ def estimate(db, cfg, ids, mode=None):
     per_src = cost(model_of(cfg), EST_IN, EST_OUT, mode == "batch") * rate   # 원본 1개당 원
     return {"per_1k_krw": round(per_src * 1000), "per_10k_krw": round(per_src * 10000),"sources": n, "selected": len(ids), "have": len(ids) - n, "requests": math.ceil(n / per) if n else 0,
             "in_tok": in_tok, "out_tok": out_tok, "usd": round(usd, 4), "krw": math.ceil(usd * rate), "rate": rate,
-            "mode": mode, "model": model_of(cfg), "pending": pending, "has_key": has_key(cfg)}
+            "mode": mode, "model": model_of(cfg), "pending": pending, "has_key": has_key(cfg),
+            "old": 0 if refresh else old_count(db, ids), "refresh": bool(refresh)}
 
 
 # ───────────────────────── 저장 → 이름 후보 만들기
@@ -227,6 +247,7 @@ def _save_ok(c, got, names, n_req, in_tok, out_tok, run_id):
     """got: {원본 id: {keep, core, ctx}}, names: {원본 id: 받을 때 원본 상품명}. 토큰은 요청에 넣은 원본 수로 나눔."""
     per_in, per_out = in_tok // max(1, n_req), out_tok // max(1, n_req)
     now = time.time()
+    _drop_unused(c, list(got))   # 새 키워드 → 예전 키워드로 만든 안 쓴·안 올린 이름은 버리고 새로 만듦
     for sid, kw in got.items():
         c.execute("""INSERT INTO ctx_kw(source_id, words, name, status, batch_id, run_id, in_tok, out_tok, names_made, error, at, ver)
             VALUES(?,?,?,'ok','',?,?,?,0,'',?,?) ON CONFLICT(source_id) DO UPDATE SET words=excluded.words, name=excluded.name,
@@ -311,7 +332,7 @@ def reset_v1(db):
 
 
 def core_review(db, kind="core", limit=500):
-    """AI가 준 다른 이름(core)·맥락(ctx)을 단어별로 모아 보기: [{word, count, examples:[{id, name}], blocked}]. 많은 순."""
+    """AI가 준 다른 이름(core, 확신 2는 core2)·맥락(ctx)을 단어별로 모아 보기: [{word, count, examples:[{id, name}], blocked}]. 많은 순."""
     cfg = config.load()
     blocked = set(cfg.get("ctx_block_words") or [])
     agg = {}
@@ -335,7 +356,7 @@ def set_block(db, word, block=True):
     cur = [w for w in (cfg.get("ctx_block_words") or []) if w != word]
     config.save({"ctx_block_words": cur + [word] if block else cur})
     sids = [r["source_id"] for r in db.q("SELECT source_id, words FROM ctx_kw WHERE status='ok'")
-            if word in (kw_of(r["words"]).get("core", []) + kw_of(r["words"]).get("ctx", []))]
+            if word in sum((kw_of(r["words"]).get(k, []) for k in ("core", "core2", "ctx")), [])]
     if not sids:
         return {"sources": 0, "renamed": 0}
     renamed = 0
@@ -363,7 +384,7 @@ def name_parts(name, src_name, kw=None, origin=""):
           / ai(AI로 짓기가 넣은 말) / add(직접·셔플로 넣은 말). gone = 이 이름에서 빠진 원본 단어."""
     nt, ot = str(name or "").split(), str(src_name or "").split()
     kw = kw or {}
-    core, ctx = set(kw.get("core") or []), set(kw.get("ctx") or [])
+    core, ctx = set(kw.get("core") or []) | set(kw.get("core2") or []), set(kw.get("ctx") or [])
     # 원본 순서를 그대로 따르는 단어 = 가장 긴 공통 순서 (숫자 단어를 뒤로 보내 칸이 밀린 것은 '자리 바뀜'이 아님)
     L = [[0] * (len(ot) + 1) for _ in range(len(nt) + 1)]
     for i in range(len(nt) - 1, -1, -1):
@@ -400,8 +421,8 @@ def kw_of(words_json):
     """저장된 키워드 → {keep, core, ctx}. 예전(맥락 단어 목록만) 형식은 ctx로 본다."""
     w = json.loads(words_json or "[]")
     if isinstance(w, list):
-        return {"keep": [], "core": [], "ctx": w}
-    return {k: list(w.get(k) or []) for k in ("keep", "core", "ctx")}
+        return {"keep": [], "core": [], "core2": [], "ctx": w}
+    return {k: list(w.get(k) or []) for k in ("keep", "core", "core2", "ctx")}
 
 
 def repeat_check(cfg, lex):
@@ -493,18 +514,25 @@ def rebuild_unused(db):
     sids = [r["source_id"] for r in db.q("SELECT source_id FROM ctx_kw WHERE status='ok'")]
     for i in range(0, len(sids), 500):
         chunk = sids[i:i + 500]
-        marks = ",".join("?" * len(chunk))
         with db.tx() as c:
-            for r in c.execute(f"""SELECT l.id, l.name_id, l.source_id FROM listings l JOIN names n ON n.id=l.name_id
-                    WHERE l.source_id IN ({marks}) AND n.origin='ctx' AND l.origin_no='' AND l.status IN ('planned','fail')""",
-                    chunk).fetchall():
-                c.execute("UPDATE listings SET name_id=NULL, name=(SELECT name FROM sources WHERE id=?) WHERE id=?",
-                          (r["source_id"], r["id"]))
-                c.execute("DELETE FROM names WHERE id=?", (r["name_id"],))
-            c.execute(f"DELETE FROM names WHERE origin='ctx' AND listing_id IS NULL AND source_id IN ({marks})", chunk)
-            c.execute(f"UPDATE ctx_kw SET names_made=0 WHERE source_id IN ({marks})", chunk)
+            _drop_unused(c, chunk)
+            c.execute(f"UPDATE ctx_kw SET names_made=0 WHERE source_id IN ({','.join('?' * len(chunk))})", chunk)
         after_saved(db, chunk)
     return len(sids)
+
+
+def _drop_unused(c, sids):
+    """아직 안 올린 복사본의 AI 이름을 떼고(원본 이름으로 → 새 이름이 붙음), 안 쓴 AI 이름 후보를 지운다. 올린 것은 그대로."""
+    for i in range(0, len(sids), 500):
+        chunk = sids[i:i + 500]
+        marks = ",".join("?" * len(chunk))
+        for r in c.execute(f"""SELECT l.id, l.name_id, l.source_id FROM listings l JOIN names n ON n.id=l.name_id
+                WHERE l.source_id IN ({marks}) AND n.origin='ctx' AND l.origin_no='' AND l.status IN ('planned','fail')""",
+                chunk).fetchall():
+            c.execute("UPDATE listings SET name_id=NULL, name=(SELECT name FROM sources WHERE id=?) WHERE id=?",
+                      (r["source_id"], r["id"]))
+            c.execute("DELETE FROM names WHERE id=?", (r["name_id"],))
+        c.execute(f"DELETE FROM names WHERE origin='ctx' AND listing_id IS NULL AND source_id IN ({marks})", chunk)
 
 
 def invalidate(c, sid):
@@ -531,6 +559,7 @@ class _FakeResp:
             toks = str(it.get("name", "") if isinstance(it, dict) else "").split()
             arr.append({"id": str(it.get("id", i) if isinstance(it, dict) else i), "keep": toks[1:7],
                         "core": [cores[(i + k) % len(cores)] for k in range(2)],
+                        "core2": [cores[(i + k) % len(cores)] for k in range(2, 4)],
                         "ctx": [words[(i * 3 + k) % len(words)] for k in range(8)]})
         self.content = [{"type": "text", "text": json.dumps({"products": arr}, ensure_ascii=False)}]
         self.stop_reason = "end_turn"
@@ -542,12 +571,12 @@ def _client(cfg):
     return anthropic.Anthropic(api_key=(cfg.get("anthropic_api_key") or "").strip(), max_retries=4)
 
 
-def run_instant(db, ids, progress=None, should_stop=None):
+def run_instant(db, ids, progress=None, should_stop=None, refresh=False):
     """즉시 모드: 요청 하나에 원본 10개, 요청은 한꺼번에(최대 50개 동시). 실패한 요청의 원본은 재시도 대기."""
     cfg = config.load()
-    need = targets(db, ids)
+    need = targets(db, ids, refresh)
     per = max(1, int(cfg.get("ctx_per_request") or 10))
-    est = estimate(db, cfg, ids, "instant")
+    est = estimate(db, cfg, ids, "instant", refresh)
     st = {"sources": len(need), "requests": 0, "ok": 0, "failed": 0, "empty": 0, "errors": [], "cost_usd": 0.0, "names": {}}
     if not need:
         return {**st, "run_id": None}
@@ -670,18 +699,18 @@ def _batches(cfg):
     return FakeBatches() if fake() else _client(cfg).messages.batches
 
 
-def start_batch(db, ids):
+def start_batch(db, ids, refresh=False):
     """일괄 처리 시작: 요청을 만들어 보내고 배치 id·요청↔원본 연결을 저장한다. 결과는 poll()이 받는다."""
     cfg = config.load()
     with _lock:
-        need = targets(db, ids)
+        need = targets(db, ids, refresh)
         if not need:
             return {"sources": 0, "requests": 0, "batches": 0, "run_id": None}
         if not has_key(cfg):
             raise RuntimeError("설정 → AI 상품명에서 Anthropic API 키를 먼저 넣어 주세요.")
         per = max(1, int(cfg.get("ctx_per_request") or 10))
         groups = [need[i:i + per] for i in range(0, len(need), per)]
-        est = estimate(db, cfg, ids, "batch")
+        est = estimate(db, cfg, ids, "batch", refresh)
         run_id = _new_run(db, cfg, "batch", len(need), len(groups), est["usd"])
         api = _batches(cfg)
         n_batches = 0
@@ -864,7 +893,7 @@ def source_info(db, sid):
     """원본 상세 창: 받은 keep·core·ctx와 실제로 쓸 수 있는 것(거르기 뒤)."""
     r = db.one("SELECT * FROM ctx_kw WHERE source_id=?", (sid,))
     if not r:
-        return {"status": "", "words": [], "usable": [], "kw": {"keep": [], "core": [], "ctx": []}}
+        return {"status": "", "words": [], "usable": [], "kw": {"keep": [], "core": [], "core2": [], "ctx": []}}
     cfg = config.load()
     lex = lexicon.get(db)
     forb = set(lex.blocked)
@@ -874,7 +903,8 @@ def source_info(db, sid):
     bad = word_filter(cfg, lex)
     use = {"keep": [w for w in kw["keep"] if w in toks and w not in head and not ctxname.is_numeric(w)],
            "core": ctxname.filter_words(kw["core"], toks, head, forb, bad),
+           "core2": ctxname.filter_words([w for w in kw["core2"] if w not in kw["core"]], toks, head, forb, bad),
            "ctx": ctxname.filter_words(kw["ctx"], toks, head, forb, bad)}
     return {"status": r["status"], "kw": kw, "use": use, "head": head, "nums": nums,
-            "words": kw["core"] + kw["ctx"], "usable": use["core"] + use["ctx"],
+            "words": kw["core"] + kw["core2"] + kw["ctx"], "usable": use["core"] + use["core2"] + use["ctx"],
             "at": r["at"], "error": r["error"], "in_tok": r["in_tok"], "out_tok": r["out_tok"], "ver": r["ver"] if "ver" in r else ""}

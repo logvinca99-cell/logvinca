@@ -44,7 +44,7 @@ App.page("inventory", {
         <select id="i-missing" class="sel"><option value="">스토어 조건 없음</option></select>
         <select id="i-ai" class="sel" title="AI 키워드·AI 이름 후보(A·B)">
           <option value="">AI 이름 전체</option><option value="free">안 쓴 AI 이름 남음</option><option value="used">AI 이름 다 씀</option>
-          <option value="none">AI 키워드 안 받음</option><option value="pending">AI 키워드 받는 중</option><option value="failed">AI 키워드 실패</option></select>
+          <option value="none">AI 키워드 안 받음</option><option value="pending">AI 키워드 받는 중</option><option value="failed">AI 키워드 실패</option><option value="old">예전 지시로 받은 키워드</option></select>
         <button class="btn ghost" id="i-reset">조건 지우기</button>
       </div>
       <div class="listbar" id="i-bar"></div>
@@ -336,7 +336,8 @@ App.page("inventory", {
     b.innerHTML = `<div class="kw-src">
       <p class="muted small">이름 = [원본 앞 ${esc((k.head || []).length)}단어${k.nums?.length ? ` · ${esc(k.nums.join(" "))}는 뒤로` : ""}] + keep + 다른 이름 전부 + 맥락(남는 자리) + 남은 원본 단어.
         상태: <b>${st}</b>${k.at ? ` · ${ymd(k.at)}` : ""}${k.error ? ` · <span class="c-err">${esc(k.error)}</span>` : ""}</p>
-      ${k.status === "ok" ? group("keep", "keep", "원본에서 지킬 핵심 단어") + group("core", "다른 이름 (core)", "같은 물건을 부르는 다른 이름 · 이름 하나에 1개") + group("ctx", "맥락 (ctx)", "쓰는 장소·사람·용도·상황")
+      ${k.status === "ok" ? group("keep", "keep", "원본에서 지킬 핵심 단어") + group("core", "다른 이름 (core · 확신 1)", "같은 물건을 부르는 다른 이름 · 50자 안에서 전부 넣음")
+        + group("core2", "다른 이름 (core2 · 확신 2)", "그럴듯하지만 덜 확실한 이름 · 확신 1 다음, 자리가 남을 때만") + group("ctx", "맥락 (ctx)", "쓰는 장소·사람·용도·상황")
         : `<button class="btn" id="ctx-one">이 원본 AI 키워드 받기</button>`}
     </div>`;
     $("#ctx-one", b)?.addEventListener("click", () => App.ctxConfirm({ ids: [d.id] }));

@@ -213,6 +213,9 @@ def source_where(f):
         w.append("id NOT IN (SELECT source_id FROM ctx_kw WHERE status IN ('ok','pending'))")
     elif ai == "pending":   # 받는 중 (일괄 처리)
         w.append("id IN (SELECT source_id FROM ctx_kw WHERE status='pending')")
+    elif ai == "old":       # 예전 지시(버전)로 받음 — 다시 받을지 직접 고름
+        w.append("id IN (SELECT source_id FROM ctx_kw WHERE status='ok' AND ver!=?)")
+        a.append(ctxkw.PROMPT_VER)
     elif ai == "failed":    # 실패
         w.append("id IN (SELECT source_id FROM ctx_kw WHERE status='retry')")
     elif ai == "free":      # 안 쓴 AI 이름 후보가 남음 (다른 스토어로 복사하면 바로 붙음)

@@ -149,7 +149,7 @@ def make_names(origin_name, ai_words, forbidden, copies=1, seed=0, reject=None, 
 
 # ───────────────────────── v2: keep · core · ctx 조립 (AI가 주는 세 묶음)
 # [원본 앞 4단어(숫자·수량·연식만 있는 단어는 뒤로)] + [keep] + [core 전부] + [ctx] + [남은 원본 단어] + [숫자·수량·연식]
-# 넣는 순서(자리가 모자라면 뒤의 것부터 빠짐): keep → core → ctx 2개 → 남은 원본 단어 → ctx 2개 더 → 숫자·수량·연식.
+# 넣는 순서(자리가 모자라면 뒤의 것부터 빠짐): keep → core(확신 1 → 확신 2) → ctx 2개 → 남은 원본 단어 → ctx 2개 더 → 숫자·수량·연식.
 # 무작위 없이 정해진 순서라 같은 입력이면 늘 같은 이름. A(1번째 복사본)·B(2번째)는 core·ctx·원본 단어 고르는 위치만 다르다.
 
 # 숫자만, 또는 숫자 + 수량·연식 표시만 있는 단어 (1+1, 2024, 2024형, 10개, 3P, 2세트, 5개입, 2025년식 …). 크기(30cm)는 사양이라 그대로 둔다.
@@ -225,7 +225,8 @@ def make_names_v2(origin_name, kw, forbidden, copies=2, seed=0, reject=None, opt
         return [None] * copies
     keep = [w for w in (kw.get("keep") or []) if w in toks and w not in head and not is_numeric(w)]
     core = filter_words(kw.get("core"), toks, head, forbidden, bad)
-    ctx = filter_words([w for w in (kw.get("ctx") or []) if w not in core], toks, head, forbidden, bad)
+    core2 = [w for w in filter_words(kw.get("core2"), toks, head, forbidden, bad) if w not in core]   # 확신 2: 확신 1 뒤, 자리 남을 때만
+    ctx = filter_words([w for w in (kw.get("ctx") or []) if w not in core and w not in core2], toks, head, forbidden, bad)
     rest = [w for w in pool if w not in keep]
     orig = " ".join(str(origin_name or "").split())
     made, results = [], []
@@ -234,7 +235,9 @@ def make_names_v2(origin_name, kw, forbidden, copies=2, seed=0, reject=None, opt
         for t in range(10):   # 같은 이름·중복이면 고르는 위치를 바꿔 최대 10번
             v = k + t
             c0 = v % len(core) if core else 0
-            c_pick = core[c0:] + core[:c0]   # A·B는 다른 이름의 순서만 다름 (A는 1번째부터, B는 2번째부터)
+            d0 = v % len(core2) if core2 else 0
+            # A·B는 다른 이름의 순서만 다름 (A는 1번째부터, B는 2번째부터). 확신 1을 다 넣고 확신 2
+            c_pick = core[c0:] + core[:c0] + core2[d0:] + core2[:d0]
             start = (v * CTX_FIRST) % len(ctx) if ctx else 0
             cx = (ctx[start:] + ctx[:start]) if ctx else []
             r0 = (v * 2) % len(rest) if rest else 0

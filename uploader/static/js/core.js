@@ -400,6 +400,12 @@ const App = {
     let est;
     try { est = await this.api("/api/ctx/estimate", { json: target }); } catch (e) { return this.toast(e.message, true); }
     if (!est.sources) {
+      if (est.old && !target.refresh) {   // 예전 지시로 받은 것만 있음 → 자동으로는 안 받고 물어봄
+        if (confirm(`고른 원본은 모두 키워드가 있습니다. 그중 ${num(est.old)}개는 예전 지시로 받은 키워드입니다.\n새 지시로 다시 받을까요? (다음 화면에 비용 안내가 나오고, 거기서 시작을 눌러야 받습니다)`))
+          return this.ctxConfirm({ ...target, refresh: true }, after);
+        if (after) after(false);
+        return;
+      }
       this.toast(`고른 원본 ${num(est.selected)}개 모두 키워드가 있습니다 · 요청 0건 (AI를 부르지 않음)`);
       if (after) after(false);
       return;
@@ -413,10 +419,11 @@ const App = {
       title: "AI 키워드 받기 · 비용 안내",
       body: `<div class="form">
         <dl class="kv">
-          <dt>대상 원본</dt><dd><b>${num(est.sources)}개</b> <span class="muted small">(고른 ${num(est.selected)}개 중 이미 키워드가 있는 ${num(est.have)}개 제외)</span></dd>
+          <dt>대상 원본</dt><dd><b>${num(est.sources)}개</b> <span class="muted small">(고른 ${num(est.selected)}개 중 이미 키워드가 있는 ${num(est.have)}개 제외${target.refresh ? " · 예전 지시로 받은 것 포함" : ""})</span>
+            ${est.old ? `<br><span class="small">예전 지시로 받은 원본 <b>${num(est.old)}개</b>는 다시 받지 않습니다. <a href="#" id="cm-refresh">이것도 새 지시로 함께 다시 받기</a></span>` : ""}</dd>
           <dt>요청 수</dt><dd>${num(est.requests)}건 <span class="muted small">(요청 1건에 원본 ${num(s.ctx_per_request)}개)</span></dd>
           <dt>예상 토큰</dt><dd>입력 ${num(est.in_tok)} · 출력 ${num(est.out_tok)}</dd>
-          <dt>예상 비용</dt><dd>${line(b, "일괄")}<br>${line(i, "즉시")}<br><span class="muted small">${esc(est.model)} · 환율 ${num(est.rate)}원 · 원본당 입력 약 140, 출력 약 110토큰 기준</span></dd>
+          <dt>예상 비용</dt><dd>${line(b, "일괄")}<br>${line(i, "즉시")}<br><span class="muted small">${esc(est.model)} · 환율 ${num(est.rate)}원 · 원본당 입력 약 140, 출력 약 130토큰 기준 · 지시문 캐시 할인은 빼고 넉넉히 잡은 값</span></dd>
         </dl>
         ${est.has_key ? "" : `<p class="c-err small">설정 → AI 상품명에 Anthropic API 키를 먼저 넣어야 합니다.</p>`}
         ${est.pending ? `<p class="muted small">지금 일괄 처리 중인 원본 ${num(est.pending)}개는 다시 보내지 않습니다.</p>` : ""}
@@ -443,6 +450,7 @@ const App = {
         } catch (e) { this.toast(e.message, true); return false; }
       } }],
     });
+    $("#cm-refresh")?.addEventListener("click", (e) => { e.preventDefault(); this.closeModal(); this.ctxConfirm({ ...target, refresh: true }, after); });
   },
 
   // ── 쪽 넘기기
