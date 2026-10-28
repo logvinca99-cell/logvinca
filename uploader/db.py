@@ -283,7 +283,9 @@ class DB:
                      ("seller_code", "TEXT NOT NULL DEFAULT ''"), ("registered_at", "REAL"), ("deleted_at", "REAL"),
                      ("bait_want", "INTEGER NOT NULL DEFAULT 1"),
                      ("bait", "INTEGER NOT NULL DEFAULT 0"), ("bait_state", "TEXT NOT NULL DEFAULT ''"),
-                     ("bait_note", "TEXT NOT NULL DEFAULT ''"), ("bait_restored_at", "REAL")],
+                     ("bait_note", "TEXT NOT NULL DEFAULT ''"), ("bait_restored_at", "REAL"),
+                     # 회차 초기화: 판매 중·내린 건을 다음에 다시 올릴 때 회차를 +1 하지 않고 1회차로
+                     ("round_reset", "INTEGER NOT NULL DEFAULT 0")],
     }
 
     def _migrate_columns(self):

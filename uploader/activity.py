@@ -136,7 +136,11 @@ def _count_of(r, *keys):
 # 요청 이름 → (묶음, 제목 또는 함수(body, resp) → (제목, 대상 수, 결과))
 ACTIONS = {
     "schedule": ("복사본", _schedule),
-    "listings_delete": ("복사본", lambda b, r: ("복사본 삭제 (휴지통으로)", _count_of(r, "count", "moved", "trashed", "ids"), "")),
+    "listings_delete": ("복사본", lambda b, r: ("복사본 삭제 (휴지통으로)" + (" + 원본도" if b.get("with_source") else ""),
+                                              _count_of(r, "count", "moved", "trashed", "ids"),
+                                              f"원본 {r.get('sources_moved', 0)}개도 휴지통으로" + (f" · 다른 스토어에 올라가 있어 원본은 남긴 {r['sources_skipped_live']}개" if r.get("sources_skipped_live") else "")
+                                              if b.get("with_source") else "")),
+    "listings_reset_round": ("복사본", lambda b, r: ("회차 초기화 (1회차로)" + (" · 모든 스토어 전체" if b.get("all") else ""), r.get("count"), "")),
     "sources_delete": ("원본", lambda b, r: ("원본 삭제 (휴지통으로)", _count_of(r, "count", "moved", "trashed", "ids"), "")),
     "trash_restore": ("휴지통", lambda b, r: ("휴지통에서 되살림", _count_of(r, "count", "restored", "ids"), "")),
     "trash_purge": ("휴지통", lambda b, r: ("휴지통 비우기" if b.get("empty") else "휴지통에서 완전히 삭제", _count_of(r, "count", "purged", "deleted"), "")),

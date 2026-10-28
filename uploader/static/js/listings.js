@@ -167,6 +167,7 @@ App.page("listings", {
         "|",
         { id: "lock", label: "잠금", title: "판매 이력과 상관없이 지우지 못하게 잠금" },
         { id: "unlock", label: "잠금 풀기" },
+        { id: "resetround", label: "회차 초기화", title: "지난 회차 기록을 지우고 1회차로 (다시 다 올릴 때) · 판매 중·내린 건은 다음에 다시 올릴 때 1회차로" },
         "|",
         { id: "remove", label: "삭제", danger: true, title: "아직 안 올린 복사본·내린 복사본을 휴지통으로 (네이버에 올라간 것은 먼저 내리기)" },
         ...(this.f.status === "bait" ? ["|", { id: "restore", label: "원래 가격으로", primary: true }] : []),
@@ -186,18 +187,27 @@ App.page("listings", {
     if (id === "lock" || id === "unlock") this.lock(id === "lock");
     if (id === "remove") {
       const n = this.selAll ? this.total : this.sel.size;
+      let pv = null;
+      try { pv = await App.api("/api/listings/delete_preview", { json: this.target() }); } catch { pv = null; }
+      let withSource = false;
       const ok = await App.confirmDanger({
         title: `복사본 ${num(n)}건 삭제`,
         body: `<p>고른 복사본 <b>${num(n)}건</b>을 <b>휴지통</b>으로 옮깁니다. 붙어 있던 상품명은 원본의 안 쓴 후보로 돌아갑니다.</p>
-          <p class="muted small">네이버에 올라가 있거나 처리 중인 복사본은 지우지 않습니다(먼저 '내리기 예약'으로 내리세요). 휴지통에서 되살릴 수 있습니다.</p>`,
+          <p class="muted small">네이버에 올라가 있거나 처리 중인 복사본은 지우지 않습니다(먼저 '내리기'로 내리세요). 휴지통에서 되살릴 수 있습니다.</p>
+          <label class="check del-src"><input type="checkbox" id="del-src"><span><b>원본 상품도 같이 휴지통으로</b>${pv ? ` · 원본 ${num(pv.sources)}개` : ""}
+            <span class="muted small" style="display:block">원본을 지우면 그 원본의 이름 후보·AI 키워드${pv && pv.other_copies ? `와 <b>다른 스토어 복사본 ${num(pv.other_copies)}개</b>` : ""}도 함께 휴지통으로 갑니다.
+            ${pv && pv.live_sources ? `<span class="c-warn">다른 스토어에 올라가 있거나 처리 중인 원본 ${num(pv.live_sources)}개는 원본을 남깁니다.</span>` : ""}</span></span></label>`,
       });
       if (!ok) return;
+      withSource = !!document.getElementById("del-src")?.checked;
       try {
-        const r = await App.api("/api/listings/delete", { json: this.target() });
-        App.toast(`복사본 ${num(r.moved)}건을 휴지통으로 옮겼습니다` + (r.skipped_live ? ` · 네이버에 올라가 있거나 처리 중이라 뺀 ${num(r.skipped_live)}건` : ""));
+        const r = await App.api("/api/listings/delete", { json: { ...this.target(), with_source: withSource } });
+        App.toast(`복사본 ${num(r.moved)}건을 휴지통으로 옮겼습니다` + (r.skipped_live ? ` · 네이버에 올라가 있거나 처리 중이라 뺀 ${num(r.skipped_live)}건` : "")
+          + (withSource ? ` · 원본 ${num(r.sources_moved || 0)}개도 휴지통으로` + (r.sources_skipped_live ? ` (다른 스토어에 올라가 있어 남긴 원본 ${num(r.sources_skipped_live)}개)` : "") : ""));
         this.clearSel(); this.estKey = ""; this.load(); App.refreshState();
       } catch (err) { App.toast(err.message, true); }
     }
+    if (id === "resetround") this.resetRound();
     if (id === "restore") App.startTask(App.api("/api/bait/restore", { json: this.selAll ? { filter: this.query() } : { ids: [...this.sel] } }));
     if (id === "cancel") {
       if (!confirm("고른 건 중 대기·실패 할 일을 취소할까요?\n새 등록이면 계획을 지우고 이름을 후보로 돌립니다. 최신화·내리기면 판매 중으로 되돌립니다.")) return;
@@ -241,6 +251,35 @@ App.page("listings", {
   target() {
     if (this.selAll) return this.query();
     return { ids: [...this.sel] };
+  },
+
+  /* 회차 초기화: 지난 회차 기록을 지우고 1회차로 (다시 다 올릴 때) */
+  resetRound() {
+    const n = this.selAll ? this.total : this.sel.size;
+    App.openModal({
+      title: "회차 초기화 (1회차로)",
+      body: `<div class="form">
+        <p>지난 회차 기록을 지우고 <b>1회차</b>로 되돌립니다. 판매자 관리코드 끝 번호도 다음에 올릴 때 <b>-1</b>로 붙습니다.</p>
+        <ul class="small" style="margin:0;padding-left:18px">
+          <li>아직 안 올린 복사본: 바로 1회차</li>
+          <li>판매 중·내린 복사본: 지금 상태는 그대로, <b>최신화·다시 올리기로 다시 올릴 때 1회차</b>로 올라감 (+1 하지 않음)</li>
+          <li>네이버의 상품은 건드리지 않습니다.</li></ul>
+        <div class="radio-cards">
+          ${n ? `<label><input type="radio" name="rr" value="sel" checked><div><b>고른 복사본 ${num(n)}건</b></div></label>` : ""}
+          <label><input type="radio" name="rr" value="store" ${n ? "" : "checked"}><div><b>이 스토어 복사본 전체</b></div></label>
+          <label><input type="radio" name="rr" value="all"><div><b>모든 스토어 복사본 전체</b> <span class="muted small">다시 다 올릴 때</span></div></label>
+        </div></div>`,
+      buttons: [{ label: "취소" }, { label: "1회차로 되돌리기", danger: true, primary: true, onClick: async (b) => {
+        const v = $("input[name=rr]:checked", b).value;
+        const body = v === "all" ? { all: true } : v === "store" ? { store_id: this.f.store_id, status: "all" } : this.target();
+        if (v === "all" && !confirm("모든 스토어의 복사본 회차를 1로 되돌리고 지난 회차 기록을 지웁니다. 계속할까요?")) return false;
+        try {
+          const r = await App.api("/api/listings/reset_round", { json: body });
+          App.toast(`복사본 ${num(r.count)}건을 1회차로 되돌렸습니다. 판매 중·내린 건은 다음에 다시 올릴 때 1회차로 올라갑니다.`);
+          this.load();
+        } catch (e) { App.toast(e.message, true); return false; }
+      } }],
+    });
   },
 
   async lock(on, ids) {

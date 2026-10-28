@@ -39,7 +39,7 @@ def listing_targets(db, f):
     cond = f"({' OR '.join(KIND_COND[k] for k in kinds) or '0'}) AND NOT (l.op IN ('create','reupload') AND l.name_id IS NULL)"
     where = (where + f" AND {cond}") if where else f" WHERE {cond}"
     return db.q(f"""SELECT l.id, l.store_id, l.source_id, l.name, l.price, l.status, l.message, l.op, l.round,
-        l.origin_no, l.channel_no, l.seller_code, l.registered_at, l.bait_want, l.name_id, CASE WHEN l.op='delete' THEN 0 ELSE s.image_count END AS image_count
+        l.origin_no, l.channel_no, l.seller_code, l.registered_at, l.bait_want, l.name_id, l.round_reset, CASE WHEN l.op='delete' THEN 0 ELSE s.image_count END AS image_count
         FROM listings l JOIN sources s ON s.id=l.source_id{where} ORDER BY l.id""", args)
 
 
@@ -342,9 +342,10 @@ class Runner:
                     self._count(sid, lid, True)
                     return
                 # 지웠으니 이제부터는 다음 회차 '새 등록'. 여기서 실패해도 다시 시도하면 등록만 한다.
-                t = {**t, "round": t["round"] + 1, "origin_no": ""}
+                # 회차 초기화한 건은 +1 하지 않고 1회차로
+                t = {**t, "round": 1 if t.get("round_reset") else t["round"] + 1, "origin_no": ""}
                 self.db.set_listing(lid, None, op="create", round=t["round"], origin_no="", channel_no="",
-                                    deleted_at=time.time())
+                                    deleted_at=time.time(), round_reset=0)
                 if op == "refresh" and cfg.get("refresh_new_name"):   # 다시 올리기는 늘 같은 이름
                     t["name"] = self._new_name(cfg, t) or t["name"]
             elif op == "delete":

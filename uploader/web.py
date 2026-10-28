@@ -887,12 +887,56 @@ def create_app(db=None):
     def listings_delete():
         if runner.state["running"]:
             return fail("등록이 진행 중일 때는 지울 수 없습니다. 끝난 뒤에 다시 시도하세요.")
-        f = _filter_from(body())
+        b = body()
+        f = _filter_from(b)
         f.pop("op", None)
         ids = inventory.listing_ids(db, f)
         if not ids:
             return fail("고른 복사본이 없습니다.")
-        return jsonify(trash.trash_listings(db, ids))
+        sids = _source_ids_of(ids)
+        out = trash.trash_listings(db, ids)
+        if b.get("with_source"):   # 원본도 휴지통으로 (그 원본의 다른 스토어 복사본도 함께 — 네이버에 올라가 있는 원본은 뺌)
+            s = trash.trash_sources(db, sids)
+            out.update(sources_moved=s["moved"], sources_skipped_live=s["skipped_live"])
+        return jsonify(out)
+
+    def _source_ids_of(ids):
+        out = set()
+        for i in range(0, len(ids), 900):
+            chunk = ids[i:i + 900]
+            out |= {r["source_id"] for r in db.q(f"SELECT DISTINCT source_id FROM listings WHERE id IN ({','.join('?' * len(chunk))})", chunk)}
+        return sorted(out)
+
+    @app.post("/api/listings/delete_preview")
+    def listings_delete_preview():
+        """삭제 창에 보여 줄 수: 고른 복사본의 원본 수, 그 원본의 다른 복사본 수, 다른 스토어에 올라가 있어 원본은 못 지우는 수."""
+        f = _filter_from(body())
+        f.pop("op", None)
+        ids = inventory.listing_ids(db, f)
+        sids = _source_ids_of(ids)
+        other = live = 0
+        idset = set(ids)
+        for i in range(0, len(sids), 900):
+            chunk = sids[i:i + 900]
+            rows = db.q(f"""SELECT id, source_id, origin_no, status FROM listings WHERE source_id IN ({','.join('?' * len(chunk))})""", chunk)
+            other += sum(1 for r in rows if r["id"] not in idset)
+            live += len({r["source_id"] for r in rows if r["status"] != "deleted" and (r["origin_no"] or r["status"] in ("queued", "running"))})
+        return jsonify({"copies": len(ids), "sources": len(sids), "other_copies": other, "live_sources": live})
+
+    @app.post("/api/listings/reset_round")
+    def listings_reset_round():
+        if runner.state["running"]:
+            return fail("등록이 진행 중일 때는 회차를 바꿀 수 없습니다. 끝난 뒤에 다시 시도하세요.")
+        b = body()
+        if b.get("all"):
+            ids = [r["id"] for r in db.q("SELECT id FROM listings")]
+        else:
+            f = _filter_from(b)
+            f.pop("op", None)
+            ids = inventory.listing_ids(db, f)
+        if not ids:
+            return fail("고른 복사본이 없습니다.")
+        return jsonify({"count": inventory.reset_rounds(db, ids)})
 
     @app.get("/api/trash")
     def trash_list():

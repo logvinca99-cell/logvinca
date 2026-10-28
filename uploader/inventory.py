@@ -1123,6 +1123,21 @@ def set_listing_name(db, lid, name):
     return nid["name"]
 
 
+def reset_rounds(db, ids):
+    """회차 초기화: 지난 회차 기록을 지우고 회차를 1로. 판매 중·내린 건은 다음에 다시 올릴 때(최신화·다시 올리기)
+    +1 하지 않고 1회차로 올라가게 표시. 아직 안 올린 건은 바로 1회차. 바꾼 수."""
+    n = 0
+    for i in range(0, len(ids), 900):
+        chunk = ids[i:i + 900]
+        m = ",".join("?" * len(chunk))
+        with db.tx() as c:
+            c.execute(f"DELETE FROM listing_history WHERE listing_id IN ({m})", chunk)
+            c.execute(f"""UPDATE listings SET round=1, round_reset=CASE WHEN origin_no!='' OR status='deleted' THEN 1 ELSE 0 END,
+                updated_at=? WHERE id IN ({m})""", (time.time(), *chunk))
+            n += c.execute("SELECT changes()").fetchone()[0]
+    return n
+
+
 def schedule_op(db, f, op):
     """올라가 있는 건에 할 일을 건다. op: refresh(최신화: 오래된 상품 지우고 다시, 설정에 따라 새 이름)
     / reupload(다시 올리기: 문제가 있어 지우고 같은 내용으로 다시, 내린 것도) / delete(내리기).
@@ -1165,7 +1180,8 @@ def relist(db, f):
                 continue
             free[r["store_id"]] -= 1
             price = convert.store_price(r["price"], f"{r['source_key']}|{r['store_id']}", cfg, st)
-            c.execute("""UPDATE listings SET status='planned', op='reupload', round=round+1, price=?, message='', stage='',
+            c.execute("""UPDATE listings SET status='planned', op='reupload', round=CASE WHEN round_reset=1 THEN 1 ELSE round+1 END,
+                round_reset=0, price=?, message='', stage='',
                 bait_want=?, bait=0, bait_state='', sale_shown=NULL, updated_at=? WHERE id=?""", (price, bait_want, now, r["id"]))
             out.append(r["id"])
     db.recount_sources([r["id"] for r in db.q(f"SELECT DISTINCT source_id AS id FROM listings WHERE id IN ({','.join('?' * len(out))})", out)] if out else [])
