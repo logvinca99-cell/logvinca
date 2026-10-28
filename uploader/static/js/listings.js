@@ -606,6 +606,18 @@ App.page("listings", {
             if (r) { if ($("#l-rows")) this.load(); this.openListing(id); }
           });
         } },
+        { key: "mobile", label: "휴대폰 미리보기", render: (b) => {
+          const dc = l.body?.originProduct?.detailContent;
+          if (typeof dc !== "string") { b.innerHTML = `<p class="muted">${esc(l.body?.["검사 오류"] || "상세를 만들지 못했습니다.")}</p>`; return; }
+          const iss = l.mobile_issues || [];
+          b.innerHTML = `${iss.length
+              ? `<p class="mob-warn">⚠ 네이버 모바일에서 <b>흐린 캡처</b>로 보일 수 있습니다: ${esc(iss.join(", "))} — 스토어 템플릿 상단·하단 HTML도 확인하세요.</p>`
+              : '<p class="mob-ok">✓ 표·링크·네이버 밖 이미지가 없어 네이버 모바일에서 캡처가 아닌 그대로(선명하게) 보입니다.</p>'}
+            <p class="muted small" style="margin:0">휴대폰 너비(390px)로 보낼 상세를 그대로 그렸습니다. 옵션표는 올릴 때 이 그림을 네이버에 올려 씁니다.</p>
+            <div class="mob-frame"><iframe sandbox="allow-same-origin" title="휴대폰 미리보기"></iframe></div>`;
+          $("iframe", b).srcdoc = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+            <style>body{margin:0;padding:0 12px;font:15px/1.5 sans-serif;color:#111}img{max-width:100%;height:auto}</style>${dc}`;
+        } },
         { key: "json", label: "보낼 데이터", render: (b) => {
           const body = JSON.parse(JSON.stringify(l.body));
           const dc = body?.originProduct?.detailContent;

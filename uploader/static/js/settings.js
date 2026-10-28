@@ -85,7 +85,7 @@ const SETTING_SECTIONS = [
     ["reupload_detail_images", "상세페이지 이미지도 네이버 서버에 올림", "check"],
     ["keep_pstatic_detail_images", "상세 이미지가 이미 네이버 이미지 서버(pstatic.net) 주소면 그대로 둠 (시간 크게 절약)", "check"],
     ["detail_video", "상세페이지 동영상", "select", { options: [["keep", "원래 주소 그대로 둠"], ["remove", "지우고 등록"]] }],
-    ["option_table_style", "상세 옵션표 모양 (공통 · 스토어 템플릿에서 스토어마다 따로)", "select", { options: OPT_STYLES }],
+    ["option_table_style", "상세 옵션표 모양 (2열 그림으로 만들어 올림 · 스토어 템플릿에서 스토어마다 따로)", "select", { options: OPT_STYLES }],
     ["option_table_color", "옵션표 강조색 (공통)", "color", { hint: "스토어 템플릿에서 스토어마다 따로 고를 수 있음" }],
     ["image_cache_gb", "이미지 보관 용량 (GB, 0이면 보관 안 함)", "number", { step: 1 }],
   ] },

@@ -230,8 +230,13 @@ def validate(row, cfg, categories=None):
     if len(thumbnails(row)) > 10:
         warnings.append("썸네일이 10장을 넘어 앞 10장만 등록됩니다.")
     d = str(row.get("상세설명") or "")
-    if d and layout_left(naver_safe_layout(d)):
-        warnings.append("상세에 2열 표로 바꾸지 못한 옵션 사진 묶음이 있습니다 (네이버에서 한 줄에 하나씩 보일 수 있음) — 이 원본을 알려 주세요")
+    if d:
+        d = naver_safe_layout(strip_trackers(d))
+        if layout_left(d):
+            warnings.append("상세에 2열로 바꾸지 못한 옵션 사진 묶음이 있습니다 (네이버에서 한 줄에 하나씩 보일 수 있음) — 이 원본을 알려 주세요")
+        iss = mobile_issues(d)
+        if iss:
+            warnings.append(f"상세에 {', '.join(iss)}이(가) 있어 네이버 모바일에서 흐린 캡처로 보일 수 있습니다")
     return errors, warnings
 
 
@@ -362,64 +367,51 @@ def _text(h):
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", h)).strip()
 
 
-def _clean_img(tag):
-    tag = re.sub(r"""\s(?:style|width|height)\s*=\s*(["']).*?\1""", "", tag, flags=re.S)
-    return tag.replace("<img", '<img width="100%" style="width:100%;height:auto;display:block;margin:0 auto;"', 1)
+_SRC = re.compile(r"""\ssrc\s*=\s*(["'])(.*?)\1""", re.I | re.S)
+# 수집 프로그램이 넣어 둔 방문 알림(보이지 않는 줄의 배경 그림 = 손님이 볼 때마다 그쪽 서버로 알림) 같은
+# 내용 없는 요소의 네이버 밖 배경 그림
+_BG_EMPTY = re.compile(r"""<(p|div|span)\b[^>]*\bstyle\s*=\s*(["'])(?:(?!\2).)*url\(\s*['"]?([^)'"]+)['"]?\s*\)(?:(?!\2).)*\2[^>]*>\s*</\1>""",
+                       re.I | re.S)
+
+
+def strip_trackers(html):
+    """보이지 않는 방문 알림(네이버 밖 배경 그림만 있는 빈 요소)을 지운다."""
+    return _BG_EMPTY.sub(lambda m: m.group(0) if "pstatic.net" in m.group(3) else "", html)
 
 
 def _cards(inner):
-    """묶음 안의 칸들 → [(사진 HTML, 이름)]. 칸이 div가 아니면 사진 하나씩 한 칸."""
+    """묶음 안의 칸들 → [[사진 주소들], 이름]. 칸이 div가 아니면 사진 하나씩 한 칸."""
+    def srcs(h):
+        out = []
+        for t in _IMG_TAG.findall(h):
+            m = _SRC.search(t)
+            if m and m.group(2).strip():
+                u = m.group(2).strip()
+                out.append("https:" + u if u.startswith("//") else u)
+        return out
     out = []
     for c in _children(inner):
-        imgs = "".join(_clean_img(t) for t in _IMG_TAG.findall(c))
-        cap = _text(_IMG_TAG.sub("", c))
+        imgs, cap = srcs(c), _text(_IMG_TAG.sub("", c))
         if imgs or cap:
-            out.append((imgs, cap))
-    return out or [(_clean_img(t), "") for t in _IMG_TAG.findall(inner)]
+            out.append([imgs, cap])
+    return out or [[[u], ""] for u in srcs(inner)]
 
 
-def _cards_table(cards, strong, color):
-    """칸들 → 늘 2열 표 (휴대폰에서도 2열). 사진 줄과 이름 줄을 나눠 사진 크기가 달라도 이름이 나란히 맞고,
-    사진·이름 칸은 테두리로 한 덩어리. 칸이 홀수면 마지막 줄 오른쪽은 비움."""
-    if strong:
-        bw, bc, bg = 2, color, "#F5F6F8"
-        cap_css = "padding:12px 6px;margin:0;font-size:16px;font-weight:700;color:#111111;line-height:1.4;"
-    else:   # 원본 모양 (얇은 회색 테두리, 보통 굵기)
-        bw, bc, bg = 1, "#EAECF0", "#FFFFFF"
-        cap_css = "padding:8px;margin:0;font-weight:500;color:#111111;line-height:1.4;"
-    line = f"{bw}px solid {bc}"
-
-    def td(css, inner, valign):
-        return (f'<td width="48%" align="center" valign="{valign}" bgcolor="{bg}" style="width:48%;{css}background-color:{bg};'
-                f'padding:0;text-align:center;vertical-align:{valign};">{inner}</td>')
-    gap = '<td width="4%" style="width:4%;padding:0;"></td>'
-    blank = '<td width="48%" style="width:48%;padding:0;"></td>'
-    rows = []
-    for r in range(0, len(cards), 2):
-        if r:
-            rows.append('<tr><td colspan="3" height="16" style="height:16px;padding:0;"></td></tr>')
-        pair = cards[r:r + 2]
-        tops = [td(f"border-top:{line};border-left:{line};border-right:{line};", imgs, "middle") for imgs, _ in pair]
-        bots = [td(f"border-bottom:{line};border-left:{line};border-right:{line};",
-                   f'<p style="{cap_css}">{cap or "&nbsp;"}</p>', "top") for _, cap in pair]
-        if len(pair) == 1:
-            tops.append(blank)
-            bots.append(blank)
-        rows.append("<tr>" + gap.join(tops) + "</tr>")
-        rows.append("<tr>" + gap.join(bots) + "</tr>")
-    return ('<table width="100%" cellpadding="0" cellspacing="0" border="0" '
-            'style="width:100%;border-collapse:collapse;table-layout:fixed;margin:12px 0;">' + "".join(rows) + "</table>")
+def option_look(cfg, store=None):
+    """(옵션표 모양 strong·basic, 강조색): 스토어 템플릿 값, 없으면 설정 공통값."""
+    store = store or {}
+    style = store.get("tpl_opt_style") or cfg.get("option_table_style") or "strong"
+    color = store.get("tpl_opt_color") or cfg.get("option_table_color")
+    return ("strong" if style == "strong" else "basic",
+            color if re.fullmatch(r"#[0-9A-Fa-f]{6}", str(color or "")) else OPTION_COLOR)
 
 
-def naver_safe_layout(html, style="basic", color=None):
-    """네이버 상세 편집기가 지우는 CSS(grid, flex-wrap, flex-direction)로 짠 옵션 사진 묶음을 늘 2열 표로 바꾼다.
-    그대로 올리면 옵션 사진이 한 줄에 하나씩 쌓이고 '옵션 설명' 제목이 왼쪽으로 밀린다.
-    style='strong': 바로 위 제목(h1~h4)을 color 띠로, 옵션 이름을 굵고 크게, 칸 테두리를 color로.
-    그 밖(basic)은 원본과 같은 얇은 테두리·글씨. 네이버가 지우지 않는 표·글자색·배경색·테두리만 쓰고
-    색·너비는 bgcolor·width 속성으로도 같이 넣는다."""
-    strong = style == "strong"
-    color = color if re.fullmatch(r"#[0-9A-Fa-f]{6}", str(color or "")) else OPTION_COLOR
-    out, i = [], 0
+def _layout(html, style, color, opt_urls):
+    """옵션 사진 묶음(grid·줄바꿈 flex)을 2열 그림(<img>)으로 바꾼 HTML과 묶음 목록.
+    opt_urls[k] = k번째 묶음의 그림 주소들 (없으면 '#옵션표그림…' 자리표시 — 올릴 때 엔진이 그려서 채움).
+    strong이면 바로 위 제목(h1~h4)은 그림의 색 띠로 들어가므로 HTML에서 뺀다."""
+    from . import optimage
+    out, boxes, i = [], [], 0
     for m in _DIV_STYLED.finditer(html):
         if m.start() < i or not _card_box(m.group(2)):
             continue
@@ -430,21 +422,26 @@ def naver_safe_layout(html, style="basic", color=None):
         grid = "grid" in m.group(2).lower()
         if not cards or (not grid and sum(1 for x, _ in cards if x) < 2):   # 줄바꿈 flex는 사진 칸이 둘 이상일 때만
             continue
-        before = html[i:m.start()]
-        h = _HEAD_BEFORE.search(before) if strong else None
-        if h and _text(h.group(2)):   # 바로 위 제목 → 색 띠 (옵션 제목이면 칸 수도)
-            title = _text(h.group(2))
-            count = f'<span style="font-size:14px;color:#FFFFFF;"> &nbsp;총 {len(cards)}종</span>' if "옵션" in title else ""
-            before = before[:h.start()] + (
-                f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;">'
-                f'<tr><td bgcolor="{color}" align="center" style="background-color:{color};padding:14px 8px;text-align:center;">'
-                f'<span style="font-size:20px;font-weight:700;color:#FFFFFF;">{title}</span>{count}</td></tr></table>')
+        before, title = html[i:m.start()], ""
+        h = _HEAD_BEFORE.search(before) if style == "strong" else None
+        if h and _text(h.group(2)):
+            title, before = _text(h.group(2)), before[:h.start()]
+        k = len(boxes)
+        boxes.append({"title": title, "cards": cards})
+        urls = (opt_urls[k] if opt_urls and k < len(opt_urls) else
+                [f"#옵션표그림{k + 1}-{j + 1}" for j in range(optimage.count(len(cards)))])
         out.append(before)
-        out.append(_cards_table(cards, strong, color))
+        out.append("".join(f'<p style="text-align:center;margin:0;"><img src="{u}" width="100%" style="width:100%;"></p>'
+                           for u in urls))
         i = end
     html = "".join(out) + html[i:]
     # 세로로 쌓던 flex 묶음(제목 + 옵션표) → 그냥 가운데 정렬 블록 (flex-direction이 지워지면 가로로 붙어 버림)
-    return _FLEX_COL.sub(lambda m: f'style={m.group(1)}text-align:center;{m.group(1)}', html)
+    return _FLEX_COL.sub(lambda m: f'style={m.group(1)}text-align:center;{m.group(1)}', html), boxes
+
+
+def naver_safe_layout(html, style="basic", color=None, opt_urls=None):
+    """네이버가 지우는 배치 CSS(grid, flex)로 짠 옵션 사진 묶음 → 2열 그림 (표·CSS를 쓰지 않음, optimage 참고)."""
+    return _layout(html, style, color or OPTION_COLOR, opt_urls)[0]
 
 
 def layout_left(html):
@@ -458,19 +455,47 @@ def layout_left(html):
     return n
 
 
-OPTION_STYLES = ("strong", "basic")   # 예전 'original'(원본 그대로)은 basic(원본 모양 2열 표)으로
+def mobile_issues(html):
+    """네이버 모바일이 HTML 대신 PC 화면 캡처(흐림, '원본보기'를 눌러야 선명)로 보여 주게 만드는 것들."""
+    out = []
+    for tag, label in (("table", "표(table)"), ("a", "링크(a)"), ("iframe", "iframe")):
+        n = len(re.findall(rf"<{tag}\b", html, re.I))
+        if n:
+            out.append(f"{label} {n}개")
+    ext = [u for u in (m.group(2).strip() for t in _IMG_TAG.findall(html) for m in [_SRC.search(t)] if m)
+           if u and not u.startswith(("#", "/api/optimg/")) and "pstatic.net" not in u.split("/")[2 if "//" in u else 0]]
+    if ext:
+        out.append(f"네이버 밖 이미지 {len(ext)}장")
+    bg = [u for u in re.findall(r"url\(\s*['\"]?([^)'\"]+)", html) if "pstatic.net" not in u]
+    if bg:
+        out.append(f"네이버 밖 배경 그림 {len(bg)}개")
+    return out
 
 
-def detail_html(row, cfg, url_map, top="", bottom="", opt_style="", opt_color=""):
-    """상세설명 (이미지 주소를 네이버 주소로). top/bottom: 스토어 템플릿 상단·하단 HTML을 앞뒤에 붙인다.
-    옵션표처럼 네이버가 지우는 CSS(grid·flex 세로 쌓기)로 짠 부분은 표로 바꿔 올린다.
-    opt_style·opt_color: 스토어 템플릿의 옵션표 모양(strong 강조 / basic 원본 모양)·색 (비우면 설정 공통값)."""
+OPTION_STYLES = ("strong", "basic")   # 예전 'original'(원본 그대로)은 basic(원본 모양)으로
+
+
+def detail_source(row, cfg):
+    """올릴 상세의 출발점: 엑셀 상세 − 방문 알림 − (설정이면) 동영상."""
     html = row.get("상세설명") or f"<p>{row.get('상품명') or ''}</p>"
+    html = strip_trackers(html)
     if cfg.get("detail_video") == "remove":
         html = VIDEO_RE.sub("", html)
-    # 옵션 사진 묶음은 어떤 모양이든 늘 2열 표로 (그대로 두면 네이버에서 한 줄에 하나씩 쌓임)
-    html = naver_safe_layout(html, opt_style or cfg.get("option_table_style") or "strong",
-                             opt_color or cfg.get("option_table_color"))
+    return html
+
+
+def option_boxes(row, cfg, store=None):
+    """올릴 때 그림으로 만들 옵션 사진 묶음들 (detail_html과 같은 순서)."""
+    style, color = option_look(cfg, store)
+    return _layout(detail_source(row, cfg), style, color, None)[1]
+
+
+def detail_html(row, cfg, url_map, top="", bottom="", store=None, opt_urls=None):
+    """상세설명 (이미지 주소를 네이버 주소로). top/bottom: 스토어 템플릿 상단·하단 HTML을 앞뒤에 붙인다.
+    방문 알림은 지우고, 옵션 사진 묶음은 어떤 경우에도 2열 그림으로 (opt_urls: 엔진이 그려 올린 주소).
+    store: 스토어 템플릿의 옵션표 모양·색 (비우면 설정 공통값)."""
+    style, color = option_look(cfg, store)
+    html = _layout(detail_source(row, cfg), style, color, opt_urls)[0]
 
     def repl(m):
         src = m.group(3).strip()
@@ -560,7 +585,7 @@ def store_discount_pct(store, cfg):
 
 
 def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_phone=None, seller_code=None, bait=0,
-               importer=None, store=None):
+               importer=None, store=None, opt_urls=None):
     """url_map: 원본 이미지 주소 → 네이버 이미지 주소. 없는 주소는 원본 그대로 쓴다.
     name / price / as_phone / seller_code: 스토어별로 바꿔 쓸 값 (없으면 엑셀 값).
     bait: 도둑방지로 판매가에 더할 금액. 할인 금액·옵션가는 도둑방지 전 가격(price) 기준으로 정한다.
@@ -640,8 +665,7 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
         "leafCategoryId": category_id,
         "name": name[:100],
         "detailContent": detail_html(row, cfg, url_map, store.get("_tpl_top", store.get("tpl_top_html", "")),
-                                     store.get("_tpl_bottom", store.get("tpl_bottom_html", "")),
-                                     store.get("tpl_opt_style") or "", store.get("tpl_opt_color") or ""),
+                                     store.get("_tpl_bottom", store.get("tpl_bottom_html", "")), store, opt_urls),
         "images": {"representativeImage": {"url": images[0]}},
         "salePrice": sale_price + round_up(bait or 0, unit),
         "stockQuantity": stock_qty(row, cfg),

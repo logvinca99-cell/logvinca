@@ -11,7 +11,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import activity, bait, config, convert, naver, orders, templates, watermark
+from . import activity, bait, config, convert, naver, optimage, orders, templates, watermark
 
 IMAGE_DOWNLOAD_THREADS = 16
 DETAIL_SCOPE = 0
@@ -387,9 +387,16 @@ class Runner:
             url_map.update(dmap)
             if failed:
                 notes.append(f"상세 이미지 {len(failed)}장은 내려받지 못해 원래 주소로 둠")
+            # 옵션 사진 묶음 → 2열 그림 (표·CSS 없이: 모바일에서도 선명하고 늘 2열)
+            boxes = convert.option_boxes(row, cfg, store)
+            if boxes:
+                kw["opt_urls"] = self._option_images(client, cache, boxes, convert.option_look(cfg, store), lid, label, on_wait)
 
             self._stage(lid, label, "상품 등록 중")
             body = convert.build_body(row, cfg, cat_id, url_map, **kw)
+            iss = convert.mobile_issues(body["originProduct"]["detailContent"])
+            if iss:   # 스토어 상단·하단 HTML 등에 남은 것
+                notes.append("모바일에서 흐린 캡처로 보일 수 있음: " + ", ".join(iss))
             res = client.create_product(body, on_wait=on_wait)
             shown = int(body["originProduct"]["salePrice"]) - convert.round_up(bait_amt or 0, max(1, convert.to_int(cfg.get("price_round"), 100)))
             sec = time.time() - t0
@@ -438,6 +445,34 @@ class Runner:
             c.execute("UPDATE names SET listing_id=? WHERE id=?", (t["id"], nm["id"]))
             c.execute("UPDATE listings SET name_id=?, name=? WHERE id=?", (nm["id"], nm["name"], t["id"]))
         return nm["name"]
+
+    def _option_images(self, client, cache, boxes, look, lid, label, on_wait):
+        """옵션 사진 묶음마다 2열 그림을 그려 네이버에 올린 주소들. 같은 그림은 한 번만 올리고 모든 스토어가 같이 쓴다.
+        못 만들면(옵션 사진을 못 받음, 글꼴 없음) 등록하지 않는다 — 한 줄에 하나씩 쌓이거나 흐린 상세로 올라가지 않게."""
+        style, color = look
+        dl = naver.downloader()
+        out = []
+        for box in boxes:
+            k = optimage.key(box, style, color)
+            keys = [f"optimg:{k}:{i}" for i in range(optimage.count(len(box["cards"])))]
+            saved = self.db.image_map(DETAIL_SCOPE, keys)
+            if len(saved) < len(keys):
+                self._stage(lid, label, "옵션표 그림 만드는 중")
+                try:
+                    imgs = optimage.build(box, style, color, lambda u: dl(u, cache)[0])
+                except Exception as e:  # noqa: BLE001 - 사진 받기·그리기 실패는 이 건만 실패로
+                    raise convert.ConvertError(f"옵션표 그림을 만들지 못했습니다 ({e}). 다시 시도해 주세요.") from None
+                need = [(kk, data) for kk, data in zip(keys, imgs) if kk not in saved]
+                for j in range(0, len(need), naver.IMAGES_PER_CALL):
+                    chunk = need[j:j + naver.IMAGES_PER_CALL]
+                    urls = client.upload_images([(kk, data, "image/jpeg") for kk, data in chunk], on_wait=on_wait)
+                    pairs = [(kk, u) for (kk, _), u in zip(chunk, urls)]
+                    self.db.save_images(DETAIL_SCOPE, pairs)
+                    saved.update(pairs)
+                    with self.lock:
+                        self.state["images"] += len(chunk)
+            out.append([saved[kk] for kk in keys])
+        return out
 
     def _images(self, client, pool, cache, scope, srcs, required, lid, label, on_wait, wm=None):
         """(원본→네이버 주소, 새로 올린 수, 못 받은 주소). required면 하나라도 못 받으면 실패.

@@ -10,7 +10,7 @@ import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import VERSION, activity, aiwords, bait, bulkedit, chrome, mail, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, orders, watermark
+from . import VERSION, activity, aiwords, bait, bulkedit, chrome, mail, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
 from .db import DB
 from .tasks import Tasks
 
@@ -345,6 +345,17 @@ def create_app(db=None):
         except ValueError as e:
             return fail(str(e))
         return jsonify({"count": n, "category": path})
+
+    @app.get("/api/optimg/<k>/<int:i>.jpg")
+    def option_image(k, i):
+        """상세 옵션표 그림 미리보기 (올리기 전, 이 PC에서 그림)."""
+        try:
+            data = optimage.preview(k, i, lambda u: naver.downloader()(u, naver.image_cache(config.load()))[0])
+        except Exception as e:  # noqa: BLE001
+            return Response(f"옵션표 그림을 만들지 못했습니다: {e}", status=500, mimetype="text/plain")
+        if data is None:
+            return fail("옵션표 그림이 없습니다.", 404)
+        return Response(data, mimetype="image/jpeg", headers={"Cache-Control": "max-age=3600"})
 
     @app.get("/api/categories/search")
     def categories_search():
@@ -1020,11 +1031,21 @@ def create_app(db=None):
         k = db.one("SELECT words FROM ctx_kw WHERE source_id=?", (l["source_id"],))
         src = db.one("SELECT name FROM sources WHERE id=?", (l["source_id"],))["name"]
         l["nd"] = ctxkw.name_parts(l["name"], src, ctxkw.kw_of(k["words"]) if k and k["words"] else {}, l["name_origin"])
+        # 옵션표 그림: 이미 올린 것은 네이버 주소, 아니면 이 PC에서 그려 보여 줄 주소 (올릴 때 그려서 올림)
+        look = convert.option_look(cfg, store)
+        opt_urls = []
+        for box in convert.option_boxes(row, cfg, store):
+            k = optimage.remember(box, *look)
+            keys = [f"optimg:{k}:{i}" for i in range(optimage.count(len(box["cards"])))]
+            up = db.image_map(engine.DETAIL_SCOPE, keys)
+            opt_urls.append([up.get(kk) or f"/api/optimg/{k}/{i}.jpg" for i, kk in enumerate(keys)])
         try:
             l["body"] = convert.build_body(row, cfg, cats.get(cat) or f"(카테고리 번호 확인 필요) {cat}", url_map,
                                            name=l["name"], price=l["price"], seller_code=l["next_seller_code"],
                                            as_phone=l["as_phone"] or cfg.get("as_phone"),
-                                           importer=convert.importer_for(store, cfg), store=store)
+                                           importer=convert.importer_for(store, cfg), store=store, opt_urls=opt_urls)
+            # 네이버 모바일이 흐린 캡처로 보여 주게 만드는 것 (스토어 상단·하단 HTML 포함)
+            l["mobile_issues"] = convert.mobile_issues(l["body"]["originProduct"]["detailContent"])
         except convert.ConvertError as e:
             l["body"] = {"검사 오류": str(e)}
         l["thumb"] = (convert.thumbnails(row) or [""])[0]

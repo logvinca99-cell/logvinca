@@ -275,7 +275,7 @@ App.page("stores", {
               <button type="button" class="btn ghost" id="wm-del">로고 지우기</button></div></div></div>
         </div>
         <h3 class="sec-title">상세 옵션표</h3>
-        <p class="muted small" style="margin:0">원본 상세의 옵션표(사진 + 옵션 이름)를 네이버에서 깨지지 않는 표로 바꿔 올립니다. 고르지 않으면 설정의 공통값을 씁니다.</p>
+        <p class="muted small" style="margin:0">원본 상세의 옵션표(사진 + 옵션 이름)를 <b>2열 그림</b>으로 만들어 네이버에 올립니다 — 표·CSS를 쓰지 않아 휴대폰에서도 선명하고 늘 2열입니다. 고르지 않으면 설정의 공통값을 씁니다.</p>
         <div class="two">
           <div class="form" style="gap:8px">
             <label class="field">모양 <select id="t-optstyle"><option value="">설정 공통값 따름 (지금: ${esc(((OPT_STYLES.find(([v]) => v === cfg.option_table_style) || OPT_STYLES[0])[1]).split(":")[0].split(" (")[0])})</option>
