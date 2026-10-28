@@ -39,6 +39,18 @@ def explain_error(r):
     return msg + (" / " + " / ".join(bad) if bad else "")
 
 
+def _retry_unit_price(r, body):
+    """네이버가 '가격표시제 대상 품목 — 단위가격 사용여부를 선택'으로 거절했으면 body를 '사용 안 함'으로 고치고 True.
+    그 카테고리는 기억해 두고 다음부터 처음부터 넣는다."""
+    if r.status_code != 400 or "unitPriceYn" not in (r.text or ""):
+        return False
+    from . import convert
+    if not convert.set_no_unit_price(body):
+        return False
+    convert.remember_unit_price((body.get("originProduct") or {}).get("leafCategoryId"))
+    return True
+
+
 def _guess_mime(url, content_type):
     if content_type and content_type.startswith("image/"):
         ct = content_type.split(";")[0].strip()
@@ -343,6 +355,8 @@ class Client:
 
     def create_product(self, body, on_wait=None):
         r = self.request("POST", "/v2/products", json=body, on_wait=on_wait)
+        if _retry_unit_price(r, body):
+            r = self.request("POST", "/v2/products", json=body, on_wait=on_wait)
         if r.status_code != 200:
             raise ApiError(f"상품 등록 실패: {explain_error(r)}")
         return r.json()
@@ -354,8 +368,15 @@ class Client:
         body = r.json()
         return {k: v for k, v in body.items() if k in ("originProduct", "smartstoreChannelProduct")}
 
-    def _put_origin(self, origin_no, body, on_wait=None):
+    def _put(self, origin_no, body, on_wait=None):
+        """원상품 다시 보내기 (가격표시제 대상이면 '단위가격 사용 안 함'으로 한 번 더)."""
         r = self.request("PUT", f"/v2/products/origin-products/{origin_no}", json=body, on_wait=on_wait)
+        if _retry_unit_price(r, body):
+            r = self.request("PUT", f"/v2/products/origin-products/{origin_no}", json=body, on_wait=on_wait)
+        return r
+
+    def _put_origin(self, origin_no, body, on_wait=None):
+        r = self._put(origin_no, body, on_wait)
         if r.status_code != 200:
             raise ApiError(f"가격 바꾸기 실패: {explain_error(r)}")
         return True
@@ -389,7 +410,7 @@ class Client:
         body = self._get_origin(origin_no, on_wait)
         changed = apply(body)
         if changed:
-            r = self.request("PUT", f"/v2/products/origin-products/{origin_no}", json=body, on_wait=on_wait)
+            r = self._put(origin_no, body, on_wait)
             if r.status_code != 200:
                 raise ApiError(f"상품 고치기 실패: {explain_error(r)}")
         return changed
@@ -419,7 +440,7 @@ class Client:
         body = r.json()
         body["originProduct"]["salePrice"] = int(price)
         body = {k: v for k, v in body.items() if k in ("originProduct", "smartstoreChannelProduct")}
-        r = self.request("PUT", f"/v2/products/origin-products/{origin_no}", json=body, on_wait=on_wait)
+        r = self._put(origin_no, body, on_wait)
         if r.status_code != 200:
             raise ApiError(f"가격 바꾸기 실패: {explain_error(r)}")
         return True

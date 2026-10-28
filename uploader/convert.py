@@ -5,7 +5,9 @@
 
 import copy
 import hashlib
+import json
 import math
+import os
 import re
 
 from . import config
@@ -497,6 +499,45 @@ def fit_width(html):
     return _DIV_OPEN.sub(tag, html)
 
 
+UNIT_PRICE_PATH = os.path.join(config.DATA_DIR, "unit_price_categories.json")
+_unit_price = {"mtime": None, "ids": set()}
+
+
+def unit_price_categories():
+    """가격표시제(단위가격) 대상으로 확인된 네이버 카테고리 번호들 (등록·수정 때 네이버가 알려 준 것)."""
+    try:
+        mt = os.path.getmtime(UNIT_PRICE_PATH)
+    except OSError:
+        return set()
+    if _unit_price["mtime"] != mt:
+        try:
+            with open(UNIT_PRICE_PATH, encoding="utf-8") as f:
+                _unit_price["ids"] = {str(x) for x in json.load(f)}
+        except (OSError, ValueError):
+            _unit_price["ids"] = set()
+        _unit_price["mtime"] = mt
+    return _unit_price["ids"]
+
+
+def remember_unit_price(category_id):
+    if not category_id or str(category_id) in unit_price_categories():
+        return
+    ids = sorted(unit_price_categories() | {str(category_id)})
+    os.makedirs(os.path.dirname(UNIT_PRICE_PATH), exist_ok=True)
+    with open(UNIT_PRICE_PATH, "w", encoding="utf-8") as f:
+        json.dump(ids, f)
+
+
+def set_no_unit_price(body):
+    """가격표시제 대상 카테고리: '단위가격 사용 안 함'으로 (엑셀에 총 용량이 없어 단위가격을 계산할 수 없음).
+    이미 값이 있으면 그대로 두고 False."""
+    da = body.setdefault("originProduct", {}).setdefault("detailAttribute", {})
+    if (da.get("unitCapacity") or {}).get("unitPriceYn") is not None:
+        return False
+    da["unitCapacity"] = {"unitPriceYn": False}
+    return True
+
+
 def detail_source(row, cfg):
     """올릴 상세의 출발점: 엑셀 상세 − 방문 알림 − http(보안 아님) 동영상 − (설정이면) 동영상 전부, 폭은 PC 860px에 맞춤."""
     html = row.get("상세설명") or f"<p>{row.get('상품명') or ''}</p>"
@@ -664,6 +705,8 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
     code = seller_code or row.get("판매자코드")
     if code:
         detail["sellerCodeInfo"] = {"sellerManagementCode": str(code)}
+    if str(category_id) in unit_price_categories():   # 가격표시제 대상 카테고리 (한 번 확인된 것)
+        detail["unitCapacity"] = {"unitPriceYn": False}
     o = options(row)
     if o:
         o = copy.deepcopy(o)

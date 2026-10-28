@@ -398,6 +398,8 @@ class Runner:
             if iss:   # 스토어 상단·하단 HTML 등에 남은 것
                 notes.append("모바일에서 흐린 캡처로 보일 수 있음: " + ", ".join(iss))
             res = client.create_product(body, on_wait=on_wait)
+            if ((body["originProduct"].get("detailAttribute") or {}).get("unitCapacity") or {}).get("unitPriceYn") is False:
+                notes.append("가격표시제 대상 카테고리 → 단위가격 '사용 안 함'으로 등록")
             shown = int(body["originProduct"]["salePrice"]) - convert.round_up(bait_amt or 0, max(1, convert.to_int(cfg.get("price_round"), 100)))
             sec = time.time() - t0
             self.db.set_listing(lid, "success", op="create", stage="", message=" / ".join(notes), seconds=sec,
