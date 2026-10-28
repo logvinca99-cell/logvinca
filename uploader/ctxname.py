@@ -148,8 +148,8 @@ def make_names(origin_name, ai_words, forbidden, copies=1, seed=0, reject=None, 
 
 
 # ───────────────────────── v2: keep · core · ctx 조립 (AI가 주는 세 묶음)
-# [원본 앞 4단어(숫자·수량·연식만 있는 단어는 뒤로)] + [keep] + [core 전부] + [ctx] + [남은 원본 단어] + [숫자·수량·연식]
-# 넣는 순서(자리가 모자라면 뒤의 것부터 빠짐): keep → core(확신 1 → 확신 2) → ctx 2개 → 남은 원본 단어 → ctx 2개 더 → 숫자·수량·연식.
+# [원본 앞 4단어(숫자·수량·연식만 있는 단어는 뒤로)] + [keep] + [core 전부 + core2 앞 2개] + [ctx] + [남은 원본 단어] + [나머지 core2] + [숫자·수량·연식]
+# 넣는 순서(자리가 모자라면 뒤의 것부터 빠짐): keep → core → core2 2개 → ctx 2개 → 남은 원본 단어 → 나머지 core2 → ctx 2개 더 → 숫자·수량·연식.
 # 무작위 없이 정해진 순서라 같은 입력이면 늘 같은 이름. A(1번째 복사본)·B(2번째)는 core·ctx·원본 단어 고르는 위치만 다르다.
 
 # 숫자만, 또는 숫자 + 수량·연식 표시만 있는 단어 (1+1, 2024, 2024형, 10개, 3P, 2세트, 5개입, 2025년식 …). 크기(30cm)는 사양이라 그대로 둔다.
@@ -157,6 +157,7 @@ NUMERIC = re.compile(r'^[\d\s+\-x×*/.,~()]+(개|개입|매|입|p|P|ea|EA|세트
 AI_WORD = re.compile(r'^[가-힣A-Za-z0-9]{2,12}$')   # core·ctx 한 단어 (띄어쓰기 없이, 너무 긴 말은 50자를 잡아먹어 뺌)
 # core(다른 이름)는 받은 것을 50자 안에서 전부 넣고, 맥락(ctx)은 그다음 남는 자리에 넣는다
 CTX_FIRST, CTX_MORE = 2, 2
+CORE2_FIRST = 2   # core2(용도·조합 표현) 중 맥락 앞에 넣는 개수 — 나머지는 남은 원본 단어 뒤에
 
 
 def is_numeric(w):
@@ -191,7 +192,7 @@ def filter_words(words, origin_tokens, head, forbidden, bad=lambda w: False, lim
 def _fit(head, picks, max_chars, rep=None):
     """앞 단어 + (넣을 후보 [(묶음, 단어)] 우선순위 순) → 50자 안에 들어가는 것만 고른 뒤, 묶음 순서대로 늘어놓는다.
     rep(단어 목록)이 참이면(같은 단어가 3번 이상 — 예: 커튼·린넨커튼·가리개커튼) 그 단어는 넣지 않는다."""
-    order = {"keep": 0, "core": 1, "ctx": 2, "rest": 3, "num": 4}
+    order = {"keep": 0, "core": 1, "ctx": 2, "rest": 3, "more": 4, "num": 5}   # more = 뒤로 보낸 core2
     chosen = []
     for kind, w in picks:
         if w in head or any(w == x for _, x in chosen):
@@ -201,7 +202,7 @@ def _fit(head, picks, max_chars, rep=None):
             continue
         chosen.append((kind, w))
     ordered = sorted(chosen, key=lambda p: order[p[0]])   # sorted는 같은 묶음 안의 우선순위(넣은 순서)를 지킨다
-    return " ".join(head + [x for _, x in ordered]), [x for k, x in ordered if k in ("core", "ctx")]
+    return " ".join(head + [x for _, x in ordered]), [x for k, x in ordered if k in ("core", "ctx", "more")]
 
 
 def make_names_v2(origin_name, kw, forbidden, copies=2, seed=0, reject=None, opts=None, bad=None, rep=None):
@@ -225,7 +226,7 @@ def make_names_v2(origin_name, kw, forbidden, copies=2, seed=0, reject=None, opt
         return [None] * copies
     keep = [w for w in (kw.get("keep") or []) if w in toks and w not in head and not is_numeric(w)]
     core = filter_words(kw.get("core"), toks, head, forbidden, bad)
-    core2 = [w for w in filter_words(kw.get("core2"), toks, head, forbidden, bad) if w not in core]   # 확신 2: 확신 1 뒤, 자리 남을 때만
+    core2 = [w for w in filter_words(kw.get("core2"), toks, head, forbidden, bad) if w not in core]   # 용도·조합 표현
     ctx = filter_words([w for w in (kw.get("ctx") or []) if w not in core and w not in core2], toks, head, forbidden, bad)
     rest = [w for w in pool if w not in keep]
     orig = " ".join(str(origin_name or "").split())
@@ -236,14 +237,15 @@ def make_names_v2(origin_name, kw, forbidden, copies=2, seed=0, reject=None, opt
             v = k + t
             c0 = v % len(core) if core else 0
             d0 = v % len(core2) if core2 else 0
-            # A·B는 다른 이름의 순서만 다름 (A는 1번째부터, B는 2번째부터). 확신 1을 다 넣고 확신 2
-            c_pick = core[c0:] + core[:c0] + core2[d0:] + core2[:d0]
+            # A·B는 순서만 다름 (A는 1번째부터, B는 2번째부터). core 전부 + core2 앞 2개는 맥락 앞에, 나머지 core2는 원본 단어 뒤에
+            c_pick = core[c0:] + core[:c0]
+            c2 = core2[d0:] + core2[:d0]
             start = (v * CTX_FIRST) % len(ctx) if ctx else 0
             cx = (ctx[start:] + ctx[:start]) if ctx else []
             r0 = (v * 2) % len(rest) if rest else 0
             rs = rest[r0:] + rest[:r0]
-            picks = ([("keep", w) for w in keep] + [("core", w) for w in c_pick]
-                     + [("ctx", w) for w in cx[:CTX_FIRST]] + [("rest", w) for w in rs]
+            picks = ([("keep", w) for w in keep] + [("core", w) for w in c_pick + c2[:CORE2_FIRST]]
+                     + [("ctx", w) for w in cx[:CTX_FIRST]] + [("rest", w) for w in rs] + [("more", w) for w in c2[CORE2_FIRST:]]
                      + [("ctx", w) for w in cx[CTX_FIRST:CTX_FIRST + CTX_MORE]] + [("num", w) for w in nums])
             name, used = _fit(head, picks, o["max_chars"], rep)
             if rep and rep(name.split()):

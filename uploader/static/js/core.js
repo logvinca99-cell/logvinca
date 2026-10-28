@@ -414,7 +414,7 @@ const App = {
     const [b, i] = await Promise.all([this.api("/api/ctx/estimate", { json: { ...target, mode: "batch" } }),
       this.api("/api/ctx/estimate", { json: { ...target, mode: "instant" } })]);
     const inst = (s.ctx_mode || "instant") === "instant";   // 기본 방식은 설정 → AI 키워드 → 처리 방식
-    const line = (e, label) => `${label} 약 <b>${num(e.krw)}원</b> <span class="muted small">(1천 개면 약 ${num(e.per_1k_krw)}원 · 1만 개면 약 ${num(e.per_10k_krw)}원)</span>`;
+    const line = (e, label) => `${label} 약 <b>${num(e.krw)}원</b> <span class="muted small">(캐시를 다 놓치면 최대 약 ${num(e.krw_max)}원 · 1천 개면 약 ${num(e.per_1k_krw)}원 · 1만 개면 약 ${num(e.per_10k_krw)}원)</span>`;
     this.openModal({
       title: "AI 키워드 받기 · 비용 안내",
       body: `<div class="form">
@@ -423,7 +423,7 @@ const App = {
             ${est.old ? `<br><span class="small">예전 지시로 받은 원본 <b>${num(est.old)}개</b>는 다시 받지 않습니다. <a href="#" id="cm-refresh">이것도 새 지시로 함께 다시 받기</a></span>` : ""}</dd>
           <dt>요청 수</dt><dd>${num(est.requests)}건 <span class="muted small">(요청 1건에 원본 ${num(s.ctx_per_request)}개)</span></dd>
           <dt>예상 토큰</dt><dd>입력 ${num(est.in_tok)} · 출력 ${num(est.out_tok)}</dd>
-          <dt>예상 비용</dt><dd>${line(b, "일괄")}<br>${line(i, "즉시")}<br><span class="muted small">${esc(est.model)} · 환율 ${num(est.rate)}원 · 원본당 입력 약 140, 출력 약 130토큰 기준 · 지시문 캐시 할인은 빼고 넉넉히 잡은 값</span></dd>
+          <dt>예상 비용</dt><dd>${line(b, "일괄")}<br>${line(i, "즉시")}<br><span class="muted small">${esc(est.model)} · 환율 ${num(est.rate)}원 · 지시문 약 ${num(est.sys_tok)}토큰(처음 한 번 기억, 이후 0.1배) + 원본당 입력 약 45 · 출력 약 130토큰 기준 어림값</span></dd>
         </dl>
         ${est.has_key ? "" : `<p class="c-err small">설정 → AI 상품명에 Anthropic API 키를 먼저 넣어야 합니다.</p>`}
         ${est.pending ? `<p class="muted small">지금 일괄 처리 중인 원본 ${num(est.pending)}개는 다시 보내지 않습니다.</p>` : ""}
@@ -431,7 +431,7 @@ const App = {
           <label><input type="radio" name="cm" value="batch" ${!inst ? "checked" : ""}><div><b>일괄 처리 (50% 할인)</b>
             <span class="muted small">결과가 오기까지 몇 분~몇 시간. 프로그램을 꺼도 다시 켜면 이어서 확인합니다. 결과가 오면 이름 후보 2개를 만들고 이름 없는 복사본에 바로 배정합니다.</span></div></label>
           <label><input type="radio" name="cm" value="instant" ${inst ? "checked" : ""}><div><b>즉시</b>
-            <span class="muted small">1~2분 안에 받습니다. 요청을 한꺼번에 보냅니다 (요금은 일괄의 2배 — 원본 ${num(est.sources)}개면 차이 약 ${num(Math.max(0, i.krw - b.krw))}원).</span></div></label>
+            <span class="muted small">1~2분 안에 받습니다. 첫 요청 1개로 지시문을 캐시에 기억시킨 뒤 나머지를 한꺼번에 보냅니다 (요금은 일괄의 약 2배 — 원본 ${num(est.sources)}개면 차이 약 ${num(Math.max(0, i.krw - b.krw))}원).</span></div></label>
         </div>
         <p class="muted small">처음 골라져 있는 방식은 <a href="#settings">설정 → 상품명 → AI 키워드 → 처리 방식</a>에서 바꿉니다. 끝나면 실제 비용(응답의 사용량 기준)을 실행 기록에 남깁니다.</p></div>`,
       buttons: [{ label: "취소", onClick: () => { if (after) after(false); } }, { label: "키워드 받기 시작", primary: true, onClick: async (m) => {

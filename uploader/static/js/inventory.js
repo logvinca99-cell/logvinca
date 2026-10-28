@@ -334,10 +334,10 @@ App.page("inventory", {
           title="${use.includes(w) ? "이름에 쓰는 단어" : "안 씀 (앞 단어에 이미 있음·원본에 없음·금지어·상표·직접 차단 등)"}">${esc(w)}</span>`).join("")}</div>` : '<span class="muted small">없음</span>'}</div>`;
     };
     b.innerHTML = `<div class="kw-src">
-      <p class="muted small">이름 = [원본 앞 ${esc((k.head || []).length)}단어${k.nums?.length ? ` · ${esc(k.nums.join(" "))}는 뒤로` : ""}] + keep + 다른 이름 전부 + 맥락(남는 자리) + 남은 원본 단어.
+      <p class="muted small">이름 = [원본 앞 ${esc((k.head || []).length)}단어${k.nums?.length ? ` · ${esc(k.nums.join(" "))}는 뒤로` : ""}] + keep + 다른 이름(core) 전부 + 용도·조합(core2) 2개 + 맥락 + 남은 원본 단어 + 나머지 core2.
         상태: <b>${st}</b>${k.at ? ` · ${ymd(k.at)}` : ""}${k.error ? ` · <span class="c-err">${esc(k.error)}</span>` : ""}</p>
-      ${k.status === "ok" ? group("keep", "keep", "원본에서 지킬 핵심 단어") + group("core", "다른 이름 (core · 확신 1)", "같은 물건을 부르는 다른 이름 · 50자 안에서 전부 넣음")
-        + group("core2", "다른 이름 (core2 · 확신 2)", "그럴듯하지만 덜 확실한 이름 · 확신 1 다음, 자리가 남을 때만") + group("ctx", "맥락 (ctx)", "쓰는 장소·사람·용도·상황")
+      ${k.status === "ok" ? group("keep", "keep", "원본에서 지킬 핵심 단어") + group("core", "다른 이름 (core)", "같은 물건을 부르는 통용 명칭·동의어·상위 명칭 · 50자 안에서 전부 넣음")
+        + group("core2", "용도·조합 (core2)", "용도형 명칭·조합용 목적 표현 · 앞 2개는 맥락 앞, 나머지는 원본 단어 뒤") + group("ctx", "맥락 (ctx)", "쓰는 장소·사람·용도·상황")
         : `<button class="btn" id="ctx-one">이 원본 AI 키워드 받기</button>`}
     </div>`;
     $("#ctx-one", b)?.addEventListener("click", () => App.ctxConfirm({ ids: [d.id] }));

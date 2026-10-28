@@ -33,15 +33,16 @@ App.page("runs", {
           <td class="num">${num(p.pending)}</td><td class="num ${p.fail ? "c-err" : ""}">${num(p.fail)}</td>
           <td class="r"><a href="#listings?plan_id=${p.id}">보기</a></td></tr>`).join("")
           : `<tr class="empty-row"><td colspan="8">아직 계획이 없습니다.</td></tr>`}</tbody></table></section>
-      <section class="card table-card"><div class="sec-head pad-x"><h2>AI 키워드 받기</h2><span class="muted small">실제 비용 = 응답 사용량 기준 (일괄은 50% 할인 단가)</span></div>
+      <section class="card table-card"><div class="sec-head pad-x"><h2>AI 키워드 받기</h2><span class="muted small">실제 비용 = 응답 사용량 기준 (일괄 50% 할인 · 캐시로 읽은 지시문 0.1배 반영)</span></div>
         <table class="grid"><thead><tr><th>시작</th><th>방식</th><th>모델</th><th class="w-num">원본</th><th class="w-num">요청</th>
-          <th class="w-num">받음</th><th class="w-num">재시도 대기</th><th class="w-num">토큰 (입력/출력)</th><th class="w-num">실제 비용</th><th class="w-num">예상</th><th>상태</th></tr></thead>
+          <th class="w-num">받음</th><th class="w-num">재시도 대기</th><th class="w-num">토큰 (입력/출력)</th><th class="w-num" title="입력 중 캐시로 읽은 토큰 (지시문을 다시 쓴 양, 요금 0.1배)">캐시로 읽음</th><th class="w-num">실제 비용</th><th class="w-num">예상</th><th>상태</th></tr></thead>
         <tbody>${kw.length ? kw.map((r) => `<tr><td>${when(r.started_at)}</td><td>${r.mode === "batch" ? "일괄" : "즉시"}</td><td class="small">${esc(r.model)}</td>
           <td class="num">${num(r.sources)}</td><td class="num">${num(r.requests)}</td><td class="num c-ok">${num(r.ok)}</td>
           <td class="num ${r.failed ? "c-err" : ""}">${num(r.failed)}</td><td class="num">${num(r.in_tok)} / ${num(r.out_tok)}</td>
+          <td class="num">${r.in_tok ? `${num(r.cache_tok || 0)} <span class="muted small">(${Math.round(((r.cache_tok || 0) / r.in_tok) * 100)}%)</span>` : "-"}</td>
           <td class="num">${num(Math.ceil(r.cost_usd * r.rate))}원</td><td class="num muted">${num(Math.ceil(r.est_cost_usd * r.rate))}원</td>
           <td>${{ running: "진행 중", canceling: "중지 중", canceled: "중지됨", done: "끝", failed: "실패" }[r.status] || esc(r.status)}${r.note ? ` <span class="muted small">${esc(r.note)}</span>` : ""}</td></tr>`).join("")
-          : `<tr class="empty-row"><td colspan="11">아직 기록이 없습니다.</td></tr>`}</tbody></table></section>
+          : `<tr class="empty-row"><td colspan="12">아직 기록이 없습니다.</td></tr>`}</tbody></table></section>
       <section class="card table-card"><div class="sec-head pad-x"><h2>불러오기</h2></div>
         <table class="grid"><thead><tr><th>시각</th><th>종류</th><th>파일</th><th class="w-num">줄</th><th class="w-num">새로</th>
           <th class="w-num">갱신</th><th>메모</th></tr></thead>

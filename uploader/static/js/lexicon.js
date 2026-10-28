@@ -22,8 +22,8 @@ App.page("lexicon", {
 
       <section class="card pad" id="rv-sec">
         <div class="sec-head"><h2>AI 다른 이름 확인</h2>
-          <div class="seg" role="group"><button type="button" class="on" data-kind="core">다른 이름 (확신 1)</button><button type="button" data-kind="core2">다른 이름 (확신 2)</button><button type="button" data-kind="ctx">맥락 (ctx)</button></div></div>
-        <p class="muted small">AI가 원본마다 준 단어를 모아 많이 나온 순으로 보여 줍니다. <b>같은 물건이 아닌 이름</b>(예: 유압잭 → 차량리프트)이나 이상한 단어는 <b>차단</b>을 누르세요. <b>확신 2</b>는 AI가 덜 확실하다고 표시한 다른 이름이라 먼저 훑어보면 좋습니다.
+          <div class="seg" role="group"><button type="button" class="on" data-kind="core">다른 이름 (core)</button><button type="button" data-kind="core2">용도·조합 (core2)</button><button type="button" data-kind="ctx">맥락 (ctx)</button></div></div>
+        <p class="muted small">AI가 원본마다 준 단어를 모아 많이 나온 순으로 보여 줍니다. <b>같은 물건이 아닌 이름</b>(예: 유압잭 → 차량리프트)이나 이상한 단어는 <b>차단</b>을 누르세요. <b>용도·조합</b>은 차박텐트·거치·수납처럼 용도형 이름과 짧은 목적 표현입니다.
           모든 원본에서 빠지고, 아직 안 올린 복사본에 그 단어가 든 이름이 붙어 있으면 새 이름으로 바꿉니다 (올라간 상품은 그대로).</p>
         <div id="rv-box" class="muted">불러오는 중</div>
       </section>
