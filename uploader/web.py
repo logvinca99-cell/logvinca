@@ -1508,6 +1508,9 @@ def create_app(db=None):
     if not db.one("SELECT 1 FROM meta WHERE k='ctx_v2_reset'"):
         ctxkw.reset_v1(db)   # AI 키워드 방식이 keep·core·ctx로 바뀜 → 예전 맥락 키워드 초기화 (한 번만)
         db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('ctx_v2_reset', '1')")
+    if not db.one("SELECT 1 FROM meta WHERE k='ctx_core_all_v1'"):
+        ctxkw.rebuild_unused(db)   # 이름에 다른 이름(core)을 1개만 넣던 것을 전부로 → 안 올린 AI 이름 다시 조립 (AI 안 부름, 한 번만)
+        db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('ctx_core_all_v1', '1')")
     if not db.one("SELECT 1 FROM meta WHERE k='copies_dead_v1'"):
         db.recount_sources()   # 내림도 원본당 최대 수에 세도록 바뀜 → 복사 수 다시 세기 (한 번만)
         db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('copies_dead_v1', '1')")

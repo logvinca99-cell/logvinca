@@ -487,6 +487,26 @@ def after_saved(db, sids):
     return st
 
 
+def rebuild_unused(db):
+    """조립 방식이 바뀌었을 때(다른 이름 1개 → 전부): AI를 다시 부르지 않고, 아직 안 올린 복사본의 AI 이름과
+    안 쓴 AI 이름 후보를 지운 뒤 받은 키워드로 새로 만들어 다시 붙인다. 올린 복사본·바꿔 버린 이름은 그대로. 다시 만든 원본 수."""
+    sids = [r["source_id"] for r in db.q("SELECT source_id FROM ctx_kw WHERE status='ok'")]
+    for i in range(0, len(sids), 500):
+        chunk = sids[i:i + 500]
+        marks = ",".join("?" * len(chunk))
+        with db.tx() as c:
+            for r in c.execute(f"""SELECT l.id, l.name_id, l.source_id FROM listings l JOIN names n ON n.id=l.name_id
+                    WHERE l.source_id IN ({marks}) AND n.origin='ctx' AND l.origin_no='' AND l.status IN ('planned','fail')""",
+                    chunk).fetchall():
+                c.execute("UPDATE listings SET name_id=NULL, name=(SELECT name FROM sources WHERE id=?) WHERE id=?",
+                          (r["source_id"], r["id"]))
+                c.execute("DELETE FROM names WHERE id=?", (r["name_id"],))
+            c.execute(f"DELETE FROM names WHERE origin='ctx' AND listing_id IS NULL AND source_id IN ({marks})", chunk)
+            c.execute(f"UPDATE ctx_kw SET names_made=0 WHERE source_id IN ({marks})", chunk)
+        after_saved(db, chunk)
+    return len(sids)
+
+
 def invalidate(c, sid):
     """원본 상품명이 바뀌었을 때: 키워드를 무효로 하고 아직 안 쓴 맥락 이름 후보를 지운다."""
     c.execute("UPDATE ctx_kw SET status='invalid', names_made=0 WHERE source_id=? AND status IN ('ok','retry')", (sid,))

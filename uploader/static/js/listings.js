@@ -262,7 +262,7 @@ App.page("listings", {
     App.openModal({
       title: `상품명 바꾸기 · 복사본 ${num(n)}건`,
       body: `<div class="form"><div class="radio-cards">
-          <label><input type="radio" name="rn" value="ctx" checked><div><b>AI 키워드 (기본)</b><span class="muted small">[원본 앞 ${num(s.ctx_head_n)}단어] + 원본 핵심 단어(keep) + 다른 이름 1개 + 맥락 + 남은 원본 단어, 최대 ${num(s.name_max_len)}자. 키워드가 없는 원본은 먼저 받습니다(비용 안내 후).</span></div></label>
+          <label><input type="radio" name="rn" value="ctx" checked><div><b>AI 키워드 (기본)</b><span class="muted small">[원본 앞 ${num(s.ctx_head_n)}단어] + 원본 핵심 단어(keep) + 다른 이름 전부 + 맥락(남는 자리) + 남은 원본 단어, 최대 ${num(s.name_max_len)}자. 키워드가 없는 원본은 먼저 받습니다(비용 안내 후).</span></div></label>
           <label><input type="radio" name="rn" value="ai"><div><b>AI로 짓기</b><span class="muted small">AI(${esc(s.ai_model)})가 원본을 보고 이름 전체를 새로 짓습니다.</span></div></label>
           <label><input type="radio" name="rn" value="shuffle"><div><b>셔플 (AI 안 씀)</b><span class="muted small">앞 단어를 고정하고 나머지 단어 순서를 섞습니다. 넣을 단어를 적으면 그 단어도 고정 단어 뒤에서 함께 섞입니다.</span>
             <div class="shuffle-opts" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px">
