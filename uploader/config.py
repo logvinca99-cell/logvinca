@@ -173,6 +173,9 @@ DEFAULTS = {
     # 상세 이미지 주소가 이미 네이버 이미지 서버(pstatic.net)면 그대로 둠 (시간·용량 크게 절약)
     "keep_pstatic_detail_images": True,
     "detail_video": "keep",
+    # 상세 옵션표 모양: strong = 제목 색 띠 + 옵션 이름 굵게 + 색 테두리, basic = 표로만 바꿈
+    "option_table_style": "strong",
+    "option_table_color": "#1F2937",
     # 내려받은 이미지를 디스크에 보관해 여러 스토어에 올릴 때 다시 받지 않음 (GB)
     "image_cache_gb": 5,
 

@@ -346,9 +346,17 @@ def _children(inner):
         i = e
 
 
-def naver_safe_layout(html):
+_HEAD_BEFORE = re.compile(r"<(h[1-4])\b[^>]*>(.*?)</\1>\s*$", re.I | re.S)
+OPTION_COLOR = "#1F2937"
+
+
+def naver_safe_layout(html, style="basic", color=None):
     """네이버 상세 편집기가 지우는 CSS(grid, flex-direction)로 짠 옵션표를 표(table)로 바꾼다.
-    그대로 올리면 '옵션 설명' 제목이 왼쪽 좁은 칸으로 밀리고 옵션 이미지가 한 줄에 하나씩 세로로 늘어선다."""
+    그대로 올리면 '옵션 설명' 제목이 왼쪽 좁은 칸으로 밀리고 옵션 이미지가 한 줄에 하나씩 세로로 늘어선다.
+    style='strong': 바로 위 제목(h1~h4)을 색 띠로, 옵션 이름을 굵게·크게, 칸 테두리를 color로.
+    네이버가 지우지 않는 표·글자색·배경색·테두리만 쓰고 색은 bgcolor 속성으로도 같이 넣는다."""
+    strong = style == "strong"
+    color = color if re.fullmatch(r"#[0-9A-Fa-f]{6}", str(color or "")) else OPTION_COLOR
     out, i = [], 0
     for m in _GRID_OPEN.finditer(html):
         if m.start() < i:
@@ -363,20 +371,38 @@ def naver_safe_layout(html):
         cards = _children(html[m.end():end - len("</div>")])
         if not cards:
             continue
+        w = 100 // cols
         cells = []
         for c in cards:
             img = _IMG_TAG.search(c)
             cap = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", _IMG_TAG.sub("", c))).strip()
             img_html = re.sub(r"""\sstyle\s*=\s*(["']).*?\1""", "", img.group(0), flags=re.S) if img else ""
             img_html = img_html.replace("<img", '<img style="width:100%;display:block;" width="100%"', 1) if img_html else ""
-            cells.append(f'<td width="{100 // cols}%" style="width:{100 // cols}%;border:1px solid #EAECF0;text-align:center;'
-                         f'vertical-align:top;padding:0;">{img_html}<p style="padding:8px;margin:0;font-weight:500;">{cap}</p></td>')
+            if strong:   # 칸 전체를 연회색으로 → 이름이 한 줄·두 줄이어도 아래가 비어 보이지 않음
+                cap_html = (f'<p style="padding:12px 6px;margin:0;font-size:16px;font-weight:700;color:#111111;line-height:1.4;">{cap}</p>'
+                            if cap else "")
+                cells.append(f'<td width="{w}%" valign="top" bgcolor="#F5F6F8" style="width:{w}%;border:2px solid {color};'
+                             f'background-color:#F5F6F8;text-align:center;vertical-align:top;padding:0;">{img_html}{cap_html}</td>')
+            else:
+                cap_html = f'<p style="padding:8px;margin:0;font-weight:500;">{cap}</p>' if cap else ""
+                cells.append(f'<td width="{w}%" style="width:{w}%;border:1px solid #EAECF0;text-align:center;'
+                             f'vertical-align:top;padding:0;">{img_html}{cap_html}</td>')
         rows = []
         for r in range(0, len(cells), cols):
-            row = cells[r:r + cols] + [f'<td width="{100 // cols}%" style="width:{100 // cols}%;"></td>'] * (cols - len(cells[r:r + cols]))
+            row = cells[r:r + cols] + [f'<td width="{w}%" style="width:{w}%;"></td>'] * (cols - len(cells[r:r + cols]))
             rows.append("<tr>" + "".join(row) + "</tr>")
-        out.append(html[i:m.start()])
-        out.append('<table width="100%" style="width:100%;border-collapse:separate;border-spacing:12px;table-layout:fixed;">'
+        before = html[i:m.start()]
+        h = _HEAD_BEFORE.search(before) if strong else None
+        if h:   # 바로 위 제목 → 색 띠 (옵션 제목이면 칸 수도)
+            title = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", h.group(2))).strip()
+            if title:
+                count = f'<span style="font-size:14px;color:#FFFFFF;"> &nbsp;총 {len(cards)}종</span>' if "옵션" in title else ""
+                band = (f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;">'
+                        f'<tr><td bgcolor="{color}" align="center" style="background-color:{color};padding:14px 8px;text-align:center;">'
+                        f'<span style="font-size:20px;font-weight:700;color:#FFFFFF;">{title}</span>{count}</td></tr></table>')
+                before = before[:h.start()] + band
+        out.append(before)
+        out.append(f'<table width="100%" style="width:100%;border-collapse:separate;border-spacing:{10 if strong else 12}px;table-layout:fixed;">'
                    + "".join(rows) + "</table>")
         i = end
     html = "".join(out) + html[i:]
@@ -390,7 +416,7 @@ def detail_html(row, cfg, url_map, top="", bottom=""):
     html = row.get("상세설명") or f"<p>{row.get('상품명') or ''}</p>"
     if cfg.get("detail_video") == "remove":
         html = VIDEO_RE.sub("", html)
-    html = naver_safe_layout(html)
+    html = naver_safe_layout(html, cfg.get("option_table_style") or "strong", cfg.get("option_table_color"))
 
     def repl(m):
         src = m.group(3).strip()
