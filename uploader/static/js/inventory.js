@@ -10,6 +10,15 @@ const INV_TILES = [
   { key: "invalid", label: "오류 (고쳐야 함)", dot: "var(--err)" },
 ];
 
+/* 원본 줄 아래: AI 이름 후보 A·B… — 어느 스토어 복사본에 쓰였는지, 남았는지 (남은 이름은 다른 스토어로 복사하면 바로 붙음) */
+function aiNamesLine(p) {
+  const KW = { pending: "AI 키워드 받는 중", retry: "AI 키워드 실패", invalid: "원본 이름이 바뀌어 다시 받아야 함" };
+  if (!p.ai_names?.length) return p.kw_status && KW[p.kw_status] ? `<div class="ai-names muted small">${KW[p.kw_status]}</div>` : "";
+  return `<div class="ai-names">${p.ai_names.map((n) => `<div class="ai-name ${n.code ? "used" : "free"}" title="${esc(n.name)}">
+    <b>${esc(n.label)}</b><span class="an-text">${esc(n.name)}</span>
+    <span class="an-st">${n.code ? `${esc(n.code)} ${n.live ? "판매 중" : "올릴 준비"}` : "남음"}</span></div>`).join("")}</div>`;
+}
+
 App.page("inventory", {
   async mount(el, params) {
     this.f = { status: "", copies: "", q: "", price_min: "", price_max: "", store_missing: "", ...params };
@@ -33,6 +42,9 @@ App.page("inventory", {
         <span class="price-range" title="원본가 구간">원본가 <input id="i-pmin" type="number" min="0" step="1000" placeholder="최소">원 ~
           <input id="i-pmax" type="number" min="0" step="1000" placeholder="최대">원</span>
         <select id="i-missing" class="sel"><option value="">스토어 조건 없음</option></select>
+        <select id="i-ai" class="sel" title="AI 키워드·AI 이름 후보(A·B)">
+          <option value="">AI 이름 전체</option><option value="free">안 쓴 AI 이름 남음</option><option value="used">AI 이름 다 씀</option>
+          <option value="none">AI 키워드 안 받음</option><option value="pending">AI 키워드 받는 중</option><option value="failed">AI 키워드 실패</option></select>
         <button class="btn ghost" id="i-reset">조건 지우기</button>
       </div>
       <div class="listbar" id="i-bar"></div>
@@ -48,6 +60,7 @@ App.page("inventory", {
     </div>`;
     $("#i-missing").innerHTML += App.stores.map((s) => `<option value="${s.id}">${esc(s.name)}에 없는 것만</option>`).join("");
     $("#i-missing").value = this.f.store_missing || "";
+    $("#i-ai").value = this.f.ai || "";
     $("#i-q").value = this.f.q || "";
     this.bind();
     this.onDone = (t) => { if (["import", "plan", "revalidate", "ctxkw"].includes(t.kind)) this.load(); };
@@ -123,7 +136,8 @@ App.page("inventory", {
     return `<tr data-id="${p.id}" class="${on ? "sel" : ""}">
       <td class="w-check" data-stop><input type="checkbox" ${on ? "checked" : ""} ${this.selAll ? "disabled" : ""} aria-label="고르기"></td>
       <td>${img(p.thumb)}</td>
-      <td><div class="p-name">${esc(p.name)}</div><div class="p-sub"><span>원본 #${p.id}</span>${p.seller_code ? `<span>${esc(p.seller_code)}</span>` : ""}${flags}</div></td>
+      <td><div class="p-name">${esc(p.name)}</div><div class="p-sub"><span>원본 #${p.id}</span>${p.seller_code ? `<span>${esc(p.seller_code)}</span>` : ""}${flags}</div>
+        ${aiNamesLine(p)}</td>
       <td class="w-links">${goLinks({ sourceId: p.id })}</td>
       <td class="cat-td"><div class="cat">${cat.length > 2 ? `<div class="cat-top">${esc(cat.slice(0, -2).join(" › "))}</div>` : ""}${esc(cat.slice(-2).join(" › "))}</div></td>
       <td class="num">${num(p.price)}원</td>
@@ -165,10 +179,11 @@ App.page("inventory", {
     $("#i-pmin").addEventListener("input", (e) => later({ price_min: e.target.value }));
     $("#i-pmax").addEventListener("input", (e) => later({ price_max: e.target.value }));
     $("#i-missing").addEventListener("change", (e) => this.setFilter({ store_missing: e.target.value }));
+    $("#i-ai").addEventListener("change", (e) => this.setFilter({ ai: e.target.value }));
     $("#i-reset").addEventListener("click", () => {
-      $("#i-q").value = $("#i-pmin").value = $("#i-pmax").value = ""; $("#i-missing").value = "";
+      $("#i-q").value = $("#i-pmin").value = $("#i-pmax").value = ""; $("#i-missing").value = ""; $("#i-ai").value = "";
       this.tile = "all";
-      this.setFilter({ status: "", copies: "", q: "", price_min: "", price_max: "", store_missing: "" });
+      this.setFilter({ status: "", copies: "", q: "", price_min: "", price_max: "", store_missing: "", ai: "" });
     });
     $("#i-rows").addEventListener("click", (e) => {
       const cr = e.target.closest("tr[data-copy]");
@@ -283,7 +298,7 @@ App.page("inventory", {
         { key: "info", label: "정보", render: (b) => self.renderInfo(b, d) },
         { key: "stores", label: `복사본 ${d.listings.filter((l) => l.status !== "deleted").length}/${d.max_copies}`, render: (b) => self.renderListings(b, d) },
         { key: "ctx", label: `AI 키워드 ${d.ctx.usable.length}`, render: (b) => self.renderCtx(b, d) },
-        { key: "names", label: `상품명 후보 ${d.names.length}`, render: (b) => self.renderNames(b, d) },
+        { key: "names", label: `상품명 후보 ${d.names.filter((n) => n.listing_id !== -1).length}`, render: (b) => self.renderNames(b, d) },
         { key: "detail", label: "상세페이지", render: (b) => {
           b.innerHTML = `<iframe class="preview" sandbox referrerpolicy="no-referrer"></iframe>`;
           $("iframe", b).srcdoc = `<meta name="referrer" content="no-referrer"><style>body{margin:0}img{max-width:100%}</style>` + d.detail_html;
@@ -328,13 +343,15 @@ App.page("inventory", {
   },
 
   renderNames(b, d) {
-    b.innerHTML = `<p class="muted small" style="margin:0">이 원본으로 만든 이름입니다. 모든 이름은 33개 스토어 전체에서 겹치지 않습니다.</p>
-      <ul class="name-list">${d.names.map((n) => `<li>
-        <span class="org org-${n.origin}">${ORIGIN[n.origin] || n.origin}</span>
+    const names = d.names.filter((n) => n.listing_id !== -1);   // 바꿔 버린 이름(-1)은 숨김
+    b.innerHTML = `<p class="muted small" style="margin:0">이 원본으로 만든 이름입니다. <b>AI 이름 A·B…</b>는 AI 키워드로 만든 후보로, 1번째·2번째 스토어 복사본에 차례로 붙습니다.
+        <b>남음</b>인 이름은 이 원본을 다른 스토어로 복사하면 바로 붙습니다. 모든 이름은 33개 스토어 전체에서 겹치지 않습니다.</p>
+      <ul class="name-list">${names.map((n) => `<li>
+        ${n.origin === "ctx" ? `<span class="org org-ctx">AI 이름 ${esc(n.label || "")}</span>` : `<span class="org org-${n.origin}">${ORIGIN[n.origin] || n.origin}</span>`}
         <span class="nm">${esc(n.name)}</span>
         ${n.listing_id ? `<span class="muted small">${esc(n.store_name)} · ${STATUS[n.status] || ""}</span>`
           : n.origin === "original" ? `<span class="muted small">원본</span>`
-          : `<button class="link-btn danger-text" data-del="${n.id}">지우기</button>`}</li>`).join("")}</ul>`;
+          : `<span class="c-ok small"><b>남음</b></span> <button class="link-btn danger-text" data-del="${n.id}">지우기</button>`}</li>`).join("")}</ul>`;
     const reload = async () => { const nd = await App.api(`/api/sources/${d.id}`); Object.assign(d, nd); this.renderNames(b, d); this.load(); };
     $(".name-list", b).addEventListener("click", async (e) => {
       const id = e.target.dataset.del;

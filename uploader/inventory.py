@@ -208,6 +208,17 @@ def source_where(f):
         c = int(f["copies"])
         w.append("n_listings>=?" if c >= 2 else "n_listings=?")
         a.append(c)
+    ai = f.get("ai") or ""
+    if ai == "none":        # AI 키워드를 아직 안 받음
+        w.append("id NOT IN (SELECT source_id FROM ctx_kw WHERE status IN ('ok','pending'))")
+    elif ai == "pending":   # 받는 중 (일괄 처리)
+        w.append("id IN (SELECT source_id FROM ctx_kw WHERE status='pending')")
+    elif ai == "failed":    # 실패
+        w.append("id IN (SELECT source_id FROM ctx_kw WHERE status='retry')")
+    elif ai == "free":      # 안 쓴 AI 이름 후보가 남음 (다른 스토어로 복사하면 바로 붙음)
+        w.append("id IN (SELECT source_id FROM names WHERE origin='ctx' AND listing_id IS NULL)")
+    elif ai == "used":      # 받았지만 후보를 다 씀
+        w.append("id IN (SELECT source_id FROM ctx_kw WHERE status='ok') AND id NOT IN (SELECT source_id FROM names WHERE origin='ctx' AND listing_id IS NULL)")
     if f.get("store_missing"):
         w.append("id NOT IN (SELECT source_id FROM listings WHERE store_id=? AND status!='deleted')")
         a.append(int(f["store_missing"]))
@@ -252,7 +263,27 @@ def query_sources(db, f, page=0, size=100):
             if c["status"] == "deleted":   # 내림도 원본당 자리를 차지하므로 칸에 같이 보인다
                 by_id[c["source_id"]]["deleted_copies"] += 1
             by_id[c["source_id"]]["copies"].append(c)
+        attach_ai_names(db, by_id)
     return {"rows": rows, "total": total}
+
+
+def attach_ai_names(db, by_id):
+    """원본마다 AI 키워드 상태와 AI 이름 후보(A·B…: 어느 스토어 복사본에 쓰였는지 / 남았는지)를 붙인다."""
+    ids = list(by_id)
+    for r in by_id.values():
+        r["kw_status"], r["ai_names"] = "", []
+    if not ids:
+        return
+    marks = ",".join("?" * len(ids))
+    for k in db.q(f"SELECT source_id, status FROM ctx_kw WHERE source_id IN ({marks})", ids):
+        by_id[k["source_id"]]["kw_status"] = k["status"]
+    for n in db.q(f"""SELECT n.source_id, n.name, n.listing_id, l.status, l.origin_no,
+            CASE WHEN t.id IS NULL THEN '' ELSE COALESCE(NULLIF(t.code,''), 'S'||printf('%02d', t.id)) END AS code, t.name AS store
+            FROM names n LEFT JOIN listings l ON l.id=n.listing_id LEFT JOIN stores t ON t.id=l.store_id
+            WHERE n.origin='ctx' AND (n.listing_id IS NULL OR n.listing_id>0) AND n.source_id IN ({marks}) ORDER BY n.id""", ids):
+        lst = by_id[n["source_id"]]["ai_names"]
+        lst.append({"label": chr(65 + len(lst)) if len(lst) < 26 else str(len(lst) + 1), "name": n["name"],
+                    "code": n["code"] or "", "store": n["store"] or "", "live": bool(n["origin_no"]), "status": n["status"] or ""})
 
 
 def source_ids(db, f):
@@ -472,6 +503,9 @@ def source_detail(db, sid):
     s["names"] = db.q("""SELECT n.id, n.name, n.origin, n.listing_id, st.name AS store_name, l.status
         FROM names n LEFT JOIN listings l ON l.id=n.listing_id LEFT JOIN stores st ON st.id=l.store_id
         WHERE n.source_id=? ORDER BY n.listing_id IS NULL, n.id""", (sid,))
+    ai = sorted((n for n in s["names"] if n["origin"] == "ctx" and n["listing_id"] != -1), key=lambda n: n["id"])
+    for i, n in enumerate(ai):   # AI 이름 A·B… (만든 순서, 원본 목록 줄과 같은 글자)
+        n["label"] = chr(65 + i) if i < 26 else str(i + 1)
     s["listings"] = db.q("""SELECT l.id, l.name, l.price, l.status, l.op, l.round, l.message, l.channel_no, l.sold_count,
         l.origin_no, l.seller_code, l.registered_at, l.deleted_at, l.store_id, st.name AS store_name, st.store_url,
         n.origin AS name_origin
@@ -1202,8 +1236,8 @@ def listing_where(f):
         w.append("l.locked=1 AND l.status!='deleted'")
     elif st == "noname":
         w.append("l.name_id IS NULL AND l.status!='deleted' AND l.origin_no=''")
-    elif st == "named":   # 상품명 변경 완료 (아직 안 올린 것 중 새 이름을 붙인 것)
-        w.append("l.name_id IS NOT NULL AND l.status!='deleted' AND l.origin_no=''")
+    elif st == "named":   # 올릴 준비: 상품명을 바꿨고 아직 네이버에 안 올렸고 등록 대기 (실패·처리 중·판매 중·내림 제외)
+        w.append("l.name_id IS NOT NULL AND l.origin_no='' AND l.status='planned' AND l.op IN ('create','reupload')")
     elif st == "bait":
         w.append("l.bait_state IN ('on','fail') AND l.origin_no!=''")
     elif st != "all":
@@ -1244,7 +1278,9 @@ def query_listings(db, f, page=0, size=100):
         s.price AS source_price, s.thumb, s.category, s.n_listings AS source_copies,
         t.id AS store_id, t.name AS store_name, t.store_url,
         COALESCE(NULLIF(t.code,''), 'S'||printf('%02d', t.id)) AS store_code,
-        n.origin AS name_origin, k.words AS ctx_words
+        n.origin AS name_origin, k.words AS ctx_words,
+        CASE WHEN n.origin='ctx' THEN (SELECT COUNT(*) FROM names x WHERE x.source_id=n.source_id AND x.origin='ctx'
+            AND (x.listing_id IS NULL OR x.listing_id>0) AND x.id<n.id) END AS ai_rank
         {base} LEFT JOIN names n ON n.id=l.name_id LEFT JOIN ctx_kw k ON k.source_id=l.source_id
         {where} ORDER BY l.id LIMIT ? OFFSET ?""", (*args, size, page * size))
     # 같은 원본의 다른 스토어 복사본 (바로 가기 버튼용)
@@ -1290,7 +1326,7 @@ def store_summaries(db):
     """복사본 첫 화면: 스토어마다 복사본 수·이름 변경 필요·대기·판매 중·실패."""
     rows = {r["store_id"]: r for r in db.q("""SELECT store_id, COUNT(*) AS all_,
         SUM(name_id IS NULL AND status!='deleted' AND origin_no='') AS noname,
-        SUM(name_id IS NOT NULL AND status!='deleted' AND origin_no='') AS named,
+        SUM(name_id IS NOT NULL AND origin_no='' AND status='planned' AND op IN ('create','reupload')) AS named,
         SUM(status IN ('planned','queued','running')) AS pending,
         SUM(status IN ('planned','queued','running') AND op='create') AS p_create,
         SUM(status IN ('planned','queued','running') AND op='refresh') AS p_refresh,
@@ -1335,7 +1371,7 @@ def listing_counts(db, store_id=None, plan_id=None):
         SUM(sold_count>0) AS sold, SUM(locked=1 AND status!='deleted') AS locked,
         SUM(bait_state IN ('on','fail') AND origin_no!='') AS bait,
         SUM(name_id IS NULL AND status!='deleted' AND origin_no='') AS noname,
-        SUM(name_id IS NOT NULL AND status!='deleted' AND origin_no='') AS named,
+        SUM(name_id IS NOT NULL AND origin_no='' AND status='planned' AND op IN ('create','reupload')) AS named,
         SUM(origin_no!='' AND registered_at<=?) AS age30, SUM(origin_no!='' AND registered_at<=?) AS age60,
         SUM(origin_no!='' AND registered_at<=?) AS age90
         FROM listings{where}""", (now - 30 * day, now - 60 * day, now - 90 * day, *a))

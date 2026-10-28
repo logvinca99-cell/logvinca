@@ -696,3 +696,10 @@ td.w-links > .btn { margin-top: 4px; }
 .nowrap { white-space: nowrap; }
 .nd .nd-core, .nd-legend .nd-core { background: #f3e8ff; color: #7c3aed; font-weight: 700; }
 th .nd-legend { font-weight: 400; margin-top: 4px; }
+/* 원본 줄의 AI 이름 후보 A·B */
+.ai-names { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.ai-name { display: flex; align-items: baseline; gap: 6px; font-size: 12px; min-width: 0; }
+.ai-name b { flex: none; width: 18px; height: 18px; display: inline-grid; place-items: center; border-radius: 4px; background: var(--accent-soft); color: var(--accent-strong); font-size: 11px; }
+.ai-name .an-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); min-width: 0; }
+.ai-name .an-st { flex: none; font-weight: 700; color: var(--muted); }
+.ai-name.free .an-st { color: var(--ok); }

@@ -6,7 +6,7 @@ const RUN_KINDS = [["create", "등록"], ["refresh", "최신화"], ["reupload", 
 const LST_TILES = [
   { key: "all", label: "전체", dot: "var(--text-2)", count: "all_" },
   { key: "noname", label: "상품명 변경 필요", dot: "var(--err)" },
-  { key: "named", label: "상품명 변경 완료", dot: "var(--info)" },
+  { key: "named", label: "올릴 준비 (이름 바꿈·안 올림)", dot: "var(--info)" },
   { key: "live", label: "판매 중", dot: "var(--ok)" },
   { key: "fail", label: "실패", dot: "var(--err)" },
   { key: "sold", label: "판매 이력 있음", dot: "var(--warn)" },
@@ -220,7 +220,7 @@ App.page("listings", {
     const noname = !l.name_id && !live && l.status !== "deleted";
     const flags = (noname ? `<span class="flag bad" title="원본 상품명 그대로라 올리지 않습니다">상품명 변경 필요</span>` : "")
       + (l.rep_word ? `<span class="flag warn" title="'${esc(l.rep_word)}'가 3번 이상 나옵니다 — 상품명 바꾸기로 다시 만드세요">반복: ${esc(l.rep_word)}</span>` : "")
-      + (l.name_origin ? `<span class="org org-${l.name_origin}">${ORIGIN[l.name_origin] || l.name_origin}</span>` : "") + lockFlag(l) + salesFlag(l);
+      + (l.name_origin ? `<span class="org org-${l.name_origin}" title="${l.name_origin === "ctx" ? "AI 키워드로 만든 이름 후보 중 이 원본의 몇 번째인지 (원본 상품 화면에서 A·B 전체를 볼 수 있음)" : ""}">${l.name_origin === "ctx" && l.ai_rank != null ? `AI 이름 ${String.fromCharCode(65 + Math.min(25, l.ai_rank))}` : ORIGIN[l.name_origin] || l.name_origin}</span>` : "") + lockFlag(l) + salesFlag(l);
     return `<tr data-id="${l.id}" class="${on ? "sel" : ""} ${l.status === "deleted" ? "off" : ""}">
       <td class="w-check" data-stop><input type="checkbox" ${on ? "checked" : ""} ${this.selAll ? "disabled" : ""} aria-label="고르기"></td>
       <td>${img(l.thumb)}</td>
