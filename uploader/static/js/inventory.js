@@ -17,7 +17,7 @@ function aiNamesLine(p) {
   return `<div class="ai-names">${p.ai_names.map((n) => `<div class="ai-name ${n.code ? "used" : "free"}" title="${esc(n.name)}">
     <b>${esc(n.label)}</b><span class="an-text">${esc(n.name)}</span>
     <span class="an-st">${n.code ? `${esc(n.code)} ${n.live ? "판매 중" : "올릴 준비"}` : "남음"}</span></div>`).join("")}
-    ${p.ai_retired ? `<div class="muted small" title="상품명 바꾸기를 다시 눌러 바꿔 버린 이름 — 다시 쓰지 않음 (글자는 만든 순서라 건너뜀)">바꿔서 안 쓰는 이름 ${num(p.ai_retired)}개</div>` : ""}</div>`;
+    ${p.ai_retired ? `<div class="muted small" title="상품명 바꾸기를 다시 눌러 바꿔 버린 이름 — 다시 쓰지 않음">바꿔서 안 쓰는 이름 ${num(p.ai_retired)}개</div>` : ""}</div>`;
 }
 
 App.page("inventory", {

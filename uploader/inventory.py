@@ -283,18 +283,16 @@ def attach_ai_names(db, by_id):
     for n in db.q(f"""SELECT n.source_id, n.name, n.listing_id, l.status, l.origin_no,
             CASE WHEN t.id IS NULL THEN '' ELSE COALESCE(NULLIF(t.code,''), 'S'||printf('%02d', t.id)) END AS code, t.name AS store
             FROM names n LEFT JOIN listings l ON l.id=n.listing_id LEFT JOIN stores t ON t.id=l.store_id
-            WHERE n.origin='ctx' AND n.source_id IN ({marks}) ORDER BY n.id""", ids):
-        # 글자(A·B·C…)는 만든 순서 그대로 (화면마다·시간이 지나도 같은 이름은 같은 글자). 바꿔서 안 쓰는 이름은 글자만 차지하고 안 보임
+            WHERE n.origin='ctx' AND n.source_id IN ({marks})
+            ORDER BY n.listing_id IS NULL, CASE WHEN n.listing_id>0 THEN n.listing_id END, n.id""", ids):
+        # 글자: A = 1번째 복사본에 붙은 이름, B = 2번째 복사본(없으면 안 쓴 이름)… 다시 바꿔도 그 복사본 이름은 같은 글자.
+        # 바꿔서 안 쓰는 이름은 안 보이고 개수만
         r = by_id[n["source_id"]]
-        i = r.setdefault("_ai_i", 0)
-        r["_ai_i"] = i + 1
         if n["listing_id"] == -1:
             r["ai_retired"] = r.get("ai_retired", 0) + 1
             continue
-        r["ai_names"].append({"label": _ai_label(i), "name": n["name"], "code": n["code"] or "", "store": n["store"] or "",
-                              "live": bool(n["origin_no"]), "status": n["status"] or ""})
-    for r in by_id.values():
-        r.pop("_ai_i", None)
+        r["ai_names"].append({"label": _ai_label(len(r["ai_names"])), "name": n["name"], "code": n["code"] or "",
+                              "store": n["store"] or "", "live": bool(n["origin_no"]), "status": n["status"] or ""})
 
 
 def _ai_label(i):
@@ -518,8 +516,9 @@ def source_detail(db, sid):
     s["names"] = db.q("""SELECT n.id, n.name, n.origin, n.listing_id, st.name AS store_name, l.status
         FROM names n LEFT JOIN listings l ON l.id=n.listing_id LEFT JOIN stores st ON st.id=l.store_id
         WHERE n.source_id=? ORDER BY n.listing_id IS NULL, n.id""", (sid,))
-    ai = sorted((n for n in s["names"] if n["origin"] == "ctx"), key=lambda n: n["id"])
-    for i, n in enumerate(ai):   # AI 이름 A·B… (만든 순서 그대로, 원본 목록 줄·복사본 화면과 같은 글자)
+    ai = sorted((n for n in s["names"] if n["origin"] == "ctx" and n["listing_id"] != -1),
+                key=lambda n: (n["listing_id"] is None, n["listing_id"] or 0, n["id"]))
+    for i, n in enumerate(ai):   # AI 이름 A·B… (복사본 순서 → 안 쓴 이름, 원본 목록 줄·복사본 화면과 같은 글자)
         n["label"] = _ai_label(i)
     s["listings"] = db.q("""SELECT l.id, l.name, l.price, l.status, l.op, l.round, l.message, l.channel_no, l.sold_count,
         l.origin_no, l.seller_code, l.registered_at, l.deleted_at, l.store_id, st.name AS store_name, st.store_url,
@@ -1311,7 +1310,7 @@ def query_listings(db, f, page=0, size=100):
         COALESCE(NULLIF(t.code,''), 'S'||printf('%02d', t.id)) AS store_code,
         n.origin AS name_origin, k.words AS ctx_words,
         CASE WHEN n.origin='ctx' THEN (SELECT COUNT(*) FROM names x WHERE x.source_id=n.source_id AND x.origin='ctx'
-            AND x.id<n.id) END AS ai_rank
+            AND x.listing_id>0 AND x.listing_id<l.id) END AS ai_rank
         {base} LEFT JOIN names n ON n.id=l.name_id LEFT JOIN ctx_kw k ON k.source_id=l.source_id
         {where} ORDER BY l.id LIMIT ? OFFSET ?""", (*args, size, page * size))
     # 같은 원본의 다른 스토어 복사본 (바로 가기 버튼용)
