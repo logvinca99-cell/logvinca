@@ -585,14 +585,15 @@ function aiMsg(a) {
 }
 
 /* 등록 상품명을 원본과 비교해 색으로: 같은 자리 / 자리만 바뀜 / AI 단어 / 직접 넣은 단어, 아래에 빠진 원본 단어 */
-function nameDiff(name, orig, aiWords = [], origin = "") {
+function nameDiff(name, orig, aiWords = [], origin = "", coreWords = []) {
   const ot = String(orig || "").split(/\s+/).filter(Boolean);
   const nt = String(name || "").split(/\s+/).filter(Boolean);
-  const oset = new Set(ot), ai = new Set(aiWords || []);
+  const oset = new Set(ot), ai = new Set(aiWords || []), core = new Set(coreWords || []);
   const html = nt.map((w, i) => {
     let c = "nd-add", t = "직접 넣은 단어";
     if (oset.has(w)) { c = ot[i] === w ? "nd-same" : "nd-move"; t = ot[i] === w ? "원본과 같은 자리" : "자리만 바뀐 원본 단어"; }
-    else if (ai.has(w) || origin === "ctx" || origin === "ai") { c = "nd-ai"; t = "AI가 가져온 단어"; }
+    else if (core.has(w)) { c = "nd-core"; t = "AI 다른 이름(core)"; }
+    else if (ai.has(w) || origin === "ctx" || origin === "ai") { c = "nd-ai"; t = "AI가 가져온 단어 (맥락)"; }
     return `<span class="${c}" title="${t}">${esc(w)}</span>`;
   }).join(" ");
   const nset = new Set(nt);
@@ -601,7 +602,7 @@ function nameDiff(name, orig, aiWords = [], origin = "") {
 }
 
 const ND_LEGEND = `<div class="nd-legend"><span class="nd-same" style="border:1px solid var(--line)">원본과 같은 자리</span>
-  <span style="background:var(--info-soft);color:var(--info)">자리만 바뀜(셔플)</span><span style="background:var(--accent-soft);color:var(--accent-strong)">AI 단어</span>
+  <span style="background:var(--info-soft);color:var(--info)">자리만 바뀜(셔플)</span><span style="background:var(--accent-soft);color:var(--accent-strong)">AI 맥락</span><span class="nd-core">AI 다른 이름</span>
   <span style="background:var(--warn-soft);color:var(--warn)">직접 넣은 단어</span><span><s>빠진 원본 단어</s></span></div>`;
 
 /* 스토어 목록을 사업자별로 묶기 (순서는 서버가 사업자·스토어 순서대로 줌) → [[사업자 이름, [스토어…]], …] */

@@ -145,3 +145,96 @@ def make_names(origin_name, ai_words, forbidden, copies=1, seed=0, reject=None, 
             break
         results.append(got)
     return results
+
+
+# ───────────────────────── v2: keep · core · ctx 조립 (AI가 주는 세 묶음)
+# [원본 앞 4단어(숫자·수량·연식만 있는 단어는 뒤로)] + [keep] + [core 1개] + [ctx] + [남은 원본 단어] + [숫자·수량·연식]
+# 넣는 순서(자리가 모자라면 뒤의 것부터 빠짐): keep → core → ctx 2개 → 남은 원본 단어 → ctx 2개 더 → 숫자·수량·연식.
+# 무작위 없이 정해진 순서라 같은 입력이면 늘 같은 이름. A(1번째 복사본)·B(2번째)는 core·ctx·원본 단어 고르는 위치만 다르다.
+
+# 숫자만, 또는 숫자 + 수량·연식 표시만 있는 단어 (1+1, 2024, 2024형, 10개, 3P, 2세트, 5개입, 2025년식 …). 크기(30cm)는 사양이라 그대로 둔다.
+NUMERIC = re.compile(r'^[\d\s+\-x×*/.,~()]+(개|개입|매|입|p|P|ea|EA|세트|set|SET|팩|박스|box|BOX|롤|켤레|족|쌍|년|년형|년식|연식|형|종)?$')
+AI_WORD = re.compile(r'^[가-힣A-Za-z0-9]{2,12}$')   # core·ctx 한 단어 (띄어쓰기 없이, 너무 긴 말은 50자를 잡아먹어 뺌)
+CORE_PER_NAME = 1     # 이름 하나에 core는 1개만 (틀린 core가 섞여도 피해가 작게)
+CTX_FIRST, CTX_MORE = 2, 2
+
+
+def is_numeric(w):
+    return bool(NUMERIC.match(w))
+
+
+def split_origin(name, forbidden, head_n=HEAD_N):
+    """원본 → (원본 토큰, 앞 단어, 남은 원본 단어(정리), 숫자·수량·연식 단어)."""
+    toks = []
+    for w in str(name or "").split():
+        if w not in toks and w not in forbidden:
+            toks.append(w)
+    nums = [w for w in toks if is_numeric(w)]
+    words = [w for w in toks if not is_numeric(w)]
+    _, head, pool = clean_origin(" ".join(words), forbidden, head_n)
+    return toks, head, pool, nums
+
+
+def filter_words(words, origin_tokens, head, forbidden, bad=lambda w: False, limit=None):
+    """core·ctx 거르기: 원본에 이미 있는 단어·앞 단어에 들어 있는 말·금지어·막연한 말·상표(bad) 빼고, 순서 유지."""
+    ok = []
+    for w in words or []:
+        w = str(w or "").strip().replace(" ", "")
+        if not AI_WORD.match(w) or w in ok or w in origin_tokens or w in forbidden or w in BAD_AI:
+            continue
+        if any(w in h for h in head) or bad(w):
+            continue
+        ok.append(w)
+    return ok[:limit] if limit else ok
+
+
+def _fit(head, picks, max_chars):
+    """앞 단어 + (넣을 후보 [(묶음, 단어)] 우선순위 순) → 50자 안에 들어가는 것만 고른 뒤, 묶음 순서대로 늘어놓는다."""
+    order = {"keep": 0, "core": 1, "ctx": 2, "rest": 3, "num": 4}
+    chosen = []
+    for kind, w in picks:
+        if w in head or any(w == x for _, x in chosen):
+            continue
+        trial = head + [x for _, x in sorted(chosen + [(kind, w)], key=lambda p: order[p[0]])]
+        if nchars(" ".join(trial)) <= max_chars:
+            chosen.append((kind, w))
+    ordered = sorted(chosen, key=lambda p: order[p[0]])   # sorted는 같은 묶음 안의 우선순위(넣은 순서)를 지킨다
+    return " ".join(head + [x for _, x in ordered]), [x for k, x in ordered if k in ("core", "ctx")]
+
+
+def make_names_v2(origin_name, kw, forbidden, copies=2, seed=0, reject=None, opts=None, bad=None):
+    """원본 하나 → 이름 copies개 (1번째 = A, 2번째 = B). kw = {keep:[], core:[], ctx:[]} (AI가 준 그대로).
+    못 만든 자리는 None (→ 복사본 화면 '상품명 변경 필요'). reject(name)=True면 그 조합을 버리고 다음 조합."""
+    o = {"max_chars": MAX_CHARS, "head_n": HEAD_N, **(opts or {})}
+    bad = bad or (lambda w: False)
+    toks, head, pool, nums = split_origin(origin_name, forbidden, o["head_n"])
+    if not head:
+        return [None] * copies
+    keep = [w for w in (kw.get("keep") or []) if w in toks and w not in head and not is_numeric(w)]
+    core = filter_words(kw.get("core"), toks, head, forbidden, bad)
+    ctx = filter_words([w for w in (kw.get("ctx") or []) if w not in core], toks, head, forbidden, bad)
+    rest = [w for w in pool if w not in keep]
+    orig = " ".join(str(origin_name or "").split())
+    made, results = [], []
+    for k in range(copies):
+        got = None
+        for t in range(10):   # 같은 이름·중복이면 고르는 위치를 바꿔 최대 10번
+            v = k + t
+            c_pick = [core[v % len(core)]] if core else []
+            start = (v * CTX_FIRST) % len(ctx) if ctx else 0
+            cx = (ctx[start:] + ctx[:start]) if ctx else []
+            r0 = (v * 2) % len(rest) if rest else 0
+            rs = rest[r0:] + rest[:r0]
+            picks = ([("keep", w) for w in keep] + [("core", w) for w in c_pick[:CORE_PER_NAME]]
+                     + [("ctx", w) for w in cx[:CTX_FIRST]] + [("rest", w) for w in rs]
+                     + [("ctx", w) for w in cx[CTX_FIRST:CTX_FIRST + CTX_MORE]] + [("num", w) for w in nums])
+            name, used = _fit(head, picks, o["max_chars"])
+            if name == orig or set(name.split()) == set(toks):
+                continue   # 원본과 같은 이름 금지
+            if name in made or (reject and reject(name)):
+                continue
+            got = {"name": name, "chars": nchars(name), "ai_used": used}
+            made.append(name)
+            break
+        results.append(got)
+    return results

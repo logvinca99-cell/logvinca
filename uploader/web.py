@@ -681,6 +681,19 @@ def create_app(db=None):
     def ctx_check():
         return jsonify(ctxkw.poll(db))
 
+    @app.get("/api/ctx/review")
+    def ctx_review():
+        kind = request.args.get("kind") if request.args.get("kind") in ("core", "ctx") else "core"
+        return jsonify(ctxkw.core_review(db, kind))
+
+    @app.post("/api/ctx/block")
+    def ctx_block():
+        b = body()
+        try:
+            return jsonify(ctxkw.set_block(db, b.get("word"), bool(b.get("block", True))))
+        except ValueError as e:
+            return fail(str(e))
+
     @app.get("/api/ctx/status")
     def ctx_status():
         return jsonify({**ctxkw.status(db), "runs": ctxkw.runs(db, 20)})
@@ -1487,6 +1500,9 @@ def create_app(db=None):
         except Exception:  # noqa: BLE001
             pass
 
+    if not db.one("SELECT 1 FROM meta WHERE k='ctx_v2_reset'"):
+        ctxkw.reset_v1(db)   # AI 키워드 방식이 keep·core·ctx로 바뀜 → 예전 맥락 키워드 초기화 (한 번만)
+        db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('ctx_v2_reset', '1')")
     if not db.one("SELECT 1 FROM meta WHERE k='copies_dead_v1'"):
         db.recount_sources()   # 내림도 원본당 최대 수에 세도록 바뀜 → 복사 수 다시 세기 (한 번만)
         db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('copies_dead_v1', '1')")

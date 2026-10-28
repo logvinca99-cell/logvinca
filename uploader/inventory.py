@@ -1225,7 +1225,8 @@ def query_listings(db, f, page=0, size=100):
             sib.setdefault(c["source_id"], []).append(c)
     pv = price_viewer(db)
     for r in rows:
-        r["ctx_words"] = json.loads(r["ctx_words"]) if r["ctx_words"] else []
+        kw = ctxkw.kw_of(r["ctx_words"]) if r["ctx_words"] else {"core": [], "ctx": []}
+        r["ctx_words"], r["core_words"] = kw["ctx"], kw["core"]
         r["others"] = [c for c in sib.get(r["source_id"], []) if c["id"] != r["id"]]
         r.update(pv(r["price"], r["store_id"], bool(r["origin_no"]), r.get("sale_shown")))
     return {"rows": rows, "total": total}

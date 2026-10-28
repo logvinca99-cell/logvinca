@@ -694,3 +694,4 @@ td.w-links > .btn { margin-top: 4px; }
 #l-tiles .t-label::before { display: inline-block; margin-right: 5px; vertical-align: 0; }
 .s-reupload { background: var(--accent-soft); color: var(--accent-strong); }
 .nowrap { white-space: nowrap; }
+.nd .nd-core, .nd-legend .nd-core { background: #f3e8ff; color: #7c3aed; font-weight: 700; }

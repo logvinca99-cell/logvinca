@@ -20,6 +20,14 @@ App.page("lexicon", {
           원본 상품명에 이 단어가 들어 있으면 원본 상품 화면에 경고로 보입니다.</p>
       </section>
 
+      <section class="card pad" id="rv-sec">
+        <div class="sec-head"><h2>AI 다른 이름 확인</h2>
+          <div class="seg" role="group"><button type="button" class="on" data-kind="core">다른 이름 (core)</button><button type="button" data-kind="ctx">맥락 (ctx)</button></div></div>
+        <p class="muted small">AI가 원본마다 준 단어를 모아 많이 나온 순으로 보여 줍니다. <b>같은 물건이 아닌 이름</b>(예: 유압잭 → 차량리프트)이나 이상한 단어는 <b>차단</b>을 누르세요.
+          모든 원본에서 빠지고, 아직 안 올린 복사본에 그 단어가 든 이름이 붙어 있으면 새 이름으로 바꿉니다 (올라간 상품은 그대로).</p>
+        <div id="rv-box" class="muted">불러오는 중</div>
+      </section>
+
       <section class="card pad" id="tm-sec">
         <div class="sec-head"><h2>상표 확인 (키프리스)</h2>
           <span class="muted small">확인한 단어 ${num(tm.stats.checked)}개 · 걸린 단어 ${num(tm.rows.filter((r) => !r.allowed && r.verdict !== "error").length)}${tm.stats.allowed ? ` · 허용 ${num(tm.stats.allowed)}` : ""}</span>
@@ -65,6 +73,31 @@ App.page("lexicon", {
       try { await App.api("/api/trademark/allow", { json: { word: b.dataset.allow, allowed: b.dataset.v === "1" } }); App.route(); }
       catch (err) { App.toast(err.message, true); }
     });
+    const rv = async (kind) => {
+      this.rvKind = kind;
+      $$("#rv-sec [data-kind]").forEach((x) => x.classList.toggle("on", x.dataset.kind === kind));
+      const r = await App.api(`/api/ctx/review?kind=${kind}`);
+      $("#rv-box").className = "";
+      $("#rv-box").innerHTML = r.rows.length ? `<p class="muted small">단어 ${num(r.total)}개${r.total > r.rows.length ? ` 중 많이 나온 ${num(r.rows.length)}개` : ""} · 차단 ${num(r.blocked.length)}개</p>
+        <div class="tm-wrap"><table class="opt-table"><thead><tr><th>단어</th><th class="r">원본 수</th><th>원본 예</th><th></th></tr></thead><tbody>
+        ${r.rows.map((x) => `<tr class="${x.blocked ? "muted" : ""}"><td><b>${esc(x.word)}</b>${x.blocked ? ' <span class="flag bad">차단</span>' : ""}</td>
+          <td class="r">${num(x.count)}</td><td class="small">${x.examples.map((e) => esc(e.name)).join("<br>")}</td>
+          <td><button class="btn sm" data-block="${esc(x.word)}" data-v="${x.blocked ? 0 : 1}">${x.blocked ? "차단 풀기" : "차단"}</button></td></tr>`).join("")}
+        </tbody></table></div>` : '<p class="muted">아직 AI 키워드를 받은 원본이 없습니다.</p>';
+    };
+    $("#rv-sec").addEventListener("click", async (e) => {
+      const k = e.target.closest("[data-kind]");
+      if (k) return rv(k.dataset.kind);
+      const bl = e.target.closest("[data-block]");
+      if (!bl) return;
+      bl.disabled = true;
+      try {
+        const r = await App.api("/api/ctx/block", { json: { word: bl.dataset.block, block: bl.dataset.v === "1" } });
+        App.toast(`'${bl.dataset.block}' ${bl.dataset.v === "1" ? "차단" : "차단 풀기"} · 원본 ${num(r.sources)}개 이름 다시 만듦` + (r.renamed ? ` · 복사본 ${num(r.renamed)}건 새 이름` : ""));
+        rv(this.rvKind);
+      } catch (err) { App.toast(err.message, true); bl.disabled = false; }
+    });
+    rv("core").catch(() => { $("#rv-box").textContent = "불러오지 못했습니다."; });
     this.onDone = async (t) => { if (t.kind === "kipris") App.route(); };
     App.on("task-done", this.onDone);
   },

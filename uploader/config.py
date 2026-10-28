@@ -137,7 +137,9 @@ DEFAULTS = {
     "ctx_tail_min": 3,               # 원본 나머지 단어 (최소~최대)
     "ctx_tail_max": 6,
     "ctx_names_per_source": 2,       # 원본당 이름 수 (한 번에 만듦)
-    "ctx_kw_count": 12,              # 원본당 요청 키워드 수
+    "ctx_kw_count": 12,              # (예전 설정, 안 씀) v2는 keep 6·core 4·ctx 8개까지
+    "ctx_block_words": [],           # 다른 이름·맥락 단어 중 직접 차단한 것 (금지어 화면 → AI 다른 이름 확인)
+    "ctx_structured": True,          # 구조화 출력(output_config.format)으로 받기
     "ctx_per_request": 10,           # 요청당 원본 수
     "ctx_model": "claude-sonnet-5-5",
     "ctx_mode": "batch",             # batch(일괄, 50% 할인) / instant(즉시, 소량 시험용)

@@ -282,7 +282,7 @@ App.page("inventory", {
       tabs: [
         { key: "info", label: "정보", render: (b) => self.renderInfo(b, d) },
         { key: "stores", label: `복사본 ${d.listings.filter((l) => l.status !== "deleted").length}/${d.max_copies}`, render: (b) => self.renderListings(b, d) },
-        { key: "ctx", label: `AI 맥락 키워드 ${d.ctx.usable.length}`, render: (b) => self.renderCtx(b, d) },
+        { key: "ctx", label: `AI 키워드 ${d.ctx.usable.length}`, render: (b) => self.renderCtx(b, d) },
         { key: "names", label: `상품명 후보 ${d.names.length}`, render: (b) => self.renderNames(b, d) },
         { key: "detail", label: "상세페이지", render: (b) => {
           b.innerHTML = `<iframe class="preview" sandbox referrerpolicy="no-referrer"></iframe>`;
@@ -312,12 +312,17 @@ App.page("inventory", {
   renderCtx(b, d) {
     const k = d.ctx;
     const st = { ok: "받음", pending: "일괄 처리 중", retry: "재시도 대기", invalid: "원본 상품명이 바뀌어 다시 받아야 함" }[k.status] || "아직 안 받음";
+    const group = (key, label, help) => {
+      const all = k.kw?.[key] || [], use = k.use?.[key] || [];
+      return `<div class="kw-grp"><h3 class="sec-title">${label} <span class="muted small" style="font-weight:400">${help}</span></h3>
+        ${all.length ? `<div class="kw-chips">${all.map((w) => `<span class="kw-chip ${use.includes(w) ? "used" : "off"}"
+          title="${use.includes(w) ? "이름에 쓰는 단어" : "안 씀 (앞 단어에 이미 있음·원본에 없음·금지어·상표·직접 차단 등)"}">${esc(w)}</span>`).join("")}</div>` : '<span class="muted small">없음</span>'}</div>`;
+    };
     b.innerHTML = `<div class="kw-src">
-      <p class="muted small">AI가 이 원본에 준 맥락 키워드(쓰는 장소·사람·용도·상황)입니다. 이름 = [원본 앞 단어] + [이 키워드] + [원본 나머지 단어].
+      <p class="muted small">이름 = [원본 앞 ${esc((k.head || []).length)}단어${k.nums?.length ? ` · ${esc(k.nums.join(" "))}는 뒤로` : ""}] + keep + 다른 이름 1개 + 맥락 + 남은 원본 단어.
         상태: <b>${st}</b>${k.at ? ` · ${ymd(k.at)}` : ""}${k.error ? ` · <span class="c-err">${esc(k.error)}</span>` : ""}</p>
-      ${k.words.length ? `<div class="kw-chips">${k.words.map((w) => `<span class="kw-chip ${k.usable.includes(w) ? "used" : "off"}"
-          title="${k.usable.includes(w) ? "이름에 쓰는 키워드" : "원본에 있는 말·금지어·막연한 말이라 안 씀"}">${esc(w)}</span>`).join("")}</div>`
-        : `<button class="btn" id="ctx-one">이 원본 맥락 키워드 받기</button>`}
+      ${k.status === "ok" ? group("keep", "keep", "원본에서 지킬 핵심 단어") + group("core", "다른 이름 (core)", "같은 물건을 부르는 다른 이름 · 이름 하나에 1개") + group("ctx", "맥락 (ctx)", "쓰는 장소·사람·용도·상황")
+        : `<button class="btn" id="ctx-one">이 원본 AI 키워드 받기</button>`}
     </div>`;
     $("#ctx-one", b)?.addEventListener("click", () => App.ctxConfirm({ ids: [d.id] }));
   },

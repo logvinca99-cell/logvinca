@@ -42,13 +42,9 @@ const SETTING_SECTIONS = [
     ["name_max_len", "상품명 최대 글자 수 (공백 포함)", "number"],
     ["use_original_name", "원본 상품명 그대로도 쓸 수 있음 (원본 스토어와 이름이 같아짐)", "check"],
   ] },
-  { tab: "name", title: "AI 맥락 키워드 (기본 방식)", note: "이름 = [원본 앞 단어] + [AI 맥락 키워드] + [원본 나머지 단어 무작위]. AI는 원본마다 한 번 키워드 목록만 만들고 조립은 프로그램이 합니다. 원본마다 이름을 한 번에 만들어 복사본에 하나씩 붙입니다.", fields: [
-    ["ctx_head_n", "앞 고정 단어 수", "number"],
-    ["ctx_ai_per_name", "이름당 AI 키워드 (최대)", "number"],
-    ["ctx_tail_min", "원본 나머지 단어 (최소)", "number"],
-    ["ctx_tail_max", "원본 나머지 단어 (최대)", "number"],
+  { tab: "name", title: "AI 키워드 (기본 방식)", note: "AI는 원본마다 한 번 keep(지킬 원본 단어)·다른 이름(core)·맥락(ctx)만 줍니다. 이름 = [원본 앞 단어] + keep + 다른 이름 1개 + 맥락 + 남은 원본 단어 + 숫자·수량·연식(뒤로), 50자 안. 조립은 프로그램이 하고 원본마다 이름 A·B를 한 번에 만들어 1번째·2번째 복사본에 붙입니다. 틀린 다른 이름은 금지어 화면 → AI 다른 이름 확인에서 차단.", fields: [
+    ["ctx_head_n", "앞 고정 단어 수 (숫자·수량·연식만 있는 단어는 세지 않고 뒤로)", "number"],
     ["ctx_names_per_source", "원본당 이름 수", "number"],
-    ["ctx_kw_count", "원본당 요청 키워드 수", "number"],
     ["ctx_per_request", "요청당 원본 수", "number"],
     ["ctx_model", "모델", "select", { options: [["claude-sonnet-5-5", "Claude Sonnet 5.5 (기본)"], ["claude-haiku-5-5", "Claude Haiku 5.5 (가장 저렴)"]] }],
     ["ctx_mode", "처리 방식", "select", { options: [["batch", "일괄 (기본, 50% 할인, 몇 분~몇 시간)"], ["instant", "즉시 (바로, 요금 2배)"]] }],
