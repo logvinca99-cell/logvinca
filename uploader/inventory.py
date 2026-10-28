@@ -851,18 +851,23 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
 def rename_shuffle(db, ids, fixed_n=3, extra=(), progress=None, should_stop=None):
     """셔플: 앞 fixed_n단어 고정, 나머지 단어와 직접 넣은 단어를 함께 섞어 복사본마다 새 이름 (AI 안 씀).
     이미 바꾼 이름이 있으면 버리고 새로 만든다. 33개 스토어 중복·원본과 같은 이름·금지어는 거른다."""
-    from . import shuffle
+    from . import ctxname, shuffle
     cfg = config.load()
     lex = lexicon.get(db)
     forb = set(lex.blocked)
     max_chars = int(cfg.get("name_max_len") or 50)
+    # 넣을 단어도 AI 단어와 같은 기준으로 거름: 금지어·상표·직접 차단한 단어, 판매 조건·과장 표현(무료배송·최저가 …)
+    bad = ctxkw.word_filter(cfg, lex)
+    dropped = [w for w in extra if w in forb or bad(w) or ctxname.claim_word(w)]
+    extra = [w for w in extra if w not in dropped]
     rows = []
     for i in range(0, len(ids), 900):
         chunk = ids[i:i + 900]
         rows += db.q(f"""SELECT l.id, l.source_id, l.name_id, l.origin_no, l.status, s.name AS orig FROM listings l
             JOIN sources s ON s.id=l.source_id WHERE l.id IN ({','.join('?' * len(chunk))})""", chunk)
     todo = [r for r in rows if not r["origin_no"] and r["status"] != "deleted"]
-    st = {"listings": len(rows), "live": len(rows) - len(todo), "renamed": 0, "short": 0, "method": "shuffle"}
+    st = {"listings": len(rows), "live": len(rows) - len(todo), "renamed": 0, "short": 0, "method": "shuffle",
+          "dropped_extra": dropped}
     now = time.time()
     for i in range(0, len(todo), 500):
         if should_stop and should_stop():
@@ -1093,6 +1098,11 @@ def set_listing_name(db, lid, name):
         raise ValueError("복사본이 없습니다.")
     if l["origin_no"]:
         raise ValueError("이미 올라간 복사본입니다. 최신화로 다시 올릴 때 이름을 바꾸세요.")
+    from . import ctxname
+    src_words = set((db.one("SELECT name FROM sources WHERE id=?", (l["source_id"],)) or {}).get("name", "").split())
+    claims = [w for w in str(name or "").split() if w not in src_words and ctxname.claim_word(w)]
+    if claims:   # 원본에 없던 판매 조건·과장 표현은 직접 넣을 수 없음
+        raise ValueError(f"쓸 수 없는 표현입니다: '{claims[0]}' ({ctxname.claim_word(claims[0])}) — 판매 조건·품질 주장·원산지 표현은 상품명에 넣지 않습니다.")
     rejected = []
     now = time.time()
     with db.tx() as c:

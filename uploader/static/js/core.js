@@ -265,6 +265,7 @@ const App = {
       ctxkw: () => `AI 키워드(즉시) 끝: 원본 ${num(r.ok)}개 받음` + (r.failed ? ` · 재시도 대기 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : "")
         + ` · 실제 약 ${num(r.krw)}원 (예상 ${num(r.est_krw)}원)` + (r.names ? ` · 이름 후보 ${num(r.names.made)}개 · 복사본에 배정 ${num(r.names.assigned)}건` : ""),
       rename: () => r.method === "shuffle" ? `상품명 바꾸기(셔플) 끝: ${num(r.renamed)}건 바꿈` + (r.short ? ` · 못 만든 ${num(r.short)}건은 '이름 변경 필요'` : "") + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
+          + (r.dropped_extra?.length ? ` · 넣을 단어 중 쓸 수 없는 것 뺌: ${r.dropped_extra.join(", ")}` : "")
         : r.method === "ctx"
         ? `상품명 바꾸기(AI 키워드) 끝: ${num(r.renamed)}건 배정` + (r.kept ? ` · 이미 맥락 이름 ${num(r.kept)}건 그대로` : "")
           + (r.fallback ? ` · 키워드 없는 원본은 예비 방식으로 ${num(r.fallback)}건` : "")
