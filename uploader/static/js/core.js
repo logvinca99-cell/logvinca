@@ -685,7 +685,8 @@ function aiMsg(a) {
 const ND_ROLE = {
   fixed: ["nd-fixed", "앞 고정 단어 (원본 앞 단어 그대로 · A는 4개, B는 3개)"], keep: ["nd-keep", "지킨 원본 핵심 단어 (AI가 고른 keep)"],
   orig: ["nd-orig", "그 밖의 원본 단어"], core: ["nd-core", "AI 다른 이름·용도 (보라)"], ctx: ["nd-ai", "AI 맥락 (장소·사람·용도)"],
-  ai: ["nd-ai", "AI로 짓기가 넣은 말"], add: ["nd-add", "직접·셔플로 넣은 단어"],
+  ai: ["nd-ai", "AI가 넣은 말 (AI로 짓기 · 키워드를 다시 받기 전 예전 키워드)"],
+  add: ["nd-add", "직접 넣은 단어 (원본에도 AI 키워드에도 없음: 직접 고친 이름 · 셔플의 '넣을 단어')"],
   same: ["nd-orig", "원본 단어"], move: ["nd-orig", "원본 단어"],
 };
 function nameDiff(nd) {
@@ -696,7 +697,7 @@ function nameDiff(nd) {
 
 const ND_LEGEND = `<div class="nd-legend"><span class="nd-fixed">앞 고정</span><span class="nd-keep">원본 핵심(keep)</span>
   <span class="nd-orig">원본 단어</span><span class="nd-core">AI 다른 이름</span><span class="nd-ai">AI 맥락</span>
-  <span class="nd-add">직접 넣은 단어</span><span><s>빠진 원본 단어</s></span></div>`;
+  <span class="nd-add" title="원본에도 AI 키워드에도 없는 단어: 직접 고친 이름이나 셔플의 '넣을 단어'에 적은 것">직접 넣은 단어</span><span><s>빠진 원본 단어</s></span></div>`;
 
 /* 스토어 목록을 사업자별로 묶기 (순서는 서버가 사업자·스토어 순서대로 줌) → [[사업자 이름, [스토어…]], …] */
 function byBusiness(stores) {

@@ -594,7 +594,7 @@ def name_parts(name, src_name, kw=None, origin=""):
     """상품명의 단어마다 어디서 왔는지 — 모든 화면이 이 결과 하나로 색을 칠한다 (화면마다 따로 추측하지 않게).
     역할: fixed(앞 고정 단어: 원본 앞 단어와 같은 순서로 시작하는 부분, 최대 4개 — A는 4개, B는 3개)
           / keep(AI가 고른 지킬 원본 단어) / orig(그 밖의 원본 단어) / core(AI 다른 이름·용도) / ctx(AI 맥락)
-          / ai(AI로 짓기가 넣은 말) / add(직접·셔플로 넣은 말). gone = 이 이름에서 빠진 원본 단어."""
+          / ai(AI가 넣은 말인데 지금 키워드엔 없음: AI로 짓기·예전 키워드) / add(직접 넣은 말: 직접 고친 이름·셔플의 '넣을 단어'). gone = 이 이름에서 빠진 원본 단어."""
     nt, ot = str(name or "").split(), str(src_name or "").split()
     kw = kw or {}
     keep = set(kw.get("keep") or [])
@@ -617,10 +617,10 @@ def name_parts(name, src_name, kw=None, origin=""):
             role = "core"
         elif w in ctx:
             role = "ctx"
-        elif origin == "ai":
-            role = "ai"
+        elif origin in ("ai", "ctx"):
+            role = "ai"    # AI가 넣은 말인데 지금 키워드엔 없음 (AI로 짓기 이름, 키워드를 다시 받기 전 예전 키워드로 만든 이름)
         else:
-            role = "add"
+            role = "add"   # 원본에도 AI 키워드에도 없는 말 = 직접 넣은 단어 (직접 고친 이름, 셔플의 '넣을 단어')
         parts.append([w, role])
     nset = set(nt)
     gone = [w for k, w in enumerate(ot) if w not in nset and ot.index(w) == k] if name != src_name else []
