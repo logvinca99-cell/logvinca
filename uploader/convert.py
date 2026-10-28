@@ -483,10 +483,24 @@ def mobile_issues(html):
 OPTION_STYLES = ("strong", "basic")   # 예전 'original'(원본 그대로)은 basic(원본 모양)으로
 
 
+PC_WIDTH = 860   # 네이버 PC 상세 폭 (스토어 상단·하단 그림도 이 폭)
+_DIV_OPEN = re.compile(r"<div\b[^>]*>", re.I)
+
+
+def fit_width(html):
+    """원본이 상세 폭을 780px 등으로 줄여 둔 묶음 → 네이버 PC 상세 폭(860px)에 꽉 차게, 가운데로.
+    그대로 두면 PC에서 스토어 상단(860px)보다 좁고 왼쪽에 붙어 보인다 (휴대폰은 화면이 더 좁아 상관없음)."""
+    def tag(m):
+        def mw(x):
+            return f"max-width: {PC_WIDTH}px; margin: 0 auto" if 600 <= int(x.group(1)) < PC_WIDTH else x.group(0)
+        return re.sub(r"max-width\s*:\s*(\d+)px", mw, m.group(0), flags=re.I)
+    return _DIV_OPEN.sub(tag, html)
+
+
 def detail_source(row, cfg):
-    """올릴 상세의 출발점: 엑셀 상세 − 방문 알림 − http(보안 아님) 동영상 − (설정이면) 동영상 전부."""
+    """올릴 상세의 출발점: 엑셀 상세 − 방문 알림 − http(보안 아님) 동영상 − (설정이면) 동영상 전부, 폭은 PC 860px에 맞춤."""
     html = row.get("상세설명") or f"<p>{row.get('상품명') or ''}</p>"
-    html = strip_trackers(html)
+    html = fit_width(strip_trackers(html))
     if cfg.get("detail_video") == "remove":
         html = VIDEO_RE.sub("", html)
     else:   # 네이버(https) 화면에서 http 동영상은 막히거나 안 열림
