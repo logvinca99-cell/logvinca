@@ -283,10 +283,22 @@ def attach_ai_names(db, by_id):
     for n in db.q(f"""SELECT n.source_id, n.name, n.listing_id, l.status, l.origin_no,
             CASE WHEN t.id IS NULL THEN '' ELSE COALESCE(NULLIF(t.code,''), 'S'||printf('%02d', t.id)) END AS code, t.name AS store
             FROM names n LEFT JOIN listings l ON l.id=n.listing_id LEFT JOIN stores t ON t.id=l.store_id
-            WHERE n.origin='ctx' AND (n.listing_id IS NULL OR n.listing_id>0) AND n.source_id IN ({marks}) ORDER BY n.id""", ids):
-        lst = by_id[n["source_id"]]["ai_names"]
-        lst.append({"label": chr(65 + len(lst)) if len(lst) < 26 else str(len(lst) + 1), "name": n["name"],
-                    "code": n["code"] or "", "store": n["store"] or "", "live": bool(n["origin_no"]), "status": n["status"] or ""})
+            WHERE n.origin='ctx' AND n.source_id IN ({marks}) ORDER BY n.id""", ids):
+        # 글자(A·B·C…)는 만든 순서 그대로 (화면마다·시간이 지나도 같은 이름은 같은 글자). 바꿔서 안 쓰는 이름은 글자만 차지하고 안 보임
+        r = by_id[n["source_id"]]
+        i = r.setdefault("_ai_i", 0)
+        r["_ai_i"] = i + 1
+        if n["listing_id"] == -1:
+            r["ai_retired"] = r.get("ai_retired", 0) + 1
+            continue
+        r["ai_names"].append({"label": _ai_label(i), "name": n["name"], "code": n["code"] or "", "store": n["store"] or "",
+                              "live": bool(n["origin_no"]), "status": n["status"] or ""})
+    for r in by_id.values():
+        r.pop("_ai_i", None)
+
+
+def _ai_label(i):
+    return chr(65 + i) if i < 26 else str(i + 1)
 
 
 def source_ids(db, f):
@@ -506,9 +518,9 @@ def source_detail(db, sid):
     s["names"] = db.q("""SELECT n.id, n.name, n.origin, n.listing_id, st.name AS store_name, l.status
         FROM names n LEFT JOIN listings l ON l.id=n.listing_id LEFT JOIN stores st ON st.id=l.store_id
         WHERE n.source_id=? ORDER BY n.listing_id IS NULL, n.id""", (sid,))
-    ai = sorted((n for n in s["names"] if n["origin"] == "ctx" and n["listing_id"] != -1), key=lambda n: n["id"])
-    for i, n in enumerate(ai):   # AI 이름 A·B… (만든 순서, 원본 목록 줄과 같은 글자)
-        n["label"] = chr(65 + i) if i < 26 else str(i + 1)
+    ai = sorted((n for n in s["names"] if n["origin"] == "ctx"), key=lambda n: n["id"])
+    for i, n in enumerate(ai):   # AI 이름 A·B… (만든 순서 그대로, 원본 목록 줄·복사본 화면과 같은 글자)
+        n["label"] = _ai_label(i)
     s["listings"] = db.q("""SELECT l.id, l.name, l.price, l.status, l.op, l.round, l.message, l.channel_no, l.sold_count,
         l.origin_no, l.seller_code, l.registered_at, l.deleted_at, l.store_id, st.name AS store_name, st.store_url,
         n.origin AS name_origin
@@ -528,8 +540,10 @@ def source_detail(db, sid):
 
 # ───────────────────────── 3. 등록 계획
 
-def assign_ctx_names(db, sids):
-    """이 원본들의 아직 안 올린·이름 없는 복사본에 맥락 키워드로 만든 안 쓴 이름 후보를 하나씩 배정한다. 배정한 수."""
+def assign_ctx_names(db, sids, only=None, newest=False):
+    """이 원본들의 아직 안 올린·이름 없는 복사본에 맥락 키워드로 만든 안 쓴 이름 후보를 하나씩 배정한다. 배정한 수.
+    only: 이 복사본들에만. newest: 가장 최근에 만든 후보부터 (이름 다시 바꾸기 — 다른 스토어 몫 B를 남겨 둠)."""
+    only = set(only) if only is not None else None
     n = 0
     now = time.time()
     for i in range(0, len(sids), 500):
@@ -538,10 +552,12 @@ def assign_ctx_names(db, sids):
         with db.tx() as c:
             free = {}
             for r in c.execute(f"""SELECT id, source_id, name FROM names WHERE origin='ctx' AND listing_id IS NULL
-                    AND source_id IN ({marks}) ORDER BY id""", chunk):
+                    AND source_id IN ({marks}) ORDER BY id {'DESC' if newest else ''}""", chunk):
                 free.setdefault(r["source_id"], []).append(dict(r))
             for l in c.execute(f"""SELECT id, source_id FROM listings WHERE name_id IS NULL AND origin_no=''
                     AND status!='deleted' AND source_id IN ({marks}) ORDER BY id""", chunk).fetchall():
+                if only is not None and l["id"] not in only:
+                    continue
                 pool = free.get(l["source_id"])
                 if not pool:
                     continue
@@ -919,6 +935,7 @@ def rename_ctx(db, ids, fallback=False, progress=None, should_stop=None, redo=Tr
     if progress:
         progress(len(mine) // 2, max(1, len(todo)), "이름 후보를 복사본에 붙이는 중")
     avoid = {}   # 떼어 낸 이름은 다시 붙이지 않음
+    redone = []  # 이름을 다시 바꾸는 복사본 → A·B가 아니라 새 조합으로 (안 쓴 B는 다음 스토어 몫으로 남김)
     with db.tx() as c:
         for r in mine:
             if not r["name_id"]:
@@ -926,6 +943,7 @@ def rename_ctx(db, ids, fallback=False, progress=None, should_stop=None, redo=Tr
             if not redo:
                 st["kept"] += 1
                 continue
+            redone.append(r)
             old = c.execute("SELECT name, origin FROM names WHERE id=?", (r["name_id"],)).fetchone()
             if old:
                 avoid.setdefault(r["source_id"], set()).add(old["name"])
@@ -937,14 +955,24 @@ def rename_ctx(db, ids, fallback=False, progress=None, should_stop=None, redo=Tr
             c.execute("UPDATE listings SET name_id=NULL, name=(SELECT name FROM sources WHERE id=?) WHERE id=?",
                       (r["source_id"], r["id"]))
     srcs = sorted({r["source_id"] for r in mine})
-    st["renamed"] = assign_ctx_names(db, srcs)
+    redone_ids = {r["id"] for r in redone}
+    # 처음 이름을 붙이는 복사본: 만들어 둔 A·B 순서대로
+    st["renamed"] = assign_ctx_names(db, srcs, only=[r["id"] for r in mine if r["id"] not in redone_ids])
+    # 다시 바꾸는 복사본: 새 조합을 만들어 그것을 붙임 (A·B 중 안 쓴 것은 다른 스토어 몫으로 남음)
+    if redone:
+        need = {}
+        for r in redone:
+            need[r["source_id"]] = need.get(r["source_id"], 0) + 1
+        st["extra_made"] = ctxkw.make_more(db, need, avoid)
+        st["renamed"] += assign_ctx_names(db, sorted(need), only=redone_ids, newest=True)
+        need = {}
     # 후보(A·B)를 다 써서 아직 이름이 없는 복사본 → 그 원본 키워드로 다른 조합을 더 만든다
     need = {}
     for r in db.q(f"""SELECT source_id, COUNT(*) AS n FROM listings WHERE name_id IS NULL AND origin_no='' AND status!='deleted'
             AND id IN ({','.join('?' * len(mine))}) GROUP BY source_id""", [r["id"] for r in mine]) if mine else []:
         need[r["source_id"]] = r["n"]
     if need:
-        st["extra_made"] = ctxkw.make_more(db, need, avoid)
+        st["extra_made"] = st.get("extra_made", 0) + ctxkw.make_more(db, need, avoid)
         st["renamed"] += assign_ctx_names(db, sorted(need))
     left = db.q(f"""SELECT COUNT(*) AS n FROM listings WHERE name_id IS NULL AND origin_no='' AND status!='deleted'
         AND id IN ({','.join('?' * len(mine))})""", [r["id"] for r in mine])[0]["n"] if mine else 0
@@ -1283,7 +1311,7 @@ def query_listings(db, f, page=0, size=100):
         COALESCE(NULLIF(t.code,''), 'S'||printf('%02d', t.id)) AS store_code,
         n.origin AS name_origin, k.words AS ctx_words,
         CASE WHEN n.origin='ctx' THEN (SELECT COUNT(*) FROM names x WHERE x.source_id=n.source_id AND x.origin='ctx'
-            AND (x.listing_id IS NULL OR x.listing_id>0) AND x.id<n.id) END AS ai_rank
+            AND x.id<n.id) END AS ai_rank
         {base} LEFT JOIN names n ON n.id=l.name_id LEFT JOIN ctx_kw k ON k.source_id=l.source_id
         {where} ORDER BY l.id LIMIT ? OFFSET ?""", (*args, size, page * size))
     # 같은 원본의 다른 스토어 복사본 (바로 가기 버튼용)

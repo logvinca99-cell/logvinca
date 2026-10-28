@@ -731,6 +731,16 @@ def rebuild_repeated(db):
     return rebuild_unused(db, sids) if sids else 0
 
 
+def rebuild_pairs(db):
+    """A·B 짝이 깨진 원본(이름 다시 바꾸기가 다른 스토어 몫 B까지 써 버림)을 되살림: 복사본이 원본당 이름 수(기본 2)보다
+    적은데 안 쓴 AI 이름이 하나도 없는 원본만, 받은 키워드로 다시 조립 (1번째 복사본에 A, B는 안 씀으로). 다시 만든 원본 수."""
+    copies = max(1, int(config.load().get("ctx_names_per_source") or 2))
+    sids = [r["source_id"] for r in db.q("""SELECT k.source_id FROM ctx_kw k WHERE k.status='ok'
+        AND NOT EXISTS (SELECT 1 FROM names n WHERE n.source_id=k.source_id AND n.origin='ctx' AND n.listing_id IS NULL)
+        AND (SELECT COUNT(*) FROM listings l WHERE l.source_id=k.source_id AND l.status!='deleted') < ?""", (copies,))]
+    return rebuild_unused(db, sids) if sids else 0
+
+
 def rebuild_unused(db, sids=None):
     """조립 방식이 바뀌었을 때(다른 이름 1개 → 전부): AI를 다시 부르지 않고, 아직 안 올린 복사본의 AI 이름과
     안 쓴 AI 이름 후보를 지운 뒤 받은 키워드로 새로 만들어 다시 붙인다. 올린 복사본·바꿔 버린 이름은 그대로. 다시 만든 원본 수.

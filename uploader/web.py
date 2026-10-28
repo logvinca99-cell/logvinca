@@ -1640,6 +1640,10 @@ def create_app(db=None):
     if not db.one("SELECT 1 FROM meta WHERE k='ctx_v2_reset'"):
         ctxkw.reset_v1(db)   # AI 키워드 방식이 keep·core·ctx로 바뀜 → 예전 맥락 키워드 초기화 (한 번만)
         db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('ctx_v2_reset', '1')")
+    if not db.one("SELECT 1 FROM meta WHERE k='ab_pair_v1'"):
+        # 이름 다시 바꾸기가 다른 스토어 몫 B까지 써 버린 원본 → A·B 짝을 되살림 (안 올린 이름만, AI 안 부름, 한 번만)
+        ctxkw.rebuild_pairs(db)
+        db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('ab_pair_v1', '1')")
     if not db.one("SELECT 1 FROM meta WHERE k='ab_split_v2'"):
         # A·B가 달라 보이게 (보라는 자기 몫 먼저·자리 남으면 상대 몫도, 맥락은 반씩, B는 앞 3단어만 두고 앞쪽이 A와 다르게 섞기)
         # → 안 올린 AI 이름을 받은 키워드로 한 번 다시 조립 (AI 안 부름)
