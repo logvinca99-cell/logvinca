@@ -274,6 +274,19 @@ App.page("stores", {
               <div><label class="btn"><input type="file" id="wm-file" accept=".png,.jpg,.jpeg,.webp" hidden>로고 올리기</label>
               <button type="button" class="btn ghost" id="wm-del">로고 지우기</button></div></div></div>
         </div>
+        <h3 class="sec-title">상세 옵션표</h3>
+        <p class="muted small" style="margin:0">원본 상세의 옵션표(사진 + 옵션 이름)를 네이버에서 깨지지 않는 표로 바꿔 올립니다. 고르지 않으면 설정의 공통값을 씁니다.</p>
+        <div class="two">
+          <div class="form" style="gap:8px">
+            <label class="field">모양 <select id="t-optstyle"><option value="">설정 공통값 따름 (지금: ${esc(((OPT_STYLES.find(([v]) => v === cfg.option_table_style) || OPT_STYLES[0])[1]).split(":")[0].split(" (")[0])})</option>
+              ${OPT_STYLES.map(([v, l]) => `<option value="${v}" ${v === t.opt_style ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+            <div class="field">강조색 <span class="muted" id="t-optcolor-l"></span>
+              <div class="opt-sw" id="t-optsw"><button type="button" class="opt-sw-common" data-c="">공통 색</button>
+                ${OPT_COLORS.map(([c, n]) => `<button type="button" data-c="${c}" title="${n}" style="background:${c}"></button>`).join("")}
+                <label class="opt-sw-pick" title="직접 고르기"><input type="color" id="t-optpick" value="${esc(t.opt_color || cfg.option_table_color || "#1F2937")}">직접</label></div></div>
+          </div>
+          <div class="field">미리보기 <span class="muted">(사진은 회색 칸)</span><div class="opt-prev" id="t-optprev"></div></div>
+        </div>
         <h3 class="sec-title">출고지 · 반품지</h3>
         <p class="muted small">판매자센터 주소록에 등록한 주소의 번호입니다. 비우면 판매자센터의 기본 출고지·반품지로 올라갑니다. 해외 출고지는 판매자센터 주소록에 먼저 등록해 두세요.</p>
         <div class="two">
@@ -282,12 +295,13 @@ App.page("stores", {
         </div>
         <button type="button" class="btn sm" id="t-addr-load" style="align-self:flex-start">네이버 주소록 불러오기</button>
         <div id="t-addr" class="addr-list"></div>
-        <p class="muted small">가격 조정은 새로 복사하는 것부터, 이미 만든 대기 복사본은 설정 → '대기 중인 복사본 가격 다시 계산'. 상단·하단·관부가세·표시 할인율은 다음 등록부터.</p>
+        <p class="muted small">가격 조정은 새로 복사하는 것부터, 이미 만든 대기 복사본은 설정 → '대기 중인 복사본 가격 다시 계산'. 상단·하단·관부가세·표시 할인율·옵션표는 다음 등록(최신화·다시 올리기 포함)부터.</p>
       </div>`,
       buttons: [{ label: "닫기" }, { label: "저장", primary: true, onClick: async (b) => {
         try {
           const r = await App.api(`/api/stores/${s.id}/template`, { json: { top_html: $("#t-top", b).value, bottom_html: $("#t-bottom", b).value,
-            customs: $("#t-customs", b).value, jitter_min: $("#t-jlo", b).value, jitter_max: $("#t-jhi", b).value, wm_text: $("#t-wm", b).value, ship_addr: $("#t-ship", b).value, return_addr: $("#t-ret", b).value, price_pct: $("#t-price", b).value, discount_pct: $("#t-disc", b).value } });
+            customs: $("#t-customs", b).value, jitter_min: $("#t-jlo", b).value, jitter_max: $("#t-jhi", b).value, wm_text: $("#t-wm", b).value, ship_addr: $("#t-ship", b).value, return_addr: $("#t-ret", b).value, price_pct: $("#t-price", b).value, discount_pct: $("#t-disc", b).value,
+            opt_style: $("#t-optstyle", b).value, opt_color: optColor } });
           App.toast(`${s.name} 템플릿을 저장했습니다` + (r.repriced ? ` · 아직 안 올린 복사본 ${num(r.repriced)}건 가격을 다시 정했습니다` : ""));
         } catch (e) { App.toast(e.message, true); return false; }
       } }],
@@ -317,6 +331,28 @@ App.page("stores", {
     };
     ["#t-price", "#t-jlo", "#t-jhi", "#t-disc"].forEach((id) => $(id).addEventListener("input", ex));
     ex();
+    // 옵션표 모양·색 (optColor ''면 설정 공통 색)
+    let optColor = t.opt_color || "";
+    const optDraw = () => {
+      const base = cfg.option_table_color || "#1F2937";
+      const style = $("#t-optstyle").value || cfg.option_table_style || "strong";
+      const color = optColor || base;
+      $$("#t-optsw button").forEach((x) => x.classList.toggle("on", (x.dataset.c || "") === optColor));
+      const named = (c) => (OPT_COLORS.find(([v]) => v.toUpperCase() === c.toUpperCase()) || [, c])[1];
+      $("#t-optcolor-l").textContent = optColor ? `이 스토어: ${named(optColor)}` : `공통 색 (${named(base)})`;
+      $("#t-optsw").style.opacity = style === "strong" ? "" : ".45";
+      $("#t-optprev").innerHTML = optTablePreview(style, color);
+    };
+    $("#t-optsw").addEventListener("click", (e) => {
+      const x = e.target.closest("button[data-c]");
+      if (!x) return;
+      optColor = x.dataset.c;
+      if (optColor) $("#t-optpick").value = optColor;
+      optDraw();
+    });
+    $("#t-optpick").addEventListener("input", (e) => { optColor = e.target.value.toUpperCase(); optDraw(); });
+    $("#t-optstyle").addEventListener("change", optDraw);
+    optDraw();
     body.addEventListener("click", async (e) => {
       if (e.target.id === "t-addr-load") {
         e.target.disabled = true; e.target.textContent = "불러오는 중";

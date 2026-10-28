@@ -410,13 +410,19 @@ def naver_safe_layout(html, style="basic", color=None):
     return _FLEX_COL.sub(lambda m: f'style={m.group(1)}text-align:center;{m.group(1)}', html)
 
 
-def detail_html(row, cfg, url_map, top="", bottom=""):
+OPTION_STYLES = ("strong", "basic", "original")
+
+
+def detail_html(row, cfg, url_map, top="", bottom="", opt_style="", opt_color=""):
     """상세설명 (이미지 주소를 네이버 주소로). top/bottom: 스토어 템플릿 상단·하단 HTML을 앞뒤에 붙인다.
-    옵션표처럼 네이버가 지우는 CSS(grid·flex 세로 쌓기)로 짠 부분은 표로 바꿔 올린다."""
+    옵션표처럼 네이버가 지우는 CSS(grid·flex 세로 쌓기)로 짠 부분은 표로 바꿔 올린다.
+    opt_style·opt_color: 스토어 템플릿의 옵션표 모양·색 (비우면 설정 공통값). 'original'이면 원본 그대로."""
     html = row.get("상세설명") or f"<p>{row.get('상품명') or ''}</p>"
     if cfg.get("detail_video") == "remove":
         html = VIDEO_RE.sub("", html)
-    html = naver_safe_layout(html, cfg.get("option_table_style") or "strong", cfg.get("option_table_color"))
+    style = opt_style or cfg.get("option_table_style") or "strong"
+    if style != "original":
+        html = naver_safe_layout(html, style, opt_color or cfg.get("option_table_color"))
 
     def repl(m):
         src = m.group(3).strip()
@@ -586,7 +592,8 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
         "leafCategoryId": category_id,
         "name": name[:100],
         "detailContent": detail_html(row, cfg, url_map, store.get("_tpl_top", store.get("tpl_top_html", "")),
-                                     store.get("_tpl_bottom", store.get("tpl_bottom_html", ""))),
+                                     store.get("_tpl_bottom", store.get("tpl_bottom_html", "")),
+                                     store.get("tpl_opt_style") or "", store.get("tpl_opt_color") or ""),
         "images": {"representativeImage": {"url": images[0]}},
         "salePrice": sale_price + round_up(bait or 0, unit),
         "stockQuantity": stock_qty(row, cfg),

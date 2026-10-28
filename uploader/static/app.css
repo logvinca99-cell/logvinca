@@ -748,3 +748,12 @@ th .nd-legend { font-weight: 400; margin-top: 4px; }
 /* 카테고리 바꾸기 */
 .pc-hits { display: flex; flex-direction: column; gap: 4px; max-height: 40vh; overflow: auto; }
 .pc-hits .cm-hit.on { background: var(--accent-soft); outline: 2px solid var(--accent); font-weight: 700; }
+
+/* 스토어 템플릿 · 상세 옵션표 색 */
+.opt-sw { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+.opt-sw button { width: 28px; height: 28px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--line); cursor: pointer; padding: 0; }
+.opt-sw button.on { box-shadow: 0 0 0 3px var(--accent); }
+.opt-sw .opt-sw-common { width: auto; border-radius: 14px; padding: 0 10px; background: var(--panel-2, #eef1f4); color: var(--text); font-size: 12px; }
+.opt-sw-pick { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; cursor: pointer; }
+.opt-sw-pick input { width: 30px; height: 30px; padding: 0; border: none; background: none; cursor: pointer; }
+.opt-prev { max-width: 340px; border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: #fff; margin-top: 6px; }

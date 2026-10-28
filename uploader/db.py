@@ -271,6 +271,8 @@ class DB:
                    ("tpl_ship_addr", "INTEGER"), ("tpl_return_addr", "INTEGER"),
                    # 가격 흔들기 범위 % (비우면 설정 기본 -3~+3), 흔들면 원본가와 같은 가격은 안 나옴
                    ("tpl_jitter_min", "REAL"), ("tpl_jitter_max", "REAL"),
+                   # 상세 옵션표 모양(strong·basic·original)·강조색 — 비우면 설정 공통값
+                   ("tpl_opt_style", "TEXT NOT NULL DEFAULT ''"), ("tpl_opt_color", "TEXT NOT NULL DEFAULT ''"),
                    # 사업자 묶음과 순서 (사업자 하나에 스토어 최대 3개)
                    ("business_id", "INTEGER"), ("sort", "INTEGER NOT NULL DEFAULT 0"),
                    # 연결 확인 때 받은 전시중지(고구마)를 뺀 수·전시중지 수, 고구마 수를 직접 넣으면 그 값

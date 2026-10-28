@@ -77,6 +77,24 @@ function ymd(ts) {
   const d = new Date(ts * 1000), p = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
+/* 상세 옵션표 모양·강조색 (설정 공통값과 스토어 템플릿) */
+const OPT_STYLES = [["strong", "강조: 제목 색 띠 + 옵션 이름 굵게 + 색 테두리"], ["basic", "표로만 (강조 끔)"],
+  ["original", "원본 그대로 (안 바꿈 · 네이버에서 옵션 사진이 한 줄에 하나씩 쌓일 수 있음)"]];
+const OPT_COLORS = [["#1F2937", "남색"], ["#111111", "검정"], ["#1D4ED8", "파랑"], ["#0B7A5F", "초록"], ["#B4232A", "빨강"],
+  ["#C2410C", "주황"], ["#6D28D9", "보라"], ["#BE185D", "분홍"], ["#7C4A1E", "갈색"]];
+/* 옵션표 미리보기 (서버 convert.naver_safe_layout과 같은 모양, 사진은 회색 칸) */
+function optTablePreview(style, color) {
+  if (style === "original") return '<p class="muted small" style="margin:0">원본 상세를 그대로 올립니다. 원본 옵션표는 네이버가 지우는 격자로 짜여 있어 사진이 한 줄에 하나씩 쌓이고 제목이 왼쪽으로 밀릴 수 있습니다.</p>';
+  const names = ["옵션 이름 A", "옵션 이름 B"];
+  const img = '<div style="height:70px;background:#c9ced6"></div>';
+  const cell = (n) => style === "strong"
+    ? `<td style="width:50%;border:2px solid ${color};background:#F5F6F8;padding:0;text-align:center;vertical-align:top">${img}<p style="padding:8px 4px;margin:0;font-size:13px;font-weight:700;color:#111">${n}</p></td>`
+    : `<td style="width:50%;border:1px solid #EAECF0;padding:0;text-align:center;vertical-align:top">${img}<p style="padding:6px;margin:0;font-size:12px;font-weight:500;color:#111">${n}</p></td>`;
+  const head = style === "strong"
+    ? `<div style="background:${color};color:#fff;text-align:center;padding:8px"><b style="font-size:15px">옵션 설명</b><span style="font-size:11px"> &nbsp;총 2종</span></div>`
+    : '<div style="text-align:center;font-weight:700;color:#111;padding:6px">옵션 설명</div>';
+  return `${head}<table style="width:100%;border-collapse:separate;border-spacing:8px;table-layout:fixed;background:#fff"><tr>${names.map(cell).join("")}</tr></table>`;
+}
 const CUSTOMS_OPTS = [["", "보내지 않음"], ["EXCLUDED", "관부가세 미포함 (구매자 납부)"], ["INCLUDED", "관부가세 포함 (해외직구 노출이면 이것만)"], ["NOT_APPLICABLE", "부과 대상 아님"]];
 const REGION = { overseas: "해외", domestic: "국내" };   // 스토어 출고 형태 표시 (해외 파란색 · 국내 초록색)
 const regionCls = (s) => (s.ship_region ? `reg-${s.ship_region}` : "");

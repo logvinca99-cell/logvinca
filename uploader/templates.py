@@ -88,4 +88,5 @@ def summary(store):
             "customs": config.customs_code(store.get("tpl_customs")), "price_pct": store.get("tpl_price_pct"),
             "discount_pct": store.get("tpl_discount_pct"),
             "ship_addr": store.get("tpl_ship_addr"), "return_addr": store.get("tpl_return_addr"),
-            "jitter_min": store.get("tpl_jitter_min"), "jitter_max": store.get("tpl_jitter_max"), "wm_text": store.get("wm_text") or ""}
+            "jitter_min": store.get("tpl_jitter_min"), "jitter_max": store.get("tpl_jitter_max"), "wm_text": store.get("wm_text") or "",
+            "opt_style": store.get("tpl_opt_style") or "", "opt_color": store.get("tpl_opt_color") or ""}

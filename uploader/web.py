@@ -1365,6 +1365,14 @@ def create_app(db=None):
         except ValueError:
             return fail("출고지·반품지는 주소록 번호(숫자)로 넣어 주세요.")
         old = db.store(sid) or {}
+        # 옵션표 모양·색 (보내지 않으면 그대로, 비우면 설정 공통값)
+        opt_style = str((b.get("opt_style") if "opt_style" in b else old.get("tpl_opt_style")) or "")
+        opt_color = str((b.get("opt_color") if "opt_color" in b else old.get("tpl_opt_color")) or "").strip()
+        if opt_style and opt_style not in convert.OPTION_STYLES:
+            return fail("옵션표 모양을 목록에서 골라 주세요.")
+        if opt_color and not (len(opt_color) == 7 and opt_color[0] == "#" and all(ch in "0123456789abcdefABCDEF" for ch in opt_color[1:])):
+            return fail("옵션표 색은 #1F2937처럼 # 뒤에 6자리로 넣어 주세요.")
+        db.x("UPDATE stores SET tpl_opt_style=?, tpl_opt_color=? WHERE id=?", (opt_style, opt_color.upper(), sid))
         repriced = (old.get("tpl_price_pct"), old.get("tpl_jitter_min"), old.get("tpl_jitter_max")) != (price_pct, jlo, jhi)
         db.x("""UPDATE stores SET tpl_jitter_min=?, tpl_jitter_max=?, wm_text=? WHERE id=?""",
              (jlo, jhi, str((b.get("wm_text") if "wm_text" in b else old.get("wm_text")) or "").strip(), sid))

@@ -247,7 +247,8 @@ def settings_changed(db, before, after):
 
 TEMPLATE_KEYS = {"tpl_price_pct": "가격 조정 %", "tpl_discount_pct": "표시 할인율 %", "tpl_jitter_min": "가격 흔들기 최소 %",
                  "tpl_jitter_max": "가격 흔들기 최대 %", "tpl_customs": "관부가세", "tpl_ship_addr": "출고지 번호",
-                 "tpl_return_addr": "반품지 번호", "wm_text": "워터마크 글자", "tpl_top_html": "상단", "tpl_bottom_html": "하단"}
+                 "tpl_return_addr": "반품지 번호", "wm_text": "워터마크 글자", "tpl_top_html": "상단", "tpl_bottom_html": "하단",
+                 "tpl_opt_style": "옵션표 모양", "tpl_opt_color": "옵션표 색"}
 
 
 def template_changed(db, store, before, after):
