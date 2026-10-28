@@ -150,6 +150,8 @@ ACTIONS = {
     "sources_bulk_edit": ("원본", lambda b, r: ("원본 일괄 수정" + (" · 판매자코드 비우기" if b.get("clear_seller_code") else "")
                                                + (f" · 재고 {b.get('stock')}" if b.get("stock") not in (None, "") else ""), _count_of(r, "count", "updated"), "")),
     "categories_map": ("원본", lambda b, r: ("카테고리 맞추기 저장", r.get("count"), "")),
+    "sources_category": ("원본", lambda b, r: (("카테고리 직접 정함: " + str(b.get("set_category"))) if b.get("set_category") else "카테고리를 엑셀 값으로 되돌림",
+                                              r.get("count"), "")),
     "refresh_categories": ("원본", "네이버 카테고리 목록 받기"),
     "source_core": ("원본", lambda b, r: ("핵심 단어 직접 지정", 1, str(b.get("core") or ""))),
     "add_name": ("상품명", lambda b, r: ("상품명 후보 직접 추가", 1, "")),

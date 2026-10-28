@@ -105,12 +105,16 @@ App.page("inventory", {
         { id: "copy", label: "다른 스토어로 복사", primary: true },
         "|",
         { id: "edit", label: "일괄 수정", title: "판매자코드 비우기, 재고수(상품·옵션 모두) 바꾸기" },
+        { id: "category", label: "카테고리 바꾸기", title: "고른 원본의 네이버 카테고리를 직접 정함 (인증 때문에 안 올라가는 카테고리 등) — 그 원본의 모든 복사본에 적용" },
         { id: "delete", label: "삭제", danger: true, title: "휴지통으로 옮김 (휴지통에서 되살리거나 완전히 지울 수 있음)" },
       ],
       onPageCheck: (on) => { this.selAll = false; this.rows.forEach((p) => (on ? this.sel.add(p.id) : this.sel.delete(p.id))); this.load(); },
       onAll: () => { this.selAll = true; this.sel.clear(); this.load(); },
       onClear: () => { this.clearSel(); this.load(); },
-      onAction: (id) => { if (id === "ctx") App.ctxConfirm(this.target()); if (id === "copy") this.copyModal(); if (id === "delete") this.remove(); if (id === "edit") this.editModal(); },
+      onAction: (id) => {
+        if (id === "ctx") App.ctxConfirm(this.target()); if (id === "copy") this.copyModal(); if (id === "delete") this.remove(); if (id === "edit") this.editModal();
+        if (id === "category") App.pickCategory({ target: this.target(), what: `고른 원본 ${num(this.selAll ? this.total : this.sel.size)}개`, after: () => this.load() });
+      },
     });
     App.pagerBar($("#i-pager"), this.pagerOpts());
   },
@@ -312,7 +316,8 @@ App.page("inventory", {
     const notes = [];
     if (d.errors.length) notes.push(`<div class="notice err"><b>고쳐야 등록할 수 있어요</b><ul>${d.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>`);
     if (d.warnings.length) notes.push(`<div class="notice warn"><b>확인해 보세요</b><ul>${d.warnings.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>`);
-    const kv = [["카테고리", esc(d.category)], ...Object.entries(d.fields).map(([k, v]) => [esc(k), esc(v)]),
+    const kv = [["카테고리", (d.category_fix ? `${esc(d.category_fix)} <span class="flag">직접 정함</span> <span class="muted small">(엑셀: ${esc(d.category)})</span>` : esc(d.category))
+        + ` <button class="btn sm" id="s-cat">바꾸기</button>`], ...Object.entries(d.fields).map(([k, v]) => [esc(k), esc(v)]),
       ["이미지", `대표·추가 ${Math.min(10, d.thumbnails.length)}장 · 상세 ${d.detail_images.length}장`]];
     b.innerHTML = notes.join("") +
       (d.thumbnails.length ? `<div class="gallery">${d.thumbnails.map((u, i) => img(u, i === 0 ? "g-main" : "")).join("")}</div>` : "") +
@@ -323,6 +328,9 @@ App.page("inventory", {
           <td class="r">${o.price ? (o.price > 0 ? "+" : "") + num(o.price) + "원" : "-"}</td><td class="r">${num(o.stockQuantity)}</td></tr>`).join("")}
         </table></div>` : "") +
       (d.tags_list.length ? `<div><h3 class="sec-title">엑셀 태그</h3><div class="tags">${d.tags_list.map((t) => `<span>${esc(t)}</span>`).join("")}</div></div>` : "");
+    $("#s-cat", b)?.addEventListener("click", () => App.pickCategory({
+      target: { ids: [d.id] }, current: d.category_fix || d.category, excel: d.category, what: `원본 #${d.id}`,
+      after: () => { this.openSource(d.id); this.load(); } }));
   },
 
   renderCtx(b, d) {

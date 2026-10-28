@@ -257,6 +257,14 @@ def _index(categories):
     return _cat_index
 
 
+def with_category_fix(row, fix):
+    """직접 고른 네이버 카테고리가 있으면 '카테고리'를 그것으로 바꾼 복사본 (엑셀 값은 '엑셀카테고리'에 남김)."""
+    fix = str(fix or "").strip()
+    if not fix or not row:
+        return row
+    return {**row, "카테고리": fix, "엑셀카테고리": row.get("카테고리")}
+
+
 def find_category(cat, categories, cfg=None, guess=False):
     """엑셀 카테고리 → (네이버 카테고리 번호, 맞춘 방법). 못 찾으면 (None, '').
     순서: 그대로 → 직접 맞춰 둔 것(설정 category_map) → 띄어쓰기·구분자 무시 → 카테고리 번호.
@@ -307,11 +315,82 @@ def category_suggestions(cat, categories, limit=6):
     return [x for _, x in scored[:limit]]
 
 
+_DIV_TAG = re.compile(r"<(/?)div\b[^>]*>", re.I)
+_GRID_OPEN = re.compile(r"""<div\b[^>]*style\s*=\s*(["'])(?:(?!\1).)*display\s*:\s*grid(?:(?!\1).)*\1[^>]*>""", re.I | re.S)
+_FLEX_COL = re.compile(r"""style\s*=\s*(["'])((?:(?!\1).)*flex-direction\s*:\s*column(?:(?!\1).)*)\1""", re.I | re.S)
+_IMG_TAG = re.compile(r"<img\b[^>]*>", re.I)
+
+
+def _div_end(html, start):
+    """start 자리의 <div …>와 짝이 되는 </div> 바로 뒤 위치 (못 찾으면 -1)."""
+    depth = 0
+    for m in _DIV_TAG.finditer(html, start):
+        depth += -1 if m.group(1) else 1
+        if depth == 0:
+            return m.end()
+    return -1
+
+
+def _children(inner):
+    """inner 안의 맨 바깥 <div>…</div> 들."""
+    out, i = [], 0
+    while True:
+        m = re.search(r"<div\b", inner[i:], re.I)
+        if not m:
+            return out
+        s = i + m.start()
+        e = _div_end(inner, s)
+        if e < 0:
+            return out
+        out.append(inner[s:e])
+        i = e
+
+
+def naver_safe_layout(html):
+    """네이버 상세 편집기가 지우는 CSS(grid, flex-direction)로 짠 옵션표를 표(table)로 바꾼다.
+    그대로 올리면 '옵션 설명' 제목이 왼쪽 좁은 칸으로 밀리고 옵션 이미지가 한 줄에 하나씩 세로로 늘어선다."""
+    out, i = [], 0
+    for m in _GRID_OPEN.finditer(html):
+        if m.start() < i:
+            continue
+        end = _div_end(html, m.start())
+        if end < 0:
+            continue
+        cols_m = re.search(r"grid-template-columns\s*:\s*([^;\"']+)", m.group(0), re.I)
+        rep = re.match(r"\s*repeat\(\s*(\d+)", cols_m.group(1)) if cols_m else None
+        n = int(rep.group(1)) if rep else len(re.findall(r"\dfr|\d+px|\d+%|auto", cols_m.group(1))) if cols_m else 2
+        cols = max(1, min(4, n or 2))
+        cards = _children(html[m.end():end - len("</div>")])
+        if not cards:
+            continue
+        cells = []
+        for c in cards:
+            img = _IMG_TAG.search(c)
+            cap = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", _IMG_TAG.sub("", c))).strip()
+            img_html = re.sub(r"""\sstyle\s*=\s*(["']).*?\1""", "", img.group(0), flags=re.S) if img else ""
+            img_html = img_html.replace("<img", '<img style="width:100%;display:block;" width="100%"', 1) if img_html else ""
+            cells.append(f'<td width="{100 // cols}%" style="width:{100 // cols}%;border:1px solid #EAECF0;text-align:center;'
+                         f'vertical-align:top;padding:0;">{img_html}<p style="padding:8px;margin:0;font-weight:500;">{cap}</p></td>')
+        rows = []
+        for r in range(0, len(cells), cols):
+            row = cells[r:r + cols] + [f'<td width="{100 // cols}%" style="width:{100 // cols}%;"></td>'] * (cols - len(cells[r:r + cols]))
+            rows.append("<tr>" + "".join(row) + "</tr>")
+        out.append(html[i:m.start()])
+        out.append('<table width="100%" style="width:100%;border-collapse:separate;border-spacing:12px;table-layout:fixed;">'
+                   + "".join(rows) + "</table>")
+        i = end
+    html = "".join(out) + html[i:]
+    # 세로로 쌓던 flex 묶음(제목 + 옵션표) → 그냥 가운데 정렬 블록 (flex-direction이 지워지면 가로로 붙어 버림)
+    return _FLEX_COL.sub(lambda m: f'style={m.group(1)}text-align:center;{m.group(1)}', html)
+
+
 def detail_html(row, cfg, url_map, top="", bottom=""):
-    """상세설명 (이미지 주소를 네이버 주소로). top/bottom: 스토어 템플릿 상단·하단 HTML을 앞뒤에 붙인다."""
+    """상세설명 (이미지 주소를 네이버 주소로). top/bottom: 스토어 템플릿 상단·하단 HTML을 앞뒤에 붙인다.
+    옵션표처럼 네이버가 지우는 CSS(grid·flex 세로 쌓기)로 짠 부분은 표로 바꿔 올린다."""
     html = row.get("상세설명") or f"<p>{row.get('상품명') or ''}</p>"
     if cfg.get("detail_video") == "remove":
         html = VIDEO_RE.sub("", html)
+    html = naver_safe_layout(html)
 
     def repl(m):
         src = m.group(3).strip()

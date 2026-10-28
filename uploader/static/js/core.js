@@ -489,6 +489,56 @@ const App = {
     $("input", el).addEventListener("change", (e) => onPage(Math.min(pages, Math.max(1, +e.target.value)) - 1));
   },
 
+  /* 네이버 카테고리 직접 정하기 (인증 때문에 안 올라가는 카테고리 등). target: /api/sources/category에 보낼 대상
+     ({ids: [원본 번호]} 또는 {listing_filter: 복사본 조건}). 저장하면 그 원본(들)에 적용 → 그 원본의 모든 복사본이 다음 등록부터 이 카테고리 */
+  pickCategory({ target, current = "", excel = "", what = "", after }) {
+    let chosen = "";
+    this.openModal({
+      title: "카테고리 바꾸기", wide: true,
+      body: `<div class="form">
+        <p class="small" style="margin:0">${what ? esc(what) + " · " : ""}고른 카테고리는 <b>원본에 저장</b>되어, 그 원본으로 만든 <b>모든 스토어 복사본</b>이 다음에 올릴 때(실패 다시 올리기 포함) 이 카테고리로 올라갑니다. 엑셀을 다시 불러와도 남습니다.</p>
+        ${current ? `<p class="small" style="margin:0">지금: <b>${esc(current)}</b>${excel && excel !== current ? ` <span class="muted">(엑셀: ${esc(excel)})</span>` : ""}</p>` : ""}
+        <label class="field">네이버 카테고리 찾기 <span class="muted">(띄어 쓴 단어가 모두 들어간 것)</span>
+          <input id="pc-q" placeholder="예) 미용 의자" autofocus></label>
+        <div id="pc-hits" class="pc-hits"></div>
+        <p class="small" id="pc-chosen">고른 카테고리: <span class="muted">없음</span></p></div>`,
+      buttons: [
+        { label: "취소" },
+        ...(excel && excel !== current ? [{ label: "엑셀 카테고리로 되돌리기", onClick: async () => this._saveCategory(target, "", after) }] : []),
+        { label: "이 카테고리로 저장", primary: true, onClick: async () => {
+          if (!chosen) { this.toast("목록에서 카테고리를 골라 주세요.", true); return false; }
+          return this._saveCategory(target, chosen, after);
+        } },
+      ],
+    });
+    let timer;
+    $("#pc-q").addEventListener("input", (e) => {
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        const q = e.target.value.trim();
+        const hits = q ? await this.api(`/api/categories/search?q=${encodeURIComponent(q)}`) : [];
+        $("#pc-hits").innerHTML = hits.map((h) => `<button type="button" class="cm-hit" data-cat="${esc(h)}">${esc(h)}</button>`).join("")
+          || (q ? '<span class="muted small">없음 — 다른 단어로 찾아 보세요 (카테고리 목록이 오래됐으면 원본 상품 → 카테고리 맞추기에서 다시 받기)</span>' : "");
+      }, 250);
+    });
+    $("#pc-hits").addEventListener("click", (e) => {
+      const h = e.target.closest("[data-cat]");
+      if (!h) return;
+      chosen = h.dataset.cat;
+      $$("#pc-hits .cm-hit").forEach((x) => x.classList.toggle("on", x === h));
+      $("#pc-chosen").innerHTML = `고른 카테고리: <b>${esc(chosen)}</b>`;
+    });
+  },
+  async _saveCategory(target, category, after) {
+    try {
+      const r = await this.api("/api/sources/category", { json: { ...target, set_category: category } });
+      this.toast(category ? `원본 ${num(r.count)}개의 카테고리를 '${category}'(으)로 정했습니다. 실패한 복사본은 시작에서 '실패'를 골라 다시 올리세요.`
+        : `원본 ${num(r.count)}개를 엑셀 카테고리로 되돌렸습니다.`);
+      if (after) after(r);
+      return true;
+    } catch (e) { this.toast(e.message, true); return false; }
+  },
+
   /* 한 번 더 묻는 창: 확인 버튼(빨강)을 눌러야 true */
   confirmDanger({ title, body, ok = "삭제합니다" }) {
     return new Promise((resolve) => {

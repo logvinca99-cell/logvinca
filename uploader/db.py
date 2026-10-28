@@ -236,6 +236,7 @@ class DB:
         self.c.execute("PRAGMA cache_size=-65536")  # 64MB
         self._migrate_columns()
         self.c.executescript(SCHEMA)
+        self._migrate_columns()   # 새로 만든 db: SCHEMA에 없는 나중에 더한 열도 붙인다
         self._migrate_data()
         from . import activity, aiwords, bulkedit, ctxkw, keywords, kipris, lexicon, mail, trash
         lexicon.ensure(self)
@@ -257,7 +258,10 @@ class DB:
     # 예전 버전의 db에 새 열을 더한다 (SCHEMA의 CREATE는 이미 있는 표를 바꾸지 않으므로).
     NEW_COLUMNS = {
         "sources": [("seller_code", "TEXT NOT NULL DEFAULT ''"), ("core_kw", "TEXT NOT NULL DEFAULT ''"),
-                    ("core_manual", "INTEGER NOT NULL DEFAULT 0"), ("kw_at", "REAL")],
+                    ("core_manual", "INTEGER NOT NULL DEFAULT 0"), ("kw_at", "REAL"),
+                    # 직접 고른 네이버 카테고리 (인증 때문에 안 올라가는 카테고리 등) — 엑셀 카테고리 대신 이것으로 검사·등록.
+                    # 엑셀을 다시 불러와도 남음
+                    ("category_fix", "TEXT NOT NULL DEFAULT ''")],
         "stores": [("code", "TEXT NOT NULL DEFAULT ''"), ("orders_synced_to", "REAL"),
                    ("wm_text", "TEXT NOT NULL DEFAULT ''"), ("importer", "TEXT NOT NULL DEFAULT ''"),
                    # 스토어 템플릿: 상세 상단·하단(HTML), 관부가세 코드, 가격 조정 %, 표시 할인율 % (비우면 설정 공통값)
@@ -364,8 +368,10 @@ class DB:
     # ── 원본
 
     def source_row(self, sid):
-        r = self.one("SELECT data FROM sources WHERE id=?", (sid,))
-        return unpack(r["data"]) if r else None
+        """원본 엑셀 줄 (직접 고른 카테고리가 있으면 '카테고리'를 그것으로)."""
+        from .convert import with_category_fix
+        r = self.one("SELECT data, category_fix FROM sources WHERE id=?", (sid,))
+        return with_category_fix(unpack(r["data"]), r["category_fix"]) if r else None
 
     def recount_sources(self, ids=None):
         """n_listings / n_success / n_free_names 다시 세기. ids가 없으면 전체."""

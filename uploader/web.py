@@ -319,7 +319,7 @@ def create_app(db=None):
             return jsonify({**info, "items": []})
         cfg = config.load()
         items = []
-        for r in db.q("SELECT category, COUNT(*) AS n FROM sources GROUP BY category ORDER BY n DESC"):
+        for r in db.q("SELECT category, COUNT(*) AS n FROM sources WHERE category_fix='' GROUP BY category ORDER BY n DESC"):
             if not r["category"]:
                 continue
             cid, _ = convert.find_category(r["category"], cats, cfg)
@@ -330,6 +330,21 @@ def create_app(db=None):
                     sug = [gname] + [x for x in sug if x != gname]
                 items.append({"category": r["category"], "count": r["n"], "how": "", "guess": gname if g else "", "suggest": sug})
         return jsonify({**info, "items": items})
+
+    @app.post("/api/sources/category")
+    def sources_category():
+        """원본의 네이버 카테고리를 직접 정함 (복사본 화면에서 고르면 그 원본에) — set_category가 비면 엑셀 카테고리로 되돌림.
+        (category는 화면 거르기 조건이라 고른 값은 set_category로 받음)"""
+        b = body()
+        path = str(b.get("set_category") or "").strip()
+        ids = _ctx_sources(b)
+        if not ids:
+            return fail("고른 원본이 없습니다.")
+        try:
+            n = inventory.set_category_fix(db, ids, path)
+        except ValueError as e:
+            return fail(str(e))
+        return jsonify({"count": n, "category": path})
 
     @app.get("/api/categories/search")
     def categories_search():
@@ -1015,6 +1030,9 @@ def create_app(db=None):
         l["thumb"] = (convert.thumbnails(row) or [""])[0]
         l["source_name"] = row.get("상품명")
         l["source_price"] = convert.net_price(row)
+        l["category"] = cat
+        l["category_excel"] = row.get("엑셀카테고리") or cat
+        l["category_fixed"] = bool(row.get("엑셀카테고리"))
         return jsonify(l)
 
     @app.post("/api/listings/schedule")

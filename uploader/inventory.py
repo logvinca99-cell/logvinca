@@ -70,7 +70,8 @@ def import_products(db, fileobj, filename, progress=None, should_stop=None):
             for row in batch:
                 key = source_key(row)
                 s = convert.summary(row, cfg)
-                errors, warnings = convert.validate(row, cfg, categories)
+                fix = (c.execute("SELECT category_fix FROM sources WHERE source_key=?", (key,)).fetchone() or {"category_fix": ""})["category_fix"]
+                errors, warnings = convert.validate(convert.with_category_fix(row, fix), cfg, categories)   # 직접 고른 카테고리는 다시 불러와도 그대로
                 warnings += _name_warnings(s["name"], lex)
                 tags = ",".join(convert.tags(row))
                 vals = (s["name"], s["price"], s["category"], s["thumb"], s["option_count"], s["image_count"],
@@ -139,6 +140,30 @@ def _name_warnings(name, lex):
     return out
 
 
+def set_category_fix(db, sids, path):
+    """원본들의 네이버 카테고리를 직접 정함 (path = 네이버 카테고리 전체 이름, ''면 엑셀 카테고리로 되돌림).
+    그 원본으로 만든 복사본도 다음에 올릴 때 이 카테고리로. 바꾼 원본 수."""
+    path = str(path or "").strip()
+    cats = naver.cached_categories() or {}
+    if path and path not in cats:
+        raise ValueError(f"네이버 카테고리 '{path}'가 목록에 없습니다. 목록에서 골라 주세요.")
+    cfg = config.load()
+    n = 0
+    for i in range(0, len(sids), 900):
+        chunk = list(sids)[i:i + 900]
+        m = ",".join("?" * len(chunk))
+        rows = db.q(f"SELECT id, data FROM sources WHERE id IN ({m})", chunk)
+        with db.tx() as c:
+            for r in rows:
+                row = convert.with_category_fix(unpack(r["data"]), path)
+                errors, warnings = convert.validate(row, cfg, cats)
+                c.execute("UPDATE sources SET category_fix=?, errors=?, valid=? WHERE id=?",
+                          (path, json.dumps(errors, ensure_ascii=False), int(not errors), r["id"]))
+                n += 1
+    db.recount_sources(sids)
+    return n
+
+
 def revalidate(db, progress=None, should_stop=None):
     """카테고리 목록이나 설정·단어 사전이 바뀐 뒤 전체 원본을 다시 검사한다."""
     cfg = config.load()
@@ -150,10 +175,10 @@ def revalidate(db, progress=None, should_stop=None):
         if should_stop and should_stop():
             break
         chunk = ids[i:i + CHUNK]
-        rows = db.q(f"SELECT id, data FROM sources WHERE id IN ({','.join('?' * len(chunk))})", chunk)
+        rows = db.q(f"SELECT id, data, category_fix FROM sources WHERE id IN ({','.join('?' * len(chunk))})", chunk)
         with db.tx() as c:
             for r in rows:
-                row = unpack(r["data"])
+                row = convert.with_category_fix(unpack(r["data"]), r["category_fix"])
                 errors, warnings = convert.validate(row, cfg, categories)
                 invalid += bool(errors)
                 warnings += _name_warnings(str(row.get("상품명") or ""), lex)

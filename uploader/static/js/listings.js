@@ -167,6 +167,7 @@ App.page("listings", {
         "|",
         { id: "lock", label: "잠금", title: "판매 이력과 상관없이 지우지 못하게 잠금" },
         { id: "unlock", label: "잠금 풀기" },
+        { id: "category", label: "카테고리 바꾸기", title: "고른 복사본의 원본 카테고리를 직접 정함 (인증 때문에 안 올라가는 카테고리 등) — 그 원본의 다른 스토어 복사본도 같이" },
         { id: "resetround", label: "회차 초기화", title: "지난 회차 기록을 지우고 1회차로 (다시 다 올릴 때) · 판매 중·내린 건은 다음에 다시 올릴 때 1회차로" },
         "|",
         { id: "remove", label: "삭제", danger: true, title: "아직 안 올린 복사본·내린 복사본을 휴지통으로 (네이버에 올라간 것은 먼저 내리기)" },
@@ -208,6 +209,10 @@ App.page("listings", {
       } catch (err) { App.toast(err.message, true); }
     }
     if (id === "resetround") this.resetRound();
+    if (id === "category") {
+      const n = this.selAll ? this.total : this.sel.size;
+      App.pickCategory({ target: { listing_filter: this.target() }, what: `고른 복사본 ${num(n)}건의 원본`, after: () => this.load() });
+    }
     if (id === "restore") App.startTask(App.api("/api/bait/restore", { json: this.selAll ? { filter: this.query() } : { ids: [...this.sel] } }));
     if (id === "cancel") {
       if (!confirm("고른 건 중 대기·실패 할 일을 취소할까요?\n새 등록이면 계획을 지우고 이름을 후보로 돌립니다. 최신화·내리기면 판매 중으로 되돌립니다.")) return;
@@ -545,7 +550,8 @@ App.page("listings", {
       title: l.name, sub: `${l.store_name} · ${statusLabel(l.status, l.op)} · ${l.round}회차`,
       tabs: [
         { key: "info", label: "정보", render: (b) => {
-          b.innerHTML = (l.status === "fail" ? `<div class="notice err"><b>${esc(statusLabel(l.status, l.op))}</b><br>${esc(l.message)}</div>` : "")
+          b.innerHTML = (l.status === "fail" ? `<div class="notice err"><b>${esc(statusLabel(l.status, l.op))}</b><br>${esc(l.message)}
+              ${/카테고리|인증|category|certif/i.test(l.message || "") ? `<br><button class="btn sm d-cat">카테고리 바꾸기</button> <span class="small">원본에 저장되어 다른 스토어 복사본도 같이 바뀝니다</span>` : ""}</div>` : "")
             + (l.origin_no ? `<div class="notice ok"><b>판매 중</b> · 상품번호 ${esc(l.channel_no)} · ${ymd(l.registered_at)}에 올림 (${age(l.registered_at)})<br>
                 ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">스토어에서 보기</a> · ` : ""}
                 ${sellerLink((App.stores || []).find((s) => s.id === l.store_id), `https://sell.smartstore.naver.com/#/products/edit/${l.origin_no}`, "스마트스토어센터에서 수정")}</div>` : "")
@@ -559,6 +565,8 @@ App.page("listings", {
               <dt>원본 상품명</dt><dd>${esc(l.source_name)} <button class="btn sm" id="d-src">원본 보기</button></dd>
               <dt>판매자 관리코드</dt><dd>${esc(l.seller_code || l.next_seller_code)} <span class="muted">(${l.round}회차${l.seller_code ? "" : ", 등록하면 붙음"})</span></dd>
               <dt>원본 번호</dt><dd>#${l.source_id}</dd>
+              <dt>카테고리</dt><dd>${esc(l.category)}${l.category_fixed ? ` <span class="flag">직접 정함</span> <span class="muted small">(엑셀: ${esc(l.category_excel)})</span>` : ""}
+                <button class="btn sm d-cat">바꾸기</button></dd>
               <dt>판매가</dt><dd>손님 가격 <b>${num(l.final)}원</b> <span class="muted">(원본가 ${num(l.source_price)}원)</span>
                 ${l.off ? `<br><span class="muted">네이버 판매가 ${num(l.shown)}원 · 즉시할인 ${num(l.off)}원 (${l.disc_pct}%)</span>` : ""}
                 ${l.bait_state === "on" ? `<br><span class="flag bad">도둑방지 중</span> 네이버에는 <b>${num(l.price + l.bait)}원</b> <button class="btn" id="d-restore">원래 가격으로</button>` : ""}
@@ -584,6 +592,9 @@ App.page("listings", {
             } catch (err) { App.toast(err.message, true); }
           });
           $("#d-src", b)?.addEventListener("click", () => App.pages.inventory.openSource(l.source_id));
+          $$(".d-cat", b).forEach((x) => x.addEventListener("click", () => App.pickCategory({
+            target: { ids: [l.source_id] }, current: l.category, excel: l.category_excel, what: `원본 #${l.source_id}`,
+            after: () => { this.openListing(id); this.load(); } })));
           $("#d-rename", b)?.addEventListener("click", () => this.renameModal([id]));
           $$("[data-go]", b).forEach((x) => x.addEventListener("click", () => { App.closeDrawer(); this.goto(+x.dataset.go); }));
           $("#d-restore", b)?.addEventListener("click", async () => {
