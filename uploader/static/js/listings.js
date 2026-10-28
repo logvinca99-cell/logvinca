@@ -47,7 +47,7 @@ App.page("listings", {
       <div class="listbar" id="l-bar"></div>
       <div class="card table-card">
         <table class="grid"><thead><tr><th class="w-check"></th>
-          <th class="w-thumb"></th><th>등록 상품명 <span class="muted small" style="font-weight:400">(원본과 비교)</span></th>
+          <th class="w-thumb"></th><th>등록 상품명 <span class="muted small" style="font-weight:400">(원본과 비교)</span>${ND_LEGEND}</th>
           <th class="w-links">바로 가기</th><th class="w-round">관리코드 · 올린 날</th><th class="w-num">판매가</th><th class="w-status">상태</th></tr></thead><tbody id="l-rows"></tbody></table>
         <div class="pg-foot"><div class="pg" id="l-pager"></div></div>
       </div>

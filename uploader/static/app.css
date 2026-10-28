@@ -695,3 +695,4 @@ td.w-links > .btn { margin-top: 4px; }
 .s-reupload { background: var(--accent-soft); color: var(--accent-strong); }
 .nowrap { white-space: nowrap; }
 .nd .nd-core, .nd-legend .nd-core { background: #f3e8ff; color: #7c3aed; font-weight: 700; }
+th .nd-legend { font-weight: 400; margin-top: 4px; }

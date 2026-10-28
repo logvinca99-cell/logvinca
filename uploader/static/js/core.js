@@ -642,9 +642,18 @@ function nameDiff(name, orig, aiWords = [], origin = "", coreWords = []) {
   const ot = String(orig || "").split(/\s+/).filter(Boolean);
   const nt = String(name || "").split(/\s+/).filter(Boolean);
   const oset = new Set(ot), ai = new Set(aiWords || []), core = new Set(coreWords || []);
+  // 원본 순서를 그대로 따르는 단어(가장 긴 공통 순서)는 '원본 순서 그대로', 나머지 원본 단어는 '자리만 바뀜'
+  // (숫자·수량·연식을 뒤로 보내거나 단어가 빠져 칸이 밀린 것은 자리 바뀜으로 보지 않음)
+  const L = Array.from({ length: nt.length + 1 }, () => new Array(ot.length + 1).fill(0));
+  for (let i = nt.length - 1; i >= 0; i--) for (let j = ot.length - 1; j >= 0; j--)
+    L[i][j] = nt[i] === ot[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const inOrder = new Set();
+  for (let i = 0, j = 0; i < nt.length && j < ot.length;) {
+    if (nt[i] === ot[j]) { inOrder.add(i); i++; j++; } else if (L[i + 1][j] >= L[i][j + 1]) i++; else j++;
+  }
   const html = nt.map((w, i) => {
     let c = "nd-add", t = "직접 넣은 단어";
-    if (oset.has(w)) { c = ot[i] === w ? "nd-same" : "nd-move"; t = ot[i] === w ? "원본과 같은 자리" : "자리만 바뀐 원본 단어"; }
+    if (oset.has(w)) { c = inOrder.has(i) ? "nd-same" : "nd-move"; t = inOrder.has(i) ? "원본 단어 (원본 순서 그대로)" : "원본 단어 (자리만 바뀜)"; }
     else if (core.has(w)) { c = "nd-core"; t = "AI 다른 이름(core)"; }
     else if (ai.has(w) || origin === "ctx" || origin === "ai") { c = "nd-ai"; t = "AI가 가져온 단어 (맥락)"; }
     return `<span class="${c}" title="${t}">${esc(w)}</span>`;
@@ -654,8 +663,8 @@ function nameDiff(name, orig, aiWords = [], origin = "", coreWords = []) {
   return `<div class="nd">${html}</div>${gone.length && name !== orig ? `<div class="nd-gone">빠진 원본 단어: ${gone.map((w) => `<s>${esc(w)}</s>`).join("")}</div>` : ""}`;
 }
 
-const ND_LEGEND = `<div class="nd-legend"><span class="nd-same" style="border:1px solid var(--line)">원본과 같은 자리</span>
-  <span style="background:var(--info-soft);color:var(--info)">자리만 바뀜(셔플)</span><span style="background:var(--accent-soft);color:var(--accent-strong)">AI 맥락</span><span class="nd-core">AI 다른 이름</span>
+const ND_LEGEND = `<div class="nd-legend"><span class="nd-same" style="border:1px solid var(--line)">원본 단어</span>
+  <span style="background:var(--info-soft);color:var(--info)">원본 단어 · 자리 바뀜</span><span style="background:var(--accent-soft);color:var(--accent-strong)">AI 맥락</span><span class="nd-core">AI 다른 이름</span>
   <span style="background:var(--warn-soft);color:var(--warn)">직접 넣은 단어</span><span><s>빠진 원본 단어</s></span></div>`;
 
 /* 스토어 목록을 사업자별로 묶기 (순서는 서버가 사업자·스토어 순서대로 줌) → [[사업자 이름, [스토어…]], …] */
