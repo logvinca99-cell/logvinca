@@ -709,11 +709,17 @@ def make_more(db, need, avoid=None, cfg=None):
 
 
 def after_saved(db, sids):
-    """키워드를 저장한 뒤: 이름 후보를 만들고, 그 원본의 아직 이름 없는 복사본에 배정한다."""
+    """키워드를 저장한 뒤: 이름 후보를 만들고, 키워드를 기다리던 복사본(이름 바꾸기를 눌러 둔 것 — 이미 이름이 있는 것·
+    내린 것 포함)은 그때 누른 대로 이름을 바꾸고, 그 밖의 아직 이름 없는 복사본에도 배정한다."""
     from . import inventory
     if not sids:
         return {}
     st = build_names(db, sids)
+    wait = inventory.ctx_waiting(db, sids)
+    st["waiting_renamed"] = 0
+    for value, ids in wait.items():
+        if ids:
+            st["waiting_renamed"] += inventory.rename_ctx(db, ids, redo=value == 1).get("renamed", 0)
     st["assigned"] = inventory.assign_ctx_names(db, sids)
     return st
 
@@ -1073,7 +1079,14 @@ def poll(db):
             except Exception:  # noqa: BLE001
                 pass
         st["ended"] += 1
-        after_saved(db, saved)
+        got = after_saved(db, saved)
+        if got.get("waiting_renamed"):
+            try:
+                from . import activity
+                activity.add(db, "상품명", "rename_wait", "AI 키워드 도착 → 기다리던 복사본 상품명 바꿈",
+                             count=got["waiting_renamed"], result=f"복사본 {got['waiting_renamed']:,}건 이름 바꿈")
+            except Exception:  # noqa: BLE001
+                pass
     return st
 
 

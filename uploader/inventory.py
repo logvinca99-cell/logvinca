@@ -886,6 +886,7 @@ def rename_shuffle(db, ids, fixed_n=3, extra=(), progress=None, should_stop=None
     bad = ctxkw.word_filter(cfg, lex)
     dropped = [w for w in extra if w in forb or bad(w) or ctxname.claim_word(w)]
     extra = [w for w in extra if w not in dropped]
+    set_ctx_wait(db, ids, 0)   # 셔플로 바꿨으면 AI 키워드가 와도 덮어쓰지 않음
     rows = []
     for i in range(0, len(ids), 900):
         chunk = ids[i:i + 900]
@@ -938,6 +939,25 @@ def refresh_name(c, src, store_id, cfg, now):
     return dict(c.execute("SELECT id, name FROM names WHERE norm=?", (namegen.normalize(name),)).fetchone())
 
 
+def set_ctx_wait(db, ids, value):
+    """AI 키워드를 기다리는 복사본 표시: 1 = 오면 이름 바꿈(있던 이름도), 2 = 이름 없는 것만, 0 = 지움.
+    다른 방식으로 이름을 바꾸거나 직접 고치면 지운다."""
+    for i in range(0, len(ids), 900):
+        chunk = list(ids)[i:i + 900]
+        db.x(f"UPDATE listings SET ctx_wait=? WHERE id IN ({','.join('?' * len(chunk))})", (int(value), *chunk))
+
+
+def ctx_waiting(db, sids):
+    """이 원본들의 복사본 중 AI 키워드를 기다리던(이름 바꾸기를 눌러 둔) 아직 안 올린 것 → {1: [...], 2: [...]}."""
+    out = {1: [], 2: []}
+    for i in range(0, len(sids), 900):
+        chunk = list(sids)[i:i + 900]
+        for r in db.q(f"""SELECT id, ctx_wait FROM listings WHERE ctx_wait IN (1, 2) AND origin_no=''
+                AND source_id IN ({','.join('?' * len(chunk))})""", chunk):
+            out[r["ctx_wait"]].append(r["id"])
+    return out
+
+
 def rename_ctx(db, ids, fallback=False, progress=None, should_stop=None, redo=True):
     """AI 키워드 방식(기본): 키워드를 받은 원본은 이름 후보(A·B)를 만들어 고른 복사본에 붙인다.
     redo면 이미 이름이 있는 복사본(AI 키워드·셔플·AI로 짓기 이름 등)도 새 이름으로 바꾼다 — 바꾸기를 눌렀는데
@@ -949,6 +969,7 @@ def rename_ctx(db, ids, fallback=False, progress=None, should_stop=None, redo=Tr
         rows += db.q(f"""SELECT l.id, l.source_id, l.name_id, l.origin_no, l.status, n.origin FROM listings l
             LEFT JOIN names n ON n.id=l.name_id WHERE l.id IN ({','.join('?' * len(chunk))})""", chunk)
     todo = [r for r in rows if not r["origin_no"]]   # 안 올린 것·내린 것(다시 올리기 전 이름 바꾸기)
+    set_ctx_wait(db, [r["id"] for r in todo], 0)
     st = {"listings": len(rows), "live": len(rows) - len(todo), "renamed": 0, "kept": 0, "short": 0, "no_kw": 0,
           "fallback": 0, "method": "ctx"}
     src = sorted({r["source_id"] for r in todo})
@@ -1026,6 +1047,14 @@ def rename_ctx(db, ids, fallback=False, progress=None, should_stop=None, redo=Tr
                     kst[r["status"]] = kst.get(r["status"], 0) + r["n"]
             st["kw_pending"], st["kw_failed"] = kst.get("pending", 0), kst.get("retry", 0)
             st["kw_none"] = st["no_kw"] - st["kw_pending"] - st["kw_failed"]
+            # 키워드를 받는 중·재시도 대기인 원본의 복사본: 키워드가 오면 이 복사본 이름을 바꿈
+            # (이미 이름이 있는 것·내린 것도 — 바꾸기를 눌렀으니까)
+            waiting = set()
+            for i in range(0, len(rs), 900):
+                waiting |= {r["source_id"] for r in db.q(f"""SELECT source_id FROM ctx_kw WHERE status IN ('pending','retry')
+                    AND source_id IN ({','.join('?' * len(rs[i:i + 900]))})""", rs[i:i + 900])}
+            set_ctx_wait(db, [r["id"] for r in rest if r["source_id"] in waiting], 1 if redo else 2)
+            st["kw_wait_listings"] = sum(1 for r in rest if r["source_id"] in waiting)
     return st
 
 
@@ -1037,6 +1066,7 @@ def rename_listings(db, ids, method="recombine", progress=None, should_stop=None
     이미 바꾼 이름이 있으면 그 이름은 버리고 새로 고르며, 지난 이름에 넣었던 새 단어는 되도록 피한다."""
     cfg = config.load()
     cfg["_lex"] = lexicon.get(db)
+    set_ctx_wait(db, ids, 0)
     rows = []
     for i in range(0, len(ids), 900):
         chunk = ids[i:i + 900]
@@ -1142,7 +1172,8 @@ def set_listing_name(db, lid, name):
         if l["name_id"]:
             c.execute("DELETE FROM names WHERE id=? AND origin!='original'", (l["name_id"],))
             c.execute("UPDATE names SET listing_id=NULL WHERE id=?", (l["name_id"],))
-        c.execute("UPDATE listings SET name_id=?, name=?, updated_at=? WHERE id=?", (nid["id"], nid["name"], now, lid))
+        # 직접 고친 이름은 AI 키워드가 와도 덮어쓰지 않음 (ctx_wait=0)
+        c.execute("UPDATE listings SET name_id=?, name=?, updated_at=?, ctx_wait=0 WHERE id=?", (nid["id"], nid["name"], now, lid))
         c.execute("UPDATE names SET listing_id=? WHERE id=?", (lid, nid["id"]))
     db.recount_sources([l["source_id"]])
     return nid["name"]

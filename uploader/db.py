@@ -291,7 +291,9 @@ class DB:
                      ("bait", "INTEGER NOT NULL DEFAULT 0"), ("bait_state", "TEXT NOT NULL DEFAULT ''"),
                      ("bait_note", "TEXT NOT NULL DEFAULT ''"), ("bait_restored_at", "REAL"),
                      # 회차 초기화: 판매 중·내린 건을 다음에 다시 올릴 때 회차를 +1 하지 않고 1회차로
-                     ("round_reset", "INTEGER NOT NULL DEFAULT 0")],
+                     ("round_reset", "INTEGER NOT NULL DEFAULT 0"),
+                     # 상품명 바꾸기(AI 키워드)를 눌렀는데 키워드가 아직 오는 중 → 오면 이 복사본 이름을 바꿈
+                     ("ctx_wait", "INTEGER NOT NULL DEFAULT 0")],
     }
 
     def _migrate_columns(self):

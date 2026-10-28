@@ -284,7 +284,7 @@ const App = {
         : r.method === "ctx"
         ? `상품명 바꾸기(AI 키워드) 끝: ${num(r.renamed)}건 배정` + (r.kept ? ` · 이미 맥락 이름 ${num(r.kept)}건 그대로` : "")
           + (r.fallback ? ` · 키워드 없는 원본은 예비 방식으로 ${num(r.fallback)}건` : "")
-          + (r.kw_pending ? ` · AI 키워드 받는 중인 원본 ${num(r.kw_pending)}개는 끝나면 자동으로 붙음 (오른쪽 아래 현황)` : "")
+          + (r.kw_pending ? ` · AI 키워드 받는 중인 원본 ${num(r.kw_pending)}개${r.kw_wait_listings ? `(복사본 ${num(r.kw_wait_listings)}건)` : ""}는 키워드가 오면 자동으로 이름을 바꿈 — 프로그램이 켜져 있을 때 1분마다 확인, 껐다 켜도 이어서 (오른쪽 아래 현황)` : "")
           + (r.kw_failed ? ` · AI 키워드 실패 원본 ${num(r.kw_failed)}개 (오른쪽 아래에서 사유 보고 다시 받기)` : "")
           + (r.kw_none ? ` · 키워드를 아직 안 받은 원본 ${num(r.kw_none)}개` : "")
           + (r.short ? ` · 이름을 못 만든 ${num(r.short)}건은 '이름 변경 필요'` : "") + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
