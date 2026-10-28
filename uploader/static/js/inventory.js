@@ -336,8 +336,8 @@ App.page("inventory", {
     b.innerHTML = `<div class="kw-src">
       <p class="muted small">이름 = [원본 앞 ${esc((k.head || []).length)}단어${k.nums?.length ? ` · ${esc(k.nums.join(" "))}는 뒤로` : ""}] + keep + 다른 이름(core) + 용도·조합(core2) + 맥락 + 남은 원본 단어 (A·B는 보라·맥락을 나눠 쓰고, B는 앞 3단어만 두고 섞음).
         상태: <b>${st}</b>${k.at ? ` · ${ymd(k.at)}` : ""}${k.error ? ` · <span class="c-err">${esc(k.error)}</span>` : ""}</p>
-      ${k.status === "ok" ? group("keep", "keep", "원본에서 지킬 핵심 단어") + group("core", "다른 이름 (core)", "같은 물건을 부르는 통용 명칭·동의어·상위 명칭 · 1번째는 A·B 둘 다, 나머지는 번갈아")
-        + group("core2", "용도·조합 (core2)", "용도형 명칭·조합용 목적 표현 · A·B가 반씩 나눠 씀") + group("ctx", "맥락 (ctx)", "쓰는 장소·사람·용도·상황 · A·B가 반씩 나눠 씀")
+      ${k.status === "ok" ? group("keep", "keep", "원본에서 지킬 핵심 단어") + group("core", "다른 이름 (core)", "같은 물건을 부르는 통용 명칭·동의어·상위 명칭 · A·B가 나눠 쓰고 자리가 남으면 상대 몫도")
+        + group("core2", "용도·조합 (core2)", "용도형 명칭·조합용 목적 표현 · A·B가 나눠 쓰고 자리가 남으면 상대 몫도") + group("ctx", "맥락 (ctx)", "쓰는 장소·사람·용도·상황 · A·B가 반씩 나눠 씀")
         : `<button class="btn" id="ctx-one">이 원본 AI 키워드 받기</button>`}
     </div>`;
     $("#ctx-one", b)?.addEventListener("click", () => App.ctxConfirm({ ids: [d.id] }));

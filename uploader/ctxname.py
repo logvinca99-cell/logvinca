@@ -220,6 +220,28 @@ def _ab(lst, p, r, share_first):
     return lst[p::2] or lst[:1]
 
 
+def _b_order(tail, made, ai_words, rnd, tries=40):
+    """B의 섞을 부분 순서: 여러 번 섞어 보고 이미 만든 이름(A)과 가장 달라 보이는 것.
+    점수(낮을수록 좋음) = 앞 3단어 바로 뒤 4자리에 A 앞쪽(8단어)에 있는 단어 수 ×3 + A와 같은 자리 단어 수
+                      - 앞 4자리에 AI 단어(보라·맥락) 수 (B는 AI 단어가 앞에 오면 더 달라 보임)."""
+    if not tail:
+        return tail
+    others = [m.split() for m in made]
+    best, best_score = list(tail), None
+    for _ in range(tries):
+        cand = list(tail)
+        rnd.shuffle(cand)
+        score = 0
+        for o in others:
+            front = set(o[:8])
+            score += 3 * sum(1 for w in cand[:4] if w in front)
+            score += sum(1 for i, w in enumerate(cand) if B_FIXED + i < len(o) and o[B_FIXED + i] == w)
+        score -= sum(1 for w in cand[:4] if w in ai_words)
+        if best_score is None or score < best_score:
+            best, best_score = cand, score
+    return best
+
+
 def make_names_v2(origin_name, kw, forbidden, copies=2, seed=0, reject=None, opts=None, bad=None, rep=None):
     """원본 하나 → 이름 copies개 (1번째 = A, 2번째 = B, 3번째부터는 A·B 방식을 번갈아 다른 조합으로).
     A·B가 덜 비슷하게: 보라(core)는 가장 확실한 1개만 둘 다 쓰고 나머지는 번갈아 나눔, 용도·조합(core2)·맥락(ctx)은 반씩 나눔.
@@ -260,20 +282,18 @@ def make_names_v2(origin_name, kw, forbidden, copies=2, seed=0, reject=None, opt
             rs = rest[r % len(rest):] + rest[:r % len(rest)] if rest else []
             if p == 1:
                 rs = rs[::-1]
+            # 상대(A↔B) 몫 보라: 자리가 남으면 맥락 2개 다음에 빌려 씀 (보라를 최대한 채우되 자기 몫이 먼저)
+            borrow = [w for w in core + core2 if w not in c_pick and w not in c2]
             picks = ([("keep", w) for w in kp] + [("core", w) for w in c_pick + c2[:CORE2_FIRST]]
-                     + [("ctx", w) for w in cx[:CTX_FIRST]] + [("rest", w) for w in rs] + [("more", w) for w in c2[CORE2_FIRST:]]
+                     + [("ctx", w) for w in cx[:CTX_FIRST]] + [("core", w) for w in borrow] + [("rest", w) for w in rs]
+                     + [("more", w) for w in c2[CORE2_FIRST:]]
                      + [("ctx", w) for w in cx[CTX_FIRST:CTX_FIRST + CTX_MORE]] + [("num", w) for w in nums])
             name, used = _fit(head, picks, o["max_chars"], rep)
-            if p == 1:   # B: 앞 3단어만 두고 나머지(숫자 단어 빼고) 섞기 — A와 순서가 같으면 다시 섞음
+            if p == 1:   # B: 앞 3단어만 두고 나머지(숫자 단어 빼고) 섞기 — 겉으로 달라 보이게 섞은 것 중 고름
                 ws = name.split()
                 fixed, tail = ws[:B_FIXED], [w for w in ws[B_FIXED:] if w not in nums]
                 tail_nums = [w for w in ws[B_FIXED:] if w in nums]
-                rnd = random.Random(f"{seed}:{v}")
-                for _ in range(5):
-                    rnd.shuffle(tail)
-                    name = " ".join(fixed + tail + tail_nums)
-                    if not any(name.split()[B_FIXED:] == m.split()[B_FIXED:] for m in made):
-                        break
+                name = " ".join(fixed + _b_order(tail, made, used, random.Random(f"{seed}:{v}")) + tail_nums)
             if rep and rep(name.split()):
                 continue   # 앞 단어만으로도 반복이면 (원본 자체 문제) 이 조합은 버림
             if name == orig or set(name.split()) == set(toks):
