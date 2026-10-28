@@ -720,10 +720,23 @@ def after_saved(db, sids):
     return st
 
 
-def rebuild_unused(db):
+def rebuild_repeated(db):
+    """반복 기준이 바뀌었을 때: 안 올린·안 쓴 AI 이름 중 지금 기준으로 같은 단어가 3번 이상인 이름이 있는 원본만 다시 조립.
+    AI는 부르지 않는다. 다시 만든 원본 수."""
+    cfg = config.load()
+    rep = repeat_check(cfg, lexicon.get(db))
+    sids = sorted({r["source_id"] for r in db.q("""SELECT n.source_id, n.name FROM names n LEFT JOIN listings l ON l.id=n.listing_id
+        WHERE n.origin='ctx' AND (n.listing_id IS NULL OR (n.listing_id>0 AND l.origin_no='' AND l.status IN ('planned','fail')))""")
+        if rep(str(r["name"] or "").split())})
+    return rebuild_unused(db, sids) if sids else 0
+
+
+def rebuild_unused(db, sids=None):
     """조립 방식이 바뀌었을 때(다른 이름 1개 → 전부): AI를 다시 부르지 않고, 아직 안 올린 복사본의 AI 이름과
-    안 쓴 AI 이름 후보를 지운 뒤 받은 키워드로 새로 만들어 다시 붙인다. 올린 복사본·바꿔 버린 이름은 그대로. 다시 만든 원본 수."""
-    sids = [r["source_id"] for r in db.q("SELECT source_id FROM ctx_kw WHERE status='ok'")]
+    안 쓴 AI 이름 후보를 지운 뒤 받은 키워드로 새로 만들어 다시 붙인다. 올린 복사본·바꿔 버린 이름은 그대로. 다시 만든 원본 수.
+    sids를 주면 그 원본만."""
+    if sids is None:
+        sids = [r["source_id"] for r in db.q("SELECT source_id FROM ctx_kw WHERE status='ok'")]
     for i in range(0, len(sids), 500):
         chunk = sids[i:i + 500]
         with db.tx() as c:
