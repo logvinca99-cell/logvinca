@@ -933,7 +933,7 @@ def create_app(db=None):
             fb = False
             try:
                 tid = tasks.start("rename", f"상품명 바꾸기(AI 키워드) · 복사본 {len(ids):,}건",
-                                  lambda **kw: inventory.rename_ctx(db, ids, fb, **kw))
+                                  lambda **kw: inventory.rename_ctx(db, ids, fb, redo=bool(b.get("redo", True)), **kw))
             except RuntimeError as e:
                 return fail(str(e))
             return jsonify({"task": tid})

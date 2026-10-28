@@ -78,11 +78,11 @@ def import_products(db, fileobj, filename, progress=None, should_stop=None):
                         json.dumps(warnings, ensure_ascii=False), int(not errors), s["seller_code"], iid, now)
                 old = c.execute("SELECT id, name FROM sources WHERE source_key=?", (key,)).fetchone()
                 if old:
-                    if old["name"] != s["name"]:
-                        ctxkw.invalidate(c, old["id"])   # 원본 상품명이 바뀌면 맥락 키워드·안 쓴 맥락 이름 후보 무효
                     c.execute("""UPDATE sources SET name=?, price=?, category=?, thumb=?, option_count=?,
                         image_count=?, has_video=?, tags=?, data=?, errors=?, warnings=?, valid=?, seller_code=?,
                         import_id=?, updated_at=? WHERE id=?""", (*vals, old["id"]))
+                    if old["name"] != s["name"]:
+                        ctxkw.invalidate(c, old["id"])   # 원본 상품명이 바뀌면 AI 키워드·그 이름 후보 무효 (새 원본 이름 기준으로)
                     sid = old["id"]
                     stats["updated"] += 1
                 else:
@@ -850,9 +850,11 @@ def refresh_name(c, src, store_id, cfg, now):
     return dict(c.execute("SELECT id, name FROM names WHERE norm=?", (namegen.normalize(name),)).fetchone())
 
 
-def rename_ctx(db, ids, fallback=False, progress=None, should_stop=None):
-    """맥락 키워드 방식(기본): 키워드를 받은 원본은 이름 후보 2개를 한 번에 만들어(이미 만들었으면 그대로) 복사본에 배정한다.
-    키워드가 없는 원본은 fallback이면 예전 재조합(예비 방식)으로, 아니면 '이름 변경 필요'로 둔다 (키워드를 받으면 자동 배정)."""
+def rename_ctx(db, ids, fallback=False, progress=None, should_stop=None, redo=True):
+    """AI 키워드 방식(기본): 키워드를 받은 원본은 이름 후보(A·B)를 만들어 고른 복사본에 붙인다.
+    redo면 이미 이름이 있는 복사본(AI 키워드·셔플·AI로 짓기 이름 등)도 새 이름으로 바꾼다 — 바꾸기를 눌렀는데
+    그대로면 안 되므로, 후보(A·B)를 다 썼으면 다른 조합으로 새 후보를 그 자리에서 만든다 (AI는 다시 부르지 않음).
+    키워드가 없는 원본은 '상품명 변경 필요'로 두고, 키워드를 받으면 자동으로 붙는다."""
     rows = []
     for i in range(0, len(ids), 900):
         chunk = ids[i:i + 900]
@@ -873,24 +875,40 @@ def rename_ctx(db, ids, fallback=False, progress=None, should_stop=None):
         progress(0, len(todo), "맥락 키워드로 이름 후보 만드는 중")
     st["names"] = ctxkw.build_names(db, sorted(ok))
     if progress:
-        progress(len(mine), max(1, len(todo)), "이름 후보를 복사본에 붙이는 중")
+        progress(len(mine) // 2, max(1, len(todo)), "이름 후보를 복사본에 붙이는 중")
+    avoid = {}   # 떼어 낸 이름은 다시 붙이지 않음
     with db.tx() as c:
         for r in mine:
-            if r["name_id"] and r["origin"] == "ctx":
-                st["kept"] += 1     # 이미 맥락 이름이면 그대로
-            elif r["name_id"]:     # 예전 방식 이름이면 맥락 이름으로 바꿈 (후보가 있을 때만 → assign에서 처리)
-                if c.execute("SELECT 1 FROM names WHERE source_id=? AND origin='ctx' AND listing_id IS NULL",
-                             (r["source_id"],)).fetchone():
-                    c.execute("DELETE FROM names WHERE id=? AND origin NOT IN ('original','manual','import')", (r["name_id"],))
-                    c.execute("UPDATE names SET listing_id=NULL WHERE id=?", (r["name_id"],))
-                    c.execute("UPDATE listings SET name_id=NULL, name=(SELECT name FROM sources WHERE id=?) WHERE id=?",
-                              (r["source_id"], r["id"]))
-                else:
-                    st["kept"] += 1
-    st["renamed"] = assign_ctx_names(db, sorted(ok))
+            if not r["name_id"]:
+                continue
+            if not redo:
+                st["kept"] += 1
+                continue
+            old = c.execute("SELECT name, origin FROM names WHERE id=?", (r["name_id"],)).fetchone()
+            if old:
+                avoid.setdefault(r["source_id"], set()).add(old["name"])
+            if old and old["origin"] in ("original", "manual", "import"):
+                c.execute("UPDATE names SET listing_id=NULL WHERE id=?", (r["name_id"],))   # 직접 넣은 이름은 후보로 돌림
+            else:
+                # 바꿔 버린 이름은 '다 쓴 이름'(listing_id=-1)으로 남겨, 다시 바꿀 때 같은 이름이 돌아오지 않게 한다
+                c.execute("UPDATE names SET listing_id=-1 WHERE id=?", (r["name_id"],))
+            c.execute("UPDATE listings SET name_id=NULL, name=(SELECT name FROM sources WHERE id=?) WHERE id=?",
+                      (r["source_id"], r["id"]))
+    srcs = sorted({r["source_id"] for r in mine})
+    st["renamed"] = assign_ctx_names(db, srcs)
+    # 후보(A·B)를 다 써서 아직 이름이 없는 복사본 → 그 원본 키워드로 다른 조합을 더 만든다
+    need = {}
+    for r in db.q(f"""SELECT source_id, COUNT(*) AS n FROM listings WHERE name_id IS NULL AND origin_no='' AND status!='deleted'
+            AND id IN ({','.join('?' * len(mine))}) GROUP BY source_id""", [r["id"] for r in mine]) if mine else []:
+        need[r["source_id"]] = r["n"]
+    if need:
+        st["extra_made"] = ctxkw.make_more(db, need, avoid)
+        st["renamed"] += assign_ctx_names(db, sorted(need))
     left = db.q(f"""SELECT COUNT(*) AS n FROM listings WHERE name_id IS NULL AND origin_no='' AND status!='deleted'
         AND id IN ({','.join('?' * len(mine))})""", [r["id"] for r in mine])[0]["n"] if mine else 0
     st["short"] = left
+    if progress:
+        progress(len(todo), max(1, len(todo)), "끝")
     if rest:
         if fallback:
             fb = rename_listings(db, [r["id"] for r in rest], "recombine", progress, should_stop)

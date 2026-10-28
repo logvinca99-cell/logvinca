@@ -47,6 +47,7 @@ DEFAULTS = {
     "orders_auto_sync_minutes": 0,   # 0 = 끔. 최신화·내리기 전에는 늘 그 스토어 주문을 먼저 가져옴
     "orders_auto_off_v1": True,
     "price_exact_v1": True,
+    "ctx_mode_v2": True,
     # 처음 가져올 때 며칠 전부터
     "orders_initial_days": 30,
     "orders_refresh_days": 7,    # 최신화·내리기 전 주문 확인: 그 스토어를 처음 확인할 때 며칠 전부터 (그 뒤엔 마지막 확인부터)
@@ -142,7 +143,7 @@ DEFAULTS = {
     "ctx_structured": True,          # 구조화 출력(output_config.format)으로 받기
     "ctx_per_request": 10,           # 요청당 원본 수
     "ctx_model": "claude-sonnet-5-5",
-    "ctx_mode": "batch",             # batch(일괄, 50% 할인) / instant(즉시, 소량 시험용)
+    "ctx_mode": "instant",           # 키워드 받기 기본 방식: instant(즉시, 1~2분) / batch(일괄, 50% 할인, 몇 분~몇 시간)
     "krw_rate": 1330,                # 비용 안내 환율 (원/달러)
     "shuffle_fixed": 3,              # 셔플: 앞에서 고정할 단어 수 (기본값, 바꾸기 창에서 바꿀 수 있음)
 
@@ -217,6 +218,8 @@ def load():
             saved.pop("use_category_words", None)  # 이 버전부터 상품명에 카테고리를 쓰지 않음 (예전 설정도 끔)
         if "price_exact_v1" not in saved:
             saved["price_jitter_pct"] = 0.0   # 가격은 판매가 - 할인가 그대로 (예전 기본 ±3% 흔들기 끔)
+        if "ctx_mode_v2" not in saved:
+            saved["ctx_mode"] = "instant"   # 키워드 받기 기본을 즉시로 (예전 기본 일괄은 결과가 늦게 와 헷갈림) — 설정에서 바꿈
         if "orders_auto_off_v1" not in saved:
             saved["orders_auto_sync_minutes"] = 0   # 주문은 다른 프로그램으로 봄 → 자동 가져오기 끔 (최신화·내리기 전에만 가져옴)
         cfg.update(saved)

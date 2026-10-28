@@ -158,7 +158,7 @@ App.page("listings", {
       ...this.pagerOpts(), count: n, selAll: this.selAll, what: "복사본",
       pageChecked: this.rows.length > 0 && this.rows.every((l) => this.sel.has(l.id)),
       actions: [
-        { id: "rename", label: "상품명 바꾸기", primary: true, title: "아직 안 올린 복사본의 상품명을 AI 맥락 키워드·AI로 짓기·셔플로 바꿈" },
+        { id: "rename", label: "상품명 바꾸기", primary: true, title: "아직 안 올린 복사본의 상품명을 AI 키워드·AI로 짓기·셔플로 바꿈" },
         "|",
         { id: "refresh", label: "최신화", title: "판매 중인 건을 네이버에서 지우고 같은 내용으로 다시 올림 (회차 +1) · 바로 하기 또는 대기에 넣기" },
         { id: "reupload", label: "다시 올리기", title: "문제가 있어 지우고 같은 내용(같은 상품명)으로 다시 올림 · 판매 중인 건은 지우고 다시, 내린 건은 그냥 다시 · 최신화와 따로 기록" },
@@ -252,7 +252,7 @@ App.page("listings", {
     } catch (e) { App.toast(e.message, true); }
   },
 
-  /* 상품명 바꾸기: AI 맥락 키워드(기본) / AI로 짓기 / 셔플. ids를 주면 그 건만 */
+  /* 상품명 바꾸기: AI 키워드(기본) / AI로 짓기 / 셔플. ids를 주면 그 건만 */
   renameModal(ids) {
     const s = App.state.settings;
     const target = ids ? { ids } : this.target();
@@ -269,7 +269,8 @@ App.page("listings", {
               <label class="field" style="margin:0;flex:1;min-width:220px">넣을 단어 (띄어쓰기·쉼표로 구분, 비워도 됨) <input id="rn-extra" placeholder="예: 업소용 카페"></label>
             </div></div></label>
         </div>
-        ${keyOk ? "" : '<p class="c-err small">AI 맥락 키워드·AI로 짓기는 설정 → API 키에서 Anthropic 키를 먼저 넣어야 합니다.</p>'}
+        <label class="check"><input type="checkbox" id="rn-redo" checked> 이미 이름이 붙은 복사본도 새 이름으로 바꾸기 <span class="muted small">(끄면 '상품명 변경 필요'인 것만)</span></label>
+        ${keyOk ? "" : '<p class="c-err small">AI 키워드·AI로 짓기는 설정 → API 키에서 Anthropic 키를 먼저 넣어야 합니다.</p>'}
         <p class="muted small">이미 올라간 복사본은 바꾸지 않습니다(최신화로 다시 올릴 때 바뀜). 판매자 관리코드는 그대로입니다.
           모든 이름은 금지어·상표와 33개 스토어 중복을 검사합니다. 한 건씩은 복사본을 눌러 직접 입력할 수도 있습니다.</p></div>`,
       buttons: [{ label: "취소" }, { label: "바꾸기", primary: true, onClick: async (b) => {
@@ -279,7 +280,8 @@ App.page("listings", {
             fixed_n: +$("#rn-fixed", b).value, extra: $("#rn-extra", b).value } })));
         }
         if (method === "ctx") {
-          const go = () => App.startTask(App.api("/api/listings/rename", { json: { ...target, method } }));
+          const redo = $("#rn-redo", b).checked;
+          const go = () => App.startTask(App.api("/api/listings/rename", { json: { ...target, method, redo } }));
           const est = await App.api("/api/ctx/estimate", { json: { listing_filter: target } });
           if (est.sources) {
             // 키워드 없는 원본: 비용 안내 후 받기 → 키워드 있는 원본은 지금 붙이고, 나머지는 받는 대로 자동으로 붙음
@@ -511,7 +513,7 @@ App.page("listings", {
               ${!l.origin_no && l.status !== "deleted" ? `<div class="notice ${l.name_id ? "" : "err"} name-edit">
                 <div><b>${l.name_id ? "바꾼 상품명" : "이름 변경 필요 — 원본 상품명 그대로라 올리지 않습니다"}</b></div>
                 <div class="add-name"><input id="d-name" value="${esc(l.name)}" maxlength="100"><button class="btn primary" id="d-name-save">이 이름으로</button></div>
-                <span class="muted small">직접 고쳐 저장하거나 <button class="link-btn" id="d-rename">상품명 바꾸기</button>(AI 맥락 키워드·AI로 짓기·셔플). 금지어·상표·33개 스토어 중복을 검사합니다.</span></div>` : ""}
+                <span class="muted small">직접 고쳐 저장하거나 <button class="link-btn" id="d-rename">상품명 바꾸기</button>(AI 키워드·AI로 짓기·셔플). 금지어·상표·33개 스토어 중복을 검사합니다.</span></div>` : ""}
               <dl class="kv"><dt>스토어</dt><dd>${esc(l.store_name)}</dd>
               <dt>등록 상품명</dt><dd>${l.name_id ? nameDiff(l.name, l.source_name, l.ctx_words, l.name_origin, l.core_words) + ND_LEGEND : `${esc(l.name)} <span class="flag bad">원본 상품명 그대로</span>`}</dd>
               <dt>원본 상품명</dt><dd>${esc(l.source_name)} <button class="btn sm" id="d-src">원본 보기</button></dd>

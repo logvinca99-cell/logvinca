@@ -399,6 +399,35 @@ def build_names(db, sids, cfg=None):
     return st
 
 
+def make_more(db, need, avoid=None, cfg=None):
+    """후보를 다 쓴 원본에 이름 후보를 더 만든다: {원본 id: 필요한 수}. 이미 있는 이름·avoid(떼어 낸 이름)는 피해
+    다른 조합(다른 이름·맥락·원본 단어 위치)으로. AI는 부르지 않는다. 만든 수."""
+    from .inventory import add_names
+    cfg = cfg or config.load()
+    lex = lexicon.get(db)
+    forb = set(lex.blocked)
+    o, bad = opts(cfg), word_filter(cfg, lex)
+    made = 0
+    sids = sorted(need)
+    for i in range(0, len(sids), 500):
+        chunk = sids[i:i + 500]
+        rows = db.q(f"""SELECT s.id, s.name, k.words FROM sources s JOIN ctx_kw k ON k.source_id=s.id
+            WHERE k.status='ok' AND s.id IN ({','.join('?' * len(chunk))})""", chunk)
+        with db.tx() as c:
+            base = make_rejecter(c, cfg, lex)
+            now = time.time()
+            for r in rows:
+                skip = (avoid or {}).get(r["id"], set())
+                reject = (lambda nm, skip=skip: nm in skip or base(nm))
+                # 앞 번호 조합(A·B)은 이미 있으니 뒤 번호부터 — copies를 넉넉히 주고 새로 나온 것만 넣는다
+                res = ctxname.make_names_v2(r["name"], kw_of(r["words"]), forb, copies=need[r["id"]] + 2, seed=r["id"],
+                                            reject=reject, opts=o, bad=bad)
+                for x in [x for x in res if x][:need[r["id"]]]:
+                    added, _ = add_names(c, r["id"], [x["name"]], "ctx", now)
+                    made += added
+    return made
+
+
 def after_saved(db, sids):
     """키워드를 저장한 뒤: 이름 후보를 만들고, 그 원본의 아직 이름 없는 복사본에 배정한다."""
     from . import inventory
@@ -413,6 +442,11 @@ def invalidate(c, sid):
     """원본 상품명이 바뀌었을 때: 키워드를 무효로 하고 아직 안 쓴 맥락 이름 후보를 지운다."""
     c.execute("UPDATE ctx_kw SET status='invalid', names_made=0 WHERE source_id=? AND status IN ('ok','retry')", (sid,))
     c.execute("DELETE FROM names WHERE source_id=? AND origin='ctx' AND listing_id IS NULL", (sid,))
+    # 아직 안 올린 복사본에 붙은 예전 원본 기준 이름도 떼어 '상품명 변경 필요'로 (새 키워드를 받으면 새 이름이 붙음)
+    for r in c.execute("""SELECT l.id, l.name_id FROM listings l JOIN names n ON n.id=l.name_id
+            WHERE l.source_id=? AND n.origin='ctx' AND l.origin_no='' AND l.status IN ('planned','fail')""", (sid,)).fetchall():
+        c.execute("UPDATE listings SET name_id=NULL, name=(SELECT name FROM sources WHERE id=?) WHERE id=?", (sid, r["id"]))
+        c.execute("DELETE FROM names WHERE id=?", (r["name_id"],))
 
 
 # ───────────────────────── 즉시 모드

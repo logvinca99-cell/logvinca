@@ -133,14 +133,15 @@ class Supplier:
             max_tokens=8000,
             system=[{"type": "text", "text": self.system, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": prompt}],
-            output_config={"effort": self.cfg.get("ai_words_effort") or "low",
-                           "format": {"type": "json_schema", "schema": ITEM_SCHEMA}},
         )
+        # 새 옵션은 extra_body/extra_headers로 보낸다 — 설치된 anthropic 라이브러리가 예전 버전이어도 그대로 전달됨
+        extra = {"output_config": {"effort": self.cfg.get("ai_words_effort") or "low", "format": {"type": "json_schema", "schema": ITEM_SCHEMA}}}
+        headers = {}
         if self.model in ("claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5-5"):
-            resp = self.client.beta.messages.create(betas=["server-side-fallback-2026-07-01"],
-                                                    fallbacks="default", **kwargs)
-        else:
-            resp = self.client.messages.create(**kwargs)
+            # 안전 분류기가 거절하면 서버가 다른 모델로 다시 시도한다.
+            extra["fallbacks"] = "default"
+            headers["anthropic-beta"] = "server-side-fallback-2026-07-01"
+        resp = self.client.messages.create(**kwargs, extra_body=extra, extra_headers=headers or None)
         with self.lock:
             self.usage["input"] += resp.usage.input_tokens + (resp.usage.cache_read_input_tokens or 0)
             self.usage["output"] += resp.usage.output_tokens

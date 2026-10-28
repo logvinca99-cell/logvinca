@@ -25,7 +25,7 @@ const SETTING_SECTIONS = [
   { tab: "product", title: "복사·구분", note: "판매자 관리코드로 어느 원본의 몇 번째 등록인지 스마트스토어센터에서 바로 찾을 수 있습니다.", fields: [
     ["max_copies", "원본 하나를 올릴 수 있는 최대 스토어 수 (내린 것은 세지 않음)", "number"],
     ["seller_code_format", "판매자 관리코드 형식", "text", { hint: "{store}=스토어 코드, {source:07d}=원본 번호, {round}=회차" }],
-    ["refresh_new_name", "최신화 때 상품명을 새로 (안 쓴 AI 맥락 후보 → 없으면 셔플)", "check"],
+    ["refresh_new_name", "최신화 때 상품명을 새로 (안 쓴 AI 키워드 후보 → 없으면 셔플)", "check"],
   ] },
   { tab: "price", title: "가격 (기본값)", note: "스토어 가격 = (판매가 - 할인가) × (1 + 스토어 가격 조정 %) × 흔들기(범위 안에서 상품마다 다르게), 100원 단위 올림. 흔들기를 쓰면 원본가와 똑같은 가격은 나오지 않습니다. 표시 할인율은 금액으로 걸어 정확히 그 %가 되게 판매가를 정합니다(그래서 손님 가격이 몇백 원 높아질 수 있음). 아래는 기본값이고, 스토어 → 템플릿에서 스토어마다 바꿉니다.", fields: [
     ["price_jitter_min", "흔들기 최소 %", "number", { step: 0.5 }],
@@ -48,7 +48,7 @@ const SETTING_SECTIONS = [
     ["ctx_per_request", "요청당 원본 수", "number"],
     ["ctx_structured", "구조화 출력으로 받기 (JSON이 깨지지 않게 · 실패 사유에 output_config 오류가 보이면 끄기)", "check"],
     ["ctx_model", "모델", "select", { options: [["claude-sonnet-5-5", "Claude Sonnet 5.5 (기본)"], ["claude-haiku-5-5", "Claude Haiku 5.5 (가장 저렴)"]] }],
-    ["ctx_mode", "처리 방식", "select", { options: [["batch", "일괄 (기본, 50% 할인, 몇 분~몇 시간)"], ["instant", "즉시 (바로, 요금 2배)"]] }],
+    ["ctx_mode", "키워드 받기 기본 방식 (받기 창에서 처음 골라져 있는 것)", "select", { options: [["instant", "즉시 (1~2분, 요금 2배)"], ["batch", "일괄 (50% 할인, 몇 분~몇 시간)"]] }],
     ["krw_rate", "비용 안내 환율 (원/달러)", "number"],
   ] },
   { tab: "name", title: "AI로 짓기", note: "AI가 원본을 보고 이름 전체를 새로 짓습니다. 사용한 만큼 요금이 나옵니다.", fields: [
@@ -62,7 +62,7 @@ const SETTING_SECTIONS = [
   { tab: "name", title: "셔플 (AI 안 씀)", note: "앞 단어를 고정하고 나머지 단어(+ 넣은 단어)의 순서를 섞습니다. 상품명 바꾸기 창에서 그때그때 바꿀 수 있습니다.", fields: [
     ["shuffle_fixed", "앞에서 고정할 단어 수 (기본값)", "number"],
   ] },
-  { tab: "keys", title: "Anthropic (AI)", note: "console.anthropic.com에서 만든 API 키. AI 맥락 키워드와 AI로 짓기에 씁니다.", fields: [
+  { tab: "keys", title: "Anthropic (AI)", note: "console.anthropic.com에서 만든 API 키. AI 키워드와 AI로 짓기에 씁니다.", fields: [
     ["anthropic_api_key", "Anthropic API 키", "secret"],
   ] },
   { tab: "keys", title: "상표 확인 (키프리스)", note: "KIPRIS Plus(plus.kipris.or.kr) 회원가입 → 상표 정보 검색 API 활용 신청 → 받은 키. '효도의자'처럼 붙여 만든 말이 상표인지 확인합니다.", fields: [
@@ -110,7 +110,7 @@ const APPLY_WHEN = {
   "가격": "새로 만드는 복사본부터 · 이미 만든 복사본은 위 '대기 중인 복사본 가격 다시 계산'",
   "도둑방지": "다음 복사·다음 등록부터 (이미 올라간 상품은 그대로)",
   "상품명 공통": "새로 만드는 이름부터",
-  "AI 맥락 키워드 (기본 방식)": "다음 키워드 받기·이름 만들기부터 (이미 만든 후보는 그대로)",
+  "AI 키워드 (기본 방식)": "다음 키워드 받기·이름 만들기부터 (이미 만든 후보는 그대로)",
   "AI로 짓기": "다음 AI 이름 짓기부터",
   "셔플 (AI 안 씀)": "다음 셔플부터",
   "상표 확인 (키프리스)": "확인할 때 · 출원 중 막기는 저장 즉시",

@@ -99,7 +99,7 @@ function priceCell(x, srcPrice) {
     ${x.off ? `<div class="p-sub r nowrap" title="네이버 판매가 ${num(x.shown)}원 · 즉시할인 ${num(x.off)}원 → 손님 가격 ${num(fin)}원">판매가 ${num(x.shown)} · ${x.disc_pct}%</div>`
       : x.old_rule ? `<div class="p-sub r" title="예전 규칙으로 올라간 상품이라 네이버 판매가·할인은 판매자센터에서 확인하세요. 최신화·다시 올리기를 하면 지금 기준으로 올라갑니다">예전 규칙</div>` : ""}</td>`;
 }
-const ORIGIN = { original: "원본", ctx: "AI 맥락", shuffle: "셔플", recombine: "재조합(예전)", import: "가져옴", ai: "AI", manual: "직접" };
+const ORIGIN = { original: "원본", ctx: "AI 키워드", shuffle: "셔플", recombine: "재조합(예전)", import: "가져옴", ai: "AI", manual: "직접" };
 
 const App = {
   pages: {}, current: null, state: null, stores: [], run: null, listeners: {}, taskSeen: {},
@@ -275,7 +275,7 @@ const App = {
         + (r.exists ? ` · 그 스토어에 이미 있어 뺀 것 ${num(r.exists)}` : "")
         + (r.full ? ` · 최대 ${App.state.settings.max_copies}회라 일부·전부 못 보낸 원본 ${num(r.full)}개` : "")
         + (r.capacity ? ` · 스토어 자리 부족 ${num(r.capacity)}` : "") + (r.invalid ? ` · 오류 원본 ${num(r.invalid)}개는 뺌` : "")
-        + (r.named ? ` · AI 맥락 이름 바로 붙음 ${num(r.named)}건` : "")
+        + (r.named ? ` · AI 키워드 이름 바로 붙음 ${num(r.named)}건` : "")
         + (r.created - (r.named || 0) > 0 ? " · 나머지는 복사본 화면 '이름 변경 필요'에서 상품명을 바꾼 뒤 올리세요" : ""),
       revalidate: () => `다시 검사 끝: ${num(r.total)}개` + (r.invalid !== undefined ? ` · 오류 ${num(r.invalid)}개` : ""),
       orders: () => r.rows !== undefined
@@ -407,7 +407,7 @@ const App = {
     const s = this.state.settings;
     const [b, i] = await Promise.all([this.api("/api/ctx/estimate", { json: { ...target, mode: "batch" } }),
       this.api("/api/ctx/estimate", { json: { ...target, mode: "instant" } })]);
-    const small = est.sources <= 200;   // 적으면 즉시가 기본 (몇 분~몇 시간 기다리지 않게, 차이는 몇십 원)
+    const inst = (s.ctx_mode || "instant") === "instant";   // 기본 방식은 설정 → AI 키워드 → 처리 방식
     const line = (e, label) => `${label} 약 <b>${num(e.krw)}원</b> <span class="muted small">(1천 개면 약 ${num(e.per_1k_krw)}원 · 1만 개면 약 ${num(e.per_10k_krw)}원)</span>`;
     this.openModal({
       title: "AI 키워드 받기 · 비용 안내",
@@ -421,12 +421,12 @@ const App = {
         ${est.has_key ? "" : `<p class="c-err small">설정 → AI 상품명에 Anthropic API 키를 먼저 넣어야 합니다.</p>`}
         ${est.pending ? `<p class="muted small">지금 일괄 처리 중인 원본 ${num(est.pending)}개는 다시 보내지 않습니다.</p>` : ""}
         <div class="radio-cards">
-          <label><input type="radio" name="cm" value="batch" ${!small ? "checked" : ""}><div><b>일괄 처리 (많을 때 권장, 50% 할인)</b>
+          <label><input type="radio" name="cm" value="batch" ${!inst ? "checked" : ""}><div><b>일괄 처리 (50% 할인)</b>
             <span class="muted small">결과가 오기까지 몇 분~몇 시간. 프로그램을 꺼도 다시 켜면 이어서 확인합니다. 결과가 오면 이름 후보 2개를 만들고 이름 없는 복사본에 바로 배정합니다.</span></div></label>
-          <label><input type="radio" name="cm" value="instant" ${small ? "checked" : ""}><div><b>즉시 (적을 때 권장)</b>
+          <label><input type="radio" name="cm" value="instant" ${inst ? "checked" : ""}><div><b>즉시</b>
             <span class="muted small">1~2분 안에 받습니다. 요청을 한꺼번에 보냅니다 (요금은 일괄의 2배 — 원본 ${num(est.sources)}개면 차이 약 ${num(Math.max(0, i.krw - b.krw))}원).</span></div></label>
         </div>
-        <p class="muted small">끝나면 실제 비용(응답의 사용량 기준)을 실행 기록에 남깁니다.</p></div>`,
+        <p class="muted small">처음 골라져 있는 방식은 <a href="#settings">설정 → 상품명 → AI 키워드 → 처리 방식</a>에서 바꿉니다. 끝나면 실제 비용(응답의 사용량 기준)을 실행 기록에 남깁니다.</p></div>`,
       buttons: [{ label: "취소", onClick: () => { if (after) after(false); } }, { label: "키워드 받기 시작", primary: true, onClick: async (m) => {
         const mode = $("input[name=cm]:checked", m).value;
         try {

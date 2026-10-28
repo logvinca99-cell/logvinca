@@ -33,7 +33,7 @@ App.page("runs", {
           <td class="num">${num(p.pending)}</td><td class="num ${p.fail ? "c-err" : ""}">${num(p.fail)}</td>
           <td class="r"><a href="#listings?plan_id=${p.id}">보기</a></td></tr>`).join("")
           : `<tr class="empty-row"><td colspan="8">아직 계획이 없습니다.</td></tr>`}</tbody></table></section>
-      <section class="card table-card"><div class="sec-head pad-x"><h2>맥락 키워드 받기 (AI)</h2><span class="muted small">실제 비용 = 응답 사용량 기준 (일괄은 50% 할인 단가)</span></div>
+      <section class="card table-card"><div class="sec-head pad-x"><h2>AI 키워드 받기</h2><span class="muted small">실제 비용 = 응답 사용량 기준 (일괄은 50% 할인 단가)</span></div>
         <table class="grid"><thead><tr><th>시작</th><th>방식</th><th>모델</th><th class="w-num">원본</th><th class="w-num">요청</th>
           <th class="w-num">받음</th><th class="w-num">재시도 대기</th><th class="w-num">토큰 (입력/출력)</th><th class="w-num">실제 비용</th><th class="w-num">예상</th><th>상태</th></tr></thead>
         <tbody>${kw.length ? kw.map((r) => `<tr><td>${when(r.started_at)}</td><td>${r.mode === "batch" ? "일괄" : "즉시"}</td><td class="small">${esc(r.model)}</td>

@@ -87,7 +87,7 @@ App.page("inventory", {
       ...this.pagerOpts(), count: n, selAll: this.selAll, what: "원본",
       pageChecked: this.rows.length > 0 && this.rows.every((p) => this.sel.has(p.id)),
       actions: [
-        { id: "ctx", label: "AI 맥락 키워드 받기", title: "고른 원본마다 AI에게 맥락 키워드를 한 번 받아 이름 후보를 만들어 둡니다 (실행 전에 비용 안내)" },
+        { id: "ctx", label: "AI 키워드 받기", title: "고른 원본마다 AI에게 키워드(keep·다른 이름·맥락)를 한 번 받아 이름 후보 A·B를 만들어 둡니다 (실행 전에 비용 안내)" },
         { id: "copy", label: "다른 스토어로 복사", primary: true },
         "|",
         { id: "edit", label: "일괄 수정", title: "판매자코드 비우기, 재고수(상품·옵션 모두) 바꾸기" },
@@ -244,7 +244,7 @@ App.page("inventory", {
         ${App.state.settings.bait_default ? `<label class="check bait-check"><input type="checkbox" id="p-bait" checked>
           <span><b>도둑방지로 올리기</b> · 새로 올릴 때마다(등록·최신화·다시 올리기) 판매가 +${num(App.state.settings.bait_amount)}원 (원래 가격으로는 직접 되돌림)</span></label>` : ""}
         <div class="plan-sum" id="p-sum"></div>
-        <p class="muted small">상품명: AI 맥락 키워드로 만들어 둔 이름 후보가 있으면 바로 붙고, 없으면 복사본 화면에서 '이름 변경 필요'로 보입니다.
+        <p class="muted small">상품명: AI 키워드로 만들어 둔 이름 후보가 있으면 바로 붙고, 없으면 복사본 화면에서 '이름 변경 필요'로 보입니다.
           가격은 스토어 템플릿의 가격 조정과 ±${App.state.settings.price_jitter_pct}%, 100원 단위 올림.</p></div>`,
       buttons: [{ label: "취소" }, {
         label: "복사하기", primary: true, onClick: async (b) => {
