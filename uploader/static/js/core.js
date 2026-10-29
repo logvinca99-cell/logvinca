@@ -217,7 +217,7 @@ const App = {
     const show = list.filter((t) => !this.taskClosed.has(`t${t.id}`) && (t.status === "running"
       || (t.ended_at && (t.status === "error" ? now - t.ended_at < 600 : now - t.ended_at < 60))));
     const close = (key) => `<button class="link-btn" data-close-task="${key}" title="닫기">✕</button>`;
-    box.innerHTML = this.ctxCards(now, close) + show.map((t) => {
+    box.innerHTML = this.collectCard(close) + this.ctxCards(now, close) + show.map((t) => {
       const p = t.total ? Math.min(100, (t.done / t.total) * 100) : t.status !== "running" ? 100 : null;
       const st = { running: "", done: "끝", error: "오류", stopped: "중단됨" }[t.status];
       const msg = t.status === "running" ? (t.message || "준비 중…") + (t.total ? ` · ${num(t.done)}/${num(t.total)}` : "")
@@ -234,7 +234,27 @@ const App = {
       if (prev === "running" && t.status !== "running") this.taskFinished(t);
       this.taskSeen[t.id] = t.status;
     }
-    this._tasksRunning = list.some((t) => t.status === "running");
+    this._tasksRunning = list.some((t) => t.status === "running") || !!this.state?.collect?.running;   // 도는 중이면 자주 새로
+  },
+
+  /* 상품 수집: 도는 중(지금 하는 일·남은 초·숫자, 캡차·로그인 경고) 또는 멈춘 작업 */
+  collectCard(close) {
+    const c = this.state?.collect;
+    const badge = $("#nav-collect");
+    if (badge) { badge.hidden = !c?.running; badge.textContent = c?.running ? "●" : ""; }
+    if (!c) return "";
+    if (!c.running) {
+      return c.paused && !this.taskClosed.has(`collectp${c.paused.id}`) ? `<div class="task">
+        <div class="task-top"><b>상품 수집 멈춤 · ${esc(c.paused.title)}</b><span><a class="link-btn" href="#collect">이어서</a> ${close(`collectp${c.paused.id}`)}</span></div>
+        <div class="task-msg">상품 수집 화면에서 '이어서'를 누르면 남은 것부터 계속합니다</div></div>` : "";
+    }
+    const n = c.counts || {}, tot = n.total || 0, fin = tot - (n.pending || 0);
+    const left = c.until && c.until > c.now ? ` · ${esc(c.until_what || "다음")}까지 ${dur(c.until - c.now)}` : "";
+    return `<div class="task ${c.alert ? "error" : "running"}">
+      <div class="task-top"><b>상품 수집 중</b><span><a class="link-btn" href="#collect">자세히</a></span></div>
+      <div class="bar thin">${tot ? `<div class="bar-ok" style="width:${Math.min(100, (fin / tot) * 100)}%"></div>` : '<div class="bar-indef"></div>'}</div>
+      <div class="task-msg">${c.alert ? `<b class="c-err">⚠ ${esc(c.alert)}</b><br>` : ""}${esc(c.msg)}${left}<br>
+        수집 ${num(n.done)} · 품절 ${num(n.soldout)} · 이름 중복 ${num(n.dup)} · 실패 ${num(n.fail)} · 남음 ${num(n.pending)}</div></div>`;
   },
 
   /* AI 키워드: 일괄 처리 중(보낸 지 몇 분, 마지막 확인), 실패(사유·다시 받기), 방금 끝남 */
@@ -270,6 +290,7 @@ const App = {
     const r = t.result || {};
     const msg = {
       import: () => `원본 불러오기 끝: 새로 ${num(r.added)}개 · 갱신 ${num(r.updated)}개 · 오류 ${num(r.invalid)}개`,
+      collect_import: () => `수집함 → 원본 상품: 새 원본 ${num(r.added)}개${r.same_name ? ` · 같은 이름 원본이 있어 넣지 않음 ${num(r.same_name)}개` : ""}${r.invalid ? ` · 검사 오류 ${num(r.invalid)}개 (원본 상품 화면에서 확인)` : ""}`,
       names: () => r.not_found !== undefined
         ? `상품명 가져오기 끝: 새 이름 ${num(r.added)}개 · 다른 이름과 중복 ${num(r.dup)}개 · 원본 못 찾음 ${num(r.not_found)}줄`
           + (r.rejected ? ` · 반복·금지 단어로 버림 ${num(r.rejected)}개 (예: ${r.rejected_examples?.[0] || ""})` : "")

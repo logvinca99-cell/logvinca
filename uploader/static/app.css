@@ -763,3 +763,27 @@ th .nd-legend { font-weight: 400; margin-top: 4px; }
 .mob-frame iframe { width: 100%; height: 100%; border: 0; display: block; }
 .mob-warn { margin: 0 0 6px; padding: 8px 10px; border-radius: 8px; background: #fff4e5; color: #8a4b00; }
 .mob-ok { margin: 0 0 6px; padding: 8px 10px; border-radius: 8px; background: var(--accent-soft, #e8f7ee); color: var(--text); }
+
+/* 상품 수집 */
+.c-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.field.inline { display: inline-flex; align-items: center; gap: 6px; flex-direction: row; white-space: nowrap; }
+.c-test summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+.c-test[open] { padding-bottom: 6px; }
+.c-ctl { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.c-alert { margin-bottom: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.c-now { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 15px; }
+.c-until { color: var(--info); font-weight: 600; font-variant-numeric: tabular-nums; }
+.c-cur { margin-top: 6px; word-break: break-all; }
+.c-bars { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 12px 0; }
+@media (max-width: 800px) { .c-bars { grid-template-columns: 1fr; } }
+.c-nums { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; margin-bottom: 12px; }
+.c-stores td, .c-stores th { font-size: 13px; }
+.c-curow { background: var(--info-soft); }
+.c-log { max-height: 260px; overflow: auto; font: 12.5px/1.65 ui-monospace, Menlo, Consolas, monospace; background: var(--panel-2, #f6f8fa);
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.c-log .c-warn { color: var(--warn); }
+.bulkbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 8px 0 10px; }
+.cmp td { font-size: 13px; }
+.cmp-ex td { background: var(--panel-2, #f6f8fa); font-size: 12px; word-break: break-all; }
+.cmp-ex b { display: inline-block; width: 80px; color: var(--muted); }
+#c-items td:nth-child(3) { min-width: 340px; }

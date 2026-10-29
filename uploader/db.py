@@ -238,7 +238,8 @@ class DB:
         self.c.executescript(SCHEMA)
         self._migrate_columns()   # 새로 만든 db: SCHEMA에 없는 나중에 더한 열도 붙인다
         self._migrate_data()
-        from . import activity, aiwords, bulkedit, ctxkw, keywords, kipris, lexicon, mail, trash
+        from . import activity, aiwords, bulkedit, collect, ctxkw, keywords, kipris, lexicon, mail, trash
+        collect.ensure(self)
         lexicon.ensure(self)
         kipris.ensure(self)
         keywords.ensure(self)

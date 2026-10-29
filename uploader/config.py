@@ -179,6 +179,13 @@ DEFAULTS = {
     # 내려받은 이미지를 디스크에 보관해 여러 스토어에 올릴 때 다시 받지 않음 (GB)
     "image_cache_gb": 5,
 
+    # ── 상품 수집 (다른 스마트스토어 → 수집함)
+    "collect_delay_min": 4,          # 상품 사이 간격 (초, 이 범위에서 매번 다르게)
+    "collect_delay_max": 6,
+    "collect_daily_limit": 0,        # 하루에 여는 상품 수 한도 (0이면 없음) — 넘으면 다음 날 0시에 이어서
+    "collect_block_wait": 60,        # 차단(429·403)이 나오면 쉬는 초
+    "collect_login": True,           # 수집용 크롬에서 네이버 로그인을 기다림 (한 번 하면 기억)
+
     # ── 속도
     "workers_per_store": 2,
     "max_parallel_stores": 33,

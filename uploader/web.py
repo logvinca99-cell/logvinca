@@ -10,7 +10,7 @@ import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import VERSION, activity, aiwords, bait, bulkedit, chrome, mail, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
+from . import VERSION, activity, aiwords, bait, bulkedit, chrome, collect, excel, mail, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
 from .db import DB
 from .tasks import Tasks
 
@@ -47,6 +47,7 @@ def create_app(db=None):
     os.makedirs(config.DATA_DIR, exist_ok=True)
     db = db or DB()
     runner = engine.Runner(db)
+    collector = collect.Collector(db)   # 상품 수집 (다른 스마트스토어 → 수집함)
     if getattr(db, "_v3", False):
         orders.recount_sold(db)
         db.x("PRAGMA user_version=3")
@@ -144,8 +145,147 @@ def create_app(db=None):
             "tasks": tasks.list(),
             "running": runner.state["running"],
             "ctx": ctxkw.live_status(db),   # AI 키워드 일괄 처리·실패 현황 (오른쪽 아래)
+            "collect": collect.summary(db, collector),   # 상품 수집 현황 (오른쪽 아래)
             "mail_warn_open": db.one("SELECT COUNT(*) AS n FROM mails WHERE kind='warn' AND handled=0")["n"],
         })
+
+    # ── 상품 수집 (다른 스마트스토어 → 수집함 → 원본)
+
+    @app.get("/api/collect")
+    def collect_overview():
+        return jsonify(collect.overview(db, collector, config.load()))
+
+    @app.post("/api/collect/start")
+    def collect_start():
+        b = body()
+        if collector.running():
+            return fail("이미 수집 중입니다. 지금 것을 중지한 뒤 시작하세요.")
+        try:
+            targets = collect.parse_targets(b.get("text"))
+            jid = collect.create_job(db, targets, b.get("scope") or "all", int(b.get("n") or 0))
+            collector.start(jid)
+        except (ValueError, RuntimeError) as e:
+            return fail(str(e))
+        return jsonify({"job_id": jid})
+
+    @app.post("/api/collect/resume")
+    def collect_resume():
+        b = body()
+        jid = int(b.get("job_id") or 0)
+        if collector.running():
+            collector.pause(False)
+            return jsonify({"ok": True})
+        if not db.one("SELECT 1 FROM collect_job WHERE id=?", (jid,)):
+            return fail("수집 작업이 없습니다.")
+        try:
+            collector.start(jid)
+        except RuntimeError as e:
+            return fail(str(e))
+        return jsonify({"job_id": jid})
+
+    @app.post("/api/collect/pause")
+    def collect_pause():
+        collector.pause(bool(body().get("on", True)))
+        return jsonify({"ok": True})
+
+    @app.post("/api/collect/stop")
+    def collect_stop():
+        collector.stop()
+        return jsonify({"ok": True})
+
+    @app.post("/api/collect/front")
+    def collect_front():
+        collector.front()
+        return jsonify({"ok": True})
+
+    @app.post("/api/collect/retry")
+    def collect_retry():
+        collector.retry()
+        return jsonify({"ok": True})
+
+    @app.get("/api/collect/jobs")
+    def collect_jobs():
+        return jsonify(collect.jobs(db))
+
+    @app.get("/api/collect/items")
+    def collect_items():
+        a = request.args
+        return jsonify(collect.items(db, a.get("job_id") or None, a.get("status") or "new", (a.get("q") or "").strip(),
+                                     int(a.get("page") or 1), min(500, int(a.get("size") or 100))))
+
+    @app.get("/api/collect/items/<int:iid>")
+    def collect_item(iid):
+        r = collect.item(db, iid)
+        return jsonify(r) if r else fail("수집한 상품이 없습니다.", 404)
+
+    @app.post("/api/collect/items/delete")
+    def collect_items_delete():
+        return jsonify({"count": collect.delete_items(db, collect.item_ids(db, body()))})
+
+    @app.post("/api/collect/to_sources")
+    def collect_to_sources():
+        b = body()
+        ids = collect.item_ids(db, {**b, "status": "new"} if not b.get("ids") else b)
+        if not ids:
+            return fail("넣을 상품이 없습니다.")
+        try:
+            tid = tasks.start("collect_import", f"수집함 → 원본 상품 · {len(ids):,}개",
+                              lambda **kw: collect.to_sources(db, ids, **kw))
+        except RuntimeError as e:
+            return fail(str(e))
+        return jsonify({"task": tid})
+
+    @app.get("/api/collect/export")
+    def collect_export():
+        a = request.args
+        ids = collect.item_ids(db, {"ids": [x for x in (a.get("ids") or "").split(",") if x.isdigit()],
+                                    "job_id": a.get("job_id"), "status": a.get("status")})
+        if not ids:
+            return fail("저장할 상품이 없습니다.")
+        data, over = collect.export_xlsx(db, ids)
+        name = f"수집_{time.strftime('%Y%m%d_%H%M')}_{len(ids)}개.xlsx"
+        from urllib.parse import quote
+        return Response(data, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}",
+                                 "X-Over-Limit": str(over)})
+
+    def _excel_rows():
+        f = request.files.get("file")
+        if not f:
+            raise ValueError("셀업 엑셀 파일을 골라 주세요.")
+        path = _save_upload(f)
+        try:
+            return excel.read(path, f.filename)
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    @app.post("/api/collect/compare")
+    def collect_compare():
+        try:
+            rows = _excel_rows()
+        except Exception as e:  # noqa: BLE001
+            return fail(str(e))
+        return jsonify(collect.compare(db, rows))
+
+    @app.post("/api/collect/from_excel")
+    def collect_from_excel():
+        """셀업 엑셀의 수집URL(상품 주소)로 시험 수집 — 끝나면 '셀업 엑셀과 비교'로 칸마다 맞춰 봄."""
+        if collector.running():
+            return fail("이미 수집 중입니다. 지금 것을 중지한 뒤 시작하세요.")
+        try:
+            rows = _excel_rows()
+            urls = "\n".join(str(r.get("수집URL") or "") for r in rows if r.get("수집URL"))
+            targets = [t for t in collect.parse_targets(urls) if t["kind"] == "product"]
+            if not targets:
+                raise ValueError("엑셀에 상품 주소(수집URL)가 없습니다.")
+            jid = collect.create_job(db, targets, title=f"엑셀 시험 수집 {len(targets):,}개")
+            collector.start(jid)
+        except (ValueError, RuntimeError) as e:
+            return fail(str(e))
+        return jsonify({"job_id": jid, "count": len(targets)})
 
     # ── 구글 메일함
 

@@ -3,7 +3,7 @@
 
 const SETTING_TABS = [
   ["product", "상품 등록 기본값"], ["price", "가격·할인"], ["name", "상품명 (AI)"], ["keys", "API 키"],
-  ["image", "이미지·워터마크"], ["orders", "주문·잠금"], ["speed", "속도·고급"],
+  ["image", "이미지·워터마크"], ["orders", "주문·잠금"], ["collect", "상품 수집"], ["speed", "속도·고급"],
 ];
 
 const SETTING_SECTIONS = [
@@ -104,6 +104,13 @@ const SETTING_SECTIONS = [
     ["orders_initial_days", "처음 가져올 때 며칠 전부터", "number"],
     ["lock_sold", "판매 이력이 있는 복사본은 자동으로 잠금 (최신화·내리기로 지우지 않음)", "check"],
     ["lock_canceled_too", "취소·반품만 있는 복사본도 잠금", "check"],
+  ] },
+  { tab: "collect", title: "상품 수집", note: "다른 스마트스토어의 판매 중 상품을 수집용 크롬으로 열어 가져옵니다. 간격이 짧을수록 빠르지만 차단(429·캡차) 위험이 커집니다. 캡차·차단이 나오면 멈추고 알립니다(자동으로 풀지 않음). 크롬을 못 찾으면 API 키 탭의 '크롬 위치'를 넣으세요.", fields: [
+    ["collect_delay_min", "상품 사이 간격 최소 (초)", "number", { step: 0.5 }],
+    ["collect_delay_max", "상품 사이 간격 최대 (초)", "number", { step: 0.5, hint: "이 범위 안에서 매번 다르게 (기본 4~6초 → 1만 개 약 11~17시간)" }],
+    ["collect_daily_limit", "하루에 여는 상품 수 한도 (0이면 없음)", "number", { step: 100, hint: "넘으면 다음 날 0시에 자동으로 이어서" }],
+    ["collect_block_wait", "차단(429·403)이 나오면 쉬는 시간 (초)", "number", { step: 10 }],
+    ["collect_login", "수집용 크롬에서 네이버 로그인을 기다림 (한 번 하면 기억)", "check"],
   ] },
   { tab: "speed", title: "속도", note: "네이버 호출 한도는 스토어마다 따로라서, 스토어를 나란히 돌리면 그만큼 빨라집니다. 429(호출 초과)가 잦으면 스토어당 동시 등록 수를 줄이세요.", fields: [
     ["max_parallel_stores", "동시에 돌릴 스토어 수", "number"],

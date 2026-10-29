@@ -55,21 +55,41 @@ def add_names(c, source_id, names, origin, now=None, cfg=None, rejected=None):
 # ───────────────────────── 1. 원본 불러오기
 
 def import_products(db, fileobj, filename, progress=None, should_stop=None):
+    """원본 엑셀(셀업 양식) 불러오기. 대표 썸네일이 같은 원본은 내용을 갱신한다."""
+    total_hint = excel.count_rows(fileobj, filename)
+    st = import_rows(db, ((None, r) for r in excel.iter_rows(fileobj, filename)), filename, total_hint=total_hint,
+                     progress=progress, should_stop=should_stop)
+    st.pop("refs", None)
+    return st
+
+
+def import_rows(db, rows, file_name, key_fn=None, skip_same_name=False, total_hint=0, progress=None, should_stop=None):
+    """원본 줄들을 원본 상품으로. rows: (참조, 셀업 양식 줄 사전) 반복자.
+    key_fn: 원본 구분값 (기본 대표 썸네일 — 같으면 갱신). skip_same_name: 상품명(띄어쓰기 무시)이 같은 원본이 이미 있으면 넣지 않음.
+    돌려주는 refs: {참조: 원본 번호} (넣거나 갱신한 것만)."""
     cfg = config.load()
     lex = lexicon.get(db)
     categories = naver.cached_categories()
-    total_hint = excel.count_rows(fileobj, filename)
+    key_fn = key_fn or source_key
     now = time.time()
-    iid = db.x("INSERT INTO imports(kind, file_name, created_at) VALUES('products', ?, ?)", (filename, now))
-    stats = {"total": 0, "added": 0, "updated": 0, "invalid": 0, "name_dup": 0}
+    iid = db.x("INSERT INTO imports(kind, file_name, created_at) VALUES('products', ?, ?)", (file_name, now))
+    stats = {"total": 0, "added": 0, "updated": 0, "invalid": 0, "name_dup": 0, "same_name": 0}
+    refs = {}
+    names = {" ".join(str(r["name"] or "").split()) for r in db.q("SELECT name FROM sources")} if skip_same_name else None
     touched = []
     batch = []
 
     def flush():
         with db.tx() as c:
-            for row in batch:
-                key = source_key(row)
+            for ref, row in batch:
+                key = key_fn(row)
                 s = convert.summary(row, cfg)
+                if names is not None:
+                    nm = " ".join(str(s["name"] or "").split())
+                    if nm in names:
+                        stats["same_name"] += 1
+                        continue
+                    names.add(nm)
                 fix = (c.execute("SELECT category_fix FROM sources WHERE source_key=?", (key,)).fetchone() or {"category_fix": ""})["category_fix"]
                 errors, warnings = convert.validate(convert.with_category_fix(row, fix), cfg, categories)   # 직접 고른 카테고리는 다시 불러와도 그대로
                 warnings += _name_warnings(s["name"], lex)
@@ -97,14 +117,16 @@ def import_products(db, fileobj, filename, progress=None, should_stop=None):
                 if not old:
                     stats["name_dup"] += dup  # 다른 원본과 상품명이 같음
                 touched.append(sid)
+                if ref is not None:
+                    refs[ref] = sid
         batch.clear()
 
-    for row in excel.iter_rows(fileobj, filename):
+    for ref, row in rows:
         if should_stop and should_stop():
             break
         if not row.get("상품명"):
             continue
-        batch.append(row)
+        batch.append((ref, row))
         stats["total"] += 1
         if len(batch) >= CHUNK:
             flush()
@@ -114,10 +136,11 @@ def import_products(db, fileobj, filename, progress=None, should_stop=None):
         flush()
     db.recount_sources(touched)
     reprice_pending(db)   # 원본가가 바뀐 원본의 아직 안 올린 복사본 가격도 다시
+    note = f"원본 상품명 중복 {stats['name_dup']}개" + (f" · 같은 이름 원본이 있어 넣지 않음 {stats['same_name']}개" if stats["same_name"] else "")
     db.x("UPDATE imports SET total=?, added=?, updated=?, skipped=?, note=? WHERE id=?",
-         (stats["total"], stats["added"], stats["updated"], stats["invalid"],
-          f"원본 상품명 중복 {stats['name_dup']}개", iid))
+         (stats["total"], stats["added"], stats["updated"], stats["invalid"], note, iid))
     stats["import_id"] = iid
+    stats["refs"] = refs
     if db.one("SELECT 1 FROM dict_syn LIMIT 1"):
         with db.tx() as c:
             lexicon._bump(c)  # 사전 비슷한말은 원본 상품명에 나오는 말만 쓰므로 다시 읽게

@@ -150,6 +150,9 @@ ACTIONS = {
     "sources_bulk_edit": ("원본", lambda b, r: ("원본 일괄 수정" + (" · 판매자코드 비우기" if b.get("clear_seller_code") else "")
                                                + (f" · 재고 {b.get('stock')}" if b.get("stock") not in (None, "") else ""), _count_of(r, "count", "updated"), "")),
     "categories_map": ("원본", lambda b, r: ("카테고리 맞추기 저장", r.get("count"), "")),
+    "collect_pause": ("수집", lambda b, r: ("상품 수집 일시정지" if b.get("on", True) else "상품 수집 이어서", None, "")),
+    "collect_stop": ("수집", lambda b, r: ("상품 수집 중지", None, "")),
+    "collect_items_delete": ("수집", lambda b, r: ("수집함에서 지움", r.get("count"), "")),
     "sources_category": ("원본", lambda b, r: (("카테고리 직접 정함: " + str(b.get("set_category"))) if b.get("set_category") else "카테고리를 엑셀 값으로 되돌림",
                                               r.get("count"), "")),
     "refresh_categories": ("원본", "네이버 카테고리 목록 받기"),
