@@ -10,12 +10,12 @@ import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import VERSION, activity, aiwords, bait, chem, chrome, clean, mail, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
+from . import VERSION, activity, aiwords, bait, chem, chrome, clean, mail, srctags, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
 from .db import DB
 from .tasks import Tasks
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-FILTER_KEYS = ("q", "status", "category", "ai", "chem", "store_missing", "store_has", "import_id", "max_listings", "price_min", "price_max", "copies",
+FILTER_KEYS = ("q", "status", "category", "ai", "chem", "src_tag", "store_missing", "store_has", "import_id", "max_listings", "price_min", "price_max", "copies",
                "min_names", "store_id", "plan_id", "op", "age_days", "sold", "locked")
 STORE_FIELDS = ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "capacity", "enabled", "memo", "wm_text", "importer",
                 "business_id", "chrome_profile", "mail_to")
@@ -155,7 +155,8 @@ def create_app(db=None):
         if not f:
             return fail("셀업 엑셀 파일을 골라 주세요.")
         path = _save_upload(f)
-        opts = {k: request.form.get(k, "1") == "1" for k in ("price", "code", "info")}
+        opts = {k: request.form.get(k, "1") == "1" for k in ("price", "code", "info", "store_tag")}
+        opts["tags"] = request.form.get("tags") or ""
         name = f.filename
 
         def job(**kw):
@@ -170,6 +171,15 @@ def create_app(db=None):
             return jsonify({"task": tasks.start("clean_import", f"상세 정리 · 엑셀 올리기 · {name}", job)})
         except RuntimeError as e:
             return fail(str(e))
+
+    @app.get("/api/clean/<int:bid>/tags")
+    def clean_tags_get(bid):
+        return jsonify(clean.batch_tags(db, bid))
+
+    @app.post("/api/clean/<int:bid>/tags")
+    def clean_tags(bid):
+        b = body()
+        return jsonify(clean.set_batch_tags(db, bid, b.get("tags"), b.get("store_tag", True)))
 
     @app.get("/api/clean/batches")
     def clean_batches():
@@ -840,7 +850,44 @@ def create_app(db=None):
 
     @app.post("/api/sources/import")
     def import_sources():
-        return file_task("import", "원본 불러오기", inventory.import_products)
+        tags, store = request.form.get("tags") or "", request.form.get("store_tag", "0") == "1"
+        return file_task("import", "원본 불러오기", lambda db_, fh, name, **kw: inventory.import_products(
+            db_, fh, name, src_tags=tags, store_tag=store, **kw))
+
+    # ── 출처 태그 (어디서·언제 가져온 원본인지)
+
+    @app.get("/api/srctags")
+    def srctags_list():
+        return jsonify(srctags.counts(db))
+
+    @app.post("/api/srctags/apply")
+    def srctags_apply():
+        b = body()
+        ids = inventory.source_ids(db, _filter_from(b))
+        if not ids:
+            return fail("고른 원본이 없습니다.")
+        try:
+            add, remove = srctags.parse(b.get("add") or []), srctags.parse(b.get("remove") or [])
+            return jsonify({"count": srctags.apply(db, ids, add, remove), "target": len(ids), "add": add, "remove": remove})
+        except ValueError as e:
+            return fail(str(e))
+
+    @app.post("/api/srctags/rename")
+    def srctags_rename():
+        b = body()
+        try:
+            return jsonify({"count": srctags.rename(db, b.get("old"), b.get("new"))})
+        except ValueError as e:
+            return fail(str(e))
+
+    @app.post("/api/srctags/backfill")
+    def srctags_backfill():
+        b = body()
+        try:
+            return jsonify({"task": tasks.start("srctags", "예전 원본에 출처 태그 채우기", lambda **kw: srctags.backfill(
+                db, bool(b.get("store", True)), bool(b.get("date", True)), **kw))})
+        except RuntimeError as e:
+            return fail(str(e))
 
     @app.post("/api/sources/revalidate")
     def revalidate():

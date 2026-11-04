@@ -72,6 +72,14 @@ function age(ts) {
   const d = Math.floor((Date.now() / 1000 - ts) / 86400);
   return d <= 0 ? "오늘" : `${d}일 전`;
 }
+function ymdToday() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+/* 원본 출처 태그 칩 (날짜 모양은 회색) */
+function srcTagChips(tags, rm = false) {
+  return (tags || []).map((t) => `<span class="stag ${/^\d{4}-\d{2}-\d{2}$/.test(t) ? "date" : ""}" title="출처 태그">${esc(t)}${rm ? `<button type="button" class="stag-x" data-rm-tag="${esc(t)}" title="이 태그 빼기">✕</button>` : ""}</span>`).join("");
+}
 function ymd(ts) {
   if (!ts) return "-";
   const d = new Date(ts * 1000), p = (n) => String(n).padStart(2, "0");
@@ -325,6 +333,7 @@ const App = {
         + (r.invalid ? ` · 검사 오류 ${num(r.invalid)}개 (원본 상품 화면에서 확인)` : "") + " · 이어서 상품명 변경 → 복사",
       chem: () => `생활화학 판정 끝: 물건 ${num(r.tool)}개(인증 대상 아님으로 올림) · 화학제품 ${num(r.chemical)}개(보류) · 애매 ${num(r.unclear)}개`
         + (r.requeued ? ` · 실패했던 복사본 ${num(r.requeued)}건 다시 등록 대기` : "") + (r.chemical + r.unclear ? " · 원본 상품 '생활화학 보류'에서 검수" : ""),
+      srctags: () => `출처 태그 채우기 끝: 원본 ${num(r.total)}개 중 ${num(r.changed)}개에 더함 · 수집 스토어 ${num(r.store)}개 · 가져온 날 ${num(r.date)}개`,
       mail: () => `메일함: 확인 ${num(r.checked)}통 · 새로 ${num(r.new)}통` + (r.warn ? ` · 경고·제재 ${num(r.warn)}통` : "") + (r.auth ? ` · 인증번호 ${num(r.auth)}통` : ""),
       revalidate: () => `다시 검사 끝: ${num(r.total)}개` + (r.invalid !== undefined ? ` · 오류 ${num(r.invalid)}개` : ""),
       orders: () => r.rows !== undefined
@@ -353,10 +362,54 @@ const App = {
     } catch (e) { this.toast(e.message, true); return null; }
   },
 
-  upload(url, file) {
+  upload(url, file, extra = {}) {
     const fd = new FormData();
     fd.append("file", file);
+    Object.entries(extra).forEach(([k, v]) => fd.append(k, v));
     return this.startTask(this.api(url, { method: "POST", body: fd }));
+  },
+
+  // ── 출처 태그 (어디서·언제 가져온 원본인지)
+
+  async srcTags(force = false) {
+    if (!this._srcTags || force || Date.now() - this._srcTagsAt > 30000) {
+      try { this._srcTags = await this.api("/api/srctags"); this._srcTagsAt = Date.now(); } catch (e) { this._srcTags ||= { tags: [], none: 0 }; }
+    }
+    return this._srcTags;
+  },
+  /* 태그 적는 칸 + 최근 태그 누르면 더하기. prefix: 칸 id 앞글자 */
+  tagFields(prefix, { value = "", store = true, storeNote = "" } = {}) {
+    return `<div class="tag-fields"><label class="field">출처 태그 <span class="muted small">(쉼표로 여러 개 · 어디서·언제 가져왔는지 — 원본 상품에서 이 태그로 거를 수 있음)</span>
+        <input id="${prefix}-tags" value="${esc(value)}" placeholder="예) ${ymdToday()}, 경쟁사 A, 키워드 루트"></label>
+      <div class="tag-pick" id="${prefix}-recent"></div>
+      <label class="check"><input type="checkbox" id="${prefix}-store" ${store ? "checked" : ""}><span><b>수집 스토어도 태그로</b> <span class="muted small">(엑셀 '수집URL'의 스토어 주소 이름, 예: smartstore.naver.com/<b>zenith77</b> → zenith77)${storeNote}</span></span></label></div>`;
+  },
+  async bindTagFields(prefix, box = document) {
+    const d = await this.srcTags();
+    const pick = $(`#${prefix}-recent`, box);
+    if (!pick) return;
+    const recent = d.tags.filter((t) => t.kind === "tag").slice(0, 14);
+    pick.innerHTML = recent.length ? '<span class="muted small">누르면 더하기:</span>' + recent.map((t) => `<button type="button" class="stag" data-t="${esc(t.tag)}">${esc(t.tag)}</button>`).join("") : "";
+    pick.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-t]");
+      if (!b) return;
+      const inp = $(`#${prefix}-tags`, box);
+      const cur = inp.value.split(",").map((x) => x.trim()).filter(Boolean);
+      if (!cur.includes(b.dataset.t)) cur.push(b.dataset.t);
+      inp.value = cur.join(", ");
+    });
+  },
+  tagValues(prefix, box = document) {
+    return { tags: $(`#${prefix}-tags`, box)?.value || "", store_tag: $(`#${prefix}-store`, box)?.checked ? "1" : "0" };
+  },
+  /* 원본 엑셀 불러오기 (출처 태그를 묻고) */
+  importSources(file) {
+    this.openModal({
+      title: "원본 엑셀 불러오기",
+      body: `<p><b>${esc(file.name)}</b> → 원본 상품 (같은 대표 사진의 원본은 내용만 갱신, 태그는 더해짐)</p>${this.tagFields("is", { value: ymdToday() })}`,
+      buttons: [{ label: "취소" }, { label: "불러오기", primary: true, onClick: () => { this.upload("/api/sources/import", file, this.tagValues("is")); this._srcTags = null; } }],
+    });
+    this.bindTagFields("is");
   },
 
   // ── 등록 진행 상황
@@ -689,14 +742,16 @@ const App = {
       body: `<p><b>${esc(file.name)}</b> 파일을 무엇으로 불러올까요?</p>
         <p class="muted small">원본 상품: 수집한 상품 엑셀. 같은 판매자코드는 새로 추가하지 않고 내용만 갱신합니다.<br>
         상품명: 외부 AI 도구 등에서 만든 새 상품명 파일. 판매자코드(또는 원본상품명) 열과 상품명 열이 있어야 합니다.<br>
-        판매 이력: 아바닛 등 주문 수집 웹에서 내려받은 주문 파일. 판매된 복사본은 최신화·내리기에서 빠집니다.</p>`,
+        판매 이력: 아바닛 등 주문 수집 웹에서 내려받은 주문 파일. 판매된 복사본은 최신화·내리기에서 빠집니다.</p>
+        <div class="card pad" style="margin-top:8px"><div class="small" style="margin-bottom:4px"><b>원본 상품으로</b> 불러올 때 붙일 태그</div>${this.tagFields("af", { value: ymdToday() })}</div>`,
       buttons: [
         { label: "취소" },
         { label: "판매 이력으로", onClick: () => this.upload("/api/orders/import", file) },
         { label: "상품명 후보로", onClick: () => this.upload("/api/names/import", file) },
-        { label: "원본 상품으로", primary: true, onClick: () => this.upload("/api/sources/import", file) },
+        { label: "원본 상품으로", primary: true, onClick: () => { this.upload("/api/sources/import", file, this.tagValues("af")); this._srcTags = null; } },
       ],
     });
+    this.bindTagFields("af");
   },
 
   bind() {

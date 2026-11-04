@@ -31,6 +31,7 @@ App.page("inventory", {
     el.innerHTML = `<div class="page">
       <header class="page-head"><h1>원본 상품</h1>
         <div class="head-actions">
+          <button class="btn" id="i-tagman" title="출처 태그(어디서·언제 가져왔는지) 모아 보기·이름 바꾸기·예전 원본에 채우기">출처 태그</button>
           <button class="btn" id="i-catmap" title="엑셀 카테고리를 스마트스토어 카테고리에 맞추기">카테고리 맞추기</button>
           <button class="btn ghost" id="i-revalidate" title="설정이나 카테고리가 바뀐 뒤 전체를 다시 검사">다시 검사</button>
           <label class="btn primary"><input type="file" id="i-file" accept=".xlsx,.xlsm,.csv" hidden>
@@ -39,7 +40,7 @@ App.page("inventory", {
       <div class="tiles" id="i-tiles"></div>
       <div class="filters-row">
         <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
-          <input id="i-q" placeholder="상품명·판매자코드·카테고리 검색"></div>
+          <input id="i-q" placeholder="상품명·판매자코드·카테고리·태그 검색"></div>
         <span class="price-range" title="원본가 구간">원본가 <input id="i-pmin" type="number" min="0" step="1000" placeholder="최소">원 ~
           <input id="i-pmax" type="number" min="0" step="1000" placeholder="최대">원</span>
         <select id="i-missing" class="sel"><option value="">스토어 조건 없음</option></select>
@@ -49,6 +50,7 @@ App.page("inventory", {
         <select id="i-chem" class="sel" title="생활화학·살생물제 인증 판정">
           <option value="">생활화학 전체</option><option value="hold">생활화학 보류 (화학제품·애매)</option><option value="chemical">화학제품</option>
           <option value="unclear">애매</option><option value="tool">물건 (인증 대상 아님)</option><option value="drop">판매 중 내리고 지우는 중</option></select>
+        <select id="i-tag" class="sel" title="출처 태그 (어디서·언제 가져온 원본)"><option value="">출처 태그 전체</option></select>
         <button class="btn ghost" id="i-reset">조건 지우기</button>
       </div>
       <div class="listbar" id="i-bar"></div>
@@ -68,11 +70,29 @@ App.page("inventory", {
     $("#i-chem").value = this.f.chem || "";
     $("#i-q").value = this.f.q || "";
     this.bind();
-    this.onDone = (t) => { if (["import", "plan", "revalidate", "ctxkw", "chem", "clean_send"].includes(t.kind)) this.load(); };
+    this.loadTags(true);
+    this.onDone = (t) => {
+      if (["import", "plan", "revalidate", "ctxkw", "chem", "clean_send", "srctags"].includes(t.kind)) this.load();
+      if (["import", "clean_send", "srctags"].includes(t.kind)) this.loadTags(true);
+    };
     App.on("task-done", this.onDone);
     await this.load();
   },
   unmount() { App.off("task-done", this.onDone); },
+
+  async loadTags(force) {
+    const d = await App.srcTags(force);
+    const cur = this.f.src_tag || "";
+    const has = d.tags.some((t) => t.tag === cur);
+    const opt = (t) => `<option value="${esc(t.tag)}">${esc(t.tag)} (${num(t.count)})</option>`;
+    const tags = d.tags.filter((t) => t.kind === "tag"), dates = d.tags.filter((t) => t.kind === "date");
+    $("#i-tag").innerHTML = '<option value="">출처 태그 전체</option>'
+      + (tags.length ? `<optgroup label="스토어·루트">${tags.map(opt).join("")}</optgroup>` : "")
+      + (dates.length ? `<optgroup label="가져온 날">${dates.map(opt).join("")}</optgroup>` : "")
+      + `<option value="__none__">태그 없는 원본 (${num(d.none)})</option>`
+      + (cur && !has && cur !== "__none__" ? `<option value="${esc(cur)}">${esc(cur)} (0)</option>` : "");
+    $("#i-tag").value = cur;
+  },
 
   query() {
     const f = { ...this.f };
@@ -109,6 +129,7 @@ App.page("inventory", {
         { id: "copy", label: "다른 스토어로 복사", primary: true },
         "|",
         { id: "edit", label: "일괄 수정", title: "판매자코드 비우기, 재고수(상품·옵션 모두) 바꾸기" },
+        { id: "tags", label: "출처 태그 달기·빼기", title: "고른 원본에 어디서·언제 가져왔는지 태그를 달거나 뺌" },
         { id: "category", label: "카테고리 바꾸기", title: "고른 원본의 네이버 카테고리를 직접 정함 (인증 때문에 안 올라가는 카테고리 등) — 그 원본의 모든 복사본에 적용" },
         { id: "chem", label: "생활화학 판정", title: "생활화학·살생물제 인증 대상 카테고리면 물건(→ '인증 대상 아님'으로 올림)·화학제품(→ 보류)·애매를 판정 (애매한 것은 AI)" },
         { id: "chemset", label: "판정 바꾸기", title: "검수한 뒤 물건·화학제품·애매를 직접 정함" },
@@ -121,6 +142,7 @@ App.page("inventory", {
       onAction: (id) => {
         if (id === "ctx") App.ctxConfirm(this.target()); if (id === "copy") this.copyModal(); if (id === "delete") this.remove(); if (id === "edit") this.editModal();
         if (id === "category") App.pickCategory({ target: this.target(), what: `고른 원본 ${num(this.selAll ? this.total : this.sel.size)}개`, after: () => this.load() });
+        if (id === "tags") this.tagModal();
         if (id === "chem") App.startTask(App.api("/api/chem/judge", { json: this.target() }));
         if (id === "chemset") App.chemSet(this.target(), `고른 원본 ${num(this.targetCount())}개`, () => this.load());
         if (id === "chemdel") App.chemDelete(this.target(), () => { this.clearSel(); this.load(); });
@@ -152,7 +174,7 @@ App.page("inventory", {
     return `<tr data-id="${p.id}" class="${on ? "sel" : ""}">
       <td class="w-check" data-stop><input type="checkbox" ${on ? "checked" : ""} ${this.selAll ? "disabled" : ""} aria-label="고르기"></td>
       <td>${img(p.thumb)}</td>
-      <td><div class="p-name">${esc(p.name)}</div><div class="p-sub"><span>원본 #${p.id}</span>${p.seller_code ? `<span>${esc(p.seller_code)}</span>` : ""}${flags}</div>
+      <td><div class="p-name">${esc(p.name)}</div><div class="p-sub"><span>원본 #${p.id}</span>${p.seller_code ? `<span>${esc(p.seller_code)}</span>` : ""}${flags}${srcTagChips(p.src_tags)}</div>
         ${aiNamesLine(p)}</td>
       <td class="w-links">${goLinks({ sourceId: p.id })}</td>
       <td class="cat-td"><div class="cat">${cat.length > 2 ? `<div class="cat-top">${esc(cat.slice(0, -2).join(" › "))}</div>` : ""}${esc(cat.slice(-2).join(" › "))}</div></td>
@@ -179,7 +201,7 @@ App.page("inventory", {
   setFilter(patch) { Object.assign(this.f, patch); this.page = 0; this.clearSel(); this.load(); },
 
   bind() {
-    $("#i-file").addEventListener("change", (e) => { if (e.target.files[0]) App.upload("/api/sources/import", e.target.files[0]); e.target.value = ""; });
+    $("#i-file").addEventListener("change", (e) => { if (e.target.files[0]) App.importSources(e.target.files[0]); e.target.value = ""; });
     $("#i-catmap").addEventListener("click", () => this.catMap());
     $("#i-revalidate").addEventListener("click", () => App.startTask(App.api("/api/sources/revalidate", { json: {} })));
     $("#i-tiles").addEventListener("click", (e) => {
@@ -197,10 +219,12 @@ App.page("inventory", {
     $("#i-missing").addEventListener("change", (e) => this.setFilter({ store_missing: e.target.value }));
     $("#i-ai").addEventListener("change", (e) => this.setFilter({ ai: e.target.value }));
     $("#i-chem").addEventListener("change", (e) => this.setFilter({ chem: e.target.value }));
+    $("#i-tag").addEventListener("change", (e) => this.setFilter({ src_tag: e.target.value }));
+    $("#i-tagman").addEventListener("click", () => this.tagManager());
     $("#i-reset").addEventListener("click", () => {
-      $("#i-q").value = $("#i-pmin").value = $("#i-pmax").value = ""; $("#i-missing").value = ""; $("#i-ai").value = ""; $("#i-chem").value = "";
+      $("#i-q").value = $("#i-pmin").value = $("#i-pmax").value = ""; $("#i-missing").value = ""; $("#i-ai").value = ""; $("#i-chem").value = ""; $("#i-tag").value = "";
       this.tile = "all";
-      this.setFilter({ status: "", copies: "", q: "", price_min: "", price_max: "", store_missing: "", ai: "", chem: "" });
+      this.setFilter({ status: "", copies: "", q: "", price_min: "", price_max: "", store_missing: "", ai: "", chem: "", src_tag: "" });
     });
     $("#i-rows").addEventListener("click", (e) => {
       const cr = e.target.closest("tr[data-copy]");
@@ -217,6 +241,81 @@ App.page("inventory", {
         return;
       }
       this.openSource(id);
+    });
+  },
+
+  /* 고른 원본에 출처 태그 달기·빼기 */
+  async tagModal() {
+    const n = this.targetCount();
+    const d = await App.srcTags(true);
+    App.openModal({
+      title: `출처 태그 달기·빼기 · 원본 ${num(n)}개`,
+      body: `<div class="form">
+        <label class="field">달 태그 <span class="muted small">(쉼표로 여러 개)</span><input id="tg-add" placeholder="예) 경쟁사 A, ${ymdToday()}" autofocus></label>
+        <label class="field">뺄 태그 <span class="muted small">(쉼표로 여러 개)</span><input id="tg-rm" placeholder="예) 잘못 단 태그"></label>
+        ${d.tags.length ? `<div class="tag-pick" id="tg-pick"><span class="muted small">있는 태그 (누르면 '달 태그'에, Shift+누르면 '뺄 태그'에):</span>
+          ${d.tags.slice(0, 60).map((t) => `<button type="button" class="stag ${t.kind === "date" ? "date" : ""}" data-t="${esc(t.tag)}">${esc(t.tag)} <span class="muted">${num(t.count)}</span></button>`).join("")}</div>` : ""}
+      </div>`,
+      buttons: [{ label: "취소" }, { label: "적용", primary: true, onClick: async (b) => {
+        const add = $("#tg-add", b).value.split(","), remove = $("#tg-rm", b).value.split(",");
+        try {
+          const r = await App.api("/api/srctags/apply", { json: { ...this.target(), add, remove } });
+          App.toast(`원본 ${num(r.target)}개 중 ${num(r.count)}개의 출처 태그를 바꿨습니다`);
+          this.load(); this.loadTags(true);
+        } catch (e) { App.toast(e.message, true); return false; }
+      } }],
+    });
+    $("#tg-pick")?.addEventListener("click", (e) => {
+      const t = e.target.closest("[data-t]");
+      if (!t) return;
+      const inp = $(e.shiftKey ? "#tg-rm" : "#tg-add");
+      const cur = inp.value.split(",").map((x) => x.trim()).filter(Boolean);
+      if (!cur.includes(t.dataset.t)) cur.push(t.dataset.t);
+      inp.value = cur.join(", ");
+    });
+  },
+
+  /* 출처 태그 모아 보기: 누르면 거르기, 이름 바꾸기·지우기, 예전 원본에 채우기 */
+  async tagManager() {
+    const d = await App.srcTags(true);
+    const row = (t) => `<tr><td><a href="#" data-go-tag="${esc(t.tag)}">${srcTagChips([t.tag])}</a></td><td class="num">${num(t.count)}</td>
+      <td class="nowrap"><button class="btn sm" data-ren="${esc(t.tag)}">이름 바꾸기</button> <button class="btn sm danger" data-del="${esc(t.tag)}">지우기</button></td></tr>`;
+    App.openModal({
+      title: "출처 태그", wide: true,
+      body: `<div id="tm-box"><p class="small muted" style="margin:0 0 8px">원본을 어디서·언제 가져왔는지 붙이는 태그입니다 (엑셀 '상품태그'와 다름 — 네이버에 보내지 않음).
+          엑셀을 불러올 때(원본 엑셀 불러오기·상세 정리) 적은 태그와 수집 스토어가 붙습니다. 태그를 누르면 그 원본만 보입니다.</p>
+        ${d.tags.length ? `<table class="grid"><thead><tr><th>태그</th><th class="w-num">원본</th><th></th></tr></thead><tbody>${d.tags.map(row).join("")}</tbody></table>`
+          : '<p class="muted">아직 태그가 없습니다.</p>'}
+        <p class="small" style="margin-top:8px">태그 없는 원본 <b>${num(d.none)}개</b></p>
+        <div class="card pad" style="margin-top:8px"><b>예전에 불러온 원본에도 채우기</b>
+          <div class="cl-row small" style="margin-top:6px"><label class="check"><input type="checkbox" id="tm-store" checked><span>수집 스토어 (엑셀 '수집URL')</span></label>
+            <label class="check"><input type="checkbox" id="tm-date" checked><span>처음 불러온 날 (예: ${ymdToday()})</span></label>
+            <button class="btn sm" id="tm-fill">채우기</button></div>
+          <p class="muted small" style="margin:4px 0 0">있는 태그는 그대로 두고 더하기만 합니다.</p></div></div>`,
+      buttons: [{ label: "닫기" }],
+    });
+    $("#tm-box").addEventListener("click", async (e) => {
+      const g = e.target.closest("[data-go-tag]");
+      if (g) { e.preventDefault(); App.closeModal(); this.f.src_tag = g.dataset.goTag; await this.loadTags(); this.setFilter({ src_tag: g.dataset.goTag }); return; }
+      const rn = e.target.closest("[data-ren]"), dl = e.target.closest("[data-del]");
+      if (rn || dl) {
+        const old = (rn || dl).dataset.ren || (dl && dl.dataset.del);
+        const nw = rn ? prompt(`'${old}' 태그의 새 이름 (모든 원본에서 바뀜)`, old) : "";
+        if (rn && (nw === null || nw.trim() === old)) return;
+        if (dl && !confirm(`모든 원본에서 '${old}' 태그를 뺄까요? (원본은 그대로)`)) return;
+        try {
+          const r = await App.api("/api/srctags/rename", { json: { old, new: (nw || "").trim() } });
+          App.toast(`원본 ${num(r.count)}개에서 '${old}' → ${nw ? `'${nw.trim()}'` : "뺌"}`);
+          if (this.f.src_tag === old) this.f.src_tag = "";
+          await this.loadTags(true); this.load(); this.tagManager();
+        } catch (err) { App.toast(err.message, true); }
+      }
+      if (e.target.id === "tm-fill") {
+        const json = { store: $("#tm-store").checked, date: $("#tm-date").checked };
+        if (!json.store && !json.date) return App.toast("채울 것을 골라 주세요.", true);
+        App.closeModal();
+        App.startTask(App.api("/api/srctags/backfill", { json }));
+      }
     });
   },
 
@@ -328,7 +427,9 @@ App.page("inventory", {
     const notes = [];
     if (d.errors.length) notes.push(`<div class="notice err"><b>고쳐야 등록할 수 있어요</b><ul>${d.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>`);
     if (d.warnings.length) notes.push(`<div class="notice warn"><b>확인해 보세요</b><ul>${d.warnings.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>`);
-    const kv = [["카테고리", (d.category_fix ? `${esc(d.category_fix)} <span class="flag">직접 정함</span> <span class="muted small">(엑셀: ${esc(d.category)})</span>` : esc(d.category))
+    const kv = [["출처 태그", `<span id="s-tags">${srcTagChips(d.src_tags, true) || '<span class="muted">없음</span>'}</span>
+        <span class="s-tag-add"><input id="s-tag-in" placeholder="태그 더하기 (쉼표로 여러 개)" size="18"> <button class="btn sm" id="s-tag-go">달기</button></span>`],
+      ["카테고리", (d.category_fix ? `${esc(d.category_fix)} <span class="flag">직접 정함</span> <span class="muted small">(엑셀: ${esc(d.category)})</span>` : esc(d.category))
         + ` <button class="btn sm" id="s-cat">바꾸기</button>`],
       ["생활화학", `${d.chem_judge ? `<b>${esc(CHEM_LABEL[d.chem_judge] || d.chem_judge)}</b> <span class="muted small">${esc(d.chem_reason || "")}</span>` : '<span class="muted">판정 안 함</span>'}
         ${d.drop_pending ? ' <span class="flag warn">판매 중 내리고 지우는 중</span>' : ""} <button class="btn sm" id="s-chem">판정 바꾸기</button>`], ...Object.entries(d.fields).map(([k, v]) => [esc(k), esc(v)]),
@@ -343,6 +444,19 @@ App.page("inventory", {
         </table></div>` : "") +
       (d.tags_list.length ? `<div><h3 class="sec-title">엑셀 태그</h3><div class="tags">${d.tags_list.map((t) => `<span>${esc(t)}</span>`).join("")}</div></div>` : "");
     $("#s-chem", b)?.addEventListener("click", () => App.chemSet({ ids: [d.id] }, `원본 #${d.id}`, () => { this.openSource(d.id); this.load(); }));
+    const tagDo = async (add, remove) => {
+      try {
+        await App.api("/api/srctags/apply", { json: { ids: [d.id], add, remove } });
+        const nd = await App.api(`/api/sources/${d.id}`);
+        d.src_tags = nd.src_tags;
+        $("#s-tags", b).innerHTML = srcTagChips(d.src_tags, true) || '<span class="muted">없음</span>';
+        this.load(); this.loadTags(true);
+      } catch (e) { App.toast(e.message, true); }
+    };
+    $("#s-tags", b).addEventListener("click", (e) => { const x = e.target.closest("[data-rm-tag]"); if (x) tagDo([], [x.dataset.rmTag]); });
+    const addIt = () => { const v = $("#s-tag-in", b).value.trim(); if (v) { $("#s-tag-in", b).value = ""; tagDo(v.split(","), []); } };
+    $("#s-tag-go", b).addEventListener("click", addIt);
+    $("#s-tag-in", b).addEventListener("keydown", (e) => { if (e.key === "Enter") addIt(); });
     $("#s-cat", b)?.addEventListener("click", () => App.pickCategory({
       target: { ids: [d.id] }, current: d.category_fix || d.category, excel: d.category, what: `원본 #${d.id}`,
       after: () => { this.openSource(d.id); this.load(); } }));

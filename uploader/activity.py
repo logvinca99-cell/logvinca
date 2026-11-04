@@ -29,7 +29,7 @@ CREATE INDEX IF NOT EXISTS activity_started ON activity(started_at);
 """
 
 # 오래 걸리는 작업 종류 → 묶음
-TASK_GROUP = {"mail": "메일함", "clean_import": "상세 정리", "clean_chem": "상세 정리", "clean_send": "상세 정리", "chem": "원본", "rename": "상품명", "names": "상품명", "ctxkw": "AI 키워드", "plan": "복사·등록", "import": "원본",
+TASK_GROUP = {"mail": "메일함", "srctags": "원본", "clean_import": "상세 정리", "clean_chem": "상세 정리", "clean_send": "상세 정리", "chem": "원본", "rename": "상품명", "names": "상품명", "ctxkw": "AI 키워드", "plan": "복사·등록", "import": "원본",
               "revalidate": "원본", "bait": "복사본", "orders": "주문", "keywords": "상품명", "kipris": "금지어·사전",
               "lexicon": "금지어·사전", "dictfile": "금지어·사전"}
 
@@ -196,6 +196,10 @@ ACTIONS = {
     "clean_item_revert": ("상세 정리", lambda b, r: ("상세를 처음으로 되돌림", 1, "")),
     "clean_category": ("상세 정리", lambda b, r: (f"카테고리 바꿈: {b.get('to')}", r.get("count"), f"{b.get('from') or ''}")),
     "clean_items_chem": ("상세 정리", lambda b, r: ("생활화학 판정 바꿈: " + {"tool": "물건", "chemical": "화학제품", "unclear": "애매"}.get(b.get("kind"), ""), r.get("count"), "")),
+    "clean_tags": ("상세 정리", lambda b, r: ("출처 태그 정함: " + ", ".join(r.get("tags") or []) + (" + 수집 스토어" if r.get("store_tag") else ""), None, "")),
+    "srctags_apply": ("원본", lambda b, r: ("출처 태그" + (f" 달기: {', '.join(r.get('add') or [])}" if r.get("add") else "")
+                                           + (f" 빼기: {', '.join(r.get('remove') or [])}" if r.get("remove") else ""), r.get("count"), "")),
+    "srctags_rename": ("원본", lambda b, r: (f"출처 태그 이름 바꿈: {b.get('old')} → {b.get('new') or '(지움)'}", r.get("count"), "")),
     "chem_set": ("원본", lambda b, r: ("생활화학 판정 바꿈: " + {"tool": "물건", "chemical": "화학제품", "unclear": "애매", "": "지움"}.get(b.get("kind") or "", ""), r.get("count"), "")),
     "chem_delete": ("원본", lambda b, r: ("원본·복사본 모두 삭제", r.get("trashed"), f"판매 중 내리기 {r.get('dropping', 0)}건 · 판매 이력으로 남김 {r.get('kept_sold', 0)}개")),
     "mail_handled": ("메일함", lambda b, r: ("메일 확인함 표시" if b.get("handled", True) else "메일 확인함 풀기", 1, "")),

@@ -266,7 +266,9 @@ class DB:
                     # 생활화학/살생물제 인증 판정: tool(물건 → '인증 대상 아님'으로 올림) / chemical(화학제품 → 등록 보류) / unclear
                     ("chem_judge", "TEXT NOT NULL DEFAULT ''"), ("chem_reason", "TEXT NOT NULL DEFAULT ''"),
                     # 원본·복사본 모두 삭제: 판매 중인 복사본을 다 내리면 원본을 휴지통으로
-                    ("drop_pending", "INTEGER NOT NULL DEFAULT 0")],
+                    ("drop_pending", "INTEGER NOT NULL DEFAULT 0"),
+                    # 출처 태그 '|태그1|태그2|' (어디서·언제 가져왔는지: 수집 스토어, 날짜, 직접 적은 루트) — 엑셀 '상품태그'와 다름
+                    ("src_tags", "TEXT NOT NULL DEFAULT ''")],
         "stores": [("code", "TEXT NOT NULL DEFAULT ''"), ("orders_synced_to", "REAL"),
                    ("wm_text", "TEXT NOT NULL DEFAULT ''"), ("importer", "TEXT NOT NULL DEFAULT ''"),
                    # 스토어 템플릿: 상세 상단·하단(HTML), 관부가세 코드, 가격 조정 %, 표시 할인율 % (비우면 설정 공통값)

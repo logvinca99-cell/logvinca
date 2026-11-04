@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import random
 
-from . import aiwords, config, convert, ctxkw, excel, keywords, lexicon, namegen, naver
+from . import aiwords, config, convert, ctxkw, excel, keywords, lexicon, namegen, naver, srctags
 from .db import pack, unpack
 
 CHUNK = 500
@@ -54,17 +54,20 @@ def add_names(c, source_id, names, origin, now=None, cfg=None, rejected=None):
 
 # ───────────────────────── 1. 원본 불러오기
 
-def import_products(db, fileobj, filename, progress=None, should_stop=None):
-    """원본 엑셀(셀업 양식) 불러오기. 대표 썸네일이 같은 원본은 내용을 갱신한다."""
+def import_products(db, fileobj, filename, progress=None, should_stop=None, src_tags=None, store_tag=False):
+    """원본 엑셀(셀업 양식) 불러오기. 대표 썸네일이 같은 원본은 내용을 갱신한다. src_tags: 모든 원본에 붙일 출처 태그."""
     st = import_rows(db, ((None, r) for r in excel.iter_rows(fileobj, filename)), filename,
-                     total_hint=excel.count_rows(fileobj, filename), progress=progress, should_stop=should_stop)
+                     total_hint=excel.count_rows(fileobj, filename), progress=progress, should_stop=should_stop,
+                     src_tags=src_tags, store_tag=store_tag)
     st.pop("refs", None)
     return st
 
 
-def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=None):
+def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=None, src_tags=None, store_tag=False):
     """원본 줄들을 원본 상품으로 (엑셀 불러오기·상세 정리 공용). rows: (참조, 엑셀 줄 사전) 반복자.
+    src_tags: 모든 줄에 붙일 출처 태그, store_tag: 수집URL의 스토어도 태그로 (이미 있는 원본은 태그를 더함).
     돌려주는 refs: {참조: 원본 번호} (넣거나 갱신한 것만)."""
+    src_tags = srctags.parse(src_tags)
     cfg = config.load()
     lex = lexicon.get(db)
     categories = naver.cached_categories()
@@ -87,7 +90,7 @@ def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=No
                 vals = (s["name"], s["price"], s["category"], s["thumb"], s["option_count"], s["image_count"],
                         int(s["has_video"]), tags, pack(row), json.dumps(errors, ensure_ascii=False),
                         json.dumps(warnings, ensure_ascii=False), int(not errors), s["seller_code"], iid, now)
-                old = c.execute("SELECT id, name FROM sources WHERE source_key=?", (key,)).fetchone()
+                old = c.execute("SELECT id, name, src_tags FROM sources WHERE source_key=?", (key,)).fetchone()
                 if old:
                     c.execute("""UPDATE sources SET name=?, price=?, category=?, thumb=?, option_count=?,
                         image_count=?, has_video=?, tags=?, data=?, errors=?, warnings=?, valid=?, seller_code=?,
@@ -101,6 +104,11 @@ def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=No
                         has_video, tags, data, errors, warnings, valid, seller_code, import_id, updated_at, source_key,
                         created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (*vals, key, now)).lastrowid
                     stats["added"] += 1
+                tg = srctags.for_row(row, src_tags, store_tag)
+                if tg:
+                    new_tags = srctags.merge(old["src_tags"] if old else "", tg)
+                    if not old or new_tags != old["src_tags"]:
+                        c.execute("UPDATE sources SET src_tags=? WHERE id=?", (new_tags, sid))
                 if errors:
                     stats["invalid"] += 1
                 _, dup = add_names(c, sid, [s["name"]], "original", now)
@@ -211,8 +219,8 @@ def source_where(f):
     w, a = [], []
     q = (f.get("q") or "").strip()
     if q:
-        w.append("(name LIKE ? OR seller_code LIKE ? OR category LIKE ? OR id=?)")
-        a += [f"%{q}%"] * 3 + [int(q) if q.isdigit() else -1]
+        w.append("(name LIKE ? OR seller_code LIKE ? OR category LIKE ? OR src_tags LIKE ? OR id=?)")
+        a += [f"%{q}%"] * 4 + [int(q) if q.isdigit() else -1]
     st = f.get("status") or "all"
     if st == "valid":
         w.append("valid=1")
@@ -260,6 +268,12 @@ def source_where(f):
         w.append("id IN (SELECT source_id FROM names WHERE origin='ctx' AND listing_id IS NULL)")
     elif ai == "used":      # 받았지만 후보를 다 씀
         w.append("id IN (SELECT source_id FROM ctx_kw WHERE status='ok') AND id NOT IN (SELECT source_id FROM names WHERE origin='ctx' AND listing_id IS NULL)")
+    tg = f.get("src_tag") or ""
+    if tg == "__none__":                        # 출처 태그 없는 원본
+        w.append("src_tags=''")
+    elif tg:
+        w.append("instr(src_tags, ?)>0")
+        a.append(f"|{tg}|")
     ch = f.get("chem") or ""
     if ch in ("tool", "chemical", "unclear"):   # 생활화학 판정
         w.append("chem_judge=?")
@@ -288,7 +302,7 @@ def source_where(f):
 
 
 LIST_COLS = ("id, source_key, seller_code, name, price, category, thumb, option_count, image_count, has_video, errors, "
-             "warnings, valid, n_listings, n_success, n_free_names, updated_at, chem_judge, chem_reason, drop_pending")
+             "warnings, valid, n_listings, n_success, n_free_names, updated_at, chem_judge, chem_reason, drop_pending, src_tags")
 
 
 def query_sources(db, f, page=0, size=100):
@@ -297,6 +311,7 @@ def query_sources(db, f, page=0, size=100):
     rows = db.q(f"SELECT {LIST_COLS} FROM sources{where} ORDER BY id LIMIT ? OFFSET ?", (*args, size, page * size))
     for r in rows:
         r["errors"], r["warnings"] = json.loads(r["errors"]), json.loads(r["warnings"])
+        r["src_tags"] = srctags.split(r["src_tags"])
         r["copies"], r["deleted_copies"] = [], 0
     # 이 쪽에 보이는 원본들의 복사본을 한 번에 가져와 원본 아래에 붙인다.
     by_id = {r["id"]: r for r in rows}
@@ -558,6 +573,7 @@ def source_detail(db, sid):
         return None
     row = unpack(s.pop("data"))
     s["errors"], s["warnings"] = json.loads(s["errors"]), json.loads(s["warnings"])
+    s["src_tags"] = srctags.split(s.get("src_tags"))
     s["row"] = row
     s["names"] = db.q("""SELECT n.id, n.name, n.origin, n.listing_id, st.name AS store_name, l.status
         FROM names n LEFT JOIN listings l ON l.id=n.listing_id LEFT JOIN stores st ON st.id=l.store_id

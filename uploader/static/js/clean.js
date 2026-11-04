@@ -26,10 +26,13 @@ App.page("clean", {
           <label class="check"><input type="checkbox" id="cl-o-price" checked><span>가격을 <b>고객 결제가 한 칸</b>으로 (판매가 − 할인가, 할인가 비움)</span></label>
           <label class="check"><input type="checkbox" id="cl-o-code" checked><span>상품코드(판매자코드) 비우기</span></label>
           <label class="check"><input type="checkbox" id="cl-o-info" checked><span>브랜드·제조사·모델명·원산지 '상세페이지 참조'</span></label></div>
-        <div class="tiles" id="cl-sum" style="margin-top:12px"></div></section>
+        <div class="small" style="margin-top:8px">${App.tagFields("cl", { value: ymdToday() })}</div>
+        <div class="tiles" id="cl-sum" style="margin-top:12px"></div>
+        <div id="cl-btags" class="cl-btags small"></div></section>
       <div id="cl-steps"></div>
     </div>`;
     $("#cl-file").addEventListener("change", (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) this.upload(f); });
+    App.bindTagFields("cl");
     $("#cl-batch").addEventListener("change", (e) => { this.bid = +e.target.value || null; this.renderSteps(); this.refresh(); });
     $("#cl-sum").addEventListener("click", (e) => { if (e.target.closest("[data-filter=deleted]")) this.showDeleted(); });
     this.onDone = (t) => {
@@ -56,6 +59,7 @@ App.page("clean", {
     const fd = new FormData();
     fd.append("file", file);
     for (const k of ["price", "code", "info"]) fd.append(k, $(`#cl-o-${k}`).checked ? "1" : "0");
+    Object.entries(App.tagValues("cl")).forEach(([k, v]) => fd.append(k, v));
     await App.startTask(App.api("/api/clean/import", { method: "POST", body: fd }));
   },
 
@@ -72,7 +76,34 @@ App.page("clean", {
     if (s) s.textContent = num(b.counts.new);
   },
 
+  /* 이 묶음의 출처 태그 (원본으로 넣을 때 붙음) */
+  async loadTags() {
+    const box = $("#cl-btags");
+    if (!this.bid) { box.innerHTML = ""; return; }
+    const t = await App.api(`/api/clean/${this.bid}/tags`);
+    const st = t.stores.filter((s) => s.store);
+    const noUrl = t.stores.find((s) => !s.store)?.count || 0;
+    box.innerHTML = `<b>이 묶음의 출처 태그</b> <span class="muted">(원본으로 넣을 때 붙음)</span>: ${srcTagChips(t.tags) || '<span class="muted">없음</span>'}
+      ${t.store_tag ? ` + 수집 스토어 ${st.length ? st.slice(0, 6).map((s) => `${srcTagChips([s.store])}<span class="muted">${num(s.count)}개</span>`).join(" ") + (st.length > 6 ? ` 외 ${num(st.length - 6)}곳` : "") : '<span class="muted">(수집URL 없음)</span>'}${noUrl && st.length ? ` <span class="muted">· 수집URL 없는 상품 ${num(noUrl)}개</span>` : ""}` : ' <span class="muted">· 수집 스토어 태그 안 붙임</span>'}
+      <button class="btn sm" id="cl-btags-edit">바꾸기</button>`;
+    $("#cl-btags-edit").addEventListener("click", () => {
+      App.openModal({
+        title: "이 묶음의 출처 태그",
+        body: `<p class="small muted" style="margin:0 0 6px">아직 원본으로 넣지 않은 상품에 적용됩니다. 이미 넣은 원본은 원본 상품 화면의 '출처 태그 달기·빼기'로 바꾸세요.</p>
+          ${App.tagFields("ct", { value: t.tags.join(", "), store: t.store_tag })}`,
+        buttons: [{ label: "취소" }, { label: "저장", primary: true, onClick: async (b) => {
+          const v = App.tagValues("ct", b);
+          await App.api(`/api/clean/${this.bid}/tags`, { json: { tags: v.tags, store_tag: v.store_tag === "1" } });
+          App.toast("출처 태그를 저장했습니다");
+          this.loadTags();
+        } }],
+      });
+      App.bindTagFields("ct");
+    });
+  },
+
   renderSteps() {
+    this.loadTags();
     const box = $("#cl-steps");
     if (!this.bid) { box.innerHTML = '<p class="muted pad">엑셀을 먼저 올리세요.</p>'; return; }
     const step = (n, title, inner, note = "") => `<section class="card pad cl-step"><div class="sec-head"><h2><span class="cl-n">${n}</span> ${title}</h2>
@@ -103,7 +134,7 @@ App.page("clean", {
         <div id="cl-cat"></div><div id="cl-hold"></div>`),
       step(8, "원본 상품으로 넣기 · 새 엑셀로 저장", `<div class="cl-row"><button class="btn primary big" id="cl-send">원본 상품으로 넣기 (정리 중 <span id="cl-send-n">-</span>개)</button>
         <a class="btn" id="cl-export" href="/api/clean/${this.bid}/export">새 엑셀로 저장 (원래이름_수정.xlsx)</a></div>
-        <p class="small muted" style="margin:6px 0 0">생활화학 보류·지운 상품은 넣지 않습니다. 대표 사진이 같은 원본이 이미 있으면 내용을 갱신합니다(엑셀 불러오기와 같음). 넣은 뒤 원본 상품 화면에서 상품명 변경 → 복사로 이어 가세요.</p>`),
+        <p class="small muted" style="margin:6px 0 0">생활화학 보류·지운 상품은 넣지 않습니다. 대표 사진이 같은 원본이 이미 있으면 내용을 갱신하고 출처 태그는 더합니다(엑셀 불러오기와 같음). 넣은 뒤 원본 상품 화면에서 상품명 변경 → 복사로 이어 가세요.</p>`),
     ].join("");
     this.bind();
     this.loadRules();

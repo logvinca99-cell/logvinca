@@ -12,7 +12,7 @@ import os
 import re
 import time
 
-from . import config, convert, excel
+from . import config, convert, excel, srctags
 from .db import pack, unpack
 
 REFER = "상세페이지 참조"
@@ -27,7 +27,9 @@ CREATE TABLE IF NOT EXISTS clean_batch (
     file_name TEXT NOT NULL DEFAULT '',
     columns TEXT NOT NULL DEFAULT '[]',     -- 올린 엑셀의 열 순서 (엑셀로 저장할 때 그대로)
     total INTEGER NOT NULL DEFAULT 0,
-    note TEXT NOT NULL DEFAULT ''
+    note TEXT NOT NULL DEFAULT '',
+    tags TEXT NOT NULL DEFAULT '',          -- 원본으로 넣을 때 붙일 출처 태그 '|a|b|' (어디서·언제)
+    store_tag INTEGER NOT NULL DEFAULT 1    -- 1이면 수집URL의 스토어도 태그로
 );
 CREATE TABLE IF NOT EXISTS clean_item (
     id INTEGER PRIMARY KEY,
@@ -57,9 +59,17 @@ CREATE TABLE IF NOT EXISTS clean_rule (
 """
 
 
+NEW_COLUMNS = {"clean_batch": [("tags", "TEXT NOT NULL DEFAULT ''"), ("store_tag", "INTEGER NOT NULL DEFAULT 1")]}
+
+
 def ensure(db):
     with db.tx() as c:
         c.executescript(SCHEMA)
+        for t, cols in NEW_COLUMNS.items():
+            have = {r[1] for r in c.execute(f"PRAGMA table_info({t})").fetchall()}
+            for name, decl in cols:
+                if name not in have:
+                    c.execute(f"ALTER TABLE {t} ADD COLUMN {name} {decl}")
 
 
 # ───────────────────────── 이미지·글자 다루기
@@ -170,7 +180,8 @@ def import_excel(db, path, filename, opts=None, progress=None, should_stop=None)
     total_hint = excel.count_rows(path, filename)
     rule_srcs = [r["value"] for r in rules(db) if r["kind"] == "image"]
     now = time.time()
-    bid = db.x("INSERT INTO clean_batch(created_at, file_name) VALUES(?, ?)", (now, filename))
+    bid = db.x("INSERT INTO clean_batch(created_at, file_name, tags, store_tag) VALUES(?,?,?,?)",
+               (now, filename, srctags.join(srctags.parse(opts.get("tags"))), int(opts.get("store_tag", True))))
     cols, n = [], 0
     st = {"total": 0, "price": 0, "code": 0, "rule_imgs": 0, "skipped_empty": 0}
     batch = []
@@ -210,6 +221,23 @@ def import_excel(db, path, filename, opts=None, progress=None, should_stop=None)
     note = f"가격 한 칸으로 {st['price']:,} · 상품코드 비움 {st['code']:,}" + (f" · 기억한 공통 이미지 뺌 {st['rule_imgs']:,}장" if st["rule_imgs"] else "")
     db.x("UPDATE clean_batch SET columns=?, total=?, note=? WHERE id=?", (json.dumps(cols, ensure_ascii=False), st["total"], note, bid))
     return {**st, "batch_id": bid, "file": filename}
+
+
+def set_batch_tags(db, bid, tags, store_tag):
+    """정리함 묶음의 출처 태그 바꾸기 (아직 원본으로 안 넣은 상품에 적용 — 넣은 것은 원본 상품 화면에서)."""
+    db.x("UPDATE clean_batch SET tags=?, store_tag=? WHERE id=?", (srctags.join(srctags.parse(tags)), int(bool(store_tag)), bid))
+    return batch_tags(db, bid)
+
+
+def batch_tags(db, bid):
+    """묶음의 출처 태그와 수집URL로 붙을 스토어 (많은 순)."""
+    from collections import Counter
+    b = db.one("SELECT tags, store_tag FROM clean_batch WHERE id=?", (bid,)) or {}
+    stores = Counter()
+    for r in db.q("SELECT row FROM clean_item WHERE batch_id=? AND status IN ('new','hold')", (bid,)):
+        stores[srctags.store_of(unpack(r["row"])) or ""] += 1
+    return {"tags": srctags.split(b.get("tags")), "store_tag": bool(b.get("store_tag", 1)),
+            "stores": [{"store": s, "count": n} for s, n in stores.most_common()]}
 
 
 # ───────────────────────── 정리함 보기
@@ -580,10 +608,11 @@ def to_sources(db, bid, ids=None, progress=None, should_stop=None):
         rows = db.q("SELECT id, row, chem FROM clean_item WHERE batch_id=? AND status='new' ORDER BY ord", (bid,))
     if not rows:
         raise ValueError("원본으로 넣을 상품이 없습니다 (정리 중인 상품만 넣습니다 — 생활화학 보류는 빼고).")
-    b = db.one("SELECT file_name FROM clean_batch WHERE id=?", (bid,)) or {}
+    b = db.one("SELECT file_name, tags, store_tag FROM clean_batch WHERE id=?", (bid,)) or {}
     chem_of = {r["id"]: r["chem"] for r in rows}
     st = inventory.import_rows(db, ((r["id"], unpack(r["row"])) for r in rows), f"상세 정리 · {b.get('file_name') or ''}",
-                               total_hint=len(rows), progress=progress, should_stop=should_stop)
+                               total_hint=len(rows), progress=progress, should_stop=should_stop,
+                               src_tags=srctags.split(b.get("tags")), store_tag=bool(b.get("store_tag")))
     now = time.time()
     tools = 0
     with db.tx() as c:
