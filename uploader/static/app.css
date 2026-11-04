@@ -784,39 +784,58 @@ button.stag:hover { filter: brightness(0.95); outline: 1px solid currentColor; }
 .s-tag-add { display: inline-flex; gap: 4px; margin-left: 6px; }
 .s-tag-add input { padding: 2px 6px; border: 1px solid var(--line); border-radius: 6px; font-size: 12.5px; }
 
-/* 눈검수 (복사본 썸네일 그리드) */
+/* 눈검수 (복사본 썸네일 그리드) — 한 쪽이 화면에 꽉 차게, 오른쪽에 큰 버튼 */
 body.eye-open { overflow: hidden; }
-.eye { position: fixed; inset: 0; z-index: 15; background: var(--bg); display: flex; flex-direction: column; }
-.eye-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
-.eye-title { font-size: 16px; margin-right: 4px; }
-.eye-pg, .eye-acts { display: flex; align-items: center; gap: 6px; }
-.eye-acts { margin-left: auto; }
-.eye-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 6px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
-.eye-pages { display: flex; flex-wrap: wrap; gap: 3px; max-height: 52px; overflow: auto; }
-.eye-pgdot { min-width: 14px; height: 14px; padding: 0 3px; border-radius: 3px; border: 1px solid var(--line); background: var(--bg); font-size: 10px; line-height: 12px; color: var(--muted); cursor: pointer; }
-.eye-pgdot.s1 { background: var(--warn-soft); border-color: var(--warn); color: var(--text-2); }
-.eye-pgdot.s2 { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
-.eye-pgdot.on { outline: 2px solid var(--accent); outline-offset: 1px; }
-.eye-body { flex: 1; overflow: auto; padding: 12px 16px 70px; }
-.eye-done { margin: 0 0 10px; padding: 8px 12px; border-radius: 8px; background: var(--ok-soft); color: var(--ok); font-weight: 700; }
-.eye-grid { display: grid; grid-template-columns: repeat(var(--cols, 6), minmax(0, 1fr)); gap: 4px; }
-.eye-grid.c10, .eye-grid.c12 { gap: 2px; }
-.eye-tile { position: relative; aspect-ratio: 1; background: var(--line); overflow: hidden; cursor: pointer; border-radius: 2px; user-select: none; }
-.eye-tile img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
-.eye-tile img.broken { opacity: .2; }
+body.eye-open .tasks { display: none; }
+.eye { position: fixed; inset: 0; z-index: 15; background: var(--bg); display: flex; }
+.eye-main { flex: 1; min-width: 0; overflow: hidden; padding: 8px; display: flex; align-items: center; justify-content: center; }
+.eye-grid { display: grid; grid-template-columns: repeat(var(--cols, 6), var(--tile, 150px)); gap: 4px; justify-content: center; align-content: center; }
+.eye-tile { position: relative; width: var(--tile); cursor: pointer; user-select: none; background: var(--panel); border-radius: 3px; overflow: hidden; }
+.eye-ph { position: relative; width: var(--tile); height: var(--tile); background: var(--line); }
+.eye-ph img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+.eye-ph img.broken { opacity: .2; }
+.eye-nm { height: calc(var(--tile) * 0.3); display: flex; align-items: center; justify-content: center; overflow: hidden; white-space: nowrap;
+  font-size: calc(var(--tile) * 0.21); font-weight: 800; letter-spacing: -0.02em; color: var(--text); line-height: 1; }
 .eye-tile:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
 .eye-tile.on { outline: 4px solid var(--err); outline-offset: -4px; }
 .eye-tile.on img { opacity: .55; }
-.eye-tile .eye-check { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; border-radius: 50%; background: var(--err); color: #fff; display: none; place-items: center; font-weight: 700; font-size: 14px; }
+.eye-tile.on .eye-nm { background: var(--err); color: #fff; }
+.eye-check { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; border-radius: 50%; background: var(--err); color: #fff; display: none; place-items: center; font-weight: 700; font-size: 14px; }
 .eye-tile.on .eye-check { display: grid; }
-.eye-grid.c10 .eye-check, .eye-grid.c12 .eye-check { width: 18px; height: 18px; font-size: 11px; top: 3px; right: 3px; }
-.eye-seen { position: absolute; left: 4px; bottom: 4px; font-size: 10px; line-height: 14px; padding: 0 4px; border-radius: 3px; background: rgba(0, 0, 0, .45); color: #fff; }
-.eye-tag { position: absolute; left: 4px; top: 4px; font-size: 10px; line-height: 15px; padding: 0 5px; border-radius: 3px; background: var(--err); color: #fff; font-weight: 600; }
-.eye-tag.off { background: rgba(0, 0, 0, .5); }
-.eye-tile.gone img { opacity: .3; filter: grayscale(1); }
-.eye-bottom { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+.eye-seen { position: absolute; left: 4px; bottom: 4px; font-size: 11px; line-height: 15px; padding: 0 4px; border-radius: 3px; background: rgba(0, 0, 0, .45); color: #fff; }
+.eye-tag { position: absolute; left: 4px; top: 4px; font-size: 11px; line-height: 16px; padding: 0 5px; border-radius: 3px; background: var(--err); color: #fff; font-weight: 600; }
+.eye-tile.going img { opacity: .35; filter: grayscale(1); }
+.eye-tile.dead { cursor: default; }
+.eye-tile.dead:hover { outline: none; }
+.eye-tile.dead img { opacity: .18; filter: grayscale(1); }
+.eye-tile.dead .eye-nm { color: var(--muted); text-decoration: line-through; }
+.eye-dead { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; text-align: center; padding: 4px; }
+.eye-dead b { font-size: calc(var(--tile) * 0.16); color: var(--err); }
+.eye-dead span { font-size: max(10px, calc(var(--tile) * 0.08)); color: var(--text-2); }
+.eye-tile.kept .eye-dead b { color: var(--warn); }
+.eye-side { width: 250px; flex: none; background: var(--panel); border-left: 1px solid var(--line); padding: 14px; display: flex; flex-direction: column; gap: 10px; overflow: auto; }
+.eye-side-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; font-size: 16px; }
+.eye-pno { font-size: 18px; color: var(--text-2); }
+.eye-pno b { font-size: 34px; color: var(--text); font-variant-numeric: tabular-nums; }
+.eye-big { width: 100%; border: 0; border-radius: 12px; padding: 16px 12px; font-size: 18px; font-weight: 800; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; line-height: 1.25; }
+.eye-big small { font-size: 14px; font-weight: 600; opacity: .9; }
+.eye-big:disabled { opacity: .4; cursor: default; }
+.eye-next { background: var(--accent); color: #fff; min-height: 96px; box-shadow: 0 6px 16px rgba(3, 169, 77, .25); }
+.eye-next:not(:disabled):hover { filter: brightness(1.05); }
+.eye-del { background: var(--err); color: #fff; min-height: 56px; }
+.eye-big2 { width: 100%; border: 1px solid var(--line); background: var(--bg); color: var(--text); border-radius: 10px; padding: 12px; font-size: 16px; font-weight: 700; cursor: pointer; }
+.eye-big2:disabled { opacity: .4; cursor: default; }
+.eye-sep { border-top: 1px solid var(--line); margin: 2px 0; }
+.eye-seln { font-size: 15px; }
+.eye-seln b { font-size: 20px; color: var(--err); }
+.eye-row { display: flex; gap: 6px; }
+.eye-row .btn { flex: 1; }
+.eye-field { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.eye-field .sel { flex: 1; min-width: 0; }
+.eye-side > .sel { flex: none; width: 100%; }
+.eye-hint { margin: auto 0 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
 .eye-zoom { position: fixed; z-index: 17; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 16px 40px rgba(16, 24, 40, .3); padding: 6px; pointer-events: none; }
 .eye-zoom img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .eye-card { position: fixed; z-index: 18; width: 360px; max-width: calc(100vw - 16px); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 32px rgba(16, 24, 40, .25); padding: 12px 14px; }
 .eye-card-name { font-weight: 700; line-height: 1.45; word-break: keep-all; }
-@media (max-width: 700px) { .eye-acts { margin-left: 0; } }
+@media (max-width: 800px) { .eye { flex-direction: column-reverse; } .eye-side { width: auto; max-height: 45vh; border-left: 0; border-bottom: 1px solid var(--line); } }

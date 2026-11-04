@@ -24,7 +24,8 @@ STORE_FIELDS = ("name", "code", "client_id", "client_secret", "store_url", "as_p
 def _filter_from(src):
     f = {k: src.get(k) for k in FILTER_KEYS if src.get(k) not in (None, "")}
     if src.get("ids"):
-        f["ids"] = [int(i) for i in src["ids"]]
+        ids = src["ids"]
+        f["ids"] = [int(i) for i in (ids.split(",") if isinstance(ids, str) else ids) if str(i).strip()]
     if src.get("kinds"):
         f["kinds"] = [str(k) for k in src["kinds"]]
     if src.get("visible"):
@@ -1153,19 +1154,29 @@ def create_app(db=None):
 
     # ── 눈검수 (복사본 썸네일 그리드)
 
-    @app.get("/api/eye/pages")
-    def eye_pages():
-        """눈검수 쪽마다 본 정도: 2 = 다 봄, 1 = 일부, 0 = 안 봄 (원본 기준, 복사본 화면과 같은 순서)."""
-        f = _filter_from(request.args)
-        size = max(1, min(int(request.args.get("size", 48)), 500))
+    @app.get("/api/eye/page")
+    def eye_page():
+        """눈검수 한 쪽: 복사본 번호 순으로 from_id부터 size개 (before_id면 그 앞 size개).
+        번호로 넘기므로 쪽에서 지운 것이 있어도 다음 쪽이 밀리거나 건너뛰지 않는다."""
+        a = request.args
+        f = _filter_from(a)
+        size = max(1, min(int(a.get("size", 48)), 500))
         where, args = inventory.listing_where(f)
-        flags = [r["d"] for r in db.q(f"SELECT s.eye_at IS NOT NULL AS d FROM listings l JOIN sources s ON s.id=l.source_id{where} ORDER BY l.id", args)]
-        pages = []
-        for i in range(0, len(flags), size):
-            part = flags[i:i + size]
-            n = sum(part)
-            pages.append(2 if n == len(part) else 1 if n else 0)
-        return jsonify({"pages": pages, "total": len(flags), "reviewed": sum(flags)})
+        base = "FROM listings l JOIN sources s ON s.id=l.source_id"
+        cond = lambda c: where + (" AND " if where else " WHERE ") + c   # noqa: E731
+        if a.get("before_id"):
+            ids = [r["id"] for r in db.q(f"SELECT l.id {base}{cond('l.id<?')} ORDER BY l.id DESC LIMIT ?", (*args, int(a["before_id"]), size))][::-1]
+        else:
+            ids = [r["id"] for r in db.q(f"SELECT l.id {base}{cond('l.id>=?')} ORDER BY l.id LIMIT ?", (*args, int(a.get("from_id") or 0), size))]
+        if not ids and a.get("from_id"):   # 끝을 넘었으면 마지막 쪽
+            ids = [r["id"] for r in db.q(f"SELECT l.id {base}{where} ORDER BY l.id DESC LIMIT ?", (*args, size))][::-1]
+        total = db.one(f"SELECT COUNT(*) AS n {base}{where}", args)["n"]
+        rows = inventory.query_listings(db, {"ids": ids}, 0, size)["rows"] if ids else []
+        before = db.one(f"SELECT COUNT(*) AS n {base}{cond('l.id<?')}", (*args, ids[0]))["n"] if ids else 0
+        after = db.one(f"SELECT COUNT(*) AS n {base}{cond('l.id>?')}", (*args, ids[-1]))["n"] if ids else 0
+        page = -(-before // size) + 1   # 앞에 남은 것 기준 (이 앞 쪽에서 지운 것이 있어도 쪽 번호가 줄지 않게)
+        return jsonify({"rows": rows, "total": total, "page": page, "pages": page + -(-after // size) if ids else 1,
+                        "has_prev": before > 0, "has_next": after > 0, "done": bool(rows) and all(r["eye_at"] for r in rows)})
 
     @app.post("/api/eye/mark")
     def eye_mark():
