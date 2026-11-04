@@ -238,8 +238,8 @@ class DB:
         self.c.executescript(SCHEMA)
         self._migrate_columns()   # 새로 만든 db: SCHEMA에 없는 나중에 더한 열도 붙인다
         self._migrate_data()
-        from . import activity, aiwords, bulkedit, collect, ctxkw, keywords, kipris, lexicon, mail, trash
-        collect.ensure(self)
+        self._remove_collect(os.path.dirname(path))
+        from . import activity, aiwords, bulkedit, ctxkw, keywords, kipris, lexicon, mail, trash
         lexicon.ensure(self)
         kipris.ensure(self)
         keywords.ensure(self)
@@ -296,6 +296,17 @@ class DB:
                      # 상품명 바꾸기(AI 키워드)를 눌렀는데 키워드가 아직 오는 중 → 오면 이 복사본 이름을 바꿈
                      ("ctx_wait", "INTEGER NOT NULL DEFAULT 0")],
     }
+
+    def _remove_collect(self, data_dir):
+        """뺀 '상품 수집' 기능이 남긴 것 정리: 수집 표, 수집용 크롬 프로필(네이버 로그인 상태가 남음), 진단 파일.
+        (상품 수집은 셀업으로 하고 이 프로그램은 엑셀 불러오기부터 씀)"""
+        for t in ("collect_job", "collect_store", "collect_url", "collect_item", "collect_log"):
+            self.c.execute(f"DROP TABLE IF EXISTS {t}")
+        import shutil
+        for d in ("collect_chrome", "collect_debug"):
+            p = os.path.join(data_dir, d)
+            if os.path.isdir(p):
+                shutil.rmtree(p, ignore_errors=True)   # 수집용 크롬 창이 열려 있으면 일부가 남을 수 있음 (다음 실행 때 다시)
 
     def _migrate_columns(self):
         for table, cols in self.NEW_COLUMNS.items():
