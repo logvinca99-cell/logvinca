@@ -309,12 +309,6 @@ const App = {
         + (r.named ? ` · AI 키워드 이름 바로 붙음 ${num(r.named)}건` : "")
         + (r.created - (r.named || 0) > 0 ? " · 나머지는 복사본 화면 '이름 변경 필요'에서 상품명을 바꾼 뒤 올리세요" : ""),
       mail: () => `메일함: 확인 ${num(r.checked)}통 · 새로 ${num(r.new)}통` + (r.warn ? ` · 경고·제재 ${num(r.warn)}통` : "") + (r.auth ? ` · 인증번호 ${num(r.auth)}통` : ""),
-      bulkedit: () => r.test
-        ? (r.empty ? "시험할 상품이 없습니다 (고른 스토어에 올린 상품 없음)"
-          : r.failed ? `1개로 시험 실패: ${r.store} ${r.origin_no} · ${r.errors?.[0] || ""}`
-          : `1개로 시험 끝: ${r.store} 상품 ${r.origin_no} · ${r.changed?.length ? "바꾼 항목 " + r.changed.join(", ") : "이미 같은 값이라 바꾼 것 없음"} · 판매자센터에서 확인 후 '전체 시작'`)
-        : `올린 상품 일괄 변경: 바꿈 ${num(r.done)}개 · 이미 같음 ${num(r.same)}개` + (r.failed ? ` · 실패 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : "")
-          + (r.left ? ` · 남은 ${num(r.left)}개는 '이어서'로` : ""),
       revalidate: () => `다시 검사 끝: ${num(r.total)}개` + (r.invalid !== undefined ? ` · 오류 ${num(r.invalid)}개` : ""),
       orders: () => r.rows !== undefined
         ? `판매 이력 파일 끝: ${num(r.rows)}줄 중 복사본과 맞춘 주문 ${num(r.matched)}건 · 못 맞춘 ${num(r.unmatched)}건`

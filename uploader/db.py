@@ -238,15 +238,14 @@ class DB:
         self.c.executescript(SCHEMA)
         self._migrate_columns()   # 새로 만든 db: SCHEMA에 없는 나중에 더한 열도 붙인다
         self._migrate_data()
-        self._remove_collect(os.path.dirname(path))
-        from . import activity, aiwords, bulkedit, ctxkw, keywords, kipris, lexicon, mail, trash
+        self._remove_dropped(os.path.dirname(path))
+        from . import activity, aiwords, ctxkw, keywords, kipris, lexicon, mail, trash
         lexicon.ensure(self)
         kipris.ensure(self)
         keywords.ensure(self)
         aiwords.ensure(self)
         ctxkw.ensure(self)
         activity.ensure(self)
-        bulkedit.ensure(self)
         mail.ensure(self)
         trash.ensure(self)
         # 프로그램이 등록 도중 꺼졌으면 남은 상태를 되돌린다.
@@ -297,10 +296,11 @@ class DB:
                      ("ctx_wait", "INTEGER NOT NULL DEFAULT 0")],
     }
 
-    def _remove_collect(self, data_dir):
-        """뺀 '상품 수집' 기능이 남긴 것 정리: 수집 표, 수집용 크롬 프로필(네이버 로그인 상태가 남음), 진단 파일.
-        (상품 수집은 셀업으로 하고 이 프로그램은 엑셀 불러오기부터 씀)"""
-        for t in ("collect_job", "collect_store", "collect_url", "collect_item", "collect_log"):
+    def _remove_dropped(self, data_dir):
+        """뺀 기능이 남긴 것 정리.
+        - 상품 수집(→ 셀업으로): 수집 표, 수집용 크롬 프로필(네이버 로그인 상태가 남음), 진단 파일
+        - 올린 상품 일괄 변경(→ 다른 도구로): 일괄 변경 표"""
+        for t in ("collect_job", "collect_store", "collect_url", "collect_item", "collect_log", "bulk_job", "bulk_item"):
             self.c.execute(f"DROP TABLE IF EXISTS {t}")
         import shutil
         for d in ("collect_chrome", "collect_debug"):

@@ -10,7 +10,7 @@ import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import VERSION, activity, aiwords, bait, bulkedit, chrome, mail, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
+from . import VERSION, activity, aiwords, bait, chrome, mail, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
 from .db import DB
 from .tasks import Tasks
 
@@ -185,39 +185,6 @@ def create_app(db=None):
         if not st.get("chrome_profile"):
             return jsonify({"opened": False, "reason": "이 스토어에 크롬 프로필이 정해져 있지 않습니다 (스토어 '수정')."})
         return jsonify(chrome.open_url(url, st["chrome_profile"]))
-
-    # ── 올린 상품 일괄 변경
-
-    @app.get("/api/bulk")
-    def bulk_list():
-        return jsonify(bulkedit.jobs(db))
-
-    @app.post("/api/bulk")
-    def bulk_create():
-        b = body()
-        try:
-            return jsonify(bulkedit.create(db, b.get("spec") or {}, b.get("store_ids") or [], b.get("target")))
-        except ValueError as e:
-            return fail(str(e))
-
-    @app.post("/api/bulk/<int:jid>/<action>")
-    def bulk_action(jid, action):
-        j = bulkedit.job(db, jid)
-        if not j:
-            return fail("일괄 변경 작업을 찾지 못했습니다.", 404)
-        if action == "retry":
-            return jsonify(bulkedit.retry_failed(db, jid))
-        if action not in ("test", "run"):
-            return fail("알 수 없는 명령입니다.", 404)
-        test = action == "test"
-        try:
-            tid = tasks.start("bulkedit", f"올린 상품 일괄 변경 #{jid} · {'1개로 시험' if test else '전체'} · {j['summary'][:80]}",
-                              lambda **kw: bulkedit.run(db, jid, test=test, **kw))
-        except RuntimeError as e:
-            return fail(str(e))
-        db.x("UPDATE activity SET store=? WHERE task_id=? AND id=(SELECT MAX(id) FROM activity WHERE task_id=?)",
-             (", ".join(s["name"] for s in j["per_store"][:3]) + (" 외" if len(j["per_store"]) > 3 else ""), tid, tid))
-        return jsonify({"task": tid})
 
     @app.get("/api/activity")
     def activity_list():

@@ -29,7 +29,7 @@ CREATE INDEX IF NOT EXISTS activity_started ON activity(started_at);
 """
 
 # 오래 걸리는 작업 종류 → 묶음
-TASK_GROUP = {"mail": "메일함", "bulkedit": "올린 상품 일괄 변경", "rename": "상품명", "names": "상품명", "ctxkw": "AI 키워드", "plan": "복사·등록", "import": "원본",
+TASK_GROUP = {"mail": "메일함", "rename": "상품명", "names": "상품명", "ctxkw": "AI 키워드", "plan": "복사·등록", "import": "원본",
               "revalidate": "원본", "bait": "복사본", "orders": "주문", "keywords": "상품명", "kipris": "금지어·사전",
               "lexicon": "금지어·사전", "dictfile": "금지어·사전"}
 
@@ -187,9 +187,6 @@ ACTIONS = {
     "settings_reapply": ("설정", "설정을 기존 상품에 다시 적용"),
     "names_import": ("상품명", "상품명 파일 가져오기"),
     "mail_handled": ("메일함", lambda b, r: ("메일 확인함 표시" if b.get("handled", True) else "메일 확인함 풀기", 1, "")),
-    "bulk_create": ("올린 상품 일괄 변경", lambda b, r: (f"일괄 변경 작업 만듦 #{r.get('id')}", sum(x.get("total", 0) for x in r.get("per_store") or []) or None,
-                                                       str(r.get("summary") or ""))),
-    "bulk_action": ("올린 상품 일괄 변경", lambda b, r: ("일괄 변경 실패만 다시 대기로", r.get("count"), "")),
 }
 SKIP = {"save_settings", "store_template_save", "task_stop"}   # 따로 기록하거나 기록할 필요 없음
 
