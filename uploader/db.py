@@ -239,7 +239,8 @@ class DB:
         self._migrate_columns()   # 새로 만든 db: SCHEMA에 없는 나중에 더한 열도 붙인다
         self._migrate_data()
         self._remove_dropped(os.path.dirname(path))
-        from . import activity, aiwords, ctxkw, keywords, kipris, lexicon, mail, trash
+        from . import activity, aiwords, clean, ctxkw, keywords, kipris, lexicon, mail, trash
+        clean.ensure(self)
         lexicon.ensure(self)
         kipris.ensure(self)
         keywords.ensure(self)
@@ -261,7 +262,11 @@ class DB:
                     ("core_manual", "INTEGER NOT NULL DEFAULT 0"), ("kw_at", "REAL"),
                     # 직접 고른 네이버 카테고리 (인증 때문에 안 올라가는 카테고리 등) — 엑셀 카테고리 대신 이것으로 검사·등록.
                     # 엑셀을 다시 불러와도 남음
-                    ("category_fix", "TEXT NOT NULL DEFAULT ''")],
+                    ("category_fix", "TEXT NOT NULL DEFAULT ''"),
+                    # 생활화학/살생물제 인증 판정: tool(물건 → '인증 대상 아님'으로 올림) / chemical(화학제품 → 등록 보류) / unclear
+                    ("chem_judge", "TEXT NOT NULL DEFAULT ''"), ("chem_reason", "TEXT NOT NULL DEFAULT ''"),
+                    # 원본·복사본 모두 삭제: 판매 중인 복사본을 다 내리면 원본을 휴지통으로
+                    ("drop_pending", "INTEGER NOT NULL DEFAULT 0")],
         "stores": [("code", "TEXT NOT NULL DEFAULT ''"), ("orders_synced_to", "REAL"),
                    ("wm_text", "TEXT NOT NULL DEFAULT ''"), ("importer", "TEXT NOT NULL DEFAULT ''"),
                    # 스토어 템플릿: 상세 상단·하단(HTML), 관부가세 코드, 가격 조정 %, 표시 할인율 % (비우면 설정 공통값)
@@ -386,8 +391,10 @@ class DB:
     def source_row(self, sid):
         """원본 엑셀 줄 (직접 고른 카테고리가 있으면 '카테고리'를 그것으로)."""
         from .convert import with_category_fix
-        r = self.one("SELECT data, category_fix FROM sources WHERE id=?", (sid,))
-        return with_category_fix(unpack(r["data"]), r["category_fix"]) if r else None
+        r = self.one("SELECT data, category_fix, chem_judge FROM sources WHERE id=?", (sid,))
+        if not r:
+            return None
+        return {**with_category_fix(unpack(r["data"]), r["category_fix"]), "_chem": r["chem_judge"]}   # _chem: 저장 안 함
 
     def recount_sources(self, ids=None):
         """n_listings / n_success / n_free_names 다시 세기. ids가 없으면 전체."""

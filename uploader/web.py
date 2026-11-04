@@ -10,12 +10,12 @@ import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import VERSION, activity, aiwords, bait, chrome, mail, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
+from . import VERSION, activity, aiwords, bait, chem, chrome, clean, mail, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
 from .db import DB
 from .tasks import Tasks
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-FILTER_KEYS = ("q", "status", "category", "ai", "store_missing", "store_has", "import_id", "max_listings", "price_min", "price_max", "copies",
+FILTER_KEYS = ("q", "status", "category", "ai", "chem", "store_missing", "store_has", "import_id", "max_listings", "price_min", "price_max", "copies",
                "min_names", "store_id", "plan_id", "op", "age_days", "sold", "locked")
 STORE_FIELDS = ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "capacity", "enabled", "memo", "wm_text", "importer",
                 "business_id", "chrome_profile", "mail_to")
@@ -146,6 +146,212 @@ def create_app(db=None):
             "ctx": ctxkw.live_status(db),   # AI 키워드 일괄 처리·실패 현황 (오른쪽 아래)
             "mail_warn_open": db.one("SELECT COUNT(*) AS n FROM mails WHERE kind='warn' AND handled=0")["n"],
         })
+
+    # ── 상세 정리 (셀업 엑셀 → 정리함 → 원본)
+
+    @app.post("/api/clean/import")
+    def clean_import():
+        f = request.files.get("file")
+        if not f:
+            return fail("셀업 엑셀 파일을 골라 주세요.")
+        path = _save_upload(f)
+        opts = {k: request.form.get(k, "1") == "1" for k in ("price", "code", "info")}
+        name = f.filename
+
+        def job(**kw):
+            try:
+                return clean.import_excel(db, path, name, opts, **kw)
+            finally:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+        try:
+            return jsonify({"task": tasks.start("clean_import", f"상세 정리 · 엑셀 올리기 · {name}", job)})
+        except RuntimeError as e:
+            return fail(str(e))
+
+    @app.get("/api/clean/batches")
+    def clean_batches():
+        return jsonify(clean.batches(db))
+
+    @app.get("/api/clean/<int:bid>")
+    def clean_batch(bid):
+        b = db.one("SELECT * FROM clean_batch WHERE id=?", (bid,))
+        if not b:
+            return fail("정리함 묶음이 없습니다.", 404)
+        return jsonify({**b, "counts": clean.counts(db, bid)})
+
+    @app.get("/api/clean/<int:bid>/items")
+    def clean_items(bid):
+        a = request.args
+        return jsonify(clean.items(db, bid, a.get("status") or "", (a.get("q") or "").strip(), int(a.get("page") or 1),
+                                   min(500, int(a.get("size") or 100))))
+
+    @app.get("/api/clean/item")
+    def clean_item_get():
+        a = request.args
+        r = clean.item(db, int(a.get("id") or 0) or None, int(a.get("batch_id") or 0) or None, int(a.get("ord") or 0) or None)
+        return jsonify(r) if r else fail("그 행의 상품이 없습니다.", 404)
+
+    @app.post("/api/clean/item/<int:iid>/detail")
+    def clean_item_detail(iid):
+        try:
+            return jsonify(clean.save_detail(db, iid, body().get("html")))
+        except ValueError as e:
+            return fail(str(e))
+
+    @app.post("/api/clean/item/<int:iid>/revert")
+    def clean_item_revert(iid):
+        return jsonify({"ok": clean.revert_detail(db, iid)})
+
+    @app.post("/api/clean/items/delete")
+    def clean_items_delete():
+        return jsonify({"count": clean.delete_items(db, body().get("ids") or [])})
+
+    @app.post("/api/clean/items/restore")
+    def clean_items_restore():
+        return jsonify({"count": clean.restore_items(db, body().get("ids") or [])})
+
+    @app.post("/api/clean/<int:bid>/common")
+    def clean_common(bid):
+        return jsonify(clean.common_images(db, bid, int(body().get("min") or 10)))
+
+    @app.post("/api/clean/<int:bid>/common/remove")
+    def clean_common_remove(bid):
+        b = body()
+        try:
+            return jsonify(clean.remove_common(db, bid, b.get("srcs") or [], bool(b.get("remember"))))
+        except ValueError as e:
+            return fail(str(e))
+
+    @app.get("/api/clean/rules")
+    def clean_rules():
+        return jsonify(clean.rules(db))
+
+    @app.post("/api/clean/rules/delete")
+    def clean_rules_delete():
+        return jsonify({"count": clean.delete_rules(db, body().get("ids") or [])})
+
+    @app.post("/api/clean/<int:bid>/phones")
+    def clean_phones(bid):
+        return jsonify(clean.find_phones(db, bid))
+
+    @app.post("/api/clean/phones/remove")
+    def clean_phones_remove():
+        return jsonify(clean.remove_phones(db, body().get("picks") or []))
+
+    @app.post("/api/clean/<int:bid>/broken")
+    def clean_broken(bid):
+        return jsonify(clean.broken_details(db, bid))
+
+    @app.post("/api/clean/<int:bid>/missing")
+    def clean_missing(bid):
+        return jsonify(clean.missing_fields(db, bid, body().get("cols")))
+
+    @app.post("/api/clean/<int:bid>/categories")
+    def clean_categories(bid):
+        return jsonify(clean.categories(db, bid))
+
+    @app.post("/api/clean/<int:bid>/category")
+    def clean_category(bid):
+        b = body()
+        try:
+            return jsonify({"count": clean.set_category(db, bid, b.get("to"), b.get("from"), b.get("ids"))})
+        except ValueError as e:
+            return fail(str(e))
+
+    @app.post("/api/clean/<int:bid>/chem")
+    def clean_chem(bid):
+        try:
+            return jsonify({"task": tasks.start("clean_chem", f"상세 정리 · 생활화학 판정 · 묶음 #{bid}",
+                                                lambda **kw: clean.judge_chem(db, bid, **kw))})
+        except RuntimeError as e:
+            return fail(str(e))
+
+    @app.get("/api/clean/<int:bid>/hold")
+    def clean_hold(bid):
+        return jsonify(clean.hold_list(db, bid))
+
+    @app.post("/api/clean/items/chem")
+    def clean_items_chem():
+        b = body()
+        try:
+            return jsonify({"count": clean.set_chem(db, b.get("ids") or [], b.get("kind"))})
+        except ValueError as e:
+            return fail(str(e))
+
+    @app.post("/api/clean/<int:bid>/send")
+    def clean_send(bid):
+        b = body()
+        try:
+            return jsonify({"task": tasks.start("clean_send", f"상세 정리 → 원본 상품 · 묶음 #{bid}",
+                                                lambda **kw: clean.to_sources(db, bid, b.get("ids"), **kw))})
+        except RuntimeError as e:
+            return fail(str(e))
+
+    @app.get("/api/clean/<int:bid>/export")
+    def clean_export(bid):
+        try:
+            data, name = clean.export_xlsx(db, bid)
+        except ValueError as e:
+            return fail(str(e))
+        from urllib.parse import quote
+        return Response(data, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
+
+    # ── 생활화학/살생물제 인증 판정 (이미 넣은 원본·실패한 복사본)
+
+    @app.post("/api/chem/judge")
+    def chem_judge():
+        ids = _ctx_sources(body())
+        if not ids:
+            return fail("고른 원본이 없습니다.")
+        try:
+            return jsonify({"task": tasks.start("chem", f"생활화학 판정 · 원본 {len(ids):,}개",
+                                                lambda **kw: chem.judge_sources(db, ids, **kw))})
+        except RuntimeError as e:
+            return fail(str(e))
+
+    @app.post("/api/chem/set")
+    def chem_set():
+        b = body()
+        ids = _ctx_sources(b)
+        if not ids:
+            return fail("고른 원본이 없습니다.")
+        try:
+            return jsonify({"count": chem.set_judge(db, ids, b.get("kind") or "")})
+        except ValueError as e:
+            return fail(str(e))
+
+    @app.post("/api/chem/delete_preview")
+    def chem_delete_preview():
+        ids = _ctx_sources(body())
+        live = {r["source_id"]: r for r in db.q(f"""SELECT source_id, COUNT(*) AS n, MAX(locked) AS locked FROM listings
+            WHERE source_id IN ({','.join('?' * len(ids)) or 'NULL'}) AND status!='deleted' AND origin_no!='' GROUP BY source_id""", ids)} if ids else {}
+        kept = sum(1 for r in live.values() if r["locked"])
+        return jsonify({"sources": len(ids), "now": len(ids) - len(live), "drop_sources": len(live) - kept,
+                        "drop_listings": sum(r["n"] for r in live.values() if not r["locked"]), "kept_sold": kept})
+
+    @app.post("/api/chem/delete")
+    def chem_delete():
+        """원본·복사본 모두 삭제: 안 올라간 것은 바로 휴지통, 판매 중인 복사본은 네이버에서 내린 뒤 원본도 휴지통 (판매 이력·잠금은 남김)."""
+        if runner.state["running"]:
+            return fail("등록이 진행 중일 때는 지울 수 없습니다. 끝난 뒤에 다시 시도하세요.")
+        b = body()
+        ids = _ctx_sources(b)
+        if not ids:
+            return fail("고른 원본이 없습니다.")
+        out = chem.delete_sources_everywhere(db, ids)
+        drop = out.pop("drop_scheduled")
+        out.update(dropping=len(drop), started=False)
+        if drop and b.get("now", True):
+            try:
+                runner.start({"ids": drop, "kinds": ["delete"]})
+                out["started"] = True
+            except (RuntimeError, naver.ApiError) as e:
+                out["error"] = str(e)
+        return jsonify(out)
 
     # ── 구글 메일함
 

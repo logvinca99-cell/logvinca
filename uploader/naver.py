@@ -275,6 +275,13 @@ class Client:
         self._token_now(force=True)
         return True
 
+    def category_info(self, cat_id):
+        """카테고리 하나 (exceptionalCategories에 CHEMICAL_CERTIFICATION·UNIT_PRICE 등)."""
+        r = self.request("GET", f"/v1/categories/{cat_id}")
+        if r.status_code != 200:
+            raise ApiError(f"카테고리 조회 실패: {explain_error(r)}")
+        return r.json()
+
     def categories(self, refresh=False):
         """카테고리 전체 이름 → 번호. 7일간 data/category_cache.json에 저장."""
         if not refresh:
@@ -357,6 +364,10 @@ class Client:
         r = self.request("POST", "/v2/products", json=body, on_wait=on_wait)
         if _retry_unit_price(r, body):
             r = self.request("POST", "/v2/products", json=body, on_wait=on_wait)
+        if r.status_code != 200 and "productCertificationInfos" in (r.text or ""):
+            from . import chem   # 생활화학/살생물제 인증 대상 카테고리 → 기억해 다음부터 올리기 전에 판정
+            if chem.is_chem_error(r.text):
+                chem.remember((body.get("originProduct") or {}).get("leafCategoryId"), True)
         if r.status_code != 200:
             raise ApiError(f"상품 등록 실패: {explain_error(r)}")
         return r.json()
@@ -527,6 +538,12 @@ class FakeClient:
     def categories(self, refresh=False):
         return _load_category_cache() or {}
 
+    def category_info(self, cat_id):
+        time.sleep(random.uniform(0.02, 0.08))
+        name = {v: k for k, v in (_load_category_cache() or {}).items()}.get(str(cat_id), "")
+        chem = bool(re.search(r"세제|세정|방향|탈취|살충|소독|코팅|접착|양초|캔들|제습|커튼", name))   # 시연: 이런 이름이면 대상
+        return {"id": cat_id, "wholeCategoryName": name, "exceptionalCategories": ["CHEMICAL_CERTIFICATION"] if chem else []}
+
     def store_url(self):
         return ""
 
@@ -567,6 +584,13 @@ class FakeClient:
 
     def create_product(self, body, on_wait=None):
         time.sleep(random.uniform(0.4, 1.0))
+        op = body.get("originProduct") or {}
+        if self.category_info(op.get("leafCategoryId"))["exceptionalCategories"] and not (
+                (op.get("detailAttribute") or {}).get("certificationTargetExcludeContent") or {}).get("chemicalCertifiedProductExclusionYn"):
+            from . import chem
+            chem.remember(op.get("leafCategoryId"), True)
+            raise ApiError("상품 등록 실패: 400 BAD_REQUEST 입력한 데이터가 유효하지 않습니다. / originProduct.detailAttribute."
+                           "productCertificationInfos: 생활화학/살생물제 인증대상 인증 종류를 선택하셔야 합니다.")
         if random.random() < 0.08:
             raise ApiError("상품 등록 실패: 400 BAD_REQUEST 입력값이 올바르지 않습니다. / "
                            "originProduct.detailAttribute.optionInfo: 옵션가는 판매가의 -50%~+50% 범위여야 합니다")

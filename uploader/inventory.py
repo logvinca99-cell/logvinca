@@ -55,19 +55,29 @@ def add_names(c, source_id, names, origin, now=None, cfg=None, rejected=None):
 # ───────────────────────── 1. 원본 불러오기
 
 def import_products(db, fileobj, filename, progress=None, should_stop=None):
+    """원본 엑셀(셀업 양식) 불러오기. 대표 썸네일이 같은 원본은 내용을 갱신한다."""
+    st = import_rows(db, ((None, r) for r in excel.iter_rows(fileobj, filename)), filename,
+                     total_hint=excel.count_rows(fileobj, filename), progress=progress, should_stop=should_stop)
+    st.pop("refs", None)
+    return st
+
+
+def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=None):
+    """원본 줄들을 원본 상품으로 (엑셀 불러오기·상세 정리 공용). rows: (참조, 엑셀 줄 사전) 반복자.
+    돌려주는 refs: {참조: 원본 번호} (넣거나 갱신한 것만)."""
     cfg = config.load()
     lex = lexicon.get(db)
     categories = naver.cached_categories()
-    total_hint = excel.count_rows(fileobj, filename)
     now = time.time()
-    iid = db.x("INSERT INTO imports(kind, file_name, created_at) VALUES('products', ?, ?)", (filename, now))
+    iid = db.x("INSERT INTO imports(kind, file_name, created_at) VALUES('products', ?, ?)", (file_name, now))
     stats = {"total": 0, "added": 0, "updated": 0, "invalid": 0, "name_dup": 0}
+    refs = {}
     touched = []
     batch = []
 
     def flush():
         with db.tx() as c:
-            for row in batch:
+            for ref, row in batch:
                 key = source_key(row)
                 s = convert.summary(row, cfg)
                 fix = (c.execute("SELECT category_fix FROM sources WHERE source_key=?", (key,)).fetchone() or {"category_fix": ""})["category_fix"]
@@ -97,14 +107,16 @@ def import_products(db, fileobj, filename, progress=None, should_stop=None):
                 if not old:
                     stats["name_dup"] += dup  # 다른 원본과 상품명이 같음
                 touched.append(sid)
+                if ref is not None:
+                    refs[ref] = sid
         batch.clear()
 
-    for row in excel.iter_rows(fileobj, filename):
+    for ref, row in rows:
         if should_stop and should_stop():
             break
         if not row.get("상품명"):
             continue
-        batch.append(row)
+        batch.append((ref, row))
         stats["total"] += 1
         if len(batch) >= CHUNK:
             flush()
@@ -118,6 +130,7 @@ def import_products(db, fileobj, filename, progress=None, should_stop=None):
          (stats["total"], stats["added"], stats["updated"], stats["invalid"],
           f"원본 상품명 중복 {stats['name_dup']}개", iid))
     stats["import_id"] = iid
+    stats["refs"] = refs
     if db.one("SELECT 1 FROM dict_syn LIMIT 1"):
         with db.tx() as c:
             lexicon._bump(c)  # 사전 비슷한말은 원본 상품명에 나오는 말만 쓰므로 다시 읽게
@@ -247,6 +260,14 @@ def source_where(f):
         w.append("id IN (SELECT source_id FROM names WHERE origin='ctx' AND listing_id IS NULL)")
     elif ai == "used":      # 받았지만 후보를 다 씀
         w.append("id IN (SELECT source_id FROM ctx_kw WHERE status='ok') AND id NOT IN (SELECT source_id FROM names WHERE origin='ctx' AND listing_id IS NULL)")
+    ch = f.get("chem") or ""
+    if ch in ("tool", "chemical", "unclear"):   # 생활화학 판정
+        w.append("chem_judge=?")
+        a.append(ch)
+    elif ch == "hold":                          # 보류 = 화학제품 + 애매
+        w.append("chem_judge IN ('chemical','unclear')")
+    elif ch == "drop":                          # 원본·복사본 모두 삭제 중 (판매 중 복사본을 내리는 중)
+        w.append("drop_pending=1")
     if f.get("store_missing"):
         w.append("id NOT IN (SELECT source_id FROM listings WHERE store_id=? AND status!='deleted')")
         a.append(int(f["store_missing"]))
@@ -267,7 +288,7 @@ def source_where(f):
 
 
 LIST_COLS = ("id, source_key, seller_code, name, price, category, thumb, option_count, image_count, has_video, errors, "
-             "warnings, valid, n_listings, n_success, n_free_names, updated_at")
+             "warnings, valid, n_listings, n_success, n_free_names, updated_at, chem_judge, chem_reason, drop_pending")
 
 
 def query_sources(db, f, page=0, size=100):

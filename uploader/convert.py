@@ -724,6 +724,8 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
     if t:
         detail["seoInfo"] = {"sellerTags": [{"text": x} for x in t[:10]]}
     excl = certification_exclude(row.get("인증"))
+    if row.get("_chem") == "tool":   # 생활화학 판정 '물건' → 생활화학/살생물제 인증 대상 아님
+        excl["chemicalCertifiedProductExclusionYn"] = True
     if excl:
         detail["certificationTargetExcludeContent"] = excl
 

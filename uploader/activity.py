@@ -29,7 +29,7 @@ CREATE INDEX IF NOT EXISTS activity_started ON activity(started_at);
 """
 
 # 오래 걸리는 작업 종류 → 묶음
-TASK_GROUP = {"mail": "메일함", "rename": "상품명", "names": "상품명", "ctxkw": "AI 키워드", "plan": "복사·등록", "import": "원본",
+TASK_GROUP = {"mail": "메일함", "clean_import": "상세 정리", "clean_chem": "상세 정리", "clean_send": "상세 정리", "chem": "원본", "rename": "상품명", "names": "상품명", "ctxkw": "AI 키워드", "plan": "복사·등록", "import": "원본",
               "revalidate": "원본", "bait": "복사본", "orders": "주문", "keywords": "상품명", "kipris": "금지어·사전",
               "lexicon": "금지어·사전", "dictfile": "금지어·사전"}
 
@@ -186,6 +186,18 @@ ACTIONS = {
     "run_control": ("복사·등록", None),   # 제목은 action으로
     "settings_reapply": ("설정", "설정을 기존 상품에 다시 적용"),
     "names_import": ("상품명", "상품명 파일 가져오기"),
+    "clean_items_delete": ("상세 정리", lambda b, r: ("정리함에서 지움", r.get("count"), "")),
+    "clean_items_restore": ("상세 정리", lambda b, r: ("정리함에서 되살림", r.get("count"), "")),
+    "clean_common_remove": ("상세 정리", lambda b, r: ("공통 이미지 지움" + (" (다음에도 빼기)" if b.get("remember") else ""), r.get("items"),
+                                                   f"이미지 {r.get('images', 0)}장 · {len(b.get('srcs') or [])}종")),
+    "clean_rules_delete": ("상세 정리", lambda b, r: ("기억한 공통 이미지 지움", r.get("count"), "")),
+    "clean_phones_remove": ("상세 정리", lambda b, r: ("전화번호 지움", r.get("items"), f"번호 {r.get('removed', 0)}개")),
+    "clean_item_detail": ("상세 정리", lambda b, r: ("상세 편집 저장", 1, "")),
+    "clean_item_revert": ("상세 정리", lambda b, r: ("상세를 처음으로 되돌림", 1, "")),
+    "clean_category": ("상세 정리", lambda b, r: (f"카테고리 바꿈: {b.get('to')}", r.get("count"), f"{b.get('from') or ''}")),
+    "clean_items_chem": ("상세 정리", lambda b, r: ("생활화학 판정 바꿈: " + {"tool": "물건", "chemical": "화학제품", "unclear": "애매"}.get(b.get("kind"), ""), r.get("count"), "")),
+    "chem_set": ("원본", lambda b, r: ("생활화학 판정 바꿈: " + {"tool": "물건", "chemical": "화학제품", "unclear": "애매", "": "지움"}.get(b.get("kind") or "", ""), r.get("count"), "")),
+    "chem_delete": ("원본", lambda b, r: ("원본·복사본 모두 삭제", r.get("trashed"), f"판매 중 내리기 {r.get('dropping', 0)}건 · 판매 이력으로 남김 {r.get('kept_sold', 0)}개")),
     "mail_handled": ("메일함", lambda b, r: ("메일 확인함 표시" if b.get("handled", True) else "메일 확인함 풀기", 1, "")),
 }
 SKIP = {"save_settings", "store_template_save", "task_stop"}   # 따로 기록하거나 기록할 필요 없음

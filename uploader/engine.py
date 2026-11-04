@@ -77,6 +77,25 @@ def seller_code(cfg, store, t):
         return f"{store.get('code')}-{t['source_id']:07d}-{t['round']}"
 
 
+def chem_block(db, source_id, categories, cfg):
+    """생활화학/살생물제 판정 때문에 올리면 안 되는 이유 ('' 이면 올려도 됨)."""
+    from . import chem
+    r = db.one("SELECT chem_judge FROM sources WHERE id=?", (source_id,))
+    judge = (r or {}).get("chem_judge") or ""
+    if judge == "chemical":
+        return "생활화학 보류 · 화학제품으로 판정된 원본입니다 (원본 상품 → '생활화학 보류'에서 검수)"
+    if judge == "tool":
+        return ""
+    row = db.source_row(source_id) or {}
+    cat_id, _ = convert.find_category(row.get("카테고리"), categories, cfg)
+    if chem.is_chemical(cat_id):
+        if judge == "unclear":
+            return "생활화학 판정 '애매' · 원본 상품 → '생활화학 보류'에서 물건·화학제품을 정해 주세요"
+        return ("생활화학/살생물제 인증 대상 카테고리 · 판정이 필요합니다 (복사본 화면 '생활화학 판정' — 물건이면 "
+                "'인증 대상 아님'으로 올라감)")
+    return ""
+
+
 class Stopped(Exception):
     pass
 
@@ -320,6 +339,10 @@ class Runner:
                 rw = lexicon.repeated_word(str(t["name"] or "").split(), lexicon.get(self.db), int(cfg.get("max_word_repeat") or 2))
                 if rw:
                     raise naver.ApiError(f"상품명에 '{rw}'가 3번 이상 나옵니다 · 복사본 화면에서 상품명 바꾸기로 다시 만드세요")
+            if op != "delete":   # 생활화학 판정 (올라가 있는 상품을 지우기 전에 확인)
+                why = chem_block(self.db, t["source_id"], categories, cfg)
+                if why:
+                    raise naver.ApiError(why)
             if op in ("refresh", "delete", "reupload") and t["origin_no"]:
                 # 판매된 상품은 지우지 않는다 (예약 뒤에 팔렸을 수 있으니 실행 직전에 다시 확인).
                 if not store.get("_sales_ok", True):
@@ -328,6 +351,8 @@ class Runner:
                 if lk["locked"]:
                     self.db.set_listing(lid, "success", op="create", stage="",
                                         message=f"잠금이라 지우지 않음 ({lk['lock_note']})")
+                    # '원본·복사본 모두 삭제' 중이었으면 판매 이력이 있으니 원본은 남김
+                    self.db.x("UPDATE sources SET drop_pending=0 WHERE id=? AND drop_pending=1", (t["source_id"],))
                     self._log("info", f"건너뜀 · {t['name'][:40]} · 잠금 ({lk['lock_note']})", store["name"])
                     self._count(sid, lid, None)
                     return
@@ -340,6 +365,9 @@ class Runner:
                                         channel_no="", deleted_at=time.time(), seconds=time.time() - t0)
                     self._log("ok", f"내림 · {t['name'][:40]}", store["name"])
                     self._count(sid, lid, True)
+                    from . import chem
+                    if chem.after_drop(self.db, t["source_id"]):   # '원본·복사본 모두 삭제'로 내린 것 → 다 내려가면 원본도 휴지통으로
+                        self._log("info", f"원본 휴지통으로 (다 내림) · #{t['source_id']}", store["name"])
                     return
                 # 지웠으니 이제부터는 다음 회차 '새 등록'. 여기서 실패해도 다시 시도하면 등록만 한다.
                 # 회차 초기화한 건은 +1 하지 않고 1회차로

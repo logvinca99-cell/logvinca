@@ -46,6 +46,9 @@ App.page("inventory", {
         <select id="i-ai" class="sel" title="AI 키워드·AI 이름 후보(A·B)">
           <option value="">AI 이름 전체</option><option value="free">안 쓴 AI 이름 남음</option><option value="used">AI 이름 다 씀</option>
           <option value="none">AI 키워드 안 받음</option><option value="pending">AI 키워드 받는 중</option><option value="failed">AI 키워드 실패</option><option value="old">예전 지시로 받은 키워드</option></select>
+        <select id="i-chem" class="sel" title="생활화학·살생물제 인증 판정">
+          <option value="">생활화학 전체</option><option value="hold">생활화학 보류 (화학제품·애매)</option><option value="chemical">화학제품</option>
+          <option value="unclear">애매</option><option value="tool">물건 (인증 대상 아님)</option><option value="drop">판매 중 내리고 지우는 중</option></select>
         <button class="btn ghost" id="i-reset">조건 지우기</button>
       </div>
       <div class="listbar" id="i-bar"></div>
@@ -62,9 +65,10 @@ App.page("inventory", {
     $("#i-missing").innerHTML += App.stores.map((s) => `<option value="${s.id}">${esc(s.name)}에 없는 것만</option>`).join("");
     $("#i-missing").value = this.f.store_missing || "";
     $("#i-ai").value = this.f.ai || "";
+    $("#i-chem").value = this.f.chem || "";
     $("#i-q").value = this.f.q || "";
     this.bind();
-    this.onDone = (t) => { if (["import", "plan", "revalidate", "ctxkw"].includes(t.kind)) this.load(); };
+    this.onDone = (t) => { if (["import", "plan", "revalidate", "ctxkw", "chem", "clean_send"].includes(t.kind)) this.load(); };
     App.on("task-done", this.onDone);
     await this.load();
   },
@@ -106,7 +110,10 @@ App.page("inventory", {
         "|",
         { id: "edit", label: "일괄 수정", title: "판매자코드 비우기, 재고수(상품·옵션 모두) 바꾸기" },
         { id: "category", label: "카테고리 바꾸기", title: "고른 원본의 네이버 카테고리를 직접 정함 (인증 때문에 안 올라가는 카테고리 등) — 그 원본의 모든 복사본에 적용" },
+        { id: "chem", label: "생활화학 판정", title: "생활화학·살생물제 인증 대상 카테고리면 물건(→ '인증 대상 아님'으로 올림)·화학제품(→ 보류)·애매를 판정 (애매한 것은 AI)" },
+        { id: "chemset", label: "판정 바꾸기", title: "검수한 뒤 물건·화학제품·애매를 직접 정함" },
         { id: "delete", label: "삭제", danger: true, title: "휴지통으로 옮김 (휴지통에서 되살리거나 완전히 지울 수 있음)" },
+        { id: "chemdel", label: "원본·복사본 모두 삭제", danger: true, title: "원본과 모든 스토어 복사본을 지움 — 네이버에서 판매 중인 복사본은 내린 뒤 지움 (판매 이력·잠금은 남김)" },
       ],
       onPageCheck: (on) => { this.selAll = false; this.rows.forEach((p) => (on ? this.sel.add(p.id) : this.sel.delete(p.id))); this.load(); },
       onAll: () => { this.selAll = true; this.sel.clear(); this.load(); },
@@ -114,6 +121,9 @@ App.page("inventory", {
       onAction: (id) => {
         if (id === "ctx") App.ctxConfirm(this.target()); if (id === "copy") this.copyModal(); if (id === "delete") this.remove(); if (id === "edit") this.editModal();
         if (id === "category") App.pickCategory({ target: this.target(), what: `고른 원본 ${num(this.selAll ? this.total : this.sel.size)}개`, after: () => this.load() });
+        if (id === "chem") App.startTask(App.api("/api/chem/judge", { json: this.target() }));
+        if (id === "chemset") App.chemSet(this.target(), `고른 원본 ${num(this.targetCount())}개`, () => this.load());
+        if (id === "chemdel") App.chemDelete(this.target(), () => { this.clearSel(); this.load(); });
       },
     });
     App.pagerBar($("#i-pager"), this.pagerOpts());
@@ -136,6 +146,7 @@ App.page("inventory", {
       warn.length ? `<span class="flag warn" title="${esc(warn.join("\n"))}">경고 ${warn.length}</span>` : "",
       rep.length ? `<span class="flag rep" title="${esc(rep.join("\n"))}">반복</span>` : "",
       p.has_video ? `<span class="flag video" title="상세설명에 동영상 있음 (경고 아님)">동영상</span>` : "",
+      chemFlag(p),
     ].join("");
     const on = this.selAll || this.sel.has(p.id);
     return `<tr data-id="${p.id}" class="${on ? "sel" : ""}">
@@ -185,10 +196,11 @@ App.page("inventory", {
     $("#i-pmax").addEventListener("input", (e) => later({ price_max: e.target.value }));
     $("#i-missing").addEventListener("change", (e) => this.setFilter({ store_missing: e.target.value }));
     $("#i-ai").addEventListener("change", (e) => this.setFilter({ ai: e.target.value }));
+    $("#i-chem").addEventListener("change", (e) => this.setFilter({ chem: e.target.value }));
     $("#i-reset").addEventListener("click", () => {
-      $("#i-q").value = $("#i-pmin").value = $("#i-pmax").value = ""; $("#i-missing").value = ""; $("#i-ai").value = "";
+      $("#i-q").value = $("#i-pmin").value = $("#i-pmax").value = ""; $("#i-missing").value = ""; $("#i-ai").value = ""; $("#i-chem").value = "";
       this.tile = "all";
-      this.setFilter({ status: "", copies: "", q: "", price_min: "", price_max: "", store_missing: "", ai: "" });
+      this.setFilter({ status: "", copies: "", q: "", price_min: "", price_max: "", store_missing: "", ai: "", chem: "" });
     });
     $("#i-rows").addEventListener("click", (e) => {
       const cr = e.target.closest("tr[data-copy]");
@@ -317,7 +329,9 @@ App.page("inventory", {
     if (d.errors.length) notes.push(`<div class="notice err"><b>고쳐야 등록할 수 있어요</b><ul>${d.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>`);
     if (d.warnings.length) notes.push(`<div class="notice warn"><b>확인해 보세요</b><ul>${d.warnings.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>`);
     const kv = [["카테고리", (d.category_fix ? `${esc(d.category_fix)} <span class="flag">직접 정함</span> <span class="muted small">(엑셀: ${esc(d.category)})</span>` : esc(d.category))
-        + ` <button class="btn sm" id="s-cat">바꾸기</button>`], ...Object.entries(d.fields).map(([k, v]) => [esc(k), esc(v)]),
+        + ` <button class="btn sm" id="s-cat">바꾸기</button>`],
+      ["생활화학", `${d.chem_judge ? `<b>${esc(CHEM_LABEL[d.chem_judge] || d.chem_judge)}</b> <span class="muted small">${esc(d.chem_reason || "")}</span>` : '<span class="muted">판정 안 함</span>'}
+        ${d.drop_pending ? ' <span class="flag warn">판매 중 내리고 지우는 중</span>' : ""} <button class="btn sm" id="s-chem">판정 바꾸기</button>`], ...Object.entries(d.fields).map(([k, v]) => [esc(k), esc(v)]),
       ["이미지", `대표·추가 ${Math.min(10, d.thumbnails.length)}장 · 상세 ${d.detail_images.length}장`]];
     b.innerHTML = notes.join("") +
       (d.thumbnails.length ? `<div class="gallery">${d.thumbnails.map((u, i) => img(u, i === 0 ? "g-main" : "")).join("")}</div>` : "") +
@@ -328,6 +342,7 @@ App.page("inventory", {
           <td class="r">${o.price ? (o.price > 0 ? "+" : "") + num(o.price) + "원" : "-"}</td><td class="r">${num(o.stockQuantity)}</td></tr>`).join("")}
         </table></div>` : "") +
       (d.tags_list.length ? `<div><h3 class="sec-title">엑셀 태그</h3><div class="tags">${d.tags_list.map((t) => `<span>${esc(t)}</span>`).join("")}</div></div>` : "");
+    $("#s-chem", b)?.addEventListener("click", () => App.chemSet({ ids: [d.id] }, `원본 #${d.id}`, () => { this.openSource(d.id); this.load(); }));
     $("#s-cat", b)?.addEventListener("click", () => App.pickCategory({
       target: { ids: [d.id] }, current: d.category_fix || d.category, excel: d.category, what: `원본 #${d.id}`,
       after: () => { this.openSource(d.id); this.load(); } }));

@@ -92,6 +92,15 @@ function optTablePreview(style, color) {
     : '<div style="text-align:center;font-weight:700;color:#111;padding:6px">옵션 설명</div>';
   return `${head}<table style="width:100%;border-collapse:collapse;table-layout:fixed;background:#fff;margin-top:8px"><tr>${cell("옵션 이름 A")}<td style="width:4%"></td>${cell("옵션 이름 B")}</tr></table>`;
 }
+/* 생활화학·살생물제 인증 판정 */
+const CHEM_LABEL = { tool: "물건 (인증 대상 아님)", chemical: "화학제품 (보류)", unclear: "애매 (사람이 정함)" };
+function chemFlag(p) {
+  if (p.drop_pending) return '<span class="flag warn" title="원본·복사본 모두 삭제: 판매 중인 복사본을 내린 뒤 휴지통으로">내리고 지우는 중</span>';
+  if (p.chem_judge === "chemical") return `<span class="flag chem-hold" title="${esc(p.chem_reason || "")}">생활화학 보류</span>`;
+  if (p.chem_judge === "unclear") return `<span class="flag chem-hold" title="${esc(p.chem_reason || "")}">생활화학 애매</span>`;
+  if (p.chem_judge === "tool") return `<span class="flag" title="생활화학 인증 대상 아님으로 올림 · ${esc(p.chem_reason || "")}">인증 대상 아님</span>`;
+  return "";
+}
 const CUSTOMS_OPTS = [["", "보내지 않음"], ["EXCLUDED", "관부가세 미포함 (구매자 납부)"], ["INCLUDED", "관부가세 포함 (해외직구 노출이면 이것만)"], ["NOT_APPLICABLE", "부과 대상 아님"]];
 const REGION = { overseas: "해외", domestic: "국내" };   // 스토어 출고 형태 표시 (해외 파란색 · 국내 초록색)
 const regionCls = (s) => (s.ship_region ? `reg-${s.ship_region}` : "");
@@ -308,6 +317,14 @@ const App = {
         + (r.capacity ? ` · 스토어 자리 부족 ${num(r.capacity)}` : "") + (r.invalid ? ` · 오류 원본 ${num(r.invalid)}개는 뺌` : "")
         + (r.named ? ` · AI 키워드 이름 바로 붙음 ${num(r.named)}건` : "")
         + (r.created - (r.named || 0) > 0 ? " · 나머지는 복사본 화면 '이름 변경 필요'에서 상품명을 바꾼 뒤 올리세요" : ""),
+      clean_import: () => `엑셀 올리기 끝: ${num(r.total)}개 → 정리함 · 가격 한 칸으로 ${num(r.price)}개 · 상품코드 비움 ${num(r.code)}개`
+        + (r.rule_imgs ? ` · 기억한 공통 이미지 뺌 ${num(r.rule_imgs)}장` : "") + " · 상세 정리 화면에서 이어서",
+      clean_chem: () => `생활화학 판정 끝: 인증 대상 카테고리 상품 ${num(r.target)}개 · 물건 ${num(r.tool)} · 화학제품 ${num(r.chemical)} · 애매 ${num(r.unclear)}`
+        + (r.chemical + r.unclear ? " (보류 목록에서 검수)" : "") + (r.error ? ` · ${r.error}` : ""),
+      clean_send: () => `원본 상품으로 넣기 끝: 새 원본 ${num(r.added)}개 · 갱신 ${num(r.updated)}개`
+        + (r.invalid ? ` · 검사 오류 ${num(r.invalid)}개 (원본 상품 화면에서 확인)` : "") + " · 이어서 상품명 변경 → 복사",
+      chem: () => `생활화학 판정 끝: 물건 ${num(r.tool)}개(인증 대상 아님으로 올림) · 화학제품 ${num(r.chemical)}개(보류) · 애매 ${num(r.unclear)}개`
+        + (r.requeued ? ` · 실패했던 복사본 ${num(r.requeued)}건 다시 등록 대기` : "") + (r.chemical + r.unclear ? " · 원본 상품 '생활화학 보류'에서 검수" : ""),
       mail: () => `메일함: 확인 ${num(r.checked)}통 · 새로 ${num(r.new)}통` + (r.warn ? ` · 경고·제재 ${num(r.warn)}통` : "") + (r.auth ? ` · 인증번호 ${num(r.auth)}통` : ""),
       revalidate: () => `다시 검사 끝: ${num(r.total)}개` + (r.invalid !== undefined ? ` · 오류 ${num(r.invalid)}개` : ""),
       orders: () => r.rows !== undefined
@@ -500,23 +517,26 @@ const App = {
 
   /* 네이버 카테고리 직접 정하기 (인증 때문에 안 올라가는 카테고리 등). target: /api/sources/category에 보낼 대상
      ({ids: [원본 번호]} 또는 {listing_filter: 복사본 조건}). 저장하면 그 원본(들)에 적용 → 그 원본의 모든 복사본이 다음 등록부터 이 카테고리 */
-  pickCategory({ target, current = "", excel = "", what = "", after }) {
+  /* save(카테고리)를 주면 원본 대신 그것으로 저장 (상세 정리), note는 설명 글, suggest는 처음에 보여 줄 후보 */
+  pickCategory({ target, current = "", excel = "", what = "", after, save, note, suggest = [] }) {
     let chosen = "";
+    const saveIt = save ? async (c) => { try { await save(c); if (after) after(); return true; } catch (e) { this.toast(e.message, true); return false; } }
+      : (c) => this._saveCategory(target, c, after);
     this.openModal({
       title: "카테고리 바꾸기", wide: true,
       body: `<div class="form">
-        <p class="small" style="margin:0">${what ? esc(what) + " · " : ""}고른 카테고리는 <b>원본에 저장</b>되어, 그 원본으로 만든 <b>모든 스토어 복사본</b>이 다음에 올릴 때(실패 다시 올리기 포함) 이 카테고리로 올라갑니다. 엑셀을 다시 불러와도 남습니다.</p>
+        <p class="small" style="margin:0">${what ? esc(what) + " · " : ""}${note || "고른 카테고리는 <b>원본에 저장</b>되어, 그 원본으로 만든 <b>모든 스토어 복사본</b>이 다음에 올릴 때(실패 다시 올리기 포함) 이 카테고리로 올라갑니다. 엑셀을 다시 불러와도 남습니다."}</p>
         ${current ? `<p class="small" style="margin:0">지금: <b>${esc(current)}</b>${excel && excel !== current ? ` <span class="muted">(엑셀: ${esc(excel)})</span>` : ""}</p>` : ""}
         <label class="field">네이버 카테고리 찾기 <span class="muted">(띄어 쓴 단어가 모두 들어간 것)</span>
           <input id="pc-q" placeholder="예) 미용 의자" autofocus></label>
-        <div id="pc-hits" class="pc-hits"></div>
+        <div id="pc-hits" class="pc-hits">${suggest.length ? `<span class="muted small">추천</span>` + suggest.map((h) => `<button type="button" class="cm-hit" data-cat="${esc(h)}">${esc(h)}</button>`).join("") : ""}</div>
         <p class="small" id="pc-chosen">고른 카테고리: <span class="muted">없음</span></p></div>`,
       buttons: [
         { label: "취소" },
-        ...(excel && excel !== current ? [{ label: "엑셀 카테고리로 되돌리기", onClick: async () => this._saveCategory(target, "", after) }] : []),
+        ...(!save && excel && excel !== current ? [{ label: "엑셀 카테고리로 되돌리기", onClick: async () => this._saveCategory(target, "", after) }] : []),
         { label: "이 카테고리로 저장", primary: true, onClick: async () => {
           if (!chosen) { this.toast("목록에서 카테고리를 골라 주세요.", true); return false; }
-          return this._saveCategory(target, chosen, after);
+          return saveIt(chosen);
         } },
       ],
     });
@@ -549,6 +569,54 @@ const App = {
   },
 
   /* 한 번 더 묻는 창: 확인 버튼(빨강)을 눌러야 true */
+  /* 생활화학 판정 바꾸기 (검수 뒤 사람이): target = {ids} 또는 원본 거르기 조건 */
+  chemSet(target, what, after) {
+    const pick = async (kind, label) => {
+      try {
+        const r = await this.api("/api/chem/set", { json: { ...target, kind } });
+        this.toast(`${num(r.count)}개를 '${label}'(으)로 정했습니다` + (kind === "tool" ? " · 이 원본의 생활화학 실패 복사본은 다시 등록 대기로" : ""));
+        if (after) after();
+        return true;
+      } catch (e) { this.toast(e.message, true); return false; }
+    };
+    this.openModal({
+      title: "생활화학 판정 바꾸기",
+      body: `<div class="form"><p class="small" style="margin:0">${esc(what || "")} — 상품을 직접 확인한 뒤 정해 주세요.</p>
+        <ul class="small" style="margin:0;padding-left:18px">
+          <li><b>물건</b>: 화학제품이 들어 있지 않은 도구·용기·기계 → 카테고리 그대로, <b>'생활화학 인증 대상 아님'</b>으로 올림 (판매자 책임)</li>
+          <li><b>화학제품</b>: 세제·방향제·살충제·코팅제·접착제·양초 등 → 보류 (신고번호 없이 올리지 않음)</li>
+          <li><b>애매</b>: 아직 못 정함 → 보류</li></ul>
+        <p class="small muted" style="margin:0">화학제품을 다른 카테고리로 옮겨 올리면 네이버 카테고리 회피 제재·화학제품안전법 위반 위험이 있습니다.</p></div>`,
+      buttons: [{ label: "취소" }, { label: "판정 지우기", onClick: () => pick("", "판정 없음") },
+        { label: "애매", onClick: () => pick("unclear", "애매") }, { label: "화학제품 (보류)", onClick: () => pick("chemical", "화학제품") },
+        { label: "물건 (인증 대상 아님)", primary: true, onClick: () => pick("tool", "물건") }],
+    });
+  },
+
+  /* 원본·복사본 모두 삭제: 안 올라간 것은 바로 휴지통, 판매 중인 복사본은 네이버에서 내린 뒤 원본도 (판매 이력·잠금은 남김) */
+  async chemDelete(target, after) {
+    let pv;
+    try { pv = await this.api("/api/chem/delete_preview", { json: target }); } catch (e) { return this.toast(e.message, true); }
+    if (!pv.sources) return this.toast("고른 원본이 없습니다.", true);
+    const ok = await this.confirmDanger({
+      title: "원본·복사본 모두 삭제",
+      body: `<p>원본 <b>${num(pv.sources)}개</b>와 그 원본의 <b>모든 스토어 복사본</b>을 지웁니다.</p><ul>
+        <li>네이버에 안 올라간 원본 <b>${num(pv.now)}개</b> → 바로 휴지통</li>
+        <li>판매 중인 복사본 <b>${num(pv.drop_listings)}건</b>(원본 ${num(pv.drop_sources)}개) → <b>네이버에서 바로 내린 뒤</b> 원본도 휴지통</li>
+        ${pv.kept_sold ? `<li>판매 이력·잠금이 있는 원본 <b>${num(pv.kept_sold)}개</b> → 지우지 않고 남김</li>` : ""}</ul>
+        <p class="small muted">휴지통에서 되살릴 수 있지만, 네이버에서 내린 상품은 다시 올려야 합니다.</p>`,
+      ok: "모두 삭제합니다",
+    });
+    if (!ok) return;
+    try {
+      const r = await this.api("/api/chem/delete", { json: { ...target, now: true } });
+      this.toast(`휴지통으로 ${num(r.trashed)}개` + (r.dropping ? ` · 판매 중 ${num(r.dropping)}건 내리는 중 (다 내리면 원본도 휴지통으로)` : "")
+        + (r.kept_sold ? ` · 판매 이력으로 남긴 원본 ${num(r.kept_sold)}개` : "") + (r.error ? ` · ${r.error}` : ""), !!r.error);
+      if (r.started) this.renderSideRun?.();
+      if (after) after(r);
+    } catch (e) { this.toast(e.message, true); }
+  },
+
   confirmDanger({ title, body, ok = "삭제합니다" }) {
     return new Promise((resolve) => {
       let done = false;
@@ -689,7 +757,8 @@ const App = {
     document.addEventListener("dragover", (e) => e.preventDefault());
     document.addEventListener("drop", (e) => {
       e.preventDefault(); depth = 0; document.body.classList.remove("dragging");
-      if (e.dataTransfer.files[0]) this.askFile(e.dataTransfer.files[0]);
+      const f = e.dataTransfer.files[0];
+      if (f) this.current?.onFile ? this.current.onFile(f) : this.askFile(f);
     });
   },
 

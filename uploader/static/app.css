@@ -745,3 +745,26 @@ th .nd-legend { font-weight: 400; margin-top: 4px; }
 .mob-frame iframe { width: 100%; height: 100%; border: 0; display: block; }
 .mob-warn { margin: 0 0 6px; padding: 8px 10px; border-radius: 8px; background: #fff4e5; color: #8a4b00; }
 .mob-ok { margin: 0 0 6px; padding: 8px 10px; border-radius: 8px; background: var(--accent-soft, #e8f7ee); color: var(--text); }
+
+.flag.chem-hold { background: var(--err-soft); color: var(--err); }
+
+/* 상세 정리 */
+.cl-step { margin-top: 14px; }
+.cl-step h2 { display: flex; align-items: center; gap: 8px; }
+.cl-n { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 13px; font-weight: 700; }
+.cl-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.cl-row input[type=number] { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; }
+.cl-drop { padding: 22px 16px; cursor: pointer; }
+.cl-drop:hover { border-color: var(--accent); }
+.cl-imgs { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 8px; }
+.cl-img { display: flex; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 12px; position: relative; }
+.cl-img input { position: absolute; top: 8px; left: 8px; width: 18px; height: 18px; }
+.cl-img img { width: 100%; height: 120px; object-fit: contain; background: #f3f4f6; border-radius: 4px; }
+.cl-img:has(input:checked) { border-color: var(--err); box-shadow: 0 0 0 1px var(--err); }
+.cl-list { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow: auto; padding: 4px 0; }
+.cl-editor { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
+.cl-editor iframe { width: 100%; height: 640px; border: 0; display: block; }
+.ph { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border-radius: 6px; font-size: 12.5px; margin: 1px 0; }
+.ph.red { background: var(--err-soft); color: var(--err); }
+.ph.yellow { background: #fff4d6; color: #8a5a00; }
+@media (max-width: 640px) { .cl-editor iframe { height: 480px; } }

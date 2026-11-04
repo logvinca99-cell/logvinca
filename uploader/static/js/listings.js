@@ -168,6 +168,7 @@ App.page("listings", {
         { id: "lock", label: "잠금", title: "판매 이력과 상관없이 지우지 못하게 잠금" },
         { id: "unlock", label: "잠금 풀기" },
         { id: "category", label: "카테고리 바꾸기", title: "고른 복사본의 원본 카테고리를 직접 정함 (인증 때문에 안 올라가는 카테고리 등) — 그 원본의 다른 스토어 복사본도 같이" },
+        { id: "chem", label: "생활화학 판정", title: "고른 복사본의 원본을 판정: 물건이면 '인증 대상 아님'으로 다시 등록 대기, 화학제품이면 보류 (애매하면 AI)" },
         { id: "resetround", label: "회차 초기화", title: "지난 회차 기록을 지우고 1회차로 (다시 다 올릴 때) · 판매 중·내린 건은 다음에 다시 올릴 때 1회차로" },
         "|",
         { id: "remove", label: "삭제", danger: true, title: "아직 안 올린 복사본·내린 복사본을 휴지통으로 (네이버에 올라간 것은 먼저 내리기)" },
@@ -209,6 +210,7 @@ App.page("listings", {
       } catch (err) { App.toast(err.message, true); }
     }
     if (id === "resetround") this.resetRound();
+    if (id === "chem") App.startTask(App.api("/api/chem/judge", { json: { listing_filter: this.target() } }));
     if (id === "category") {
       const n = this.selAll ? this.total : this.sel.size;
       App.pickCategory({ target: { listing_filter: this.target() }, what: `고른 복사본 ${num(n)}건의 원본`, after: () => this.load() });
@@ -551,7 +553,8 @@ App.page("listings", {
       tabs: [
         { key: "info", label: "정보", render: (b) => {
           b.innerHTML = (l.status === "fail" ? `<div class="notice err"><b>${esc(statusLabel(l.status, l.op))}</b><br>${esc(l.message)}
-              ${/카테고리|인증|category|certif/i.test(l.message || "") ? `<br><button class="btn sm d-cat">카테고리 바꾸기</button> <span class="small">원본에 저장되어 다른 스토어 복사본도 같이 바뀝니다</span>` : ""}</div>` : "")
+              ${/생활화학|살생물|productCertificationInfos/.test(l.message || "") ? `<br><button class="btn sm primary d-chem">생활화학 판정</button> <span class="small">물건이면 카테고리 그대로 '인증 대상 아님'으로 올리고, 화학제품이면 보류합니다 (애매하면 AI)</span>`
+                : /카테고리|인증|category|certif/i.test(l.message || "") ? `<br><button class="btn sm d-cat">카테고리 바꾸기</button> <span class="small">원본에 저장되어 다른 스토어 복사본도 같이 바뀝니다</span>` : ""}</div>` : "")
             + (l.origin_no ? `<div class="notice ok"><b>판매 중</b> · 상품번호 ${esc(l.channel_no)} · ${ymd(l.registered_at)}에 올림 (${age(l.registered_at)})<br>
                 ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">스토어에서 보기</a> · ` : ""}
                 ${sellerLink((App.stores || []).find((s) => s.id === l.store_id), `https://sell.smartstore.naver.com/#/products/edit/${l.origin_no}`, "스마트스토어센터에서 수정")}</div>` : "")
@@ -596,6 +599,7 @@ App.page("listings", {
             target: { ids: [l.source_id] }, current: l.category, excel: l.category_excel, what: `원본 #${l.source_id}`,
             after: () => { this.openListing(id); this.load(); } })));
           $("#d-rename", b)?.addEventListener("click", () => this.renameModal([id]));
+          $(".d-chem", b)?.addEventListener("click", () => App.startTask(App.api("/api/chem/judge", { json: { ids: [l.source_id] } })));
           $$("[data-go]", b).forEach((x) => x.addEventListener("click", () => { App.closeDrawer(); this.goto(+x.dataset.go); }));
           $("#d-restore", b)?.addEventListener("click", async () => {
             const r = await App.startTask(App.api("/api/bait/restore", { json: { ids: [id] } }));
