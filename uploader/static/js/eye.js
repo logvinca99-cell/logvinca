@@ -1,19 +1,37 @@
 /* 눈검수: 복사본 화면에서 썸네일만 그리드로 (인스타그램처럼) 보며 빠르게 걸러 냄.
-   한 쪽이 화면에 꽉 차게(내리지 않아도 다 보임), 사진 밑에 상품명 앞 4자.
+   한 쪽이 화면에 꽉 차게(내리지 않아도 다 보임), 사진 밑에 상품명 앞 키워드 4개(띄어쓰기 기준).
    클릭 = 고르기 (Shift+클릭 = 범위) · 마우스 올리기 = 크게 · 우클릭 = 상품명 전체 · ←/→ = 쪽 이동
    [이 쪽 눈검수 완료 · 다음 쪽]을 누르면 지금 쪽은 완료(원본 기준 — 다른 스토어 복사본도 본 것으로).
    고른 것을 지워도 그 칸은 '삭제됨'으로 자리를 지킴 (새 상품이 밀려 들어오지 않음 — 쪽은 복사본 번호로 넘김). */
 "use strict";
 
 const EYE_SIZES = [[24, "크게"], [40, "보통"], [60, "작게"], [96, "아주 작게"], [150, "한눈에"]];
-const EYE_LABEL = 0.3;   // 사진 아래 상품명 칸 높이 (사진 한 변 대비)
+const EYE_LABEL = 0.38;   // 사진 아래 상품명 칸 높이 (사진 한 변 대비, 두 줄)
 
 /* 그리드용 작은 썸네일 주소 (네이버 이미지는 크기 지정, 안 되면 원래 주소로) */
 function eyeThumb(url, px) {
   if (!/^https?:\/\/[^/]*pstatic\.net\//i.test(url || "") || url.includes("?")) return url;
   return `${url}?type=${px > 220 ? "m510" : "f300"}`;
 }
-const eyeName4 = (s) => Array.from(String(s || "").replace(/\s+/g, "")).slice(0, 4).join("");
+const eyeWords = (s) => String(s || "").trim().split(/\s+/).filter(Boolean).slice(0, 4);   // 앞 키워드 4개 (띄어쓰기 기준)
+/* 키워드 4개가 칸 폭에 두 줄 안으로 꽉 차는 글자 크기 (사진 한 변 대비). 한글 1, 영문·숫자 0.6, 띄어쓰기 0.35로 셈 */
+function eyeFont(words) {
+  const w = (t) => Array.from(t).reduce((a, ch) => a + (/[\u1100-\u11ff\u3130-\u318f\uac00-\ud7a3\u4e00-\u9fff]/.test(ch) ? 1 : 0.6), 0);
+  const total = words.reduce((a, t) => a + w(t), 0) + 0.35 * Math.max(0, words.length - 1);
+  const longest = Math.max(1, ...words.map(w));
+  return Math.max(0.06, Math.min(0.15, 1.5 / Math.max(1, total), 0.9 / longest));
+}
+/* 그래도 두 줄을 넘는 이름(줄바꿈 자리 때문에)만 글자를 조금씩 줄여 맞춤 */
+function eyeFit(root) {
+  root.querySelectorAll(".eye-nm").forEach((el) => {
+    const s = el.firstElementChild;
+    let fs = parseFloat(el.style.getPropertyValue("--fs")) || 0.12;
+    for (let k = 0; k < 8 && s && (s.scrollHeight > s.clientHeight + 1 || s.scrollWidth > s.clientWidth + 1) && fs > 0.05; k++) {
+      fs *= 0.9;
+      el.style.setProperty("--fs", fs.toFixed(3));
+    }
+  });
+}
 
 const Eye = {
   open({ storeId, storeName, filter, after }) {
@@ -148,6 +166,7 @@ const Eye = {
     this.tile = Math.max(40, Math.floor(best.t));
     grid.style.setProperty("--cols", best.c);
     grid.style.setProperty("--tile", `${this.tile}px`);
+    eyeFit(grid);
   },
 
   async load(at) {
@@ -174,8 +193,9 @@ const Eye = {
           ${dead ? `<div class="eye-dead"><b>${esc(dead.label)}</b>${dead.sub ? `<span>${esc(dead.sub)}</span>` : ""}</div>`
             : going || l.drop_pending ? '<span class="eye-tag">내리는 중</span>' : ""}
           <span class="eye-check">✓</span></div>
-        <div class="eye-nm" title="${esc(l.name)}">${esc(eyeName4(l.name))}</div></div>`;
+        <div class="eye-nm" title="${esc(l.name)}" style="--fs:${eyeFont(eyeWords(l.name)).toFixed(3)}"><span>${esc(eyeWords(l.name).join(" "))}</span></div></div>`;
     }).join("") : `<p class="muted pad">${this.todo ? "눈검수 안 한 복사본이 없습니다. 다 봤습니다." : "복사본이 없습니다."}</p>`;
+    eyeFit(grid);
     this.paintSel();
   },
 

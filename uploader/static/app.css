@@ -794,8 +794,10 @@ body.eye-open .tasks { display: none; }
 .eye-ph { position: relative; width: var(--tile); height: var(--tile); background: var(--line); }
 .eye-ph img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
 .eye-ph img.broken { opacity: .2; }
-.eye-nm { height: calc(var(--tile) * 0.3); display: flex; align-items: center; justify-content: center; overflow: hidden; white-space: nowrap;
-  font-size: calc(var(--tile) * 0.21); font-weight: 800; letter-spacing: -0.02em; color: var(--text); line-height: 1; }
+.eye-nm { height: calc(var(--tile) * 0.38); display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 0 3px;
+  font-size: max(8px, calc(var(--tile) * var(--fs, 0.12))); font-weight: 800; letter-spacing: -0.02em; color: var(--text); line-height: 1.15;
+  text-align: center; word-break: keep-all; overflow-wrap: anywhere; }
+.eye-nm span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .eye-tile:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
 .eye-tile.on { outline: 4px solid var(--err); outline-offset: -4px; }
 .eye-tile.on img { opacity: .55; }
