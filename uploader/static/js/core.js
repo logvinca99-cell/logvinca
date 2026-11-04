@@ -661,13 +661,57 @@ const App = {
       ok: "모두 삭제합니다",
     });
     if (!ok) return;
+    return this._deleteEverywhere(target, after);
+  },
+  async _deleteEverywhere(target, after) {
     try {
       const r = await this.api("/api/chem/delete", { json: { ...target, now: true } });
-      this.toast(`휴지통으로 ${num(r.trashed)}개` + (r.dropping ? ` · 판매 중 ${num(r.dropping)}건 내리는 중 (다 내리면 원본도 휴지통으로)` : "")
-        + (r.kept_sold ? ` · 판매 이력으로 남긴 원본 ${num(r.kept_sold)}개` : "") + (r.error ? ` · ${r.error}` : ""), !!r.error);
+      this.toast(`원본 ${num(r.trashed)}개 휴지통으로` + (r.dropping ? (r.queued ? ` · 판매 중 ${num(r.dropping)}건은 내리기 대기 (지금 등록이 도는 중 — 끝난 뒤 시작에서 '내리기')`
+        : ` · 판매 중 ${num(r.dropping)}건 내리는 중 (다 내리면 원본도 휴지통으로)`) : "")
+        + (r.kept_sold ? ` · 판매 이력·잠금으로 남긴 원본 ${num(r.kept_sold)}개` : "") + (r.busy ? ` · 지금 올리는 중이라 남긴 원본 ${num(r.busy)}개` : "")
+        + (r.error ? ` · ${r.error}` : ""), !!r.error);
       if (r.started) this.renderSideRun?.();
+      this.refreshState();
       if (after) after(r);
-    } catch (e) { this.toast(e.message, true); }
+      return r;
+    } catch (e) { this.toast(e.message, true); return null; }
+  },
+
+  /* 복사본 삭제 (복사본 화면·눈검수): 기본은 '원본까지 같이' — 원본과 그 원본의 모든 스토어 복사본 (판매 중인 것은 내린 뒤).
+     끄면 고른 복사본만 휴지통 (올라가 있는 것은 빼고). target: 복사본 거르기 조건 또는 {ids} */
+  async deleteCopies(target, after, what = "") {
+    let pe, pc;
+    try {
+      [pe, pc] = await Promise.all([this.api("/api/chem/delete_preview", { json: { listing_filter: target } }),
+        this.api("/api/listings/delete_preview", { json: target })]);
+    } catch (e) { return this.toast(e.message, true); }
+    if (!pc.copies) return this.toast("고른 복사본이 없습니다.", true);
+    const wait = this.run?.running;
+    const p = this.confirmDanger({
+      title: `${what || `복사본 ${num(pc.copies)}건`} 삭제`,
+      body: `<label class="check del-src"><input type="checkbox" id="del-all" checked><span><b>원본까지 같이 삭제</b> <span class="muted small">(기본)</span>
+          <span class="muted small" style="display:block">원본 ${num(pe.sources)}개와 그 원본의 <b>모든 스토어 복사본</b>을 지웁니다.</span></span></label>
+        <div id="del-all-on"><ul>
+          <li>네이버에 안 올라간 원본 <b>${num(pe.now)}개</b> → 바로 휴지통 (복사본·이름 후보·AI 키워드 함께)</li>
+          ${pe.drop_listings ? `<li>판매 중인 복사본 <b>${num(pe.drop_listings)}건</b>(원본 ${num(pe.drop_sources)}개, 다른 스토어 포함) → <b>${wait ? "내리기 대기에 넣고" : "네이버에서 바로 내린 뒤"}</b> 원본도 휴지통</li>` : ""}
+          ${pe.kept_sold ? `<li>판매 이력·잠금이 있는 원본 <b>${num(pe.kept_sold)}개</b> → 지우지 않고 남김</li>` : ""}</ul>
+          ${wait && pe.drop_listings ? '<p class="small c-warn">지금 등록이 도는 중이라 내리기는 대기에 넣습니다. 등록이 끝난 뒤 시작에서 \'내리기\'를 실행하세요.</p>' : ""}
+          <p class="small muted">휴지통에서 되살릴 수 있지만, 네이버에서 내린 상품은 다시 올려야 합니다.</p></div>
+        <div id="del-all-off" hidden><p>고른 복사본 <b>${num(pc.copies)}건</b>만 휴지통으로 옮깁니다. 붙어 있던 상품명은 원본의 안 쓴 후보로 돌아가고 원본은 남습니다.</p>
+          <p class="small muted">네이버에 올라가 있거나 처리 중인 복사본은 지우지 않습니다(먼저 '내리기').</p></div>`,
+      ok: "삭제합니다",
+    });
+    const cb = $("#del-all");
+    cb.addEventListener("change", () => { $("#del-all-on").hidden = !cb.checked; $("#del-all-off").hidden = cb.checked; });
+    if (!(await p)) return null;
+    if (cb.checked) return this._deleteEverywhere({ listing_filter: target }, after);
+    try {
+      const r = await this.api("/api/listings/delete", { json: { ...target, with_source: false } });
+      this.toast(`복사본 ${num(r.moved)}건을 휴지통으로 옮겼습니다` + (r.skipped_live ? ` · 네이버에 올라가 있거나 처리 중이라 뺀 ${num(r.skipped_live)}건` : ""));
+      this.refreshState();
+      if (after) after(r);
+      return r;
+    } catch (e) { this.toast(e.message, true); return null; }
   },
 
   confirmDanger({ title, body, ok = "삭제합니다" }) {

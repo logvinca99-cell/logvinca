@@ -268,7 +268,9 @@ class DB:
                     # 원본·복사본 모두 삭제: 판매 중인 복사본을 다 내리면 원본을 휴지통으로
                     ("drop_pending", "INTEGER NOT NULL DEFAULT 0"),
                     # 출처 태그 '|태그1|태그2|' (어디서·언제 가져왔는지: 수집 스토어, 날짜, 직접 적은 루트) — 엑셀 '상품태그'와 다름
-                    ("src_tags", "TEXT NOT NULL DEFAULT ''")],
+                    ("src_tags", "TEXT NOT NULL DEFAULT ''"),
+                    # 눈검수(복사본 화면 썸네일 그리드)로 본 때 — 원본 기준이라 다른 스토어 복사본에도 '본 것'으로
+                    ("eye_at", "REAL")],
         "stores": [("code", "TEXT NOT NULL DEFAULT ''"), ("orders_synced_to", "REAL"),
                    ("wm_text", "TEXT NOT NULL DEFAULT ''"), ("importer", "TEXT NOT NULL DEFAULT ''"),
                    # 스토어 템플릿: 상세 상단·하단(HTML), 관부가세 코드, 가격 조정 %, 표시 할인율 % (비우면 설정 공통값)

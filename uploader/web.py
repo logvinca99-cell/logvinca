@@ -15,7 +15,7 @@ from .db import DB
 from .tasks import Tasks
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-FILTER_KEYS = ("q", "status", "category", "ai", "chem", "src_tag", "store_missing", "store_has", "import_id", "max_listings", "price_min", "price_max", "copies",
+FILTER_KEYS = ("q", "status", "category", "ai", "chem", "src_tag", "eye", "store_missing", "store_has", "import_id", "max_listings", "price_min", "price_max", "copies",
                "min_names", "store_id", "plan_id", "op", "age_days", "sold", "locked")
 STORE_FIELDS = ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "capacity", "enabled", "memo", "wm_text", "importer",
                 "business_id", "chrome_profile", "mail_to")
@@ -345,17 +345,16 @@ def create_app(db=None):
 
     @app.post("/api/chem/delete")
     def chem_delete():
-        """원본·복사본 모두 삭제: 안 올라간 것은 바로 휴지통, 판매 중인 복사본은 네이버에서 내린 뒤 원본도 휴지통 (판매 이력·잠금은 남김)."""
-        if runner.state["running"]:
-            return fail("등록이 진행 중일 때는 지울 수 없습니다. 끝난 뒤에 다시 시도하세요.")
+        """원본·복사본 모두 삭제: 안 올라간 것은 바로 휴지통, 판매 중인 복사본은 네이버에서 내린 뒤 원본도 휴지통 (판매 이력·잠금은 남김).
+        등록이 도는 중이면 지금 처리 중인 것은 건드리지 않고, 내리기는 대기에 넣는다(끝난 뒤 시작에서)."""
         b = body()
         ids = _ctx_sources(b)
         if not ids:
             return fail("고른 원본이 없습니다.")
         out = chem.delete_sources_everywhere(db, ids)
         drop = out.pop("drop_scheduled")
-        out.update(dropping=len(drop), started=False)
-        if drop and b.get("now", True):
+        out.update(dropping=len(drop), started=False, queued=bool(drop) and runner.state["running"])
+        if drop and b.get("now", True) and not runner.state["running"]:
             try:
                 runner.start({"ids": drop, "kinds": ["delete"]})
                 out["started"] = True
@@ -1131,8 +1130,7 @@ def create_app(db=None):
 
     @app.post("/api/listings/delete")
     def listings_delete():
-        if runner.state["running"]:
-            return fail("등록이 진행 중일 때는 지울 수 없습니다. 끝난 뒤에 다시 시도하세요.")
+        # 등록이 도는 중에도 됨: 지금 처리 중(queued·running)이거나 네이버에 올라간 것은 trash 쪽에서 건너뜀
         b = body()
         f = _filter_from(b)
         f.pop("op", None)
@@ -1152,6 +1150,34 @@ def create_app(db=None):
             chunk = ids[i:i + 900]
             out |= {r["source_id"] for r in db.q(f"SELECT DISTINCT source_id FROM listings WHERE id IN ({','.join('?' * len(chunk))})", chunk)}
         return sorted(out)
+
+    # ── 눈검수 (복사본 썸네일 그리드)
+
+    @app.get("/api/eye/pages")
+    def eye_pages():
+        """눈검수 쪽마다 본 정도: 2 = 다 봄, 1 = 일부, 0 = 안 봄 (원본 기준, 복사본 화면과 같은 순서)."""
+        f = _filter_from(request.args)
+        size = max(1, min(int(request.args.get("size", 48)), 500))
+        where, args = inventory.listing_where(f)
+        flags = [r["d"] for r in db.q(f"SELECT s.eye_at IS NOT NULL AS d FROM listings l JOIN sources s ON s.id=l.source_id{where} ORDER BY l.id", args)]
+        pages = []
+        for i in range(0, len(flags), size):
+            part = flags[i:i + size]
+            n = sum(part)
+            pages.append(2 if n == len(part) else 1 if n else 0)
+        return jsonify({"pages": pages, "total": len(flags), "reviewed": sum(flags)})
+
+    @app.post("/api/eye/mark")
+    def eye_mark():
+        """이 쪽 눈검수 완료 (복사본 번호들 → 그 원본에 표시). clear면 표시 지움."""
+        b = body()
+        sids = _source_ids_of([int(i) for i in b.get("ids") or []])
+        val = None if b.get("clear") else time.time()
+        with db.tx() as c:
+            for i in range(0, len(sids), 900):
+                chunk = sids[i:i + 900]
+                c.execute(f"UPDATE sources SET eye_at=? WHERE id IN ({','.join('?' * len(chunk))})", (val, *chunk))
+        return jsonify({"count": len(sids)})
 
     @app.post("/api/listings/delete_preview")
     def listings_delete_preview():

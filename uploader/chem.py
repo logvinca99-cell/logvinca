@@ -266,16 +266,24 @@ def delete_sources_everywhere(db, sids):
     st = trash.trash_sources(db, now) if now else {"moved": 0, "skipped_live": 0}
     ids = []
     if later:
-        n, _, ids = inventory.schedule_op(db, {"ids": [x["id"] for sid in later for x in live[sid]]}, "delete")
+        # 올라가 있는 복사본은 모두 내리기 대기로 (판매 중·실패·최신화 대기 포함, 지금 처리 중인 것은 끝난 뒤 다음에)
+        ids = [x["id"] for sid in later for x in live[sid]]
+        now_ts = time.time()
         with db.tx() as c:
+            for i in range(0, len(ids), 900):
+                chunk = ids[i:i + 900]
+                c.execute(f"""UPDATE listings SET status='planned', op='delete', message='', updated_at=?
+                    WHERE id IN ({','.join('?' * len(chunk))}) AND status NOT IN ('queued','running')""", (now_ts, *chunk))
             for sid in later:
                 c.execute("UPDATE sources SET drop_pending=1 WHERE id=?", (sid,))
+        ids = [r["id"] for i in range(0, len(ids), 900) for r in db.q(
+            f"SELECT id FROM listings WHERE id IN ({','.join('?' * len(ids[i:i + 900]))}) AND status='planned' AND op='delete'", ids[i:i + 900])]
         # 아직 안 올린 복사본은 지금 휴지통으로 (올라가 있는 것은 내린 뒤 원본과 함께)
         pending = [r["id"] for r in db.q(f"""SELECT id FROM listings WHERE source_id IN ({','.join('?' * len(later))})
             AND origin_no='' AND status NOT IN ('queued','running')""", later)]
         if pending:
             trash.trash_listings(db, pending)
-    return {"trashed": st["moved"], "drop_scheduled": ids, "drop_sources": len(later), "kept_sold": len(kept)}
+    return {"trashed": st["moved"], "drop_scheduled": ids, "drop_sources": len(later), "kept_sold": len(kept), "busy": st.get("skipped_live", 0)}
 
 
 def after_drop(db, source_id):

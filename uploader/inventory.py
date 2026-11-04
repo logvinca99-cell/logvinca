@@ -1396,6 +1396,10 @@ def listing_where(f):
     if f.get("op"):
         w.append("l.op=?")
         a.append(f["op"])
+    if f.get("eye") == "todo":      # 눈검수 안 한 원본의 복사본
+        w.append("s.eye_at IS NULL")
+    elif f.get("eye") == "done":
+        w.append("s.eye_at IS NOT NULL")
     if f.get("locked") in ("0", "1", 0, 1):
         w.append("l.locked=?")
         a.append(int(f["locked"]))
@@ -1425,7 +1429,7 @@ def query_listings(db, f, page=0, size=100):
         l.cancel_count, l.locked, l.lock_note, l.manual_lock,
         l.channel_no, l.seller_code, l.registered_at, l.deleted_at, l.seconds, l.plan_id, l.updated_at,
         s.id AS source_id, s.source_key, s.seller_code AS source_code, s.name AS source_name,
-        s.price AS source_price, s.thumb, s.category, s.n_listings AS source_copies,
+        s.price AS source_price, s.thumb, s.category, s.n_listings AS source_copies, s.eye_at, s.drop_pending,
         t.id AS store_id, t.name AS store_name, t.store_url,
         COALESCE(NULLIF(t.code,''), 'S'||printf('%02d', t.id)) AS store_code,
         n.origin AS name_origin, k.words AS ctx_words,

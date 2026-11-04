@@ -32,6 +32,7 @@ App.page("listings", {
           <select id="l-store" class="sel" title="다른 스토어로 바꾸기">${byBusiness(App.stores).map(([biz, ss]) => `<optgroup label="${esc(biz)}">${ss.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join("")}</optgroup>`).join("")}</select>
           <a class="btn ghost sm" href="#listings">스토어 목록</a>${store ? storeLinks(store) : ""}</div>
         <div class="head-actions">
+          <button class="btn primary" id="l-eye" title="썸네일만 그리드로 보며 이상한 상품을 골라 지우기">눈검수</button>
           <a class="btn ghost" id="l-export">결과 CSV</a>
           <label class="btn" title="아바닛 등 주문 수집 웹에서 내려받은 주문 파일"><input type="file" id="l-sales-file" accept=".xlsx,.xlsm,.csv" hidden>판매 이력 파일 가져오기</label>
           <a class="btn" href="#orders" title="판매자센터 주문을 가져오고 기간·스토어별로 보기">판매 현황</a>
@@ -53,6 +54,8 @@ App.page("listings", {
       </div>
     </div>`;
     $("#l-store").value = String(params.store_id);
+    $("#l-eye").addEventListener("click", () => Eye.open({ storeId: +this.f.store_id, storeName: store?.name || "", filter: this.query(),
+      after: (r) => { if (r.deleted) this.clearSel(); this.estKey = ""; this.load(); } }));
     if (!store) App.toast("스토어를 찾지 못했습니다.", true);
     $("#l-age").value = this.f.age_days || "";
     this.bind();
@@ -171,7 +174,7 @@ App.page("listings", {
         { id: "chem", label: "생활화학 판정", title: "고른 복사본의 원본을 판정: 물건이면 '인증 대상 아님'으로 다시 등록 대기, 화학제품이면 보류 (애매하면 AI)" },
         { id: "resetround", label: "회차 초기화", title: "지난 회차 기록을 지우고 1회차로 (다시 다 올릴 때) · 판매 중·내린 건은 다음에 다시 올릴 때 1회차로" },
         "|",
-        { id: "remove", label: "삭제", danger: true, title: "아직 안 올린 복사본·내린 복사본을 휴지통으로 (네이버에 올라간 것은 먼저 내리기)" },
+        { id: "remove", label: "삭제", danger: true, title: "기본: 원본까지 같이 삭제 (그 원본의 모든 스토어 복사본, 판매 중인 것은 내린 뒤) · 끄면 고른 복사본만 휴지통" },
         ...(this.f.status === "bait" ? ["|", { id: "restore", label: "원래 가격으로", primary: true }] : []),
       ],
       onPageCheck: (on) => { this.selAll = false; this.rows.forEach((l) => (on ? this.sel.add(l.id) : this.sel.delete(l.id))); this.load(); },
@@ -187,28 +190,7 @@ App.page("listings", {
     if (id === "rename") this.renameModal();
     if (id === "refresh" || id === "delete" || id === "reupload") this.schedule(id);
     if (id === "lock" || id === "unlock") this.lock(id === "lock");
-    if (id === "remove") {
-      const n = this.selAll ? this.total : this.sel.size;
-      let pv = null;
-      try { pv = await App.api("/api/listings/delete_preview", { json: this.target() }); } catch { pv = null; }
-      let withSource = false;
-      const ok = await App.confirmDanger({
-        title: `복사본 ${num(n)}건 삭제`,
-        body: `<p>고른 복사본 <b>${num(n)}건</b>을 <b>휴지통</b>으로 옮깁니다. 붙어 있던 상품명은 원본의 안 쓴 후보로 돌아갑니다.</p>
-          <p class="muted small">네이버에 올라가 있거나 처리 중인 복사본은 지우지 않습니다(먼저 '내리기'로 내리세요). 휴지통에서 되살릴 수 있습니다.</p>
-          <label class="check del-src"><input type="checkbox" id="del-src"><span><b>원본 상품도 같이 휴지통으로</b>${pv ? ` · 원본 ${num(pv.sources)}개` : ""}
-            <span class="muted small" style="display:block">원본을 지우면 그 원본의 이름 후보·AI 키워드${pv && pv.other_copies ? `와 <b>다른 스토어 복사본 ${num(pv.other_copies)}개</b>` : ""}도 함께 휴지통으로 갑니다.
-            ${pv && pv.live_sources ? `<span class="c-warn">다른 스토어에 올라가 있거나 처리 중인 원본 ${num(pv.live_sources)}개는 원본을 남깁니다.</span>` : ""}</span></span></label>`,
-      });
-      if (!ok) return;
-      withSource = !!document.getElementById("del-src")?.checked;
-      try {
-        const r = await App.api("/api/listings/delete", { json: { ...this.target(), with_source: withSource } });
-        App.toast(`복사본 ${num(r.moved)}건을 휴지통으로 옮겼습니다` + (r.skipped_live ? ` · 네이버에 올라가 있거나 처리 중이라 뺀 ${num(r.skipped_live)}건` : "")
-          + (withSource ? ` · 원본 ${num(r.sources_moved || 0)}개도 휴지통으로` + (r.sources_skipped_live ? ` (다른 스토어에 올라가 있어 남긴 원본 ${num(r.sources_skipped_live)}개)` : "") : ""));
-        this.clearSel(); this.estKey = ""; this.load(); App.refreshState();
-      } catch (err) { App.toast(err.message, true); }
-    }
+    if (id === "remove") App.deleteCopies(this.target(), () => { this.clearSel(); this.estKey = ""; this.load(); });
     if (id === "resetround") this.resetRound();
     if (id === "chem") App.startTask(App.api("/api/chem/judge", { json: { listing_filter: this.target() } }));
     if (id === "category") {
