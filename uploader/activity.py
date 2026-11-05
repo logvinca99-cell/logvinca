@@ -200,6 +200,8 @@ ACTIONS = {
     "srctags_apply": ("원본", lambda b, r: ("출처 태그" + (f" 달기: {', '.join(r.get('add') or [])}" if r.get("add") else "")
                                            + (f" 빼기: {', '.join(r.get('remove') or [])}" if r.get("remove") else ""), r.get("count"), "")),
     "srctags_rename": ("원본", lambda b, r: (f"출처 태그 이름 바꿈: {b.get('old')} → {b.get('new') or '(지움)'}", r.get("count"), "")),
+    "eye_undo": ("복사본", lambda b, r: ("눈검수: 방금 지운 것 되돌림", r.get("restored"),
+                                          f"내리기 취소 {r.get('cancelled', 0)}건" + (f" · 이미 내려간 {r.get('dropped')}건" if r.get("dropped") else ""))),
     "chem_set": ("원본", lambda b, r: ("생활화학 판정 바꿈: " + {"tool": "물건", "chemical": "화학제품", "unclear": "애매", "": "지움"}.get(b.get("kind") or "", ""), r.get("count"), "")),
     "chem_delete": ("원본", lambda b, r: ("원본·복사본 모두 삭제", r.get("trashed"), f"판매 중 내리기 {r.get('dropping', 0)}건 · 판매 이력으로 남김 {r.get('kept_sold', 0)}개")),
     "mail_handled": ("메일함", lambda b, r: ("메일 확인함 표시" if b.get("handled", True) else "메일 확인함 풀기", 1, "")),

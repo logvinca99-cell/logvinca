@@ -663,10 +663,11 @@ const App = {
     if (!ok) return;
     return this._deleteEverywhere(target, after);
   },
-  async _deleteEverywhere(target, after) {
+  async _deleteEverywhere(target, after, now = true) {
     try {
-      const r = await this.api("/api/chem/delete", { json: { ...target, now: true } });
+      const r = await this.api("/api/chem/delete", { json: { ...target, now } });
       this.toast(`원본 ${num(r.trashed)}개 휴지통으로` + (r.dropping ? (r.queued ? ` · 판매 중 ${num(r.dropping)}건은 내리기 대기 (지금 등록이 도는 중 — 끝난 뒤 시작에서 '내리기')`
+        : !now ? ` · 판매 중 ${num(r.dropping)}건은 '이 쪽 완료·다음'(또는 닫기) 때 네이버에서 내림 — 그 전엔 되돌리기로 원래대로`
         : ` · 판매 중 ${num(r.dropping)}건 내리는 중 (다 내리면 원본도 휴지통으로)`) : "")
         + (r.kept_sold ? ` · 판매 이력·잠금으로 남긴 원본 ${num(r.kept_sold)}개` : "") + (r.busy ? ` · 지금 올리는 중이라 남긴 원본 ${num(r.busy)}개` : "")
         + (r.error ? ` · ${r.error}` : ""), !!r.error);
@@ -679,7 +680,7 @@ const App = {
 
   /* 복사본 삭제 (복사본 화면·눈검수): 기본은 '원본까지 같이' — 원본과 그 원본의 모든 스토어 복사본 (판매 중인 것은 내린 뒤).
      끄면 고른 복사본만 휴지통 (올라가 있는 것은 빼고). target: 복사본 거르기 조건 또는 {ids} */
-  async deleteCopies(target, after, what = "") {
+  async deleteCopies(target, after, what = "", { now = true } = {}) {
     let pe, pc;
     try {
       [pe, pc] = await Promise.all([this.api("/api/chem/delete_preview", { json: { listing_filter: target } }),
@@ -693,7 +694,7 @@ const App = {
           <span class="muted small" style="display:block">원본 ${num(pe.sources)}개와 그 원본의 <b>모든 스토어 복사본</b>을 지웁니다.</span></span></label>
         <div id="del-all-on"><ul>
           <li>네이버에 안 올라간 원본 <b>${num(pe.now)}개</b> → 바로 휴지통 (복사본·이름 후보·AI 키워드 함께)</li>
-          ${pe.drop_listings ? `<li>판매 중인 복사본 <b>${num(pe.drop_listings)}건</b>(원본 ${num(pe.drop_sources)}개, 다른 스토어 포함) → <b>${wait ? "내리기 대기에 넣고" : "네이버에서 바로 내린 뒤"}</b> 원본도 휴지통</li>` : ""}
+          ${pe.drop_listings ? `<li>판매 중인 복사본 <b>${num(pe.drop_listings)}건</b>(원본 ${num(pe.drop_sources)}개, 다른 스토어 포함) → <b>${wait ? "내리기 대기에 넣고" : now ? "네이버에서 바로 내린 뒤" : "'이 쪽 완료·다음'(또는 닫기) 때 네이버에서 내린 뒤"}</b> 원본도 휴지통</li>` : ""}
           ${pe.kept_sold ? `<li>판매 이력·잠금이 있는 원본 <b>${num(pe.kept_sold)}개</b> → 지우지 않고 남김</li>` : ""}</ul>
           ${wait && pe.drop_listings ? '<p class="small c-warn">지금 등록이 도는 중이라 내리기는 대기에 넣습니다. 등록이 끝난 뒤 시작에서 \'내리기\'를 실행하세요.</p>' : ""}
           <p class="small muted">휴지통에서 되살릴 수 있지만, 네이버에서 내린 상품은 다시 올려야 합니다.</p></div>
@@ -704,7 +705,7 @@ const App = {
     const cb = $("#del-all");
     cb.addEventListener("change", () => { $("#del-all-on").hidden = !cb.checked; $("#del-all-off").hidden = cb.checked; });
     if (!(await p)) return null;
-    if (cb.checked) return this._deleteEverywhere({ listing_filter: target }, after);
+    if (cb.checked) return this._deleteEverywhere({ listing_filter: target }, after, now);
     try {
       const r = await this.api("/api/listings/delete", { json: { ...target, with_source: false } });
       this.toast(`복사본 ${num(r.moved)}건을 휴지통으로 옮겼습니다` + (r.skipped_live ? ` · 네이버에 올라가 있거나 처리 중이라 뺀 ${num(r.skipped_live)}건` : ""));

@@ -841,3 +841,21 @@ body.eye-open .tasks { display: none; }
 .eye-card { position: fixed; z-index: 18; width: 360px; max-width: calc(100vw - 16px); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 32px rgba(16, 24, 40, .25); padding: 12px 14px; }
 .eye-card-name { font-weight: 700; line-height: 1.45; word-break: keep-all; }
 @media (max-width: 800px) { .eye { flex-direction: column-reverse; } .eye-side { width: auto; max-height: 45vh; border-left: 0; border-bottom: 1px solid var(--line); } }
+/* 눈검수 3차: 이어서 시작·되돌리기·통계·메모·끌어서 고르기·키워드 표시 */
+.eye-main { user-select: none; touch-action: none; }
+.eye-rect { position: fixed; z-index: 16; border: 2px dashed var(--accent); background: rgba(3, 169, 77, .12); pointer-events: none; border-radius: 3px; }
+.eye-resume { padding: 6px 8px; border-radius: 8px; background: var(--info-soft); color: var(--info); line-height: 1.4; }
+.eye-undo { width: 100%; border: 1px dashed var(--text-2); background: var(--bg); color: var(--text); border-radius: 10px; padding: 9px 10px; font-size: 15px; font-weight: 700; cursor: pointer; }
+.eye-undo span { font-size: 12.5px; font-weight: 500; color: var(--text-2); }
+.eye-undo:hover { border-style: solid; }
+.eye-stats { display: flex; flex-direction: column; gap: 2px; line-height: 1.45; }
+.eye-stats b { font-size: 15px; }
+.eye-memo { flex: 1 1 120px; min-height: 110px; display: flex; flex-direction: column; gap: 4px; }
+.eye-memo-head { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.eye-memo textarea { flex: 1; min-height: 80px; resize: none; width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; font-size: 13.5px; line-height: 1.45; }
+.eye-opts { display: flex; flex-direction: column; gap: 6px; }
+.eye-opts > .sel { width: 100%; }
+.eye-nm em { font-style: normal; }
+.eye-nm em.kw-b, .eye-card em.kw-b { color: var(--err); text-decoration: underline wavy; text-underline-offset: 2px; font-style: normal; }
+.eye-nm em.kw-m, .eye-card em.kw-m { color: var(--warn); text-decoration: underline; text-underline-offset: 2px; font-style: normal; }
+.eye-tile.on .eye-nm em.kw-b, .eye-tile.on .eye-nm em.kw-m { color: #fff; }

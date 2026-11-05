@@ -10,7 +10,7 @@ import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import VERSION, activity, aiwords, bait, chem, chrome, clean, mail, srctags, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
+from . import VERSION, activity, aiwords, bait, chem, chrome, clean, eye, mail, srctags, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
 from .db import DB
 from .tasks import Tasks
 
@@ -354,7 +354,7 @@ def create_app(db=None):
             return fail("고른 원본이 없습니다.")
         out = chem.delete_sources_everywhere(db, ids)
         drop = out.pop("drop_scheduled")
-        out.update(dropping=len(drop), started=False, queued=bool(drop) and runner.state["running"])
+        out.update(dropping=len(drop), started=False, queued=bool(drop) and runner.state["running"], drop_ids=drop)
         if drop and b.get("now", True) and not runner.state["running"]:
             try:
                 runner.start({"ids": drop, "kinds": ["delete"]})
@@ -1175,12 +1175,72 @@ def create_app(db=None):
         before = db.one(f"SELECT COUNT(*) AS n {base}{cond('l.id<?')}", (*args, ids[0]))["n"] if ids else 0
         after = db.one(f"SELECT COUNT(*) AS n {base}{cond('l.id>?')}", (*args, ids[-1]))["n"] if ids else 0
         page = -(-before // size) + 1   # 앞에 남은 것 기준 (이 앞 쪽에서 지운 것이 있어도 쪽 번호가 줄지 않게)
-        return jsonify({"rows": rows, "total": total, "page": page, "pages": page + -(-after // size) if ids else 1,
+        lex = lexicon.get(db)
+        for r in rows:   # 사진 밑 키워드 4개: 금지어·상표 단어 표시
+            r["kw"] = _eye_words(r["name"], lex)
+        return jsonify({"rows": rows, "total": total, "after": after, "page": page, "pages": page + -(-after // size) if ids else 1,
                         "has_prev": before > 0, "has_next": after > 0, "done": bool(rows) and all(r["eye_at"] for r in rows)})
+
+    def _eye_words(name, lex):
+        """상품명 앞 키워드 4개와 표시: blocked(금지어) / mark(상표). 붙여 쓴 두 단어 상표도 둘 다 표시."""
+        words = str(name or "").split()[:4]
+        out = []
+        for i, w in enumerate(words):
+            why = ""
+            if lexicon.blocked_in(w, lex):
+                why = "blocked"
+            elif lex and lex.marks and (lex.mark_of(w) or (i + 1 < len(words) and lex.mark_of(w + words[i + 1]))
+                                        or (i > 0 and lex.mark_of(words[i - 1] + w))):
+                why = "mark"
+            out.append([w, why])
+        return out
+
+    @app.get("/api/eye/state")
+    def eye_state():
+        return jsonify(eye.state(db, int(request.args.get("store_id") or 0)))
+
+    @app.post("/api/eye/memo")
+    def eye_memo():
+        b = body()
+        return jsonify(eye.save_memo(db, int(b.get("store_id") or 0), b.get("memo")))
+
+    @app.post("/api/eye/reset")
+    def eye_reset():
+        eye.reset_pos(db, int(body().get("store_id") or 0))
+        return jsonify({"ok": True})
+
+    @app.post("/api/eye/deleted")
+    def eye_deleted():
+        b = body()
+        eye.log(db, int(b.get("store_id") or 0), "deleted", int(b.get("n") or 0))
+        return jsonify(eye.stats(db, int(b.get("store_id") or 0)))
+
+    @app.post("/api/eye/undo")
+    def eye_undo():
+        b = body()
+        sid = int(b.get("store_id") or 0)
+        out = eye.undo(db, sid, b.get("source_ids") or [], b.get("since") or time.time(), int(b.get("n") or 0))
+        return jsonify({**out, **eye.stats(db, sid)})
+
+    @app.post("/api/eye/commit")
+    def eye_commit():
+        """눈검수에서 미뤄 둔 네이버 내리기 시작 ('이 쪽 완료·다음'이나 닫을 때). 등록이 도는 중이면 대기로 남김."""
+        ids = [int(i) for i in body().get("ids") or []]
+        live = [r["id"] for i in range(0, len(ids), 900) for r in db.q(
+            f"SELECT id FROM listings WHERE id IN ({','.join('?' * len(ids[i:i + 900]))}) AND op='delete' AND status='planned'", ids[i:i + 900])]
+        if not live:
+            return jsonify({"started": False, "count": 0})
+        if runner.state["running"]:
+            return jsonify({"started": False, "queued": True, "count": len(live)})
+        try:
+            runner.start({"ids": live, "kinds": ["delete"]})
+        except (RuntimeError, naver.ApiError) as e:
+            return jsonify({"started": False, "count": len(live), "error": str(e)})
+        return jsonify({"started": True, "count": len(live)})
 
     @app.post("/api/eye/mark")
     def eye_mark():
-        """이 쪽 눈검수 완료 (복사본 번호들 → 그 원본에 표시). clear면 표시 지움."""
+        """이 쪽 눈검수 완료 (복사본 번호들 → 그 원본에 표시). clear면 표시 지움. store_id·last_id가 오면 이어서 시작할 자리로."""
         b = body()
         sids = _source_ids_of([int(i) for i in b.get("ids") or []])
         val = None if b.get("clear") else time.time()
@@ -1188,6 +1248,9 @@ def create_app(db=None):
             for i in range(0, len(sids), 900):
                 chunk = sids[i:i + 900]
                 c.execute(f"UPDATE sources SET eye_at=? WHERE id IN ({','.join('?' * len(chunk))})", (val, *chunk))
+        if b.get("store_id") and b.get("last_id") and not b.get("clear"):
+            eye.page_done(db, int(b["store_id"]), int(b["last_id"]), len(b.get("ids") or []), b.get("size"), b.get("todo"))
+            return jsonify({"count": len(sids), **eye.stats(db, int(b["store_id"]))})
         return jsonify({"count": len(sids)})
 
     @app.post("/api/listings/delete_preview")

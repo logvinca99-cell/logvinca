@@ -239,8 +239,9 @@ class DB:
         self._migrate_columns()   # 새로 만든 db: SCHEMA에 없는 나중에 더한 열도 붙인다
         self._migrate_data()
         self._remove_dropped(os.path.dirname(path))
-        from . import activity, aiwords, clean, ctxkw, keywords, kipris, lexicon, mail, trash
+        from . import activity, aiwords, clean, ctxkw, eye, keywords, kipris, lexicon, mail, trash
         clean.ensure(self)
+        eye.ensure(self)
         lexicon.ensure(self)
         kipris.ensure(self)
         keywords.ensure(self)
