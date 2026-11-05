@@ -802,15 +802,15 @@ body.eye-open .tasks { display: none; }
 .eye-tile.on { outline: 4px solid var(--err); outline-offset: -4px; }
 .eye-tile.on img { opacity: .55; }
 .eye-tile.on .eye-nm { background: var(--err); color: #fff; }
-.eye-check { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; border-radius: 50%; background: var(--err); color: #fff; display: none; place-items: center; font-weight: 700; font-size: 14px; }
-.eye-tile.on .eye-check { display: grid; }
+.eye-check { position: absolute; top: 5px; right: 5px; padding: 2px 7px; border-radius: 999px; background: var(--err); color: #fff; display: none;
+  font-weight: 800; font-size: max(10px, calc(var(--tile) * 0.075)); box-shadow: 0 1px 4px rgba(0, 0, 0, .3); }
+.eye-tile.on .eye-check { display: block; }
 .eye-seen { position: absolute; left: 4px; bottom: 4px; font-size: 11px; line-height: 15px; padding: 0 4px; border-radius: 3px; background: rgba(0, 0, 0, .45); color: #fff; }
 .eye-tag { position: absolute; left: 4px; top: 4px; font-size: 11px; line-height: 16px; padding: 0 5px; border-radius: 3px; background: var(--err); color: #fff; font-weight: 600; }
 .eye-tile.going img { opacity: .35; filter: grayscale(1); }
-.eye-tile.dead { cursor: default; }
-.eye-tile.dead:hover { outline: none; }
 .eye-tile.dead img { opacity: .18; filter: grayscale(1); }
-.eye-tile.dead .eye-nm { color: var(--muted); text-decoration: line-through; }
+.eye-tile.dead .eye-nm { background: #4b5563; color: rgba(255, 255, 255, .6); text-decoration: line-through; }
+.eye-tile.dead.gone:hover .eye-dead b::after { content: " · 누르면 되살림"; font-size: .55em; color: var(--text-2); }
 .eye-dead { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; text-align: center; padding: 4px; }
 .eye-dead b { font-size: calc(var(--tile) * 0.16); color: var(--err); }
 .eye-dead span { font-size: max(10px, calc(var(--tile) * 0.08)); color: var(--text-2); }
@@ -824,22 +824,24 @@ body.eye-open .tasks { display: none; }
 .eye-big:disabled { opacity: .4; cursor: default; }
 .eye-next { background: var(--accent); color: #fff; min-height: 96px; box-shadow: 0 6px 16px rgba(3, 169, 77, .25); }
 .eye-next:not(:disabled):hover { filter: brightness(1.05); }
+.eye-next.del { background: var(--err); box-shadow: 0 6px 16px rgba(210, 58, 58, .3); font-size: 17px; }
 .eye-del { background: var(--err); color: #fff; min-height: 56px; }
 .eye-big2 { width: 100%; border: 1px solid var(--line); background: var(--bg); color: var(--text); border-radius: 10px; padding: 12px; font-size: 16px; font-weight: 700; cursor: pointer; }
 .eye-big2:disabled { opacity: .4; cursor: default; }
 .eye-sep { border-top: 1px solid var(--line); margin: 2px 0; }
 .eye-seln { font-size: 15px; }
 .eye-seln b { font-size: 20px; color: var(--err); }
-.eye-row { display: flex; gap: 6px; }
-.eye-row .btn { flex: 1; }
+.eye-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.eye-row .btn { flex: 1 1 auto; padding: 0 8px; }
 .eye-field { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 .eye-field .sel { flex: 1; min-width: 0; }
 .eye-side > .sel { flex: none; width: 100%; }
 .eye-hint { margin: auto 0 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
-.eye-zoom { position: fixed; z-index: 17; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 16px 40px rgba(16, 24, 40, .3); padding: 6px; pointer-events: none; }
-.eye-zoom img { width: 100%; height: 100%; object-fit: contain; display: block; }
-.eye-card { position: fixed; z-index: 18; width: 360px; max-width: calc(100vw - 16px); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 32px rgba(16, 24, 40, .25); padding: 12px 14px; }
-.eye-card-name { font-weight: 700; line-height: 1.45; word-break: keep-all; }
+.eye-card { position: fixed; z-index: 18; width: 380px; max-width: calc(100vw - 16px); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 16px 40px rgba(16, 24, 40, .3); padding: 14px; }
+.eye-card-img { background: var(--line); border-radius: 8px; overflow: hidden; margin-bottom: 10px; }
+.eye-card-img img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.eye-card-name { font-weight: 700; font-size: 15px; line-height: 1.45; word-break: keep-all; }
+.eye-card-flags { margin-top: 4px; }
 @media (max-width: 800px) { .eye { flex-direction: column-reverse; } .eye-side { width: auto; max-height: 45vh; border-left: 0; border-bottom: 1px solid var(--line); } }
 /* 눈검수 3차: 이어서 시작·되돌리기·통계·메모·끌어서 고르기·키워드 표시 */
 .eye-main { user-select: none; touch-action: none; }
@@ -855,7 +857,13 @@ body.eye-open .tasks { display: none; }
 .eye-memo textarea { flex: 1; min-height: 80px; resize: none; width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; font-size: 13.5px; line-height: 1.45; }
 .eye-opts { display: flex; flex-direction: column; gap: 6px; }
 .eye-opts > .sel { width: 100%; }
+/* 상품명 칸: 남색 바탕 + 흰 글자 (흰 배경 사진과 구분), 금지어·상표 단어는 빨강·주황 바탕 */
+.eye-nm { background: #1e2a44; color: #fff; }
 .eye-nm em { font-style: normal; }
-.eye-nm em.kw-b, .eye-card em.kw-b { color: var(--err); text-decoration: underline wavy; text-underline-offset: 2px; font-style: normal; }
-.eye-nm em.kw-m, .eye-card em.kw-m { color: var(--warn); text-decoration: underline; text-underline-offset: 2px; font-style: normal; }
-.eye-tile.on .eye-nm em.kw-b, .eye-tile.on .eye-nm em.kw-m { color: #fff; }
+.eye-nm em.kw-b, .eye-card em.kw-b { background: #ef4444; color: #fff; padding: 0 .15em; border-radius: .15em; font-style: normal; }
+.eye-nm em.kw-m, .eye-card em.kw-m { background: #f59e0b; color: #1a1a1a; padding: 0 .15em; border-radius: .15em; font-style: normal; }
+.eye-tile.on .eye-nm em.kw-b, .eye-tile.on .eye-nm em.kw-m { background: #fff; color: var(--err); }
+/* 눈검수 화면에서만: 크고 형광색 커서 (나가면 원래대로) */
+.eye, .eye * { cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='44' height='44' viewBox='0 0 44 44'><path d='M3 2 L3 36 L12 28 L19 42 L26 39 L19 25 L32 25 Z' fill='%23c6ff00' stroke='%23000' stroke-width='2.5' stroke-linejoin='round'/></svg>") 3 2, auto !important; }
+.eye textarea, .eye input[type=text], .eye select { cursor: auto !important; }
+@media (max-height: 820px) { .eye-hint { display: none; } .eye-pno b { font-size: 28px; } }

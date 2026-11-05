@@ -1,10 +1,11 @@
 /* 눈검수: 복사본 화면에서 썸네일만 그리드로 (인스타그램처럼) 보며 빠르게 걸러 냄.
-   한 쪽이 화면에 꽉 차게(내리지 않아도 다 보임), 사진 밑에 상품명 앞 키워드 4개(띄어쓰기 기준, 금지어·상표 단어는 빨강·주황).
-   클릭 = 고르기 (Shift+클릭 = 범위, 끌기 = 네모 안 여러 장) · 마우스 올리기 = 크게 · 우클릭 = 상품명 전체 · ←/→ = 쪽 이동
-   [이 쪽 눈검수 완료 · 다음 쪽]을 누르면 지금 쪽은 완료(원본 기준 — 다른 스토어 복사본도 본 것으로)이고 그 자리를 기억해
+   한 쪽이 화면에 꽉 차게(내리지 않아도 다 보임), 사진 밑 남색 칸에 상품명 앞 키워드 4개(띄어쓰기 기준, 금지어·상표 단어 표시).
+   클릭 = 삭제 예정으로 고르기, 한 번 더 = 풀기 (Shift+클릭 = 범위, 끌기 = 네모 안 여러 장) · 우클릭 = 큰 사진과 상품명 · ←/→ = 쪽 이동
+   [✓ 고른 N개 삭제하고 다음 쪽]: 고른 것을 확인 창 없이 지우고(원본까지) 이 쪽을 완료로 하고 다음 쪽으로. 그 자리를 기억해
    다음에 열면 이어서 시작. 오른쪽 칸에 메모(스토어마다 따로, 자동 저장)·오늘 본·지운 수·남은 쪽과 예상 시간.
-   고른 것을 지워도 그 칸은 '삭제됨'으로 자리를 지킴. 판매 중인 것의 네이버 내리기는 '이 쪽 완료·다음'이나 닫을 때 시작해서
-   그 전에 [되돌리기]를 누르면 완전히 원래대로. */
+   지운 칸은 '삭제됨'으로 자리를 지키고, 그 칸을 다시 누르면 그 하나만 되살아남.
+   판매 중인 것의 네이버 내리기는 한 쪽 늦게(그다음 쪽을 완료하거나 닫을 때) 시작 → 다음 쪽에서도 [되돌리기]로 완전히 원래대로.
+   이 화면에서만 커서가 크고 형광색. */
 "use strict";
 
 const EYE_SIZES = [[24, "크게"], [40, "보통"], [60, "작게"], [96, "아주 작게"], [150, "한눈에"]];
@@ -48,10 +49,11 @@ const Eye = {
     this.storeName = storeName;
     this.baseFilter = { ...filter };
     this.after = after;
-    this.sel = new Map();      // 복사본 번호 → 줄 (쪽을 넘겨도 남음)
+    this.sel = new Map();      // 삭제 예정으로 고른 복사본 번호 → 줄 (쪽을 넘겨도 남음)
     this.dead = new Map();     // 지운 복사본 번호 → 표시 ('삭제됨' 등) — 그 칸은 자리를 지킴
-    this.undos = [];           // 되돌리기: [{sids, lids, since, n, drops, gone}] (마지막 것부터)
-    this.drops = new Set();    // 미뤄 둔 네이버 내리기 (복사본 번호) — '이 쪽 완료·다음'이나 닫을 때 시작
+    this.undos = [];           // 되돌리기: [{sids, lids, since, n, gone}] (마지막 것부터)
+    this.dropsCur = new Set(); // 이 쪽에서 미룬 네이버 내리기 (복사본 번호)
+    this.dropsPrev = new Set();// 앞 쪽에서 미룬 것 — 이 쪽을 완료하거나 닫을 때 시작 (한 쪽 늦게 → 다음 쪽에서도 되돌리기)
     this.last = null;          // Shift+클릭 범위 시작
     this.deleted = 0;
     this.rows = [];
@@ -99,14 +101,14 @@ const Eye = {
         <div class="eye-pno"><b id="eye-pg">-</b><span> / <span id="eye-pgs">-</span>쪽</span></div>
         <div class="eye-resume small" id="eye-resume" hidden></div>
         <div class="eye-pstat small muted" id="eye-pstat"></div>
-        <button class="eye-big eye-next" id="eye-next" title="이 쪽을 눈검수 완료로 하고 다음 쪽 (→)"></button>
+        <button class="eye-big eye-next" id="eye-next" title="고른 것이 있으면 지우고, 이 쪽을 눈검수 완료로 하고 다음 쪽 (→)"></button>
         <button class="eye-big2" id="eye-prev" title="이전 쪽 (←)">‹ 이전 쪽</button>
         <div class="eye-sep"></div>
         <div class="eye-seln" id="eye-seln"></div>
-        <button class="eye-big eye-del" id="eye-del">고른 것 삭제</button>
         <button class="eye-undo" id="eye-undo" hidden></button>
-        <div class="eye-row"><button class="btn sm" id="eye-pageall" title="이 쪽 전부 고르기/빼기">이 쪽 전부</button>
-          <button class="btn sm" id="eye-clear">고른 것 비우기</button></div>
+        <div class="eye-row"><button class="btn sm" id="eye-pageall" title="이 쪽 전부 고르기/풀기">이 쪽 전부</button>
+          <button class="btn sm" id="eye-clear" title="고른 것 모두 풀기">모두 풀기</button>
+          <button class="btn sm danger" id="eye-del" title="쪽을 넘기기 전에 지금 지우기 (확인 창에서 '원본까지' 끌 수 있음)">지금 삭제</button></div>
         <div class="eye-sep"></div>
         <div class="eye-stats small" id="eye-stats"></div>
         <div class="eye-memo"><div class="eye-memo-head small"><b>메모</b> <span class="muted">이 스토어만 · 자동 저장</span><span class="muted" id="eye-memo-st"></span></div>
@@ -116,9 +118,8 @@ const Eye = {
           ${scoped ? `<select id="eye-scope" class="sel" title="볼 범위"><option value="store">이 스토어 전체 (내림 제외)</option>
             <option value="filter">복사본 화면에서 거른 조건만</option></select>` : ""}
           <label class="check small"><input type="checkbox" id="eye-todo" ${this.todo ? "checked" : ""}><span>눈검수 안 한 것만</span></label></div>
-        <p class="eye-hint">클릭 고르기 · 끌기 여러 장 · Shift+클릭 범위 · 우클릭 상품명 · ← → 쪽 · Esc 닫기</p>
+        <p class="eye-hint">클릭 삭제 예정·다시 누르면 풀기 · 끌기 여러 장 · Shift+클릭 범위 · 우클릭 크게 · ← → 쪽 · Esc 닫기</p>
       </aside>
-      <div class="eye-zoom" id="eye-zoom" hidden><img alt="" referrerpolicy="no-referrer"></div>
       <div class="eye-card" id="eye-card" hidden></div>
       <div class="eye-rect" id="eye-rect" hidden></div>`;
     $("#eye-memo").value = this.state?.memo || "";
@@ -148,11 +149,15 @@ const Eye = {
       if (!t) return;
       this.hideCard();
       const i = +t.dataset.i;
+      const l = this.rows[i];
+      const dead = this.dead.get(l.id);
+      if (dead?.cls === "gone") return this.restoreOne(l);            // 지운 칸을 다시 누르면 그 하나만 되살림
+      if (dead) { this.dead.delete(l.id); this.paintGrid(); }          // '안 지워짐' 표시는 지우고 다시 고를 수 있게
       if (e.shiftKey && this.last != null) {
         const [a, b] = [Math.min(this.last, i), Math.max(this.last, i)];
-        const on = !this.sel.has(this.rows[i].id);
+        const on = !this.sel.has(l.id);
         for (let k = a; k <= b; k++) this.pick(this.rows[k], on);
-      } else this.pick(this.rows[i], !this.sel.has(this.rows[i].id));
+      } else this.pick(l, !this.sel.has(l.id));
       this.last = i;
       this.paintSel();
     });
@@ -162,16 +167,9 @@ const Eye = {
       e.preventDefault();
       this.showCard(this.rows[+t.dataset.i], e.clientX, e.clientY);
     });
-    grid.addEventListener("mouseover", (e) => {
-      const t = e.target.closest("[data-i]");
-      clearTimeout(this._zt);
-      if (!t || this._drag?.active) return;
-      this._zt = setTimeout(() => this.zoom(t), 200);
-    });
-    grid.addEventListener("mouseleave", () => { clearTimeout(this._zt); $("#eye-zoom").hidden = true; });
     this.bindDrag();
     this._key = (e) => {
-      if (!$("#modal-bg").hidden) return;   // 삭제 확인 창이 떠 있으면 그쪽
+      if (!$("#modal-bg").hidden) return;   // 확인 창이 떠 있으면 그쪽
       if (e.target.matches?.("input, select, textarea")) return;
       if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); if (!$("#eye-card").hidden) this.hideCard(); else this.close(); }
       else if (e.key === "ArrowRight") { e.preventDefault(); this.next(); }
@@ -187,7 +185,7 @@ const Eye = {
 
   pick(l, on) { if (!l || this.dead.has(l.id)) return; on ? this.sel.set(l.id, l) : this.sel.delete(l.id); },
 
-  /* 끌어서 여러 장 고르기: 빈 곳이나 사진에서 누른 채 끌면 네모 안의 사진을 고름 (고른 사진에서 시작하면 빼기) */
+  /* 끌어서 여러 장 고르기: 빈 곳이나 사진에서 누른 채 끌면 네모 안의 사진을 고름 (고른 사진에서 시작하면 풀기) */
   bindDrag() {
     const main = $("#eye-main");
     main.addEventListener("pointerdown", (e) => {
@@ -201,8 +199,6 @@ const Eye = {
       if (!d.active) {
         if (Math.hypot(e.clientX - d.x, e.clientY - d.y) < 8) return;
         d.active = true;
-        clearTimeout(this._zt);
-        $("#eye-zoom").hidden = true;
         this.hideCard();
       }
       e.preventDefault();
@@ -277,13 +273,14 @@ const Eye = {
       const dead = this.dead.get(l.id);
       const going = !dead && l.op === "delete" && ["planned", "queued", "running"].includes(l.status);
       const words = (l.kw || []).map((x) => x[0]);
-      return `<div class="eye-tile ${dead ? `dead ${dead.cls}` : ""} ${going || (!dead && l.drop_pending) ? "going" : ""}" data-i="${i}" data-id="${l.id}">
+      return `<div class="eye-tile ${dead ? `dead ${dead.cls}` : ""} ${going || (!dead && l.drop_pending) ? "going" : ""}" data-i="${i}" data-id="${l.id}"
+          ${dead?.cls === "gone" ? 'title="다시 누르면 되살림"' : ""}>
         <div class="eye-ph"><img loading="lazy" referrerpolicy="no-referrer" src="${esc(eyeThumb(l.thumb, this.tile))}" data-full="${esc(l.thumb)}" alt=""
           onerror="if(this.dataset.full&&this.src!==this.dataset.full){this.src=this.dataset.full}else{this.classList.add('broken')}">
           ${l.eye_at && !dead ? '<span class="eye-seen" title="눈검수 한 원본">✓</span>' : ""}
           ${dead ? `<div class="eye-dead"><b>${esc(dead.label)}</b>${dead.sub ? `<span>${esc(dead.sub)}</span>` : ""}</div>`
             : going || l.drop_pending ? '<span class="eye-tag">내리는 중</span>' : ""}
-          <span class="eye-check">✓</span></div>
+          <span class="eye-check">삭제 예정</span></div>
         <div class="eye-nm" title="${esc(l.name)}" style="--fs:${eyeFont(words.length ? words : eyeWords(l.name)).toFixed(3)}"><span>${this.nameHtml(l)}</span></div></div>`;
     }).join("") : `<p class="muted pad">${this.todo ? "눈검수 안 한 복사본이 없습니다. 다 봤습니다." : "복사본이 없습니다."}</p>`;
     eyeFit(grid);
@@ -296,9 +293,19 @@ const Eye = {
     $("#eye-pgs").textContent = num(r.pages || 0);
     $("#eye-pstat").innerHTML = `복사본 ${num(r.total || 0)}건${this.todo ? " (안 한 것만)" : ""}` + (r.done ? ' · <b class="c-ok">✓ 이 쪽은 눈검수 완료</b>' : "");
     $("#eye-prev").disabled = !r.has_prev;
-    $("#eye-next").innerHTML = r.has_next ? "✓ 이 쪽 눈검수 완료<small>다음 쪽 →</small>" : "✓ 이 쪽 눈검수 완료<small>마지막 쪽</small>";
-    $("#eye-next").disabled = !this.rows.length;
+    this.paintNext();
     this.paintStats();
+  },
+
+  /* 완료 버튼: 고른 게 있으면 '고른 N개 삭제하고 다음 쪽'(빨강) */
+  paintNext() {
+    const b = $("#eye-next");
+    if (!b) return;
+    const n = this.sel.size, more = this.res?.has_next;
+    b.classList.toggle("del", n > 0);
+    b.innerHTML = n ? `✓ 고른 ${num(n)}개 삭제하고<br>${more ? "다음 쪽 →" : "이 쪽 완료"}<small>원본까지 · 되돌리기 가능</small>`
+      : `✓ 이 쪽 눈검수 완료<small>${more ? "다음 쪽 →" : "마지막 쪽"}</small>`;
+    b.disabled = !this.rows.length;
   },
 
   paintResume() {
@@ -325,13 +332,14 @@ const Eye = {
   paintSel() {
     $$("#eye-grid .eye-tile").forEach((t) => t.classList.toggle("on", this.sel.has(+t.dataset.id)));
     const n = this.sel.size;
-    $("#eye-seln").innerHTML = n ? `고른 것 <b>${num(n)}</b>개` : '<span class="muted">고른 것 없음 · 사진을 눌러 고르기</span>';
+    $("#eye-seln").innerHTML = n ? `삭제 예정 <b>${num(n)}</b>개 <span class="muted small">(다시 누르면 풀림)</span>` : '<span class="muted">지울 사진을 눌러 고르세요</span>';
     $("#eye-del").disabled = !n;
     $("#eye-clear").disabled = !n;
     const u = this.undos[this.undos.length - 1];
     const ub = $("#eye-undo");
     ub.hidden = !u;
     if (u) ub.innerHTML = `↶ 되돌리기 <span>방금 지운 ${num(u.n)}개${this.undos.length > 1 ? ` (${this.undos.length}번 남음)` : ""}</span>`;
+    this.paintNext();
   },
 
   async saveMemo() {
@@ -353,31 +361,77 @@ const Eye = {
     } catch (e) { App.toast(e.message, true); return false; }
   },
 
-  /* 미뤄 둔 네이버 내리기 시작 (이 쪽 완료·다음, 닫기) */
-  async commit() {
-    if (!this.drops.size) return;
-    const ids = [...this.drops];
-    this.drops.clear();
+  /* 미뤄 둔 네이버 내리기 시작 → 알릴 말 (없으면 "") */
+  async commit(set) {
+    if (!set.size) return "";
+    const ids = [...set];
+    set.clear();
     try {
       const r = await App.api("/api/eye/commit", { json: { ids } });
-      if (r.started) App.toast(`판매 중이던 ${num(r.count)}건을 네이버에서 내리는 중입니다 (다 내리면 원본도 휴지통으로)`);
-      else if (r.queued) App.toast(`판매 중이던 ${num(r.count)}건은 내리기 대기에 있습니다 (지금 등록이 도는 중 — 끝난 뒤 시작에서 '내리기')`);
-      else if (r.error) App.toast(r.error, true);
-    } catch (e) { App.toast(e.message, true); }
+      if (r.started) return `앞에서 지운 판매 중 ${num(r.count)}건을 네이버에서 내리는 중`;
+      if (r.queued) return `판매 중 ${num(r.count)}건은 내리기 대기 (지금 등록이 도는 중 — 끝난 뒤 시작에서 '내리기')`;
+      if (r.error) return r.error;
+    } catch (e) { return e.message; }
+    return "";
   },
 
-  /* 이 쪽 눈검수 완료 → 다음 쪽 (복사본 번호로 이어서 — 이 쪽에서 지운 것이 있어도 밀리지 않음) */
+  /* 지운 뒤: 칸에 결과 표시(자리는 그대로)·되돌리기 기록·통계. 판매 중인 것의 내리기는 이 쪽 몫으로 미룸 */
+  async afterDelete(picked, since, r) {
+    const ids = picked.map((l) => l.id);
+    const now = {};
+    try {
+      for (let i = 0; i < ids.length; i += 400) {
+        const d = await App.api(`/api/listings?${new URLSearchParams({ ids: ids.slice(i, i + 400).join(","), size: 500 })}`);
+        d.rows.forEach((x) => { now[x.id] = x; });
+      }
+    } catch (e) { /* 표시만 못 함 */ }
+    for (const id of ids) {
+      const x = now[id];
+      if (!x) this.dead.set(id, { label: "삭제됨", cls: "gone" });
+      else if (x.op === "delete" && ["planned", "queued", "running"].includes(x.status)) this.dead.set(id, { label: "삭제됨", sub: "네이버에서 내릴 예정", cls: "gone" });
+      else this.dead.set(id, { label: "안 지워짐", sub: x.locked ? "판매 이력·잠금" : x.origin_no ? "올라가 있음" : "", cls: "kept" });
+    }
+    const gone = ids.filter((id) => this.dead.get(id)?.cls === "gone");
+    (r.drop_ids || []).forEach((id) => this.dropsCur.add(id));
+    const goneSet = new Set(gone);
+    if (gone.length) this.undos.push({ sids: [...new Set(picked.filter((l) => goneSet.has(l.id)).map((l) => l.source_id))], lids: gone, since, n: gone.length, gone: gone.length });
+    this.deleted += gone.length;
+    this.sel.clear();
+    this.rows = this.rows.map((l) => (now[l.id] ? { ...l, ...now[l.id] } : l));
+    try {
+      const s = await App.api("/api/eye/deleted", { json: { store_id: this.storeId, n: gone.length } });
+      Object.assign(this.state, s);
+    } catch (e) { /* 통계만 */ }
+    return { gone: gone.length, kept: ids.length - gone.length };
+  },
+
+  /* 이 쪽 완료 → (고른 게 있으면 확인 없이 원본까지 지우고) 다음 쪽. 복사본 번호로 이어서 — 지운 것이 있어도 밀리지 않음 */
   async next() {
     if (!this.rows.length || this._busy) return;
     this._busy = true;
+    const msgs = [];
     try {
+      if (this.sel.size) {
+        const picked = [...this.sel.values()];
+        const since = Date.now() / 1000;
+        let r;
+        try { r = await App.api("/api/chem/delete", { json: { listing_filter: { ids: picked.map((l) => l.id) }, now: false } }); }
+        catch (e) { App.toast(e.message, true); return; }
+        const d = await this.afterDelete(picked, since, r);
+        msgs.push(`${num(d.gone)}개 삭제` + (d.kept ? ` · 판매 이력·잠금으로 남긴 ${num(d.kept)}개` : "") + (d.gone ? " (↶ 되돌리기 가능)" : ""));
+        App.refreshState();
+      }
       if (!(await this.mark())) return;
-      await this.commit();
+      const c = await this.commit(this.dropsPrev);   // 앞 쪽에서 지운 판매 중인 것은 이제 내림 (한 쪽 늦게)
+      if (c) msgs.push(c);
+      this.dropsPrev = this.dropsCur;
+      this.dropsCur = new Set();
       this.resume = null;
       this.paintResume();
       const lastId = this.rows[this.rows.length - 1].id;
       if (this.res.has_next) await this.load({ from_id: lastId + 1 });
-      else { App.toast("마지막 쪽까지 눈검수 완료했습니다"); await this.load({ from_id: this.rows[0].id }); }
+      else { msgs.push("마지막 쪽까지 눈검수 완료"); await this.load({ from_id: this.rows[0].id }); }
+      if (msgs.length) App.toast(msgs.join(" · "));
     } finally { this._busy = false; }
   },
 
@@ -393,83 +447,70 @@ const Eye = {
     this.load({ from_id: 0 });
   },
 
-  zoom(t) {
-    const im = $("img", t);
-    if (!im || im.classList.contains("broken") || !$("#eye-card").hidden || t.classList.contains("dead") || this._drag?.active) return;
-    const z = $("#eye-zoom");
-    $("img", z).src = im.dataset.full || im.src;
-    const r = t.getBoundingClientRect();
-    const right = $("#eye-main").getBoundingClientRect().right;   // 오른쪽 버튼 칸은 가리지 않게
-    const W = Math.min(480, right - 24, innerHeight - 24);
-    z.style.width = z.style.height = `${W}px`;
-    const left = r.right + 10 + W < right ? r.right + 10 : r.left - W - 10 > 0 ? r.left - W - 10 : Math.max(8, right - W - 8);
-    z.style.left = `${left}px`;
-    z.style.top = `${Math.max(8, Math.min(innerHeight - W - 8, r.top + r.height / 2 - W / 2))}px`;
-    z.hidden = false;
-  },
-
+  /* 우클릭: 큰 사진 + 상품명 전체 + 버튼 */
   showCard(l, x, y) {
-    $("#eye-zoom").hidden = true;
     const c = $("#eye-card");
     const named = !!l.name_id || !!l.origin_no;
     const dead = this.dead.get(l.id);
     const flagged = (l.kw || []).filter(([, why]) => EYE_KW[why]);
-    c.innerHTML = `<div class="eye-card-name">${esc(l.name)}</div>
+    const main = $("#eye-main").getBoundingClientRect();
+    const W = Math.max(280, Math.min(520, main.width - 24, innerHeight - 230));
+    c.style.width = `${W + 28}px`;
+    c.innerHTML = `<div class="eye-card-img" style="height:${W}px"><img referrerpolicy="no-referrer" src="${esc(l.thumb)}" alt=""></div>
+      <div class="eye-card-name">${esc(l.name)}</div>
       ${named && l.source_name && l.source_name !== l.name ? `<div class="small muted">원본: ${esc(l.source_name)}</div>` : ""}
       ${!named ? '<div class="small c-err">상품명 변경 전 (원본 이름 그대로)</div>' : ""}
-      ${flagged.length ? `<div class="small" style="margin-top:4px">${flagged.map(([w, why]) => `<em class="${EYE_KW[why][0]}">${esc(w)}</em> ${EYE_KW[why][1]}`).join(" · ")}</div>` : ""}
+      ${flagged.length ? `<div class="small eye-card-flags">${flagged.map(([w, why]) => `<em class="${EYE_KW[why][0]}">${esc(w)}</em> ${EYE_KW[why][1]}`).join(" · ")}</div>` : ""}
       <div class="small" style="margin-top:6px">${dead ? `<b class="c-err">${esc(dead.label)}</b>` : statusBadge(l.status, l.op)} ${esc(l.seller_code || "")} · 원본 #${l.source_id} · ${num(l.final ?? l.price)}원</div>
       <div class="cl-row" style="margin-top:8px">
-        ${dead ? "" : `<button class="btn sm ${this.sel.has(l.id) ? "" : "primary"}" data-card-sel>${this.sel.has(l.id) ? "고른 것에서 빼기" : "고르기"}</button>`}
+        ${dead?.cls === "gone" ? '<button class="btn sm primary" data-card-back>되살리기</button>'
+          : dead ? "" : `<button class="btn sm ${this.sel.has(l.id) ? "" : "danger"}" data-card-sel>${this.sel.has(l.id) ? "삭제 예정 풀기" : "삭제 예정으로"}</button>`}
         ${l.origin_no && l.channel_no ? goLinks({ storeUrl: l.store_url, channelNo: l.channel_no }) : ""}
         <a class="btn sm" href="/api/sources/${l.source_id}/origin" target="_blank" rel="noopener noreferrer" title="엑셀 수집URL">수집한 곳 ↗</a>
-        <button class="btn sm ghost" data-card-copy title="상품명 복사">복사</button></div>`;
+        <button class="btn sm ghost" data-card-copy title="상품명 복사">상품명 복사</button></div>`;
     c.hidden = false;
     const w = c.offsetWidth, h = c.offsetHeight;
-    c.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, x + 4))}px`;
-    c.style.top = `${Math.max(8, Math.min(innerHeight - h - 8, y + 4))}px`;
+    const right = main.right;
+    const left = x + 16 + w < right ? x + 16 : x - 16 - w > main.left ? x - 16 - w : Math.max(8, right - w - 8);
+    c.style.left = `${left}px`;
+    c.style.top = `${Math.max(8, Math.min(innerHeight - h - 8, y - h / 2))}px`;
     $("[data-card-sel]", c)?.addEventListener("click", () => { this.sel.has(l.id) ? this.sel.delete(l.id) : this.sel.set(l.id, l); this.paintSel(); this.hideCard(); });
+    $("[data-card-back]", c)?.addEventListener("click", () => { this.hideCard(); this.restoreOne(l); });
     $("[data-card-copy]", c).addEventListener("click", async () => {
       try { await navigator.clipboard.writeText(l.name); App.toast("상품명을 복사했습니다"); } catch (e) { App.toast("복사하지 못했습니다", true); }
     });
   },
   hideCard() { const c = $("#eye-card"); if (c) c.hidden = true; },
 
-  /* 고른 것 삭제 → 쪽을 다시 불러오지 않고 그 칸에 결과 표시 (자리는 그대로). 판매 중인 것의 네이버 내리기는 미룸 */
+  /* 쪽을 넘기기 전에 지금 지우기 (확인 창 — '원본까지'를 끌 수 있음) */
   async remove() {
     const picked = [...this.sel.values()];
-    const ids = picked.map((l) => l.id);
-    if (!ids.length) return;
+    if (!picked.length) return;
     const since = Date.now() / 1000;
-    const r = await App.deleteCopies({ ids }, null, `눈검수로 고른 ${num(ids.length)}개`, { now: false });
+    const r = await App.deleteCopies({ ids: picked.map((l) => l.id) }, null, `눈검수로 고른 ${num(picked.length)}개`, { now: false });
     if (!r) return;
-    const now = {};
-    try {
-      for (let i = 0; i < ids.length; i += 400) {
-        const part = ids.slice(i, i + 400);
-        const d = await App.api(`/api/listings?${new URLSearchParams({ ids: part.join(","), size: 500 })}`);
-        d.rows.forEach((x) => { now[x.id] = x; });
-      }
-    } catch (e) { /* 표시만 못 함 */ }
-    for (const id of ids) {
-      const x = now[id];
-      if (!x) this.dead.set(id, { label: "삭제됨", cls: "gone" });
-      else if (x.op === "delete" && ["planned", "queued", "running"].includes(x.status)) this.dead.set(id, { label: "삭제됨", sub: "네이버에서 내릴 예정", cls: "gone" });
-      else this.dead.set(id, { label: "안 지워짐", sub: x.locked ? "판매 이력·잠금" : x.origin_no ? "올라가 있음" : "", cls: "kept" });
-    }
-    const gone = ids.filter((id) => this.dead.get(id)?.cls === "gone").length;
-    const drops = r.drop_ids || [];
-    drops.forEach((id) => this.drops.add(id));
-    this.undos.push({ sids: [...new Set(picked.map((l) => l.source_id))], lids: ids, since, n: ids.length, drops, gone });
-    this.deleted += gone;
-    this.sel.clear();
-    this.rows = this.rows.map((l) => now[l.id] ? { ...l, ...now[l.id] } : l);
+    await this.afterDelete(picked, since, r);
     this.paintGrid();
-    try {
-      const s = await App.api("/api/eye/deleted", { json: { store_id: this.storeId, n: gone } });
-      Object.assign(this.state, s);
-      this.paintStats();
-    } catch (e) { /* 통계만 */ }
+    this.paintStats();
+  },
+
+  /* 지운 칸 하나 되살리기 (그 칸을 다시 누름) */
+  async restoreOne(l) {
+    const u = this.undos.find((x) => x.lids.includes(l.id));
+    if (!u) return App.toast("이 상품은 여기서 되살릴 수 없습니다 (휴지통에서 되살리세요).", true);
+    let r;
+    try { r = await App.api("/api/eye/undo", { json: { store_id: this.storeId, source_ids: [l.source_id], since: u.since, n: 1 } }); }
+    catch (e) { return App.toast(e.message, true); }
+    u.lids = u.lids.filter((id) => id !== l.id);
+    u.sids = u.sids.filter((s) => s !== l.source_id);
+    u.n -= 1; u.gone -= 1;
+    if (!u.lids.length) this.undos = this.undos.filter((x) => x !== u);
+    this.dead.delete(l.id);
+    this.deleted -= 1;
+    Object.assign(this.state, { today_seen: r.today_seen, today_deleted: r.today_deleted, sec_per_item: r.sec_per_item });
+    App.toast(r.dropped ? "원본은 되살렸지만 이미 네이버에서 내려가 '내림'으로 남았습니다 (복사본 화면에서 다시 올리기)" : "되살렸습니다", !!r.dropped);
+    App.refreshState();
+    await this.load({ from_id: this.rows[0]?.id || 0 });
   },
 
   /* 방금 지운 것 되돌리기 (마지막 것부터) */
@@ -481,7 +522,6 @@ const Eye = {
       r = await App.api("/api/eye/undo", { json: { store_id: this.storeId, source_ids: u.sids, since: u.since, n: u.gone } });
     } catch (e) { this.undos.push(u); return App.toast(e.message, true); }
     u.lids.forEach((id) => this.dead.delete(id));
-    u.drops.forEach((id) => this.drops.delete(id));
     this.deleted -= u.gone;
     Object.assign(this.state, { today_seen: r.today_seen, today_deleted: r.today_deleted, sec_per_item: r.sec_per_item });
     App.toast(`되돌렸습니다: 휴지통에서 ${num(r.restored)}개 되살림` + (r.cancelled ? ` · 네이버 내리기 ${num(r.cancelled)}건 취소 (판매 중 그대로)` : "")
@@ -492,9 +532,11 @@ const Eye = {
   },
 
   async close() {
-    clearTimeout(this._zt);
     if (this._mt) { clearTimeout(this._mt); await this.saveMemo(); }
-    await this.commit();
+    const all = new Set([...this.dropsPrev, ...this.dropsCur]);
+    this.dropsPrev.clear(); this.dropsCur.clear();
+    const c = await this.commit(all);
+    if (c) App.toast(c);
     document.removeEventListener("keydown", this._key, true);
     document.removeEventListener("mousedown", this._out, true);
     window.removeEventListener("resize", this._resize);
