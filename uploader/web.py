@@ -10,7 +10,7 @@ import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import VERSION, activity, aiwords, bait, chem, chrome, clean, eye, mail, srctags, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
+from . import VERSION, activity, aiwords, chem, chrome, clean, eye, mail, srctags, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
 from .db import DB
 from .tasks import Tasks
 
@@ -23,9 +23,10 @@ STORE_FIELDS = ("name", "code", "client_id", "client_secret", "store_url", "as_p
 
 def _filter_from(src):
     f = {k: src.get(k) for k in FILTER_KEYS if src.get(k) not in (None, "")}
-    if src.get("ids"):
+    if "ids" in src and src["ids"] is not None:
         ids = src["ids"]
-        f["ids"] = [int(i) for i in (ids.split(",") if isinstance(ids, str) else ids) if str(i).strip()]
+        # 빈 목록이 오면 '전부'가 아니라 '아무것도 아님' (고른 것 없이 지우기 등이 전체로 번지지 않게)
+        f["ids"] = [int(i) for i in (ids.split(",") if isinstance(ids, str) else ids) if str(i).strip()] or [-1]
     if src.get("kinds"):
         f["kinds"] = [str(k) for k in src["kinds"]]
     if src.get("visible"):
@@ -422,7 +423,7 @@ def create_app(db=None):
     @app.post("/api/settings")
     def save_settings():
         v = body()
-        ints = ("recombine_fixed_prefix", "recombine_new_min", "recombine_new_max", "max_word_repeat", "opendict_daily_limit", "kipris_limit", "bait_amount", "kw_daily_limit", "kw_min_volume", "kw_related_max", "kw_refresh_days", "kw_max_words", "core_scan_words", "orders_auto_sync_minutes", "orders_initial_days", "mail_days", "mail_auto_minutes", "max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
+        ints = ("recombine_fixed_prefix", "recombine_new_min", "recombine_new_max", "max_word_repeat", "opendict_daily_limit", "kipris_limit", "kw_daily_limit", "kw_min_volume", "kw_related_max", "kw_refresh_days", "kw_max_words", "core_scan_words", "orders_auto_sync_minutes", "orders_initial_days", "mail_days", "mail_auto_minutes", "max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
                 "name_max_len", "ai_names_per_product", "ai_products_per_call", "ai_workers")
         floats = ("wm_size_pct", "wm_opacity", "wm_margin_pct", "recombine_replace_ratio", "delay_sec", "price_jitter_pct", "price_jitter_min", "price_jitter_max", "display_discount_pct", "recombine_max_overlap", "image_cache_gb")
         for k in ints:
@@ -963,10 +964,13 @@ def create_app(db=None):
     @app.post("/api/plans")
     def make_plan():
         b = body()
-        ids = inventory.source_ids(db, _filter_from(b))
+        f = _filter_from(b)
+        if b.get("reviewed_only"):   # 검수 완료한 원본만 복사
+            f["eye"] = "done"
+        ids = inventory.source_ids(db, f)
         store_ids = [int(i) for i in b.get("store_ids") or []]
         if not ids:
-            return fail("대상 상품이 없습니다.")
+            return fail("대상 상품이 없습니다." + (" (검수 완료한 원본이 없습니다 — 눈검수를 하거나 '검수 완료로 표시')" if b.get("reviewed_only") else ""))
         if not store_ids:
             return fail("스토어를 하나 이상 골라 주세요.")
         if runner.state["running"]:
@@ -977,7 +981,7 @@ def create_app(db=None):
         try:
             tid = tasks.start("plan", f"등록 계획 · 상품 {len(ids):,}개 × 스토어 {len(store_ids)}곳",
                               lambda **kw: inventory.create_plan(db, ids, store_ids, mode, per,
-                                                                 b.get("title") or "", bait=b.get("bait"), seed=seed, **kw))
+                                                                 b.get("title") or "", seed=seed, **kw))
         except RuntimeError as e:
             return fail(str(e))
         return jsonify({"task": tid})
@@ -1156,30 +1160,81 @@ def create_app(db=None):
 
     @app.get("/api/eye/page")
     def eye_page():
-        """눈검수 한 쪽: 복사본 번호 순으로 from_id부터 size개 (before_id면 그 앞 size개).
-        번호로 넘기므로 쪽에서 지운 것이 있어도 다음 쪽이 밀리거나 건너뛰지 않는다."""
+        """눈검수 한 쪽: 번호 순으로 from_id부터 size개 (before_id면 그 앞 size개). kind=listing(복사본)·source(원본).
+        번호로 넘기므로 쪽에서 지운 것이 있어도 다음 쪽이 밀리거나 건너뛰지 않는다.
+        눈검수에서 지운 것(eye_dead)은 그 자리에 '삭제됨'으로 계속 넣는다 ('안 한 것만'이면 이번에 지운 것만)."""
         a = request.args
         f = _filter_from(a)
+        kind = "source" if a.get("kind") == "source" else "listing"
         size = max(1, min(int(a.get("size", 48)), 500))
-        where, args = inventory.listing_where(f)
-        base = "FROM listings l JOIN sources s ON s.id=l.source_id"
-        cond = lambda c: where + (" AND " if where else " WHERE ") + c   # noqa: E731
-        if a.get("before_id"):
-            ids = [r["id"] for r in db.q(f"SELECT l.id {base}{cond('l.id<?')} ORDER BY l.id DESC LIMIT ?", (*args, int(a["before_id"]), size))][::-1]
+        if kind == "source":
+            f.pop("store_id", None)
+            where, args = inventory.source_where(f)
+            base, idc, store = "FROM sources", "id", 0
         else:
-            ids = [r["id"] for r in db.q(f"SELECT l.id {base}{cond('l.id>=?')} ORDER BY l.id LIMIT ?", (*args, int(a.get("from_id") or 0), size))]
-        if not ids and a.get("from_id"):   # 끝을 넘었으면 마지막 쪽
-            ids = [r["id"] for r in db.q(f"SELECT l.id {base}{where} ORDER BY l.id DESC LIMIT ?", (*args, size))][::-1]
-        total = db.one(f"SELECT COUNT(*) AS n {base}{where}", args)["n"]
-        rows = inventory.query_listings(db, {"ids": ids}, 0, size)["rows"] if ids else []
-        before = db.one(f"SELECT COUNT(*) AS n {base}{cond('l.id<?')}", (*args, ids[0]))["n"] if ids else 0
-        after = db.one(f"SELECT COUNT(*) AS n {base}{cond('l.id>?')}", (*args, ids[-1]))["n"] if ids else 0
+            where, args = inventory.listing_where(f)
+            base, idc, store = "FROM listings l JOIN sources s ON s.id=l.source_id", "l.id", int(f.get("store_id") or 0)
+        cond = lambda c: where + (" AND " if where else " WHERE ") + c   # noqa: E731
+        since = float(a.get("dead_since") or 0) if f.get("eye") == "todo" else 0
+        tomb = eye.dead_map(db, kind, store, since)
+        # 지운 것 중 아직 남아 있는 것(내리기 대기 등)은 살아 있는 줄과 겹침 → 겹치지 않는 것만 따로 넣음
+        live_dead = set()
+        tids = list(tomb)
+        for i in range(0, len(tids), 900):
+            ch = tids[i:i + 900]
+            live_dead |= {r["id"] for r in db.q(f"SELECT {idc} AS id {base}{cond(f'{idc} IN ({chr(44).join(chr(63) * len(ch))})')}", (*args, *ch))}
+        only_dead = sorted(set(tids) - live_dead)
+
+        def live(op, val, desc):
+            return [r["id"] for r in db.q(f"SELECT {idc} AS id {base}{cond(f'{idc}{op}?') if val is not None else where} "
+                                          f"ORDER BY {idc} {'DESC' if desc else ''} LIMIT ?", (*args, *(() if val is None else (val,)), size))]
+        if a.get("before_id"):
+            v = int(a["before_id"])
+            ids = sorted(set(live("<", v, True)) | {x for x in only_dead if x < v}, reverse=True)[:size][::-1]
+        else:
+            v = int(a.get("from_id") or 0)
+            ids = sorted(set(live(">=", v, False)) | {x for x in only_dead if x >= v})[:size]
+            if not ids and a.get("from_id"):   # 끝을 넘었으면 마지막 쪽
+                ids = sorted(set(live(None, None, True)) | set(only_dead), reverse=True)[:size][::-1]
+        total = db.one(f"SELECT COUNT(*) AS n {base}{where}", args)["n"] + len(only_dead)
+        before = (db.one(f"SELECT COUNT(*) AS n {base}{cond(f'{idc}<?')}", (*args, ids[0]))["n"] + sum(1 for x in only_dead if x < ids[0])) if ids else 0
+        after = (db.one(f"SELECT COUNT(*) AS n {base}{cond(f'{idc}>?')}", (*args, ids[-1]))["n"] + sum(1 for x in only_dead if x > ids[-1])) if ids else 0
+        live_ids = [i for i in ids if i not in only_dead]
+        if kind == "source":
+            got = {r["id"]: r for r in db.q(f"""SELECT id, id AS source_id, name, thumb, price, category, eye_at, n_listings, drop_pending, valid
+                FROM sources WHERE id IN ({','.join('?' * len(live_ids)) or 'NULL'})""", live_ids)} if live_ids else {}
+        else:
+            got = {r["id"]: r for r in inventory.query_listings(db, {"ids": live_ids}, 0, size)["rows"]} if live_ids else {}
+        rows, stale = [], []
+        for i in ids:
+            t = tomb.get(i)
+            r = got.get(i)
+            if r is None:   # 지워져 없어진 것 → '삭제됨' 칸
+                r = {"id": i, "source_id": t["source_id"], "name": t["name"], "thumb": t["thumb"], "eye_at": None, "status": "", "op": ""}
+                r["dead"] = {"label": "삭제됨", "cls": "gone", "at": t["at"]}
+            elif t:
+                going = r.get("drop_pending") if kind == "source" else (r.get("op") == "delete" and r.get("status") in ("planned", "queued", "running"))
+                if going:
+                    r["dead"] = {"label": "삭제됨", "sub": "네이버에서 내릴 예정", "cls": "gone", "at": t["at"]}
+                else:
+                    stale.append(i)   # 휴지통에서 되살린 것 등 → 다시 보통 칸으로
+            rows.append(r)
+        if stale:
+            eye.drop_dead(db, kind, stale)
         page = -(-before // size) + 1   # 앞에 남은 것 기준 (이 앞 쪽에서 지운 것이 있어도 쪽 번호가 줄지 않게)
         lex = lexicon.get(db)
         for r in rows:   # 사진 밑 키워드 4개: 금지어·상표 단어 표시
             r["kw"] = _eye_words(r["name"], lex)
+        live_rows = [r for r in rows if not r.get("dead")]
         return jsonify({"rows": rows, "total": total, "after": after, "page": page, "pages": page + -(-after // size) if ids else 1,
-                        "has_prev": before > 0, "has_next": after > 0, "done": bool(rows) and all(r["eye_at"] for r in rows)})
+                        "has_prev": before > 0, "has_next": after > 0, "done": bool(live_rows) and all(r["eye_at"] for r in live_rows)})
+
+    @app.post("/api/eye/dead")
+    def eye_dead_add():
+        """눈검수에서 지운 것을 기록 → 눈검수 쪽에 '삭제됨'으로 계속 남김."""
+        b = body()
+        eye.add_dead(db, "source" if b.get("kind") == "source" else "listing", int(b.get("store_id") or 0), b.get("rows") or [])
+        return jsonify({"ok": True})
 
     def _eye_words(name, lex):
         """상품명 앞 키워드 4개와 표시: blocked(금지어) / mark(상표). 붙여 쓴 두 단어 상표도 둘 다 표시."""
@@ -1238,20 +1293,61 @@ def create_app(db=None):
             return jsonify({"started": False, "count": len(live), "error": str(e)})
         return jsonify({"started": True, "count": len(live)})
 
+    @app.post("/api/eye/set")
+    def eye_set():
+        """검수 완료로 표시(done=true) / 풀기. 대상: 고른 원본·원본 거르기 조건, 또는 listing_filter(복사본)의 원본."""
+        b = body()
+        sids = _ctx_sources(b)
+        if not sids:
+            return fail("고른 상품이 없습니다.")
+        val = time.time() if b.get("done", True) else None
+        n = 0
+        with db.tx() as c:
+            for i in range(0, len(sids), 900):
+                chunk = sids[i:i + 900]
+                n += c.execute(f"UPDATE sources SET eye_at=? WHERE id IN ({','.join('?' * len(chunk))}) AND (eye_at IS NULL) = ?",
+                               (val, *chunk, int(val is not None))).rowcount
+        return jsonify({"count": n, "target": len(sids)})
+
     @app.post("/api/eye/mark")
     def eye_mark():
         """이 쪽 눈검수 완료 (복사본 번호들 → 그 원본에 표시). clear면 표시 지움. store_id·last_id가 오면 이어서 시작할 자리로."""
         b = body()
-        sids = _source_ids_of([int(i) for i in b.get("ids") or []])
+        ids = [int(i) for i in b.get("ids") or []]
+        sids = ids if b.get("kind") == "source" else _source_ids_of(ids)
         val = None if b.get("clear") else time.time()
         with db.tx() as c:
             for i in range(0, len(sids), 900):
                 chunk = sids[i:i + 900]
                 c.execute(f"UPDATE sources SET eye_at=? WHERE id IN ({','.join('?' * len(chunk))})", (val, *chunk))
-        if b.get("store_id") and b.get("last_id") and not b.get("clear"):
+        if b.get("store_id") is not None and b.get("last_id") and not b.get("clear"):
             eye.page_done(db, int(b["store_id"]), int(b["last_id"]), len(b.get("ids") or []), b.get("size"), b.get("todo"))
             return jsonify({"count": len(sids), **eye.stats(db, int(b["store_id"]))})
         return jsonify({"count": len(sids)})
+
+    @app.post("/api/listings/revert")
+    def listings_revert():
+        """복사본 → 원본으로 되돌리기 (아직 안 올린 것·내린 것만)."""
+        f = _filter_from(body())
+        f.pop("op", None)
+        ids = inventory.listing_ids(db, f)
+        if not ids:
+            return fail("고른 복사본이 없습니다.")
+        return jsonify(inventory.revert_listings(db, ids))
+
+    @app.post("/api/listings/move")
+    def listings_move():
+        """복사본을 다른 스토어로 보내기 (아직 안 올린 것·내린 것만, 받는 스토어 남은 자리만큼)."""
+        b = body()
+        f = _filter_from(b)
+        f.pop("op", None)
+        ids = inventory.listing_ids(db, f)
+        if not ids:
+            return fail("고른 복사본이 없습니다.")
+        try:
+            return jsonify(inventory.move_listings(db, ids, b.get("to_store")))
+        except ValueError as e:
+            return fail(str(e))
 
     @app.post("/api/listings/delete_preview")
     def listings_delete_preview():
@@ -1624,41 +1720,6 @@ def create_app(db=None):
             lexicon._bump(c)
         return jsonify({"ok": True})
 
-    # ── 도둑방지
-
-    @app.get("/api/bait")
-    def bait_info():
-        on = db.q("""SELECT l.id, l.name, l.price, l.bait, l.bait_state, l.bait_note, l.registered_at, l.channel_no,
-            l.sold_count, st.name AS store_name, st.store_url FROM listings l JOIN stores st ON st.id=l.store_id
-            WHERE l.bait_state IN ('on','fail') AND l.origin_no!='' ORDER BY l.registered_at LIMIT 2000""")
-        return jsonify({"stats": bait.stats(db), "on": on})
-
-    @app.post("/api/bait/restore")
-    def bait_restore():
-        b = body()
-        if b.get("filter"):
-            ids = inventory.listing_ids(db, {**b["filter"], "status": "bait"})
-        elif b.get("all"):
-            ids = [r["id"] for r in db.q("SELECT id FROM listings WHERE bait_state IN ('on','fail') AND origin_no!=''")]
-        else:
-            ids = [int(i) for i in b.get("ids") or []]
-        if not ids:
-            return fail("원래 가격으로 되돌릴 복사본이 없습니다.")
-        try:
-            tid = tasks.start("bait", f"원래 가격으로 {len(ids)}건", lambda **kw: bait.restore(db, ids, **kw))
-        except RuntimeError as e:
-            return fail(str(e))
-        return jsonify({"task": tid})
-
-    @app.post("/api/bait/fix")
-    def bait_fix():
-        """예전 버그로 할인이 두 번 빠진(30% → 42%) 되돌린 상품 바로잡기."""
-        try:
-            tid = tasks.start("bait", "되돌린 가격 바로잡기", lambda **kw: bait.fix_restored(db, **kw))
-        except RuntimeError as e:
-            return fail(str(e))
-        return jsonify({"task": tid})
-
     # ── 스토어 템플릿: 상세 상단·하단(이미지 + HTML), 관부가세 코드, 가격 조정 %, 표시 할인율 %
 
     @app.get("/api/stores/<int:sid>/template")
@@ -1950,12 +2011,17 @@ def create_app(db=None):
         where, args = inventory.listing_where({**f, "status": "noname"} if not f.get("visible") else f)
         noname = db.one(f"""SELECT COUNT(*) AS n FROM listings l JOIN sources s ON s.id=l.source_id{where}
             {'AND' if where else 'WHERE'} l.name_id IS NULL AND l.status!='deleted' AND l.origin_no=''""", args)["n"]
+        # 눈검수 안 한 원본이라 새 등록을 안 하는 복사본 (상품명은 바꾼 것)
+        uw, ua = inventory.listing_where({**f, "status": "all"} if not f.get("visible") else f)
+        unreviewed = db.one(f"""SELECT COUNT(*) AS n FROM listings l JOIN sources s ON s.id=l.source_id{uw}
+            {'AND' if uw else 'WHERE'} l.status IN ('planned','fail') AND l.op='create' AND l.origin_no='' AND l.name_id IS NOT NULL
+            AND s.eye_at IS NULL""", ua)["n"]
         # 종류별 건수 (지금 범위 안에서, 종류 고르기와 무관하게)
         kinds = {}
         for t in engine.listing_targets(db, {**f, "kinds": None}):
             k = "fail" if t["status"] == "fail" else t["op"]
             kinds[k] = kinds.get(k, 0) + 1
-        return jsonify({**engine.estimate(db, targets, config.load()), "noname": noname, "count": len(targets), "kinds": kinds})
+        return jsonify({**engine.estimate(db, targets, config.load()), "noname": noname, "unreviewed": unreviewed, "count": len(targets), "kinds": kinds})
 
     @app.post("/api/run")
     def run_start():

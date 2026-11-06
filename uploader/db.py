@@ -152,9 +152,9 @@ CREATE TABLE IF NOT EXISTS listings (
     manual_lock INTEGER NOT NULL DEFAULT 0, -- 직접 잠금
     locked INTEGER NOT NULL DEFAULT 0,      -- 지금 잠김 (직접 잠금 또는 판매 이력으로 자동 잠금) → 지우지 않음
     lock_note TEXT NOT NULL DEFAULT '',
-    bait_want INTEGER NOT NULL DEFAULT 1,   -- 도둑방지로 올릴지 (등록 계획 때 정함, 기본 켬)
-    bait INTEGER NOT NULL DEFAULT 0,        -- 도둑방지로 지금 네이버 가격에 더해 둔 금액
-    bait_state TEXT NOT NULL DEFAULT '',    -- on(높여 둠) / restored(원래 가격) / fail
+    bait_want INTEGER NOT NULL DEFAULT 1,   -- (예전 기능, 안 씀)
+    bait INTEGER NOT NULL DEFAULT 0,        -- (예전 기능, 안 씀)
+    bait_state TEXT NOT NULL DEFAULT '',    -- (예전 기능, 안 씀)
     bait_note TEXT NOT NULL DEFAULT '',
     bait_restored_at REAL,
     seconds REAL,
@@ -292,7 +292,9 @@ class DB:
                    ("ship_region", "TEXT NOT NULL DEFAULT ''"),
                    ("chrome_profile", "TEXT NOT NULL DEFAULT ''"),
                    ("mail_to", "TEXT NOT NULL DEFAULT ''")],   # 이 스토어 메일을 받는 주소 (예: me+redcoco@gmail.com) — 메일함 스토어 구분용   # 판매자센터를 열 크롬 프로필 폴더 이름 (예: Profile 3)
-        "listings": [("sale_shown", "INTEGER"),   # 네이버에 넣은 판매가(도둑방지 뺀 값, 표시 할인 전). 원래 가격으로 되돌릴 때 씀
+        # AI 이름 A·B 양식 (만들 때 정해짐 — A는 1번째 복사본용, B는 양식이 조금 다름). 비면 만든 순서로 짐작
+        "names": [("variant", "TEXT NOT NULL DEFAULT ''")],
+        "listings": [("sale_shown", "INTEGER"),   # 네이버에 넣은 판매가 (표시 할인 전)
                      ("sold_count", "INTEGER NOT NULL DEFAULT 0"), ("last_sold_at", "REAL"),
                      ("cancel_count", "INTEGER NOT NULL DEFAULT 0"), ("manual_lock", "INTEGER NOT NULL DEFAULT 0"),
                      ("locked", "INTEGER NOT NULL DEFAULT 0"), ("lock_note", "TEXT NOT NULL DEFAULT ''"),("op", "TEXT NOT NULL DEFAULT 'create'"), ("round", "INTEGER NOT NULL DEFAULT 1"),

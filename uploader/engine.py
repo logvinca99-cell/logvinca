@@ -11,7 +11,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import activity, bait, config, convert, naver, optimage, orders, templates, watermark
+from . import activity, config, convert, naver, optimage, orders, templates, watermark
 
 IMAGE_DOWNLOAD_THREADS = 16
 DETAIL_SCOPE = 0
@@ -36,10 +36,12 @@ def listing_targets(db, f):
     where, args = listing_where(f if f.get("visible") else {**f, "status": "all"})
     kinds = [k for k in (f.get("kinds") or KIND_COND) if k in KIND_COND]
     # 상품명을 아직 안 바꾼(원본 상품명 그대로인) 새 등록은 올리지 않는다 → 복사본 화면 '상품명 변경 필요'
-    cond = f"({' OR '.join(KIND_COND[k] for k in kinds) or '0'}) AND NOT (l.op IN ('create','reupload') AND l.name_id IS NULL)"
+    # 눈검수 안 한 원본의 새 등록도 올리지 않는다 (최신화·다시 올리기·내리기는 그대로)
+    cond = (f"({' OR '.join(KIND_COND[k] for k in kinds) or '0'}) AND NOT (l.op IN ('create','reupload') AND l.name_id IS NULL)"
+            f" AND NOT (l.op='create' AND l.origin_no='' AND s.eye_at IS NULL)")
     where = (where + f" AND {cond}") if where else f" WHERE {cond}"
     return db.q(f"""SELECT l.id, l.store_id, l.source_id, l.name, l.price, l.status, l.message, l.op, l.round,
-        l.origin_no, l.channel_no, l.seller_code, l.registered_at, l.bait_want, l.name_id, l.round_reset, CASE WHEN l.op='delete' THEN 0 ELSE s.image_count END AS image_count
+        l.origin_no, l.channel_no, l.seller_code, l.registered_at, l.name_id, l.round_reset, CASE WHEN l.op='delete' THEN 0 ELSE s.image_count END AS image_count
         FROM listings l JOIN sources s ON s.id=l.source_id{where} ORDER BY l.id""", args)
 
 
@@ -392,9 +394,7 @@ class Runner:
             if price != t["price"]:
                 self.db.set_listing(lid, None, price=price)
                 t = {**t, "price": price}
-            # 도둑방지: 새로 올라가는 모든 경우 가격을 높여 둠 (나중에 원래 가격으로)
-            bait_amt = bait.applies(cfg, t, op)
-            kw = dict(name=t["name"], price=t["price"], bait=bait_amt, importer=convert.importer_for(store, cfg),
+            kw = dict(name=t["name"], price=t["price"], importer=convert.importer_for(store, cfg),
                       as_phone=store.get("as_phone") or cfg.get("as_phone"), seller_code=code, store=store)
             convert.build_body(row, cfg, cat_id, **kw)  # 이미지 올리기 전에 빠진 값부터 확인
             # 스토어 템플릿 상단·하단 (이미지는 이 스토어 이름으로 한 번만 올리고 이번 실행 동안 같이 씀)
@@ -428,16 +428,15 @@ class Runner:
             res = client.create_product(body, on_wait=on_wait)
             if ((body["originProduct"].get("detailAttribute") or {}).get("unitCapacity") or {}).get("unitPriceYn") is False:
                 notes.append("가격표시제 대상 카테고리 → 단위가격 '사용 안 함'으로 등록")
-            shown = int(body["originProduct"]["salePrice"]) - convert.round_up(bait_amt or 0, max(1, convert.to_int(cfg.get("price_round"), 100)))
+            shown = int(body["originProduct"]["salePrice"])
             sec = time.time() - t0
             self.db.set_listing(lid, "success", op="create", stage="", message=" / ".join(notes), seconds=sec,
                                 seller_code=code, registered_at=time.time(),
-                                bait=bait_amt, bait_state="on" if bait_amt else "", bait_note="", bait_restored_at=None, sale_shown=shown,
+                                sale_shown=shown,
                                 origin_no=str(res.get("originProductNo", "")),
                                 channel_no=str(res.get("smartstoreChannelProductNo", "")))
             what = {"refresh": "최신화", "reupload": "다시 올리기"}.get(op, "등록")
-            extra = f", 도둑방지 +{bait_amt:,}원" if bait_amt else ""
-            self._log("ok", f"{what} 완료 · {t['name'][:40]} ({sec:.1f}초, 새 이미지 {n1 + n2}장{extra})", store["name"])
+            self._log("ok", f"{what} 완료 · {t['name'][:40]} ({sec:.1f}초, 새 이미지 {n1 + n2}장)", store["name"])
             self._count(sid, lid, True)
         except Exception as e:  # noqa: BLE001 - 한 건의 실패는 기록하고 다음으로
             self.db.set_listing(lid, "fail", stage="", message=str(e)[:1000], seconds=time.time() - t0)

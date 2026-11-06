@@ -8,6 +8,8 @@ const INV_TILES = [
   { key: "c2", label: "2회 복사", dot: "var(--dup)" },
   { key: "warn", label: "경고 있음", dot: "var(--warn)" },
   { key: "invalid", label: "오류 (고쳐야 함)", dot: "var(--err)" },
+  { key: "eye_done", label: "검수 완료", dot: "var(--ok)" },
+  { key: "eye_todo", label: "미검수 (새로 못 올림)", dot: "var(--muted)" },
 ];
 
 /* 원본 줄 아래: AI 이름 후보 A·B… — 어느 스토어 복사본에 쓰였는지, 남았는지 (남은 이름은 다른 스토어로 복사하면 바로 붙음) */
@@ -23,7 +25,7 @@ function aiNamesLine(p) {
 App.page("inventory", {
   async mount(el, params) {
     this.f = { status: "", copies: "", q: "", price_min: "", price_max: "", store_missing: "", ...params };
-    this.tile = this.f.copies !== "" ? "c" + this.f.copies : this.f.status || "all";
+    this.tile = this.f.eye ? `eye_${this.f.eye}` : this.f.copies !== "" ? "c" + this.f.copies : this.f.status || "all";
     this.page = 0;
     this.size = App.pageSize("inventory");
     this.sel = new Set();
@@ -31,6 +33,7 @@ App.page("inventory", {
     el.innerHTML = `<div class="page">
       <header class="page-head"><h1>원본 상품</h1>
         <div class="head-actions">
+          <button class="btn primary" id="i-eye" title="원본 대표 사진만 그리드로 보며 이상한 상품을 골라 지우기 · 본 쪽은 검수 완료">눈검수</button>
           <button class="btn" id="i-tagman" title="출처 태그(어디서·언제 가져왔는지) 모아 보기·이름 바꾸기·예전 원본에 채우기">출처 태그</button>
           <button class="btn" id="i-catmap" title="엑셀 카테고리를 스마트스토어 카테고리에 맞추기">카테고리 맞추기</button>
           <button class="btn ghost" id="i-revalidate" title="설정이나 카테고리가 바뀐 뒤 전체를 다시 검사">다시 검사</button>
@@ -130,6 +133,9 @@ App.page("inventory", {
         "|",
         { id: "edit", label: "일괄 수정", title: "판매자코드 비우기, 재고수(상품·옵션 모두) 바꾸기" },
         { id: "tags", label: "출처 태그 달기·빼기", title: "고른 원본에 어디서·언제 가져왔는지 태그를 달거나 뺌" },
+        "|",
+        { id: "eyeon", label: "검수 완료로 표시", title: "이미 검수한 엑셀 등 — 고른 원본을 눈검수 없이 검수 완료로 (새로 올릴 수 있게)" },
+        { id: "eyeoff", label: "검수 완료 풀기" },
         { id: "category", label: "카테고리 바꾸기", title: "고른 원본의 네이버 카테고리를 직접 정함 (인증 때문에 안 올라가는 카테고리 등) — 그 원본의 모든 복사본에 적용" },
         { id: "chem", label: "생활화학 판정", title: "생활화학·살생물제 인증 대상 카테고리면 물건(→ '인증 대상 아님'으로 올림)·화학제품(→ 보류)·애매를 판정 (애매한 것은 AI)" },
         { id: "chemset", label: "판정 바꾸기", title: "검수한 뒤 물건·화학제품·애매를 직접 정함" },
@@ -143,6 +149,7 @@ App.page("inventory", {
         if (id === "ctx") App.ctxConfirm(this.target()); if (id === "copy") this.copyModal(); if (id === "delete") this.remove(); if (id === "edit") this.editModal();
         if (id === "category") App.pickCategory({ target: this.target(), what: `고른 원본 ${num(this.selAll ? this.total : this.sel.size)}개`, after: () => this.load() });
         if (id === "tags") this.tagModal();
+        if (id === "eyeon" || id === "eyeoff") App.eyeSet(this.target(), id === "eyeon", `고른 원본 ${num(this.targetCount())}개`, () => this.load());
         if (id === "chem") App.startTask(App.api("/api/chem/judge", { json: this.target() }));
         if (id === "chemset") App.chemSet(this.target(), `고른 원본 ${num(this.targetCount())}개`, () => this.load());
         if (id === "chemdel") App.chemDelete(this.target(), () => { this.clearSel(); this.load(); });
@@ -168,7 +175,7 @@ App.page("inventory", {
       warn.length ? `<span class="flag warn" title="${esc(warn.join("\n"))}">경고 ${warn.length}</span>` : "",
       rep.length ? `<span class="flag rep" title="${esc(rep.join("\n"))}">반복</span>` : "",
       p.has_video ? `<span class="flag video" title="상세설명에 동영상 있음 (경고 아님)">동영상</span>` : "",
-      chemFlag(p),
+      chemFlag(p), eyeFlag(p),
     ].join("");
     const on = this.selAll || this.sel.has(p.id);
     return `<tr data-id="${p.id}" class="${on ? "sel" : ""}">
@@ -209,7 +216,7 @@ App.page("inventory", {
       if (!t) return;
       this.tile = t.dataset.filter;
       const k = this.tile;
-      this.setFilter({ copies: /^c\d$/.test(k) ? k.slice(1) : "", status: ["warn", "invalid"].includes(k) ? k : "" });
+      this.setFilter({ copies: /^c\d$/.test(k) ? k.slice(1) : "", status: ["warn", "invalid"].includes(k) ? k : "", eye: k.startsWith("eye_") ? k.slice(4) : "" });
     });
     let timer;
     const later = (patch) => { clearTimeout(timer); timer = setTimeout(() => this.setFilter(patch), 350); };
@@ -221,10 +228,11 @@ App.page("inventory", {
     $("#i-chem").addEventListener("change", (e) => this.setFilter({ chem: e.target.value }));
     $("#i-tag").addEventListener("change", (e) => this.setFilter({ src_tag: e.target.value }));
     $("#i-tagman").addEventListener("click", () => this.tagManager());
+    $("#i-eye").addEventListener("click", () => Eye.open({ kind: "source", storeName: "원본 상품", filter: this.query(), after: () => this.load() }));
     $("#i-reset").addEventListener("click", () => {
       $("#i-q").value = $("#i-pmin").value = $("#i-pmax").value = ""; $("#i-missing").value = ""; $("#i-ai").value = ""; $("#i-chem").value = ""; $("#i-tag").value = "";
       this.tile = "all";
-      this.setFilter({ status: "", copies: "", q: "", price_min: "", price_max: "", store_missing: "", ai: "", chem: "", src_tag: "" });
+      this.setFilter({ status: "", copies: "", q: "", price_min: "", price_max: "", store_missing: "", ai: "", chem: "", src_tag: "", eye: "" });
     });
     $("#i-rows").addEventListener("click", (e) => {
       const cr = e.target.closest("tr[data-copy]");
@@ -372,8 +380,7 @@ App.page("inventory", {
             <span class="sp-name"><span class="code">${esc(s.code)}</span> ${esc(s.name)}${s.has_keys ? "" : ' <span class="flag warn">키 없음</span>'}</span>
             ${usageBar(s.used, s.capacity)}<span class="sp-free ${s.free < 100 ? "c-err" : "muted"}">남은 자리 ${num(s.free)}</span></label>`).join("")).join("")
           || '<p class="muted">스토어가 없습니다. 스토어 화면에서 먼저 추가하세요.</p>'}</div>
-        ${App.state.settings.bait_default ? `<label class="check bait-check"><input type="checkbox" id="p-bait" checked>
-          <span><b>도둑방지로 올리기</b> · 새로 올릴 때마다(등록·최신화·다시 올리기) 판매가 +${num(App.state.settings.bait_amount)}원 (원래 가격으로는 직접 되돌림)</span></label>` : ""}
+        <label class="check"><input type="checkbox" id="p-eye" checked><span><b>검수 완료한 원본만 복사</b> <span class="muted small" id="p-eye-n"></span></span></label>
         <div class="plan-sum" id="p-sum"></div>
         <p class="muted small">상품명: AI 키워드로 만들어 둔 이름 후보가 있으면 바로 붙고, 없으면 복사본 화면에서 '이름 변경 필요'로 보입니다.
           가격은 스토어 템플릿의 가격 조정과 ±${App.state.settings.price_jitter_pct}%, 100원 단위 올림.</p></div>`,
@@ -382,7 +389,7 @@ App.page("inventory", {
           const store_ids = $$(".store-pick input:checked", b).map((x) => +x.value);
           if (!store_ids.length) { App.toast("스토어를 하나 이상 고르세요.", true); return false; }
           const r = await App.startTask(App.api("/api/plans", {
-            json: { ...this.target(), store_ids, mode: "all", bait: $("#p-bait", b)?.checked ?? true },
+            json: { ...this.target(), store_ids, mode: "all", reviewed_only: $("#p-eye", b).checked },
           }));
           if (r) this.clearSel();
           return !!r;
@@ -399,6 +406,10 @@ App.page("inventory", {
     };
     $$(".store-pick input").forEach((x) => x.addEventListener("change", sum));
     sum();
+    App.api("/api/sources/count", { json: { ...this.target(), eye: "done" } }).then((r) => {
+      const el = $("#p-eye-n");
+      if (el) el.innerHTML = `· 고른 ${num(n)}개 중 검수 완료 <b>${num(r.count)}</b>개${r.count < n ? ` (미검수 ${num(n - r.count)}개는 빼고 복사 — 끄면 같이 복사되지만 새로 올리지는 않음)` : ""}`;
+    }).catch(() => {});
   },
 
   // ── 원본 상세
@@ -431,6 +442,7 @@ App.page("inventory", {
         <span class="s-tag-add"><input id="s-tag-in" placeholder="태그 더하기 (쉼표로 여러 개)" size="18"> <button class="btn sm" id="s-tag-go">달기</button></span>`],
       ["카테고리", (d.category_fix ? `${esc(d.category_fix)} <span class="flag">직접 정함</span> <span class="muted small">(엑셀: ${esc(d.category)})</span>` : esc(d.category))
         + ` <button class="btn sm" id="s-cat">바꾸기</button>`],
+      ["눈검수", `${eyeFlag(d)} <button class="btn sm" id="s-eye">${d.eye_at ? "검수 완료 풀기" : "검수 완료로 표시"}</button>`],
       ["생활화학", `${d.chem_judge ? `<b>${esc(CHEM_LABEL[d.chem_judge] || d.chem_judge)}</b> <span class="muted small">${esc(d.chem_reason || "")}</span>` : '<span class="muted">판정 안 함</span>'}
         ${d.drop_pending ? ' <span class="flag warn">판매 중 내리고 지우는 중</span>' : ""} <button class="btn sm" id="s-chem">판정 바꾸기</button>`], ...Object.entries(d.fields).map(([k, v]) => [esc(k), esc(v)]),
       ["이미지", `대표·추가 ${Math.min(10, d.thumbnails.length)}장 · 상세 ${d.detail_images.length}장`]];
@@ -444,6 +456,7 @@ App.page("inventory", {
         </table></div>` : "") +
       (d.tags_list.length ? `<div><h3 class="sec-title">엑셀 태그</h3><div class="tags">${d.tags_list.map((t) => `<span>${esc(t)}</span>`).join("")}</div></div>` : "");
     $("#s-chem", b)?.addEventListener("click", () => App.chemSet({ ids: [d.id] }, `원본 #${d.id}`, () => { this.openSource(d.id); this.load(); }));
+    $("#s-eye", b)?.addEventListener("click", () => App.eyeSet({ ids: [d.id] }, !d.eye_at, `원본 #${d.id}`, () => { this.openSource(d.id); this.load(); }));
     const tagDo = async (add, remove) => {
       try {
         await App.api("/api/srctags/apply", { json: { ids: [d.id], add, remove } });

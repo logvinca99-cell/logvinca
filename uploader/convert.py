@@ -650,11 +650,10 @@ def store_discount_pct(store, cfg):
     return float(cfg.get("display_discount_pct", 30) if v is None else v or 0)
 
 
-def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_phone=None, seller_code=None, bait=0,
+def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_phone=None, seller_code=None,
                importer=None, store=None, opt_urls=None):
     """url_map: 원본 이미지 주소 → 네이버 이미지 주소. 없는 주소는 원본 그대로 쓴다.
     name / price / as_phone / seller_code: 스토어별로 바꿔 쓸 값 (없으면 엑셀 값).
-    bait: 도둑방지로 판매가에 더할 금액. 할인 금액·옵션가는 도둑방지 전 가격(price) 기준으로 정한다.
     store: 스토어 템플릿 (tpl_top_html·tpl_bottom_html·tpl_customs·tpl_discount_pct). 상단·하단 이미지는
            엔진이 네이버 주소로 바꾼 HTML을 store['_tpl_top']·['_tpl_bottom']에 넣어 준다."""
     store = store or {}
@@ -666,7 +665,7 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
     base_price = net_price(row)   # 판매가 - 할인가 (엑셀 할인가는 이미 빼서 원본가로 씀)
     name = str(name or row["상품명"]).strip()
     unit = to_int(cfg.get("price_round"), 100) or 100
-    sale_price = round_up(price or base_price, unit)   # 도둑방지 전 가격 (할인·옵션 계산 기준)
+    sale_price = round_up(price or base_price, unit)   # 손님 가격 (할인·옵션 계산 기준)
     images = [url_map.get(u, u) for u in thumbnails(row)[:10]]
 
     fee = to_int(row.get("배송비"))
@@ -737,7 +736,7 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
         "detailContent": detail_html(row, cfg, url_map, store.get("_tpl_top", store.get("tpl_top_html", "")),
                                      store.get("_tpl_bottom", store.get("tpl_bottom_html", "")), store, opt_urls),
         "images": {"representativeImage": {"url": images[0]}},
-        "salePrice": sale_price + round_up(bait or 0, unit),
+        "salePrice": sale_price,
         "stockQuantity": stock_qty(row, cfg),
         "deliveryInfo": {
             "deliveryType": "DELIVERY",
@@ -753,10 +752,9 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
 
     # 엑셀 할인가는 원본가(net_price)에 이미 빼서 반영했으므로 엑셀 할인가로는 즉시할인을 걸지 않는다.
     # 표시 할인율(기본 30%, 스토어 템플릿에서 바꿈): 할인율이 정확히 그 %가 되도록 판매가를 올리고 그만큼 '금액으로' 즉시할인.
-    # 도둑방지는 판매가에만 더한다 → 할인 금액은 그대로라, 원래 가격으로 되돌리면 정확히 그 %.
     shown, off, _ = display_prices(sale_price, store_discount_pct(store, cfg), unit)
     if off > 0:
-        origin["salePrice"] = shown + round_up(bait or 0, unit)
+        origin["salePrice"] = shown
         origin["customerBenefit"] = {"immediateDiscountPolicy": {
             "discountMethod": {"value": off, "unitType": "WON"}}}
 

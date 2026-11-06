@@ -268,6 +268,10 @@ def source_where(f):
         w.append("id IN (SELECT source_id FROM names WHERE origin='ctx' AND listing_id IS NULL)")
     elif ai == "used":      # 받았지만 후보를 다 씀
         w.append("id IN (SELECT source_id FROM ctx_kw WHERE status='ok') AND id NOT IN (SELECT source_id FROM names WHERE origin='ctx' AND listing_id IS NULL)")
+    if f.get("eye") == "done":                  # 눈검수 완료한 원본
+        w.append("eye_at IS NOT NULL")
+    elif f.get("eye") == "todo":                # 아직 눈검수 안 한 원본
+        w.append("eye_at IS NULL")
     tg = f.get("src_tag") or ""
     if tg == "__none__":                        # 출처 태그 없는 원본
         w.append("src_tags=''")
@@ -302,7 +306,7 @@ def source_where(f):
 
 
 LIST_COLS = ("id, source_key, seller_code, name, price, category, thumb, option_count, image_count, has_video, errors, "
-             "warnings, valid, n_listings, n_success, n_free_names, updated_at, chem_judge, chem_reason, drop_pending, src_tags")
+             "warnings, valid, n_listings, n_success, n_free_names, updated_at, chem_judge, chem_reason, drop_pending, src_tags, eye_at")
 
 
 def query_sources(db, f, page=0, size=100):
@@ -341,7 +345,8 @@ def attach_ai_names(db, by_id):
     marks = ",".join("?" * len(ids))
     for k in db.q(f"SELECT source_id, status FROM ctx_kw WHERE source_id IN ({marks})", ids):
         by_id[k["source_id"]]["kw_status"] = k["status"]
-    for n in db.q(f"""SELECT n.source_id, n.name, n.listing_id, l.status, l.origin_no,
+    labels = ai_variants(db, ids)
+    for n in db.q(f"""SELECT n.id, n.source_id, n.name, n.listing_id, l.status, l.origin_no,
             CASE WHEN t.id IS NULL THEN '' ELSE COALESCE(NULLIF(t.code,''), 'S'||printf('%02d', t.id)) END AS code, t.name AS store
             FROM names n LEFT JOIN listings l ON l.id=n.listing_id LEFT JOIN stores t ON t.id=l.store_id
             WHERE n.origin='ctx' AND n.source_id IN ({marks})
@@ -352,12 +357,29 @@ def attach_ai_names(db, by_id):
         if n["listing_id"] == -1:
             r["ai_retired"] = r.get("ai_retired", 0) + 1
             continue
-        r["ai_names"].append({"label": _ai_label(len(r["ai_names"])), "name": n["name"], "code": n["code"] or "",
+        r["ai_names"].append({"label": labels.get(n["id"], _ai_label(len(r["ai_names"]))), "name": n["name"], "code": n["code"] or "",
                               "store": n["store"] or "", "live": bool(n["origin_no"]), "status": n["status"] or ""})
 
 
 def _ai_label(i):
     return chr(65 + i) if i < 26 else str(i + 1)
+
+
+def ai_variants(db, sids):
+    """원본마다 AI 이름 번호 → 'A'/'B' (만들 때 정한 양식, 없으면 만든 순서의 짝·홀). 같은 양식이 또 있으면 A2·B2…"""
+    out = {}
+    sids = list(sids)
+    for i in range(0, len(sids), 900):
+        ch = sids[i:i + 900]
+        seen = {}
+        for n in db.q(f"""SELECT id, source_id, variant FROM names WHERE origin='ctx' AND source_id IN ({','.join('?' * len(ch))})
+                ORDER BY source_id, id""", ch):
+            k = seen.setdefault(n["source_id"], {"i": 0, "A": 0, "B": 0})
+            v = n["variant"] if n["variant"] in ("A", "B") else "AB"[k["i"] % 2]
+            k["i"] += 1
+            k[v] += 1
+            out[n["id"]] = v + (str(k[v]) if k[v] > 1 else "")
+    return out
 
 
 def source_ids(db, f):
@@ -368,7 +390,7 @@ def source_ids(db, f):
 def source_counts(db):
     return db.one("""SELECT COUNT(*) AS all_, SUM(valid=1) AS valid, SUM(valid=0) AS invalid,
         SUM(n_listings=0) AS c0, SUM(n_listings=1) AS c1, SUM(n_listings>=2) AS c2,
-        SUM(valid=1 AND warnings!='[]') AS warn FROM sources""")
+        SUM(valid=1 AND warnings!='[]') AS warn, SUM(eye_at IS NOT NULL) AS eye_done, SUM(eye_at IS NULL) AS eye_todo FROM sources""")
 
 
 # ───────────────────────── 2. 상품명 후보
@@ -580,8 +602,9 @@ def source_detail(db, sid):
         WHERE n.source_id=? ORDER BY n.listing_id IS NULL, n.id""", (sid,))
     ai = sorted((n for n in s["names"] if n["origin"] == "ctx" and n["listing_id"] != -1),
                 key=lambda n: (n["listing_id"] is None, n["listing_id"] or 0, n["id"]))
-    for i, n in enumerate(ai):   # AI 이름 A·B… (복사본 순서 → 안 쓴 이름, 원본 목록 줄·복사본 화면과 같은 글자)
-        n["label"] = _ai_label(i)
+    labels = ai_variants(db, [sid])
+    for i, n in enumerate(ai):   # AI 이름 A·B: 만들 때 정한 양식 (원본 목록 줄·복사본 화면과 같은 글자)
+        n["label"] = labels.get(n["id"], _ai_label(i))
     s["listings"] = db.q("""SELECT l.id, l.name, l.price, l.status, l.op, l.round, l.message, l.channel_no, l.sold_count,
         l.origin_no, l.seller_code, l.registered_at, l.deleted_at, l.store_id, st.name AS store_name, st.store_url,
         n.origin AS name_origin
@@ -612,9 +635,12 @@ def assign_ctx_names(db, sids, only=None, newest=False):
         marks = ",".join("?" * len(chunk))
         with db.tx() as c:
             free = {}
-            for r in c.execute(f"""SELECT id, source_id, name FROM names WHERE origin='ctx' AND listing_id IS NULL
+            for r in c.execute(f"""SELECT id, source_id, name, variant FROM names WHERE origin='ctx' AND listing_id IS NULL
                     AND source_id IN ({marks}) ORDER BY id {'DESC' if newest else ''}""", chunk):
                 free.setdefault(r["source_id"], []).append(dict(r))
+            if not newest:   # 첫 복사에는 늘 A 양식부터 (A를 쓴 복사본을 되돌리면 다음 복사에 다시 A)
+                for pool in free.values():
+                    pool.sort(key=lambda n: (n["variant"] == "B", n["id"]))
             # 고른 복사본(only)이면 내린 것도 (다시 올리기 전 이름 바꾸기), 아니면 지금 있는 것만
             for l in c.execute(f"""SELECT id, source_id FROM listings WHERE name_id IS NULL AND origin_no=''
                     AND (status!='deleted' OR ?) AND source_id IN ({marks}) ORDER BY id""", (int(only is not None), *chunk)).fetchall():
@@ -807,8 +833,7 @@ def plan_spread(db, ids, store_ids, per_product, seed=None):
     return out, preview
 
 
-def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progress=None, should_stop=None, bait=None,
-                seed=None):
+def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progress=None, should_stop=None, seed=None):
     """원본 × 스토어마다 등록 한 건(planned)을 만든다.
 
     원본 하나는 최대 max_copies곳(기본 3)까지만. 내린(deleted) 스토어는 세지 않는다.
@@ -820,7 +845,6 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
     cfg = config.load()
     cfg["_lex"] = lexicon.get(db)
     max_copies = max(1, int(cfg.get("max_copies") or 2))
-    bait_want = int(bool(cfg.get("bait_default", True) if bait is None else bait))  # 도둑방지로 올릴지
     stores = {s["id"]: s for s in db.stores() if s["id"] in set(store_ids) and s["enabled"]}
     if not stores:
         raise ValueError("등록할 스토어를 골라 주세요. (사용 중지된 스토어는 제외)")
@@ -887,13 +911,13 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
                             c.execute("UPDATE names SET listing_id=NULL WHERE listing_id=?", (old["id"],))
                             c.execute("UPDATE listings SET name_id=NULL, name=? WHERE id=?", (s["name"], old["id"]))
                         c.execute("""UPDATE listings SET status='planned', op='create', round=round+1, plan_id=?,
-                            message='', stage='', bait_want=?, updated_at=? WHERE id=?""", (pid, bait_want, now, old["id"]))
+                            message='', stage='', updated_at=? WHERE id=?""", (pid, now, old["id"]))
                         st["revived"] += 1
                     else:
                         # 복사본은 원본 상품명 그대로 만든다 → 복사본 화면에서 상품명을 바꿔야 등록됨
                         c.execute("""INSERT INTO listings(store_id, source_id, plan_id, name_id, name, price,
-                            bait_want, status, created_at, updated_at) VALUES(?,?,?,NULL,?,?,?,'planned',?,?)""",
-                                  (sid, s["id"], pid, s["name"], price, bait_want, now, now))
+                            status, created_at, updated_at) VALUES(?,?,?,NULL,?,?,'planned',?,?)""",
+                                  (sid, s["id"], pid, s["name"], price, now, now))
                         st["created"] += 1
                         new_ids.append(s["id"])
                     free[sid] -= 1
@@ -963,8 +987,8 @@ def rename_shuffle(db, ids, fixed_n=3, extra=(), progress=None, should_stop=None
 def refresh_name(c, src, store_id, cfg, now):
     """최신화 때 새 이름: 안 쓴 AI 맥락 후보가 있으면 그것, 없으면 셔플 (설정의 고정 단어 수)."""
     from . import shuffle
-    r = c.execute("SELECT id, name FROM names WHERE source_id=? AND origin='ctx' AND listing_id IS NULL ORDER BY id LIMIT 1",
-                  (src["id"],)).fetchone()
+    r = c.execute("""SELECT id, name FROM names WHERE source_id=? AND origin='ctx' AND listing_id IS NULL
+        ORDER BY variant='B', id LIMIT 1""", (src["id"],)).fetchone()
     if r:
         return dict(r)
     lex = cfg["_lex"]
@@ -1264,7 +1288,6 @@ def relist(db, f):
         return []
     stores = {s["id"]: s for s in db.stores()}
     free = {sid: s["free"] for sid, s in stores.items()}
-    bait_want = int(bool(cfg.get("bait_default", True)))
     now, out = time.time(), []
     with db.tx() as c:
         for r in rows:
@@ -1275,10 +1298,95 @@ def relist(db, f):
             price = convert.store_price(r["price"], f"{r['source_key']}|{r['store_id']}", cfg, st)
             c.execute("""UPDATE listings SET status='planned', op='reupload', round=CASE WHEN round_reset=1 THEN 1 ELSE round+1 END,
                 round_reset=0, price=?, message='', stage='',
-                bait_want=?, bait=0, bait_state='', sale_shown=NULL, updated_at=? WHERE id=?""", (price, bait_want, now, r["id"]))
+                sale_shown=NULL, updated_at=? WHERE id=?""", (price, now, r["id"]))
             out.append(r["id"])
     db.recount_sources([r["id"] for r in db.q(f"SELECT DISTINCT source_id AS id FROM listings WHERE id IN ({','.join('?' * len(out))})", out)] if out else [])
     return out
+
+
+def _movable(r):
+    """원본으로 되돌리기·다른 스토어로 보내기가 되는 복사본: 아직 안 올린 것(대기·실패)과 내린 것. 판매 이력·잠금은 뺌."""
+    if r["status"] in ("queued", "running") or (r["origin_no"] and r["status"] != "deleted"):
+        return "live"
+    if r["locked"]:
+        return "locked"
+    return ""
+
+
+def revert_listings(db, ids):
+    """복사본 → 원본으로 되돌리기: 그 스토어에서 복사본을 없앰 (휴지통에 기록). 원본은 그대로, 복사 자리가 비고
+    붙어 있던 상품명은 원본의 안 쓴 후보로 (A를 쓴 것이면 다음 복사에 다시 A)."""
+    from . import trash
+    st = {"reverted": 0, "live": 0, "locked": 0}
+    go = []
+    for i in range(0, len(ids), 900):
+        ch = ids[i:i + 900]
+        for r in db.q(f"SELECT id, status, origin_no, locked FROM listings WHERE id IN ({','.join('?' * len(ch))})", ch):
+            why = _movable(r)
+            if why:
+                st[why] += 1
+            else:
+                go.append(r["id"])
+    if go:
+        st["reverted"] = trash.trash_listings(db, go)["moved"]
+    return st
+
+
+def move_listings(db, ids, to_store):
+    """복사본을 다른 스토어로 보내기 (지금 스토어에서는 사라짐): 받는 스토어의 남은 자리만큼, 그 스토어에 같은 원본이
+    이미 있으면(내린 것 포함) 뺌. 상품명(A·B)은 그대로, 가격은 받는 스토어 템플릿 기준으로 다시, 1회차 새 등록 대기.
+    내린 복사본은 받는 스토어에 새로 만들고 원래 것(지난 회차 기록)은 휴지통으로."""
+    from . import trash
+    cfg = config.load()
+    stores = {s["id"]: s for s in db.stores()}
+    to = stores.get(int(to_store or 0))
+    if not to:
+        raise ValueError("보낼 스토어를 골라 주세요.")
+    free = max(0, int(to.get("free") or 0))
+    st = {"moved": 0, "same": 0, "exists": 0, "full": 0, "live": 0, "locked": 0, "store": to["name"], "free_before": free}
+    have = {r["source_id"] for r in db.q("SELECT source_id FROM listings WHERE store_id=?", (to["id"],))}
+    rows = []
+    for i in range(0, len(ids), 900):
+        ch = ids[i:i + 900]
+        rows += db.q(f"""SELECT l.id, l.store_id, l.source_id, l.name, l.name_id, l.status, l.origin_no, l.locked, s.price AS src_price, s.source_key
+            FROM listings l JOIN sources s ON s.id=l.source_id WHERE l.id IN ({','.join('?' * len(ch))}) ORDER BY l.id""", ch)
+    old_trash, touched = [], set()
+    now = time.time()
+    with db.tx() as c:
+        for r in rows:
+            if r["store_id"] == to["id"]:
+                st["same"] += 1
+                continue
+            why = _movable(r)
+            if why:
+                st[why] += 1
+                continue
+            if r["source_id"] in have:
+                st["exists"] += 1
+                continue
+            if free <= 0:
+                st["full"] += 1
+                continue
+            price = convert.store_price(r["src_price"], f"{r['source_key']}|{to['id']}", cfg, to)
+            if r["status"] == "deleted":
+                new = c.execute("""INSERT INTO listings(store_id, source_id, plan_id, name, price, status, op, round, created_at, updated_at)
+                    VALUES(?,?,NULL,?,?,'planned','create',1,?,?)""", (to["id"], r["source_id"], r["name"], price, now, now)).lastrowid
+                if r["name_id"]:
+                    c.execute("UPDATE listings SET name_id=NULL WHERE id=?", (r["id"],))
+                    c.execute("UPDATE listings SET name_id=? WHERE id=?", (r["name_id"], new))
+                    c.execute("UPDATE names SET listing_id=? WHERE id=?", (new, r["name_id"]))
+                old_trash.append(r["id"])
+            else:
+                c.execute("""UPDATE listings SET store_id=?, price=?, status='planned', op='create', round=1, round_reset=0, seller_code='',
+                    message='', stage='', sale_shown=NULL, updated_at=? WHERE id=?""", (to["id"], price, now, r["id"]))
+            have.add(r["source_id"])
+            touched.add(r["source_id"])
+            free -= 1
+            st["moved"] += 1
+    if old_trash:
+        trash.trash_listings(db, old_trash)
+    db.recount_sources(touched)
+    return st
 
 
 def cancel_listings(db, where_sql, args):
@@ -1388,8 +1496,6 @@ def listing_where(f):
         w.append("l.name_id IS NULL AND l.status!='deleted' AND l.origin_no=''")
     elif st == "named":   # 올릴 준비: 상품명을 바꿨고 아직 네이버에 안 올렸고 등록 대기 (실패·처리 중·판매 중·내림 제외)
         w.append("l.name_id IS NOT NULL AND l.origin_no='' AND l.status='planned' AND l.op IN ('create','reupload')")
-    elif st == "bait":
-        w.append("l.bait_state IN ('on','fail') AND l.origin_no!=''")
     elif st != "all":
         w.append("l.status=?")
         a.append(st)
@@ -1432,9 +1538,7 @@ def query_listings(db, f, page=0, size=100):
         s.price AS source_price, s.thumb, s.category, s.n_listings AS source_copies, s.eye_at, s.drop_pending,
         t.id AS store_id, t.name AS store_name, t.store_url,
         COALESCE(NULLIF(t.code,''), 'S'||printf('%02d', t.id)) AS store_code,
-        n.origin AS name_origin, k.words AS ctx_words,
-        CASE WHEN n.origin='ctx' THEN (SELECT COUNT(*) FROM names x WHERE x.source_id=n.source_id AND x.origin='ctx'
-            AND x.listing_id>0 AND x.listing_id<l.id) END AS ai_rank
+        n.origin AS name_origin, n.id AS name_no, k.words AS ctx_words
         {base} LEFT JOIN names n ON n.id=l.name_id LEFT JOIN ctx_kw k ON k.source_id=l.source_id
         {where} ORDER BY l.id LIMIT ? OFFSET ?""", (*args, size, page * size))
     # 같은 원본의 다른 스토어 복사본 (바로 가기 버튼용)
@@ -1449,7 +1553,9 @@ def query_listings(db, f, page=0, size=100):
     pv = price_viewer(db)
     lex = lexicon.get(db)
     rep_n = int(config.load().get("max_word_repeat") or 2)
+    labels = ai_variants(db, sids) if any(r["name_origin"] == "ctx" for r in rows) else {}
     for r in rows:
+        r["ai_label"] = labels.get(r["name_no"]) if r["name_origin"] == "ctx" else None
         # 같은 단어 3번 이상인 이름 (예전에 만든 이름 등) → 목록에 '반복' 표시해 다시 바꾸게
         r["rep_word"] = lexicon.repeated_word(str(r["name"] or "").split(), lex, rep_n) if r["name_id"] else None
         kw = ctxkw.kw_of(r["ctx_words"]) if r["ctx_words"] else {"core": [], "ctx": []}
@@ -1515,7 +1621,7 @@ def listing_counts(db, store_id=None, plan_id=None):
     where = (" WHERE " + " AND ".join(w)) if w else ""
     day = 86400
     now = time.time()
-    return db.one(f"""SELECT COUNT(*) AS all_,
+    out = db.one(f"""SELECT COUNT(*) AS all_,
         SUM(status IN ('planned','queued','running')) AS pending,
         SUM(status IN ('planned','queued','running') AND op='create') AS pending_create,
         SUM(status IN ('planned','queued','running') AND op='refresh') AS pending_refresh,
@@ -1523,9 +1629,12 @@ def listing_counts(db, store_id=None, plan_id=None):
         SUM(status IN ('planned','queued','running') AND op='delete') AS pending_delete,
         SUM(origin_no!='' AND status='success') AS live, SUM(status='fail') AS fail, SUM(status='deleted') AS deleted,
         SUM(sold_count>0) AS sold, SUM(locked=1 AND status!='deleted') AS locked,
-        SUM(bait_state IN ('on','fail') AND origin_no!='') AS bait,
         SUM(name_id IS NULL AND status!='deleted' AND origin_no='') AS noname,
         SUM(name_id IS NOT NULL AND origin_no='' AND status='planned' AND op IN ('create','reupload')) AS named,
         SUM(origin_no!='' AND registered_at<=?) AS age30, SUM(origin_no!='' AND registered_at<=?) AS age60,
         SUM(origin_no!='' AND registered_at<=?) AS age90
         FROM listings{where}""", (now - 30 * day, now - 60 * day, now - 90 * day, *a))
+    # 눈검수: 원본 기준 (내린 것은 빼고)
+    e = db.one(f"""SELECT SUM(s.eye_at IS NOT NULL) AS eye_done, SUM(s.eye_at IS NULL) AS eye_todo
+        FROM listings l JOIN sources s ON s.id=l.source_id WHERE l.status!='deleted'{''.join(' AND l.' + x for x in w)}""", a)
+    return {**out, "eye_done": e["eye_done"] or 0, "eye_todo": e["eye_todo"] or 0}

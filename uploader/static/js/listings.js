@@ -11,8 +11,9 @@ const LST_TILES = [
   { key: "fail", label: "실패", dot: "var(--err)" },
   { key: "sold", label: "판매 이력 있음", dot: "var(--warn)" },
   { key: "locked", label: "잠금", dot: "var(--info)" },
-  { key: "bait", label: "도둑방지 가격", dot: "var(--err)" },
   { key: "deleted", label: "내림", dot: "var(--dup)" },
+  { key: "eye_done", label: "검수 완료", dot: "var(--ok)" },
+  { key: "eye_todo", label: "미검수 (새로 못 올림)", dot: "var(--muted)" },
 ];
 
 App.page("listings", {
@@ -140,7 +141,7 @@ App.page("listings", {
     this.counts = res.counts || {};
     this.rows = res.rows;
     this.total = res.total;
-    $("#l-tiles").innerHTML = tilesHtml(LST_TILES, { ...this.counts, all: this.counts.all_ }, this.f.status);
+    $("#l-tiles").innerHTML = tilesHtml(LST_TILES, { ...this.counts, all: this.counts.all_ }, this.f.eye ? `eye_${this.f.eye}` : this.f.status);
     $("#l-rows").innerHTML = res.rows.length ? res.rows.map((l) => this.rowHtml(l)).join("")
       : `<tr class="empty-row"><td colspan="7">${this.counts.all_ ? "조건에 맞는 건이 없습니다."
         : '이 스토어에 복사본이 없습니다. <a href="#inventory">원본 상품</a>에서 원본을 고르고 <b>다른 스토어로 복사</b>를 누르세요.'}</td></tr>`;
@@ -174,8 +175,13 @@ App.page("listings", {
         { id: "chem", label: "생활화학 판정", title: "고른 복사본의 원본을 판정: 물건이면 '인증 대상 아님'으로 다시 등록 대기, 화학제품이면 보류 (애매하면 AI)" },
         { id: "resetround", label: "회차 초기화", title: "지난 회차 기록을 지우고 1회차로 (다시 다 올릴 때) · 판매 중·내린 건은 다음에 다시 올릴 때 1회차로" },
         "|",
+        { id: "move", label: "다른 스토어로 보내기", title: "아직 안 올린·내린 복사본을 다른 스토어로 옮김 (이 스토어에서는 사라짐) — 받는 스토어 남은 자리만큼" },
+        { id: "revert", label: "원본으로 되돌리기", title: "아직 안 올린·내린 복사본을 이 스토어에서 없앰 → 원본의 복사 자리가 비고 상품명은 후보로 (A였으면 다음 복사에 다시 A)" },
+        "|",
+        { id: "eyeon", label: "검수 완료로 표시", title: "고른 복사본의 원본을 검수 완료로 (새로 올릴 수 있게) — 원본 기준이라 다른 스토어 복사본도 같이" },
+        { id: "eyeoff", label: "검수 완료 풀기" },
+        "|",
         { id: "remove", label: "삭제", danger: true, title: "기본: 원본까지 같이 삭제 (그 원본의 모든 스토어 복사본, 판매 중인 것은 내린 뒤) · 끄면 고른 복사본만 휴지통" },
-        ...(this.f.status === "bait" ? ["|", { id: "restore", label: "원래 가격으로", primary: true }] : []),
       ],
       onPageCheck: (on) => { this.selAll = false; this.rows.forEach((l) => (on ? this.sel.add(l.id) : this.sel.delete(l.id))); this.load(); },
       onAll: () => { this.selAll = true; this.sel.clear(); this.load(); },
@@ -192,12 +198,22 @@ App.page("listings", {
     if (id === "lock" || id === "unlock") this.lock(id === "lock");
     if (id === "remove") App.deleteCopies(this.target(), () => { this.clearSel(); this.estKey = ""; this.load(); });
     if (id === "resetround") this.resetRound();
+    if (id === "move") this.moveModal();
+    if (id === "revert") {
+      const n = this.selAll ? this.total : this.sel.size;
+      if (!confirm(`고른 복사본 ${num(n)}건을 원본으로 되돌릴까요?\n\n이 스토어에서 복사본이 없어지고(휴지통에 기록), 원본은 그대로 남아 다른 스토어로 다시 복사할 수 있습니다.\n붙어 있던 상품명은 원본의 후보로 돌아갑니다.\n네이버에 올라가 있거나 처리 중인 것·판매 이력(잠금)이 있는 것은 빼고 합니다.`)) return;
+      try {
+        const r = await App.api("/api/listings/revert", { json: this.target() });
+        App.toast(`복사본 ${num(r.reverted)}건을 원본으로 되돌렸습니다` + (r.live ? ` · 올라가 있거나 처리 중이라 뺀 ${num(r.live)}건` : "") + (r.locked ? ` · 판매 이력·잠금으로 뺀 ${num(r.locked)}건` : ""));
+        this.clearSel(); this.estKey = ""; this.load(); App.refreshState();
+      } catch (err) { App.toast(err.message, true); }
+    }
+    if (id === "eyeon" || id === "eyeoff") App.eyeSet({ listing_filter: this.target() }, id === "eyeon", `고른 복사본 ${num(this.selAll ? this.total : this.sel.size)}건의 원본`, () => this.load());
     if (id === "chem") App.startTask(App.api("/api/chem/judge", { json: { listing_filter: this.target() } }));
     if (id === "category") {
       const n = this.selAll ? this.total : this.sel.size;
       App.pickCategory({ target: { listing_filter: this.target() }, what: `고른 복사본 ${num(n)}건의 원본`, after: () => this.load() });
     }
-    if (id === "restore") App.startTask(App.api("/api/bait/restore", { json: this.selAll ? { filter: this.query() } : { ids: [...this.sel] } }));
     if (id === "cancel") {
       if (!confirm("고른 건 중 대기·실패 할 일을 취소할까요?\n새 등록이면 계획을 지우고 이름을 후보로 돌립니다. 최신화·내리기면 판매 중으로 되돌립니다.")) return;
       try {
@@ -219,7 +235,7 @@ App.page("listings", {
     const noname = !l.name_id && !live && l.status !== "deleted";
     const flags = (noname ? `<span class="flag bad" title="원본 상품명 그대로라 올리지 않습니다">상품명 변경 필요</span>` : "")
       + (l.rep_word ? `<span class="flag warn" title="'${esc(l.rep_word)}'가 3번 이상 나옵니다 — 상품명 바꾸기로 다시 만드세요">반복: ${esc(l.rep_word)}</span>` : "")
-      + (l.name_origin ? `<span class="org org-${l.name_origin}" title="${l.name_origin === "ctx" ? "AI 키워드로 만든 이름 후보 중 이 원본의 몇 번째인지 (원본 상품 화면에서 A·B 전체를 볼 수 있음)" : ""}">${l.name_origin === "ctx" && l.ai_rank != null ? `AI 이름 ${String.fromCharCode(65 + Math.min(25, l.ai_rank))}` : ORIGIN[l.name_origin] || l.name_origin}</span>` : "") + lockFlag(l) + salesFlag(l);
+      + (l.name_origin ? `<span class="org org-${l.name_origin}" title="${l.name_origin === "ctx" ? "AI 키워드 이름의 양식 (A = 첫 복사용, B = 양식이 조금 다른 두 번째) — 원본 상품 화면에서 A·B 전체를 볼 수 있음" : ""}">${l.name_origin === "ctx" && l.ai_label ? `AI 이름 ${esc(l.ai_label)}` : ORIGIN[l.name_origin] || l.name_origin}</span>` : "") + lockFlag(l) + salesFlag(l) + eyeFlag(l);
     return `<tr data-id="${l.id}" class="${on ? "sel" : ""} ${l.status === "deleted" ? "off" : ""}">
       <td class="w-check" data-stop><input type="checkbox" ${on ? "checked" : ""} ${this.selAll ? "disabled" : ""} aria-label="고르기"></td>
       <td>${img(l.thumb)}</td>
@@ -240,6 +256,42 @@ App.page("listings", {
   target() {
     if (this.selAll) return this.query();
     return { ids: [...this.sel] };
+  },
+
+  /* 다른 스토어로 보내기: 아직 안 올린·내린 복사본을 다른 스토어로 (이 스토어에서는 사라짐), 받는 스토어 남은 자리만큼 */
+  async moveModal() {
+    const n = this.selAll ? this.total : this.sel.size;
+    const stores = (await App.loadStores()).filter((s) => s.id !== +this.f.store_id);
+    const cur = App.stores.find((s) => s.id === +this.f.store_id);
+    App.openModal({
+      title: `다른 스토어로 보내기 · 복사본 ${num(n)}건`, wide: true,
+      body: `<div class="form">
+        <p class="small" style="margin:0"><b>${esc(cur?.name || "이 스토어")}</b>에서 고른 복사본을 받는 스토어로 옮깁니다. 이 스토어에서는 사라집니다.</p>
+        <ul class="small muted" style="margin:0;padding-left:18px">
+          <li>아직 안 올린 것(대기·실패)과 <b>내린 것</b>만 옮깁니다. 네이버에 올라가 있거나 처리 중인 것·판매 이력(잠금)이 있는 것은 뺍니다.</li>
+          <li>받는 스토어의 <b>남은 자리만큼만</b> 옮기고, 그 스토어에 같은 원본이 이미 있으면(내린 것 포함) 뺍니다.</li>
+          <li>상품명(A·B)은 그대로, 가격은 받는 스토어 템플릿 기준으로 다시 정하고, 1회차 새 등록 대기가 됩니다.</li></ul>
+        <div class="store-pick">${byBusiness(stores).map(([biz, ss]) => `<div class="sp-group">${esc(biz)}</div>` + ss.map((s) => `
+          <label class="sp-row"><input type="radio" name="mv-to" value="${s.id}" ${s.free > 0 ? "" : "disabled"}>
+            <span class="sp-name"><span class="code">${esc(s.code)}</span> ${esc(s.name)}</span>
+            ${usageBar(s.used, s.capacity)}<span class="sp-free ${s.free < 100 ? "c-err" : "muted"}">남은 자리 ${num(s.free)}</span></label>`).join("")).join("")}</div>
+        <div class="plan-sum" id="mv-sum">받을 스토어를 고르세요.</div></div>`,
+      buttons: [{ label: "취소" }, { label: "보내기", primary: true, onClick: async (b) => {
+        const to = +($("input[name=mv-to]:checked", b)?.value || 0);
+        if (!to) { App.toast("받을 스토어를 고르세요.", true); return false; }
+        try {
+          const r = await App.api("/api/listings/move", { json: { ...this.target(), to_store: to } });
+          App.toast(`${r.store}(으)로 ${num(r.moved)}건을 보냈습니다` + (r.exists ? ` · 그 스토어에 같은 원본이 있어 뺀 ${num(r.exists)}건` : "")
+            + (r.full ? ` · 남은 자리가 모자라 못 보낸 ${num(r.full)}건` : "") + (r.live ? ` · 올라가 있거나 처리 중이라 뺀 ${num(r.live)}건` : "")
+            + (r.locked ? ` · 판매 이력·잠금으로 뺀 ${num(r.locked)}건` : ""), !r.moved);
+          this.clearSel(); this.estKey = ""; this.load(); App.refreshState();
+        } catch (err) { App.toast(err.message, true); return false; }
+      } }],
+    });
+    $$("input[name=mv-to]").forEach((x) => x.addEventListener("change", () => {
+      const s = stores.find((t) => t.id === +x.value);
+      $("#mv-sum").innerHTML = `복사본 <b>${num(n)}건</b> → <b>${esc(s.name)}</b> · 남은 자리 ${num(s.free)}${n > s.free ? ` (넘는 ${num(n - s.free)}건은 남김)` : ""}`;
+    }));
   },
 
   /* 회차 초기화: 지난 회차 기록을 지우고 1회차로 (다시 다 올릴 때) */
@@ -386,11 +438,13 @@ App.page("listings", {
         </div>
         <div class="run-est">
           ${est.noname ? `<div class="c-err small">이 범위에서 상품명을 안 바꾼 복사본 <b>${num(est.noname)}건</b>은 올리지 않습니다 — <a href="#" id="l-noname">상품명 변경 필요 보기</a></div>` : ""}
+          ${est.unreviewed ? `<div class="c-err small">눈검수 안 한 원본이라 새로 올리지 않는 복사본 <b>${num(est.unreviewed)}건</b> — <a href="#" id="l-unrev">미검수 보기</a> (눈검수하거나 '검수 완료로 표시')</div>` : ""}
           <div id="l-est" class="muted small">${est.seconds && n ? `예상 <b>약 ${dur(est.seconds)}</b> · 스토어마다 ${est.workers}건씩 동시에 · ${esc(est.basis)}` : range === "sel" && !nSel ? "목록에서 복사본을 고르세요." : ""}</div></div>
       </div>`;
     $("#l-start").addEventListener("click", () => this.start());
     $("#l-one").addEventListener("click", () => this.start(1));
-    $("#l-noname")?.addEventListener("click", (e) => { e.preventDefault(); this.f.status = "noname"; this.page = 0; this.clearSel(); this.load(); });
+    $("#l-noname")?.addEventListener("click", (e) => { e.preventDefault(); this.f.status = "noname"; this.f.eye = ""; this.page = 0; this.clearSel(); this.load(); });
+    $("#l-unrev")?.addEventListener("click", (e) => { e.preventDefault(); this.f.status = "all"; this.f.eye = "todo"; this.page = 0; this.clearSel(); this.load(); });
     $$("[data-range]", box).forEach((x) => x.addEventListener("click", () => { this.runRange = x.dataset.range; this.renderIdle(); }));
     $$("[data-kind]", box).forEach((x) => x.addEventListener("change", () => {
       x.checked ? kinds.add(x.dataset.kind) : kinds.delete(x.dataset.kind); this.renderIdle();
@@ -495,7 +549,10 @@ App.page("listings", {
     $("#l-store").addEventListener("change", (e) => App.go(`#listings?store_id=${e.target.value}`));
     $("#l-tiles").addEventListener("click", (e) => {
       const t = e.target.closest("[data-filter]");
-      if (t) { this.f.status = t.dataset.filter; this.page = 0; this.clearSel(); this.load(); }
+      if (!t) return;
+      const k = t.dataset.filter;
+      if (k.startsWith("eye_")) { this.f.eye = k.slice(4); this.f.status = "all"; } else { this.f.status = k; this.f.eye = ""; }
+      this.page = 0; this.clearSel(); this.load();
     });
     let timer;
     $("#l-q").addEventListener("input", (e) => {
@@ -554,10 +611,7 @@ App.page("listings", {
                 <button class="btn sm d-cat">바꾸기</button></dd>
               <dt>판매가</dt><dd>손님 가격 <b>${num(l.final)}원</b> <span class="muted">(원본가 ${num(l.source_price)}원)</span>
                 ${l.off ? `<br><span class="muted">네이버 판매가 ${num(l.shown)}원 · 즉시할인 ${num(l.off)}원 (${l.disc_pct}%)</span>` : ""}
-                ${l.bait_state === "on" ? `<br><span class="flag bad">도둑방지 중</span> 네이버에는 <b>${num(l.price + l.bait)}원</b> <button class="btn" id="d-restore">원래 가격으로</button>` : ""}
-                ${!l.origin_no && l.status !== "deleted" ? `<br><span class="muted">${l.bait_want && App.state.settings.bait_default ? `도둑방지로 올림 (+${num(App.state.settings.bait_amount)}원, 처음 등록일 때)` : "도둑방지 없이 올림"}</span>` : ""}
-                ${l.bait_state === "restored" ? `<br><span class="muted">도둑방지 끝 · ${ymd(l.bait_restored_at)} 원래 가격으로 (${esc(l.bait_note)})</span>` : ""}
-                ${l.bait_state === "fail" ? `<br><span class="flag bad">${esc(l.bait_note)}</span>` : ""}</dd>
+</dd>
               <dt>다른 스토어</dt><dd>${l.siblings.length ? l.siblings.map((x) => `<div><button class="go-store" data-go="${x.id}">→ ${esc(x.store_name)}</button> ${esc(x.name)} <span class="muted">(${STATUS[x.status] || x.status})</span></div>`).join("") : "같은 원본이 다른 스토어에는 없음"}</dd></dl>`
             + `<div class="notice ${l.locked ? "info" : ""} lock-box"><div><b>${l.locked ? "잠금" : "잠금 아님"}</b>${l.locked ? ` · ${esc(l.lock_note)} · 최신화·내리기로 지우지 않습니다` : " · 최신화·내리기 가능"}
                 ${l.cancel_count ? `<br><span class="muted">취소·반품 ${num(l.cancel_count)}개는 판매로 세지 않음 (설정에서 바꿈)</span>` : ""}</div>
@@ -583,10 +637,6 @@ App.page("listings", {
           $("#d-rename", b)?.addEventListener("click", () => this.renameModal([id]));
           $(".d-chem", b)?.addEventListener("click", () => App.startTask(App.api("/api/chem/judge", { json: { ids: [l.source_id] } })));
           $$("[data-go]", b).forEach((x) => x.addEventListener("click", () => { App.closeDrawer(); this.goto(+x.dataset.go); }));
-          $("#d-restore", b)?.addEventListener("click", async () => {
-            const r = await App.startTask(App.api("/api/bait/restore", { json: { ids: [id] } }));
-            if (r) App.on("task-done", function h(t) { if (t.kind === "bait") { App.off("task-done", h); App.pages.listings.openListing(id); } });
-          });
           $("#d-lock", b)?.addEventListener("click", async () => {
             const r = await this.lock(!l.manual_lock, [id]);
             if (r) { if ($("#l-rows")) this.load(); this.openListing(id); }

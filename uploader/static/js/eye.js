@@ -44,8 +44,11 @@ function eyeTime(sec) {
 }
 
 const Eye = {
-  async open({ storeId, storeName, filter, after }) {
-    this.storeId = storeId;
+  /* kind: listing(복사본 화면, 그 스토어) / source(원본 상품 화면) */
+  async open({ kind = "listing", storeId, storeName, filter, after }) {
+    this.kind = kind === "source" ? "source" : "listing";
+    this.storeId = this.kind === "source" ? 0 : storeId;   // 메모·이어서 시작 자리: 스토어마다, 원본은 0
+    this.since0 = Date.now() / 1000;                       // '안 한 것만'일 때도 이번에 지운 칸은 남김
     this.storeName = storeName;
     this.baseFilter = { ...filter };
     this.after = after;
@@ -61,7 +64,7 @@ const Eye = {
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem("eye") || "{}"); } catch (e) { /* 무시 */ }
     let st = {};
-    try { st = await App.api(`/api/eye/state?store_id=${storeId}`); } catch (e) { /* 처음부터 */ }
+    try { st = await App.api(`/api/eye/state?store_id=${this.storeId}`); } catch (e) { /* 처음부터 */ }
     this.state = st;
     const size = st.last_at && st.size ? st.size : saved.size;
     this.size = EYE_SIZES.some((s) => s[0] === size) ? size : 40;
@@ -78,6 +81,12 @@ const Eye = {
   save() { try { localStorage.setItem("eye", JSON.stringify({ size: this.size, todo: this.todo })); } catch (e) { /* 무시 */ } },
 
   filter() {
+    if (this.kind === "source") {
+      const f = this.scope === "filter" ? { ...this.baseFilter } : {};
+      delete f.page; delete f.size; delete f.eye;
+      if (this.todo) f.eye = "todo";
+      return f;
+    }
     const f = this.scope === "filter" ? { ...this.baseFilter } : { store_id: this.storeId, status: "active" };
     if (!f.status || f.status === "all") f.status = "active";   // 내린 복사본은 볼 필요 없음
     if (this.todo) f.eye = "todo";
@@ -91,7 +100,7 @@ const Eye = {
     let el = $("#eye");
     if (!el) { el = document.createElement("div"); el.id = "eye"; el.className = "eye"; document.body.appendChild(el); }
     el.hidden = false;
-    const scoped = Object.keys(this.baseFilter).some((k) => !["store_id", "status", "page", "size"].includes(k) && this.baseFilter[k] !== "")
+    const scoped = Object.keys(this.baseFilter).some((k) => !["store_id", "status", "page", "size", "all_"].includes(k) && this.baseFilter[k] !== "")
       || (this.baseFilter.status && !["all", "active"].includes(this.baseFilter.status));
     el.innerHTML = `
       <div class="eye-main" id="eye-main"><div class="eye-grid" id="eye-grid"></div></div>
@@ -115,8 +124,8 @@ const Eye = {
           <textarea id="eye-memo" placeholder="예) 52쪽까지 봄 · 브랜드 의심 상품 다시 보기"></textarea></div>
         <div class="eye-opts">
           <label class="eye-field">한 쪽에 <select id="eye-size" class="sel">${EYE_SIZES.map(([n, l]) => `<option value="${n}" ${n === this.size ? "selected" : ""}>${n}장 · ${l}</option>`).join("")}</select></label>
-          ${scoped ? `<select id="eye-scope" class="sel" title="볼 범위"><option value="store">이 스토어 전체 (내림 제외)</option>
-            <option value="filter">복사본 화면에서 거른 조건만</option></select>` : ""}
+          ${scoped ? `<select id="eye-scope" class="sel" title="볼 범위"><option value="store">${this.kind === "source" ? "원본 전체" : "이 스토어 전체 (내림 제외)"}</option>
+            <option value="filter">${this.kind === "source" ? "원본 화면" : "복사본 화면"}에서 거른 조건만</option></select>` : ""}
           <label class="check small"><input type="checkbox" id="eye-todo" ${this.todo ? "checked" : ""}><span>눈검수 안 한 것만</span></label></div>
         <p class="eye-hint">클릭 삭제 예정·다시 누르면 풀기 · 끌기 여러 장 · Shift+클릭 범위 · 우클릭 크게 · ← → 쪽 · Esc 닫기</p>
       </aside>
@@ -134,7 +143,7 @@ const Eye = {
     $("#eye-close").addEventListener("click", () => this.close());
     $("#eye-clear").addEventListener("click", () => { this.sel.clear(); this.paintSel(); });
     $("#eye-pageall").addEventListener("click", () => {
-      const live = this.rows.filter((l) => !this.dead.has(l.id));
+      const live = this.rows.filter((l) => !this.dead.has(l.id) && !l.dead);
       const all = live.length && live.every((l) => this.sel.has(l.id));
       live.forEach((l) => (all ? this.sel.delete(l.id) : this.sel.set(l.id, l)));
       this.paintSel();
@@ -150,7 +159,7 @@ const Eye = {
       this.hideCard();
       const i = +t.dataset.i;
       const l = this.rows[i];
-      const dead = this.dead.get(l.id);
+      const dead = this.dead.get(l.id) || l.dead;
       if (dead?.cls === "gone") return this.restoreOne(l);            // 지운 칸을 다시 누르면 그 하나만 되살림
       if (dead) { this.dead.delete(l.id); this.paintGrid(); }          // '안 지워짐' 표시는 지우고 다시 고를 수 있게
       if (e.shiftKey && this.last != null) {
@@ -183,7 +192,7 @@ const Eye = {
     this.paintStats();
   },
 
-  pick(l, on) { if (!l || this.dead.has(l.id)) return; on ? this.sel.set(l.id, l) : this.sel.delete(l.id); },
+  pick(l, on) { if (!l || this.dead.has(l.id) || l.dead) return; on ? this.sel.set(l.id, l) : this.sel.delete(l.id); },
 
   /* 끌어서 여러 장 고르기: 빈 곳이나 사진에서 누른 채 끌면 네모 안의 사진을 고름 (고른 사진에서 시작하면 풀기) */
   bindDrag() {
@@ -253,7 +262,8 @@ const Eye = {
   async load(at) {
     const f = this.filter();
     let res;
-    try { res = await App.api(`/api/eye/page?${new URLSearchParams({ ...f, size: this.size, ...at })}`); } catch (e) { return App.toast(e.message, true); }
+    try { res = await App.api(`/api/eye/page?${new URLSearchParams({ ...f, size: this.size, kind: this.kind, dead_since: this.since0, ...at })}`); }
+    catch (e) { return App.toast(e.message, true); }
     this.res = res;
     this.rows = res.rows;
     this.last = null;
@@ -270,7 +280,7 @@ const Eye = {
   paintGrid() {
     const grid = $("#eye-grid");
     grid.innerHTML = this.rows.length ? this.rows.map((l, i) => {
-      const dead = this.dead.get(l.id);
+      const dead = this.dead.get(l.id) || l.dead;
       const going = !dead && l.op === "delete" && ["planned", "queued", "running"].includes(l.status);
       const words = (l.kw || []).map((x) => x[0]);
       return `<div class="eye-tile ${dead ? `dead ${dead.cls}` : ""} ${going || (!dead && l.drop_pending) ? "going" : ""}" data-i="${i}" data-id="${l.id}"
@@ -291,7 +301,7 @@ const Eye = {
     const r = this.res || {};
     $("#eye-pg").textContent = this.rows.length ? num(r.page) : "0";
     $("#eye-pgs").textContent = num(r.pages || 0);
-    $("#eye-pstat").innerHTML = `복사본 ${num(r.total || 0)}건${this.todo ? " (안 한 것만)" : ""}` + (r.done ? ' · <b class="c-ok">✓ 이 쪽은 눈검수 완료</b>' : "");
+    $("#eye-pstat").innerHTML = `${this.kind === "source" ? "원본" : "복사본"} ${num(r.total || 0)}건${this.todo ? " (안 한 것만)" : ""}` + (r.done ? ' · <b class="c-ok">✓ 이 쪽은 눈검수 완료</b>' : "");
     $("#eye-prev").disabled = !r.has_prev;
     this.paintNext();
     this.paintStats();
@@ -303,7 +313,7 @@ const Eye = {
     if (!b) return;
     const n = this.sel.size, more = this.res?.has_next;
     b.classList.toggle("del", n > 0);
-    b.innerHTML = n ? `✓ 고른 ${num(n)}개 삭제하고<br>${more ? "다음 쪽 →" : "이 쪽 완료"}<small>원본까지 · 되돌리기 가능</small>`
+    b.innerHTML = n ? `✓ 고른 ${num(n)}개 삭제하고<br>${more ? "다음 쪽 →" : "이 쪽 완료"}<small>${this.kind === "source" ? "원본·복사본 모두" : "원본까지"} · 되돌리기 가능</small>`
       : `✓ 이 쪽 눈검수 완료<small>${more ? "다음 쪽 →" : "마지막 쪽"}</small>`;
     b.disabled = !this.rows.length;
   },
@@ -355,7 +365,7 @@ const Eye = {
     const ids = this.rows.map((l) => l.id);
     if (!ids.length) return false;
     try {
-      const r = await App.api("/api/eye/mark", { json: { ids, store_id: this.storeId, last_id: ids[ids.length - 1], size: this.size, todo: this.todo } });
+      const r = await App.api("/api/eye/mark", { json: { ids, kind: this.kind, store_id: this.storeId, last_id: ids[ids.length - 1], size: this.size, todo: this.todo } });
       Object.assign(this.state, { today_seen: r.today_seen, today_deleted: r.today_deleted, sec_per_item: r.sec_per_item });
       return true;
     } catch (e) { App.toast(e.message, true); return false; }
@@ -379,19 +389,23 @@ const Eye = {
   async afterDelete(picked, since, r) {
     const ids = picked.map((l) => l.id);
     const now = {};
+    const src = this.kind === "source";
     try {
       for (let i = 0; i < ids.length; i += 400) {
-        const d = await App.api(`/api/listings?${new URLSearchParams({ ids: ids.slice(i, i + 400).join(","), size: 500 })}`);
+        const d = await App.api(`/api/${src ? "sources" : "listings"}?${new URLSearchParams({ ids: ids.slice(i, i + 400).join(","), size: 500 })}`);
         d.rows.forEach((x) => { now[x.id] = x; });
       }
     } catch (e) { /* 표시만 못 함 */ }
     for (const id of ids) {
       const x = now[id];
       if (!x) this.dead.set(id, { label: "삭제됨", cls: "gone" });
-      else if (x.op === "delete" && ["planned", "queued", "running"].includes(x.status)) this.dead.set(id, { label: "삭제됨", sub: "네이버에서 내릴 예정", cls: "gone" });
-      else this.dead.set(id, { label: "안 지워짐", sub: x.locked ? "판매 이력·잠금" : x.origin_no ? "올라가 있음" : "", cls: "kept" });
+      else if (src ? x.drop_pending : x.op === "delete" && ["planned", "queued", "running"].includes(x.status)) this.dead.set(id, { label: "삭제됨", sub: "네이버에서 내릴 예정", cls: "gone" });
+      else this.dead.set(id, { label: "안 지워짐", sub: src ? "판매 이력·잠금" : x.locked ? "판매 이력·잠금" : x.origin_no ? "올라가 있음" : "", cls: "kept" });
     }
     const gone = ids.filter((id) => this.dead.get(id)?.cls === "gone");
+    // 눈검수 쪽에 '삭제됨'으로 계속 남기기 (다시 열어도·이전 쪽으로 가도 그 자리)
+    const goneRows = picked.filter((l) => this.dead.get(l.id)?.cls === "gone").map((l) => ({ id: l.id, source_id: l.source_id, name: l.name, thumb: l.thumb }));
+    if (goneRows.length) { try { await App.api("/api/eye/dead", { json: { kind: this.kind, store_id: this.storeId, rows: goneRows } }); } catch (e) { /* 표시만 */ } }
     (r.drop_ids || []).forEach((id) => this.dropsCur.add(id));
     const goneSet = new Set(gone);
     if (gone.length) this.undos.push({ sids: [...new Set(picked.filter((l) => goneSet.has(l.id)).map((l) => l.source_id))], lids: gone, since, n: gone.length, gone: gone.length });
@@ -415,7 +429,8 @@ const Eye = {
         const picked = [...this.sel.values()];
         const since = Date.now() / 1000;
         let r;
-        try { r = await App.api("/api/chem/delete", { json: { listing_filter: { ids: picked.map((l) => l.id) }, now: false } }); }
+        const ids = picked.map((l) => l.id);
+        try { r = await App.api("/api/chem/delete", { json: { ...(this.kind === "source" ? { ids } : { listing_filter: { ids } }), now: false } }); }
         catch (e) { App.toast(e.message, true); return; }
         const d = await this.afterDelete(picked, since, r);
         msgs.push(`${num(d.gone)}개 삭제` + (d.kept ? ` · 판매 이력·잠금으로 남긴 ${num(d.kept)}개` : "") + (d.gone ? " (↶ 되돌리기 가능)" : ""));
@@ -451,17 +466,19 @@ const Eye = {
   showCard(l, x, y) {
     const c = $("#eye-card");
     const named = !!l.name_id || !!l.origin_no;
-    const dead = this.dead.get(l.id);
+    const dead = this.dead.get(l.id) || l.dead;
     const flagged = (l.kw || []).filter(([, why]) => EYE_KW[why]);
     const main = $("#eye-main").getBoundingClientRect();
     const W = Math.max(280, Math.min(520, main.width - 24, innerHeight - 230));
     c.style.width = `${W + 28}px`;
     c.innerHTML = `<div class="eye-card-img" style="height:${W}px"><img referrerpolicy="no-referrer" src="${esc(l.thumb)}" alt=""></div>
       <div class="eye-card-name">${esc(l.name)}</div>
-      ${named && l.source_name && l.source_name !== l.name ? `<div class="small muted">원본: ${esc(l.source_name)}</div>` : ""}
-      ${!named ? '<div class="small c-err">상품명 변경 전 (원본 이름 그대로)</div>' : ""}
+      ${this.kind === "listing" && named && l.source_name && l.source_name !== l.name ? `<div class="small muted">원본: ${esc(l.source_name)}</div>` : ""}
+      ${this.kind === "listing" && !named && !dead ? '<div class="small c-err">상품명 변경 전 (원본 이름 그대로)</div>' : ""}
       ${flagged.length ? `<div class="small eye-card-flags">${flagged.map(([w, why]) => `<em class="${EYE_KW[why][0]}">${esc(w)}</em> ${EYE_KW[why][1]}`).join(" · ")}</div>` : ""}
-      <div class="small" style="margin-top:6px">${dead ? `<b class="c-err">${esc(dead.label)}</b>` : statusBadge(l.status, l.op)} ${esc(l.seller_code || "")} · 원본 #${l.source_id} · ${num(l.final ?? l.price)}원</div>
+      <div class="small" style="margin-top:6px">${dead ? `<b class="c-err">${esc(dead.label)}</b> ` : ""}${this.kind === "source"
+        ? `원본 #${l.id} · 원본가 ${num(l.price)}원 · 복사 ${num(l.n_listings || 0)}곳 ${l.eye_at ? '<span class="flag eye-ok">검수 완료</span>' : ""}<div class="muted">${esc(l.category || "")}</div>`
+        : `${dead ? "" : statusBadge(l.status, l.op)} ${esc(l.seller_code || "")} · 원본 #${l.source_id} · ${num(l.final ?? l.price)}원`}</div>
       <div class="cl-row" style="margin-top:8px">
         ${dead?.cls === "gone" ? '<button class="btn sm primary" data-card-back>되살리기</button>'
           : dead ? "" : `<button class="btn sm ${this.sel.has(l.id) ? "" : "danger"}" data-card-sel>${this.sel.has(l.id) ? "삭제 예정 풀기" : "삭제 예정으로"}</button>`}
@@ -487,7 +504,9 @@ const Eye = {
     const picked = [...this.sel.values()];
     if (!picked.length) return;
     const since = Date.now() / 1000;
-    const r = await App.deleteCopies({ ids: picked.map((l) => l.id) }, null, `눈검수로 고른 ${num(picked.length)}개`, { now: false });
+    const ids = picked.map((l) => l.id);
+    const r = this.kind === "source" ? await App.chemDelete({ ids }, null, { now: false })
+      : await App.deleteCopies({ ids }, null, `눈검수로 고른 ${num(picked.length)}개`, { now: false });
     if (!r) return;
     await this.afterDelete(picked, since, r);
     this.paintGrid();
@@ -497,16 +516,20 @@ const Eye = {
   /* 지운 칸 하나 되살리기 (그 칸을 다시 누름) */
   async restoreOne(l) {
     const u = this.undos.find((x) => x.lids.includes(l.id));
-    if (!u) return App.toast("이 상품은 여기서 되살릴 수 없습니다 (휴지통에서 되살리세요).", true);
+    const since = u ? u.since : l.dead?.at;
+    if (!since) return App.toast("이 상품은 여기서 되살릴 수 없습니다 (휴지통에서 되살리세요).", true);
     let r;
-    try { r = await App.api("/api/eye/undo", { json: { store_id: this.storeId, source_ids: [l.source_id], since: u.since, n: 1 } }); }
+    try { r = await App.api("/api/eye/undo", { json: { store_id: this.storeId, source_ids: [l.source_id], since, n: 1 } }); }
     catch (e) { return App.toast(e.message, true); }
-    u.lids = u.lids.filter((id) => id !== l.id);
-    u.sids = u.sids.filter((s) => s !== l.source_id);
-    u.n -= 1; u.gone -= 1;
-    if (!u.lids.length) this.undos = this.undos.filter((x) => x !== u);
+    if (u) {
+      u.lids = u.lids.filter((id) => id !== l.id);
+      u.sids = u.sids.filter((x) => x !== l.source_id);
+      u.n -= 1; u.gone -= 1;
+      if (!u.lids.length) this.undos = this.undos.filter((x) => x !== u);
+      this.deleted -= 1;
+    }
     this.dead.delete(l.id);
-    this.deleted -= 1;
+    if (!r.restored && !r.cancelled) return App.toast("휴지통에 없어 되살리지 못했습니다 (이미 비웠거나 다시 불러온 원본).", true);
     Object.assign(this.state, { today_seen: r.today_seen, today_deleted: r.today_deleted, sec_per_item: r.sec_per_item });
     App.toast(r.dropped ? "원본은 되살렸지만 이미 네이버에서 내려가 '내림'으로 남았습니다 (복사본 화면에서 다시 올리기)" : "되살렸습니다", !!r.dropped);
     App.refreshState();

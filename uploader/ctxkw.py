@@ -647,6 +647,13 @@ def word_filter(cfg, lex):
     return lambda w: w in blocked or bool(lex and lex.mark_of(w))
 
 
+def set_variant(c, sid, name, v):
+    """방금 넣은 AI 이름에 A·B 양식 표시 (make_names_v2의 짝·홀 = A 방식·B 방식)."""
+    from . import namegen
+    c.execute("UPDATE names SET variant=? WHERE source_id=? AND norm=? AND origin='ctx'",
+              (v, sid, namegen.normalize(namegen.clean(name, 100))))
+
+
 def build_names(db, sids, cfg=None):
     """키워드를 받은 원본마다 이름 후보 N개(기본 2)를 한 번에 만들어 저장한다. 이미 만든 원본은 건너뜀.
     {made: 만든 이름 수, none: 못 만든 수(이름 변경 필요로 남음)}"""
@@ -668,12 +675,13 @@ def build_names(db, sids, cfg=None):
             for r in rows:
                 res = ctxname.make_names_v2(r["name"], kw_of(r["words"]), forb, copies=copies, seed=r["id"],
                                             reject=reject, opts=o, bad=bad, rep=rep)
-                for x in res:
+                for k, x in enumerate(res):
                     if x is None:
                         st["none"] += 1
                         continue
                     added, _ = add_names(c, r["id"], [x["name"]], "ctx", now)
                     st["made"] += added
+                    set_variant(c, r["id"], x["name"], "AB"[k % 2])
                 c.execute("UPDATE ctx_kw SET names_made=1 WHERE source_id=?", (r["id"],))
         db.recount_sources(chunk)
     return st
@@ -702,9 +710,11 @@ def make_more(db, need, avoid=None, cfg=None):
                 # 앞 번호 조합(A·B)은 이미 있으니 뒤 번호부터 — copies를 넉넉히 주고 새로 나온 것만 넣는다
                 res = ctxname.make_names_v2(r["name"], kw_of(r["words"]), forb, copies=need[r["id"]] + 2, seed=r["id"],
                                             reject=reject, opts=o, bad=bad, rep=rep)
-                for x in [x for x in res if x][:need[r["id"]]]:
+                got = [(k, x) for k, x in enumerate(res) if x][:need[r["id"]]]
+                for k, x in got:
                     added, _ = add_names(c, r["id"], [x["name"]], "ctx", now)
                     made += added
+                    set_variant(c, r["id"], x["name"], "AB"[k % 2])
     return made
 
 

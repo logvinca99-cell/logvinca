@@ -30,7 +30,7 @@ CREATE INDEX IF NOT EXISTS activity_started ON activity(started_at);
 
 # 오래 걸리는 작업 종류 → 묶음
 TASK_GROUP = {"mail": "메일함", "srctags": "원본", "clean_import": "상세 정리", "clean_chem": "상세 정리", "clean_send": "상세 정리", "chem": "원본", "rename": "상품명", "names": "상품명", "ctxkw": "AI 키워드", "plan": "복사·등록", "import": "원본",
-              "revalidate": "원본", "bait": "복사본", "orders": "주문", "keywords": "상품명", "kipris": "금지어·사전",
+              "revalidate": "원본", "orders": "주문", "keywords": "상품명", "kipris": "금지어·사전",
               "lexicon": "금지어·사전", "dictfile": "금지어·사전"}
 
 SECRET = re.compile(r"key|secret|password|token|license|client_id", re.I)
@@ -200,6 +200,12 @@ ACTIONS = {
     "srctags_apply": ("원본", lambda b, r: ("출처 태그" + (f" 달기: {', '.join(r.get('add') or [])}" if r.get("add") else "")
                                            + (f" 빼기: {', '.join(r.get('remove') or [])}" if r.get("remove") else ""), r.get("count"), "")),
     "srctags_rename": ("원본", lambda b, r: (f"출처 태그 이름 바꿈: {b.get('old')} → {b.get('new') or '(지움)'}", r.get("count"), "")),
+    "eye_set": ("원본", lambda b, r: ("검수 완료로 표시" if b.get("done", True) else "검수 완료 풀기", r.get("count"), f"고른 원본 {r.get('target', 0)}개")),
+    "listings_revert": ("복사본", lambda b, r: ("원본으로 되돌림", r.get("reverted"),
+                                                "" if not (r.get("live") or r.get("locked")) else f"올라가 있어 뺌 {r.get('live', 0)} · 잠금 {r.get('locked', 0)}")),
+    "listings_move": ("복사본", lambda b, r: (f"다른 스토어로 보냄 → {r.get('store', '')}", r.get("moved"),
+                                              " · ".join(x for x in (f"이미 있음 {r['exists']}" if r.get("exists") else "", f"자리 부족 {r['full']}" if r.get("full") else "",
+                                                                      f"올라가 있음 {r['live']}" if r.get("live") else "") if x))),
     "eye_undo": ("복사본", lambda b, r: ("눈검수: 방금 지운 것 되돌림", r.get("restored"),
                                           f"내리기 취소 {r.get('cancelled', 0)}건" + (f" · 이미 내려간 {r.get('dropped')}건" if r.get("dropped") else ""))),
     "chem_set": ("원본", lambda b, r: ("생활화학 판정 바꿈: " + {"tool": "물건", "chemical": "화학제품", "unclear": "애매", "": "지움"}.get(b.get("kind") or "", ""), r.get("count"), "")),

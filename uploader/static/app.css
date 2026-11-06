@@ -440,8 +440,6 @@ span.kw-chip { cursor: default; }
 .core-edit { display: flex; gap: 8px; align-items: center; margin: 8px 0 14px; }
 .core-edit input { height: 34px; border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; background: var(--panel); color: var(--text); width: 180px; }
 
-/* 도둑방지 */
-.bait-how { margin: 12px 0 0; padding-left: 18px; line-height: 1.7; }
 .page > .card + .card { margin-top: 16px; }
 .c-err { color: var(--err); }
 .hist { display: flex; align-items: flex-end; gap: 6px; height: 180px; padding: 8px 0 0; border-bottom: 1px solid var(--line); }
@@ -458,8 +456,6 @@ span.kw-chip { cursor: default; }
 .wm-store { display: flex; gap: 12px; align-items: center; margin-top: 6px; }
 .wm-store img { width: 110px; height: 110px; border: 1px solid var(--line); border-radius: 6px; }
 .wm-store > div { display: flex; flex-direction: column; gap: 6px; }
-.bait-check { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); font-size: 13px; }
-.bait-check input { margin-top: 3px; }
 .apply-when { font-size: 12px; color: var(--info); margin: -4px 0 6px; }
 .reapply { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
 .reapply-btns { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -867,3 +863,6 @@ body.eye-open .tasks { display: none; }
 .eye, .eye * { cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='44' height='44' viewBox='0 0 44 44'><path d='M3 2 L3 36 L12 28 L19 42 L26 39 L19 25 L32 25 Z' fill='%23c6ff00' stroke='%23000' stroke-width='2.5' stroke-linejoin='round'/></svg>") 3 2, auto !important; }
 .eye textarea, .eye input[type=text], .eye select { cursor: auto !important; }
 @media (max-height: 820px) { .eye-hint { display: none; } .eye-pno b { font-size: 28px; } }
+/* 검수 표시 */
+.flag.eye-ok { background: var(--ok-soft); color: var(--ok); }
+.flag.eye-no { background: var(--line); color: var(--text-2); }

@@ -117,12 +117,6 @@ DEFAULTS = {
     # 한 번에 확인할 단어 수
     "kipris_limit": 500,
 
-    # ── 도둑방지
-    # 처음 올릴 때 판매가에 bait_amount를 더해 올리고, 원래 가격으로는 직접 되돌림 (복사본·도둑방지 화면의 버튼)
-    # 등록 계획 창의 '도둑방지로 올리기' 기본값. 할인 금액은 도둑방지 전 가격으로 계산.
-    "bait_default": True,
-    "bait_amount": 30000,
-    "bait_on_refresh": False,        # (예전 설정, 안 씀) 이제 최신화·다시 올리기에도 늘 붙음
     # 대표 이미지 워터마크 (스토어마다: 스토어 화면에서 로고 PNG 또는 글자)
     "wm_enabled": False,
     "wm_scope": "main",              # main(대표 이미지만) / all(대표+추가 이미지)

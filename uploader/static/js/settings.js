@@ -34,10 +34,6 @@ const SETTING_SECTIONS = [
     ["price_round", "단위 (원, 올림)", "number", { step: 10 }],
     ["stock_fixed", "등록 재고 (상품·옵션 모두 늘 이 수, 0이면 엑셀 재고수)", "number", { step: 100 }],
   ] },
-  { tab: "price", title: "도둑방지", note: "처음 올릴 때 판매가에 금액을 더해 올리고, 원래 가격으로는 도둑방지·복사본 화면에서 직접 되돌립니다. 할인 금액은 도둑방지 전 가격 기준이라 되돌리면 표시 할인율·마진이 처음 그대로입니다.", fields: [
-    ["bait_default", "도둑방지 사용 (처음 등록·최신화·다시 올리기 모두. 끄면 아직 안 올린 복사본도 원래 가격으로 올림)", "check"],
-    ["bait_amount", "더할 금액 (원)", "number"],
-  ] },
   { tab: "name", title: "상품명 공통", note: "모든 상품명은 모든 스토어를 통틀어 겹치지 않습니다 (띄어쓰기·기호·대소문자 무시). 금지어는 왼쪽 메뉴 '금지어'.", fields: [
     ["name_max_len", "상품명 최대 글자 수 (공백 포함)", "number"],
     ["use_original_name", "원본 상품명 그대로도 쓸 수 있음 (원본 스토어와 이름이 같아짐)", "check"],
@@ -89,7 +85,7 @@ const SETTING_SECTIONS = [
     ["option_table_color", "옵션표 강조색 (공통)", "color", { hint: "스토어 템플릿에서 스토어마다 따로 고를 수 있음" }],
     ["image_cache_gb", "이미지 보관 용량 (GB, 0이면 보관 안 함)", "number", { step: 1 }],
   ] },
-  { tab: "image", title: "워터마크 (대표 이미지)", note: "스토어마다 로고 PNG나 글자를 스토어 화면에서 정합니다. 미리보기는 도둑방지 화면에 있습니다.", fields: [
+  { tab: "image", title: "워터마크 (대표 이미지)", note: "스토어마다 로고 PNG나 글자는 스토어 → 템플릿에서 정합니다. 아래 미리보기는 저장한 설정 기준입니다.", fields: [
     ["wm_enabled", "워터마크 넣기 (이후 올리는 상품부터)", "check"],
     ["wm_scope", "넣을 이미지", "select", { options: [["main", "대표 이미지만"], ["all", "대표 + 추가 이미지"]] }],
     ["wm_position", "위치", "select", { options: [["bottom-right", "아래 오른쪽"], ["bottom-left", "아래 왼쪽"], ["top-right", "위 오른쪽"], ["top-left", "위 왼쪽"], ["bottom-center", "아래 가운데"], ["top-center", "위 가운데"]] }],
@@ -114,13 +110,19 @@ const SETTING_SECTIONS = [
 ];
 
 /* 설정이 언제부터 적용되는지 (이미 만든 것에는 적용되지 않음) */
+/* 워터마크 미리보기 (정사각형·세로·가로 예시) */
+const WM_PREVIEW = () => `<div class="wm-previews" style="margin-top:12px">
+  ${[[1000, 1000, "정사각형"], [1000, 1400, "세로로 긴 이미지"], [1400, 1000, "가로로 긴 이미지"]].map(([w, h, t]) =>
+    `<figure><img src="/api/watermark/preview?w=${w}&h=${h}&_=${Date.now()}" alt="${t} 워터마크 미리보기"><figcaption>${t} ${w}×${h}</figcaption></figure>`).join("")}</div>
+  <p class="muted small">초록 테두리 = 네이버 목록에서 잘려 보이는 가운데 정사각형. 직사각형도 이 안쪽 모서리에 넣으므로 잘려도 워터마크가 보입니다
+    ('흰 여백으로 정사각형 만들기'를 고르면 상품이 잘리지 않게 여백을 붙인 뒤 넣음). 워터마크를 넣은 이미지는 스토어마다 따로 올라갑니다.</p>`;
+
 const APPLY_WHEN = {
   "상품 기본값": "다음 등록부터 · 원산지를 바꾸면 저장할 때 전체 원본을 다시 검사",
   "배송": "다음 등록부터",
   "복사·구분": "다음 복사·등록부터",
   "주문 (판매 이력)": "다음 주문 가져오기부터 (잠금 기준은 저장 즉시 다시 계산)",
   "가격": "새로 만드는 복사본부터 · 이미 만든 복사본은 위 '대기 중인 복사본 가격 다시 계산'",
-  "도둑방지": "다음 복사·다음 등록부터 (이미 올라간 상품은 그대로)",
   "상품명 공통": "새로 만드는 이름부터",
   "AI 키워드 (기본 방식)": "다음 키워드 받기·이름 만들기부터 (이미 만든 후보는 그대로)",
   "AI로 짓기": "다음 AI 이름 짓기부터",
@@ -155,7 +157,8 @@ App.page("settings", {
       <form class="settings" id="set-form" autocomplete="off">${SETTING_SECTIONS.map((sec) => `<div class="card set" data-tab="${sec.tab}">
         <h2>${esc(sec.title)}</h2>${sec.note ? `<p class="muted">${esc(sec.note)}</p>` : ""}
         ${APPLY_WHEN[sec.title] ? `<p class="apply-when">적용: ${esc(APPLY_WHEN[sec.title])}</p>` : ""}${sec.fields.map(field).join("")}
-        ${sec.title === "네이버 커머스 API" ? `<a class="btn" href="#stores">스토어 화면으로</a>` : ""}</div>`).join("")}
+        ${sec.title === "네이버 커머스 API" ? `<a class="btn" href="#stores">스토어 화면으로</a>` : ""}
+        ${sec.title === "워터마크 (대표 이미지)" ? WM_PREVIEW() : ""}</div>`).join("")}
       </form></div>`;
     const show = (k) => {
       this.tab = k;

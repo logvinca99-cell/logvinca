@@ -29,6 +29,18 @@ CREATE TABLE IF NOT EXISTS eye_log (
     n INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS ix_eye_log ON eye_log(store_id, at);
+CREATE TABLE IF NOT EXISTS eye_dead (       -- 눈검수에서 지운 것: 눈검수 쪽에 '삭제됨'으로 그 자리에 계속 (목록이 당겨지지 않게)
+    kind TEXT NOT NULL,                     -- listing(복사본) / source(원본)
+    ref_id INTEGER NOT NULL,                -- 복사본 번호 또는 원본 번호
+    store_id INTEGER NOT NULL DEFAULT 0,    -- 복사본이면 그 스토어, 원본이면 0
+    source_id INTEGER,
+    name TEXT NOT NULL DEFAULT '',
+    thumb TEXT NOT NULL DEFAULT '',
+    at REAL NOT NULL,
+    PRIMARY KEY (kind, ref_id)
+);
+CREATE INDEX IF NOT EXISTS ix_eye_dead ON eye_dead(kind, store_id, ref_id);
+CREATE INDEX IF NOT EXISTS ix_eye_dead_src ON eye_dead(source_id);
 """
 
 MAX_GAP = 300   # 쪽 사이 5분 넘게 쉰 것은 속도 계산에서 뺌
@@ -55,10 +67,13 @@ def log(db, store_id, kind, n):
 
 
 def stats(db, store_id):
-    """오늘 이 스토어에서 본 복사본 수(원본 기준 눈검수 표시가 오늘인 것), 지운 수, 한 장에 걸리는 초."""
+    """오늘 이 스토어에서 본 복사본 수(원본 기준 눈검수 표시가 오늘인 것), 지운 수, 한 장에 걸리는 초. store_id=0이면 원본."""
     start = _today()
-    seen = db.one("""SELECT COUNT(*) AS n FROM listings l JOIN sources s ON s.id=l.source_id
-        WHERE l.store_id=? AND l.status!='deleted' AND s.eye_at>=?""", (store_id, start))["n"]
+    if store_id:
+        seen = db.one("""SELECT COUNT(*) AS n FROM listings l JOIN sources s ON s.id=l.source_id
+            WHERE l.store_id=? AND l.status!='deleted' AND s.eye_at>=?""", (store_id, start))["n"]
+    else:
+        seen = db.one("SELECT COUNT(*) AS n FROM sources WHERE eye_at>=?", (start,))["n"]
     rows = db.q("SELECT at, kind, n FROM eye_log WHERE store_id=? AND at>=? ORDER BY at", (store_id, start))
     deleted = max(0, sum(r["n"] for r in rows if r["kind"] == "deleted") - sum(r["n"] for r in rows if r["kind"] == "undo"))
     pages = [r for r in rows if r["kind"] == "page" and r["n"]]
@@ -87,6 +102,25 @@ def page_done(db, store_id, last_id, n, size=None, todo=False):
 
 def reset_pos(db, store_id):
     _upsert(db, store_id, last_id=None, last_at=None)
+
+
+def add_dead(db, kind, store_id, rows):
+    now = time.time()
+    with db.tx() as c:
+        for r in rows:
+            c.execute("""INSERT OR REPLACE INTO eye_dead(kind, ref_id, store_id, source_id, name, thumb, at) VALUES(?,?,?,?,?,?,?)""",
+                      (kind, int(r["id"]), int(store_id), int(r.get("source_id") or r["id"]), str(r.get("name") or "")[:300],
+                       str(r.get("thumb") or ""), now))
+
+
+def dead_map(db, kind, store_id, since=0):
+    return {r["ref_id"]: r for r in db.q("SELECT * FROM eye_dead WHERE kind=? AND store_id=? AND at>=?", (kind, store_id, since))}
+
+
+def drop_dead(db, kind, ids):
+    for i in range(0, len(ids), 900):
+        ch = ids[i:i + 900]
+        db.x(f"DELETE FROM eye_dead WHERE kind=? AND ref_id IN ({','.join('?' * len(ch))})", (kind, *ch))
 
 
 def undo(db, store_id, source_ids, since, n=0):
@@ -121,6 +155,7 @@ def undo(db, store_id, source_ids, since, n=0):
         chunk = sids[i:i + 400]
         m = ",".join("?" * len(chunk))
         db.x(f"UPDATE sources SET drop_pending=0 WHERE id IN ({m})", chunk)
+        db.x(f"DELETE FROM eye_dead WHERE source_id IN ({m})", chunk)   # 되살린 것은 '삭제됨' 칸에서 뺌
         st["dropped"] += db.one(f"""SELECT COUNT(*) AS n FROM listings WHERE source_id IN ({m}) AND status='deleted'
             AND deleted_at>=?""", (*chunk, since))["n"]
     db.recount_sources(sids)

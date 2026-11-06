@@ -80,6 +80,10 @@ function ymdToday() {
 function srcTagChips(tags, rm = false) {
   return (tags || []).map((t) => `<span class="stag ${/^\d{4}-\d{2}-\d{2}$/.test(t) ? "date" : ""}" title="출처 태그">${esc(t)}${rm ? `<button type="button" class="stag-x" data-rm-tag="${esc(t)}" title="이 태그 빼기">✕</button>` : ""}</span>`).join("");
 }
+/* 눈검수(검수) 표시: 원본 기준 */
+function eyeFlag(x) {
+  return x.eye_at ? `<span class="flag eye-ok" title="${when(x.eye_at)} 검수 완료">검수 완료</span>` : '<span class="flag eye-no" title="새로 올리려면 눈검수 또는 \'검수 완료로 표시\'">미검수</span>';
+}
 function ymd(ts) {
   if (!ts) return "-";
   const d = new Date(ts * 1000), p = (n) => String(n).padStart(2, "0");
@@ -308,8 +312,6 @@ const App = {
         : (r.kw_error ? `네이버 키워드를 못 받음(${r.kw_error}) · ` : "") + `상품명 바꾸기 끝: ${num(r.renamed)}건 바꿈` + (r.short ? ` · 후보를 못 만든 ${num(r.short)}건은 그대로 (단어가 적음 → 직접 입력이나 AI)` : "")
         + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
         + (r.few_words ? ` · 새 단어 후보가 설정보다 적은 원본 ${num(r.few_words)}개` : "") + aiMsg(r.ai),
-      bait: () => r.checked !== undefined ? `되돌린 가격 확인 ${num(r.checked)}건 · 고침 ${num(r.fixed)}건` + (r.failed ? ` · 실패 ${num(r.failed)}건 (${r.errors?.[0] || ""})` : "")
-        : `원래 가격으로 ${num(r.restored)}건` + (r.failed ? ` · 실패 ${num(r.failed)}건 (${r.errors?.[0] || ""})` : ""),
       dictfile: () => `사전 파일 넣기 끝: 명사 ${num(r.nouns)}개 · 비슷한말 있는 단어 ${num(r.syn_words)}개 (파일 ${num(r.files)}개)`,
       keywords: () => `네이버 키워드 끝: 원본 ${num(r.sources)}개 · 새 단어 ${num(r.words)}개 · 새로 물은 단어 ${num(r.tokens)}개 (저장한 결과 ${num(r.cached)}번)`
         + (r.not_in_dict ? ` · 사전에 없어 뺀 말 ${num(r.not_in_dict)}개` : "")
@@ -621,6 +623,16 @@ const App = {
     } catch (e) { this.toast(e.message, true); return false; }
   },
 
+  /* 검수 완료로 표시 / 풀기. target: 원본 조건·{ids}, 또는 {listing_filter} */
+  async eyeSet(target, done, what, after) {
+    if (!done && !confirm(`${what}의 검수 완료를 풀까요? 풀면 새로 올리지 않습니다 (최신화·내리기는 그대로).`)) return;
+    try {
+      const r = await this.api("/api/eye/set", { json: { ...target, done } });
+      this.toast(done ? `원본 ${num(r.target)}개 중 ${num(r.count)}개를 검수 완료로 표시했습니다` : `원본 ${num(r.count)}개의 검수 완료를 풀었습니다`);
+      if (after) after(r);
+    } catch (e) { this.toast(e.message, true); }
+  },
+
   /* 한 번 더 묻는 창: 확인 버튼(빨강)을 눌러야 true */
   /* 생활화학 판정 바꾸기 (검수 뒤 사람이): target = {ids} 또는 원본 거르기 조건 */
   chemSet(target, what, after) {
@@ -647,7 +659,7 @@ const App = {
   },
 
   /* 원본·복사본 모두 삭제: 안 올라간 것은 바로 휴지통, 판매 중인 복사본은 네이버에서 내린 뒤 원본도 (판매 이력·잠금은 남김) */
-  async chemDelete(target, after) {
+  async chemDelete(target, after, { now = true } = {}) {
     let pv;
     try { pv = await this.api("/api/chem/delete_preview", { json: target }); } catch (e) { return this.toast(e.message, true); }
     if (!pv.sources) return this.toast("고른 원본이 없습니다.", true);
@@ -655,13 +667,13 @@ const App = {
       title: "원본·복사본 모두 삭제",
       body: `<p>원본 <b>${num(pv.sources)}개</b>와 그 원본의 <b>모든 스토어 복사본</b>을 지웁니다.</p><ul>
         <li>네이버에 안 올라간 원본 <b>${num(pv.now)}개</b> → 바로 휴지통</li>
-        <li>판매 중인 복사본 <b>${num(pv.drop_listings)}건</b>(원본 ${num(pv.drop_sources)}개) → <b>네이버에서 바로 내린 뒤</b> 원본도 휴지통</li>
+        <li>판매 중인 복사본 <b>${num(pv.drop_listings)}건</b>(원본 ${num(pv.drop_sources)}개) → <b>${now ? "네이버에서 바로 내린 뒤" : "'이 쪽 완료·다음'(또는 닫기) 때 네이버에서 내린 뒤"}</b> 원본도 휴지통</li>
         ${pv.kept_sold ? `<li>판매 이력·잠금이 있는 원본 <b>${num(pv.kept_sold)}개</b> → 지우지 않고 남김</li>` : ""}</ul>
         <p class="small muted">휴지통에서 되살릴 수 있지만, 네이버에서 내린 상품은 다시 올려야 합니다.</p>`,
       ok: "모두 삭제합니다",
     });
-    if (!ok) return;
-    return this._deleteEverywhere(target, after);
+    if (!ok) return null;
+    return this._deleteEverywhere(target, after, now);
   },
   async _deleteEverywhere(target, after, now = true) {
     try {
