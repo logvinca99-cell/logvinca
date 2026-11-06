@@ -10,12 +10,12 @@ import time
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import VERSION, activity, aiwords, chem, chrome, clean, eye, mail, srctags, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
+from . import VERSION, activity, adopt, aiwords, chem, chrome, clean, eye, mail, srctags, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
 from .db import DB
 from .tasks import Tasks
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-FILTER_KEYS = ("q", "status", "category", "ai", "chem", "src_tag", "eye", "store_missing", "store_has", "import_id", "max_listings", "price_min", "price_max", "copies",
+FILTER_KEYS = ("q", "status", "category", "ai", "chem", "src_tag", "eye", "adopted", "store_missing", "store_has", "import_id", "max_listings", "price_min", "price_max", "copies",
                "min_names", "store_id", "plan_id", "op", "age_days", "sold", "locked")
 STORE_FIELDS = ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "capacity", "enabled", "memo", "wm_text", "importer",
                 "business_id", "chrome_profile", "mail_to")
@@ -741,6 +741,43 @@ def create_app(db=None):
         now = time.time()
         db.x("UPDATE stores SET memo=?, memo_at=? WHERE id=?", (str(body().get("memo") or "")[:20000], now, sid))
         return jsonify({"memo_at": now})
+
+    # ── 기존 상품 가져오기 (이미 올린 상품: 업로드했던 엑셀 + 스토어 상품 목록 → 원본 + 판매 중 복사본)
+
+    @app.post("/api/adopt/prepare")
+    def adopt_prepare():
+        f = request.files.get("file")
+        if not f or not f.filename:
+            return fail("업로드했던 엑셀 파일을 골라 주세요.")
+        if not f.filename.lower().endswith((".xlsx", ".xlsm", ".csv")):
+            return fail("xlsx 또는 csv 파일만 됩니다.")
+        token, path = adopt.save_upload(f, f.filename)
+        try:
+            return jsonify({"token": token, "file": f.filename, **adopt.prepare(db, path, f.filename)})
+        except Exception as e:  # noqa: BLE001
+            return fail(f"파일을 읽지 못했습니다: {e}")
+
+    @app.post("/api/adopt/start")
+    def adopt_start():
+        b = body()
+        opts = {k: bool(b.get(k, True)) for k in ("strip_top", "strip_bottom", "mark_eye")}
+        try:
+            return jsonify({"task": adopt.start(db, tasks, b.get("token"), b.get("store_id"), opts)})
+        except (ValueError, RuntimeError) as e:
+            return fail(str(e))
+
+    @app.get("/api/adopt/runs")
+    def adopt_runs():
+        return jsonify(adopt.runs(db))
+
+    @app.get("/api/adopt/<int:rid>/items.csv")
+    def adopt_items_csv(rid):
+        try:
+            data, name = adopt.items_csv(db, rid, request.args.get("kind") or "store_only")
+        except ValueError as e:
+            return fail(str(e), 404)
+        from urllib.parse import quote
+        return Response(data, mimetype="text/csv", headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
 
     @app.get("/api/home/memo")
     def home_memo_get():

@@ -874,3 +874,10 @@ body.eye-open .tasks { display: none; }
 .st-memo { margin: 8px 0 4px; }
 .st-memo-head { display: flex; gap: 6px; align-items: baseline; font-size: 13px; margin-bottom: 3px; }
 .st-memo textarea { min-height: 56px; font-size: 13px; padding: 7px 9px; }
+/* 기존 상품 가져오기 */
+.flag.adopted { background: var(--info-soft); color: var(--info); }
+.ad-prep { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.ad-edges { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.ad-imgs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.ad-imgs img { height: 70px; max-width: 100%; border: 1px solid var(--line); border-radius: 4px; background: var(--line); object-fit: contain; }
+@media (max-width: 800px) { .ad-edges { grid-template-columns: 1fr; } }

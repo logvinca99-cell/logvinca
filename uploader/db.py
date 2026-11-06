@@ -239,8 +239,9 @@ class DB:
         self._migrate_columns()   # 새로 만든 db: SCHEMA에 없는 나중에 더한 열도 붙인다
         self._migrate_data()
         self._remove_dropped(os.path.dirname(path))
-        from . import activity, aiwords, clean, ctxkw, eye, keywords, kipris, lexicon, mail, trash
+        from . import activity, adopt, aiwords, clean, ctxkw, eye, keywords, kipris, lexicon, mail, trash
         clean.ensure(self)
+        adopt.ensure(self)
         eye.ensure(self)
         lexicon.ensure(self)
         kipris.ensure(self)
@@ -271,7 +272,9 @@ class DB:
                     # 출처 태그 '|태그1|태그2|' (어디서·언제 가져왔는지: 수집 스토어, 날짜, 직접 적은 루트) — 엑셀 '상품태그'와 다름
                     ("src_tags", "TEXT NOT NULL DEFAULT ''"),
                     # 눈검수(복사본 화면 썸네일 그리드)로 본 때 — 원본 기준이라 다른 스토어 복사본에도 '본 것'으로
-                    ("eye_at", "REAL")],
+                    ("eye_at", "REAL"),
+                    # 기존 상품 가져오기로 들어온 원본 (원본 이름 없음 — 올라가 있던 이름이 원본 자리)
+                    ("adopted", "INTEGER NOT NULL DEFAULT 0")],
         "stores": [("code", "TEXT NOT NULL DEFAULT ''"), ("orders_synced_to", "REAL"),
                    ("memo_at", "REAL"),   # 스토어 메모를 고친 때 (스토어 화면 카드에서 바로 적음)
                    ("wm_text", "TEXT NOT NULL DEFAULT ''"), ("importer", "TEXT NOT NULL DEFAULT ''"),
@@ -295,7 +298,8 @@ class DB:
                    ("mail_to", "TEXT NOT NULL DEFAULT ''")],   # 이 스토어 메일을 받는 주소 (예: me+redcoco@gmail.com) — 메일함 스토어 구분용   # 판매자센터를 열 크롬 프로필 폴더 이름 (예: Profile 3)
         # AI 이름 A·B 양식 (만들 때 정해짐 — A는 1번째 복사본용, B는 양식이 조금 다름). 비면 만든 순서로 짐작
         "names": [("variant", "TEXT NOT NULL DEFAULT ''")],
-        "listings": [("sale_shown", "INTEGER"),   # 네이버에 넣은 판매가 (표시 할인 전)
+        "listings": [("sale_shown", "INTEGER"),
+                     ("price_fixed", "INTEGER NOT NULL DEFAULT 0"),   # 가져온 복사본: 최신화·다시 올리기 때 지금 가격 그대로   # 네이버에 넣은 판매가 (표시 할인 전)
                      ("sold_count", "INTEGER NOT NULL DEFAULT 0"), ("last_sold_at", "REAL"),
                      ("cancel_count", "INTEGER NOT NULL DEFAULT 0"), ("manual_lock", "INTEGER NOT NULL DEFAULT 0"),
                      ("locked", "INTEGER NOT NULL DEFAULT 0"), ("lock_note", "TEXT NOT NULL DEFAULT ''"),("op", "TEXT NOT NULL DEFAULT 'create'"), ("round", "INTEGER NOT NULL DEFAULT 1"),

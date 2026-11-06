@@ -268,6 +268,10 @@ def source_where(f):
         w.append("id IN (SELECT source_id FROM names WHERE origin='ctx' AND listing_id IS NULL)")
     elif ai == "used":      # 받았지만 후보를 다 씀
         w.append("id IN (SELECT source_id FROM ctx_kw WHERE status='ok') AND id NOT IN (SELECT source_id FROM names WHERE origin='ctx' AND listing_id IS NULL)")
+    if f.get("adopted") in ("1", 1, True):     # 기존 상품 가져오기로 들어온 원본 (원본 이름 없음)
+        w.append("adopted=1")
+    elif f.get("adopted") in ("0", 0):
+        w.append("adopted=0")
     if f.get("eye") == "done":                  # 눈검수 완료한 원본
         w.append("eye_at IS NOT NULL")
     elif f.get("eye") == "todo":                # 아직 눈검수 안 한 원본
@@ -306,7 +310,7 @@ def source_where(f):
 
 
 LIST_COLS = ("id, source_key, seller_code, name, price, category, thumb, option_count, image_count, has_video, errors, "
-             "warnings, valid, n_listings, n_success, n_free_names, updated_at, chem_judge, chem_reason, drop_pending, src_tags, eye_at")
+             "warnings, valid, n_listings, n_success, n_free_names, updated_at, chem_judge, chem_reason, drop_pending, src_tags, eye_at, adopted")
 
 
 def query_sources(db, f, page=0, size=100):
@@ -1282,7 +1286,7 @@ def relist(db, f):
     """내린(내림) 복사본을 다시 올릴 대기로 되돌린다: 다음 회차·같은 이름, 가격은 지금 스토어 기준으로 다시. 스토어 남은 자리만큼만."""
     cfg = config.load()
     where, args = listing_where({**f, "status": "deleted"})
-    rows = db.q(f"""SELECT l.id, l.store_id, s.price, s.source_key FROM listings l JOIN sources s ON s.id=l.source_id{where}
+    rows = db.q(f"""SELECT l.id, l.store_id, l.price AS cur, l.price_fixed, s.price, s.source_key FROM listings l JOIN sources s ON s.id=l.source_id{where}
         ORDER BY l.id""", args)
     if not rows:
         return []
@@ -1295,7 +1299,7 @@ def relist(db, f):
             if not st or free.get(r["store_id"], 0) <= 0:
                 continue
             free[r["store_id"]] -= 1
-            price = convert.store_price(r["price"], f"{r['source_key']}|{r['store_id']}", cfg, st)
+            price = r["cur"] if r["price_fixed"] else convert.store_price(r["price"], f"{r['source_key']}|{r['store_id']}", cfg, st)
             c.execute("""UPDATE listings SET status='planned', op='reupload', round=CASE WHEN round_reset=1 THEN 1 ELSE round+1 END,
                 round_reset=0, price=?, message='', stage='',
                 sale_shown=NULL, updated_at=? WHERE id=?""", (price, now, r["id"]))
@@ -1535,7 +1539,7 @@ def query_listings(db, f, page=0, size=100):
         l.cancel_count, l.locked, l.lock_note, l.manual_lock,
         l.channel_no, l.seller_code, l.registered_at, l.deleted_at, l.seconds, l.plan_id, l.updated_at,
         s.id AS source_id, s.source_key, s.seller_code AS source_code, s.name AS source_name,
-        s.price AS source_price, s.thumb, s.category, s.n_listings AS source_copies, s.eye_at, s.drop_pending,
+        s.price AS source_price, s.thumb, s.category, s.n_listings AS source_copies, s.eye_at, s.drop_pending, s.adopted, l.price_fixed,
         t.id AS store_id, t.name AS store_name, t.store_url,
         COALESCE(NULLIF(t.code,''), 'S'||printf('%02d', t.id)) AS store_code,
         n.origin AS name_origin, n.id AS name_no, k.words AS ctx_words

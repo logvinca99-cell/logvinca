@@ -319,6 +319,25 @@ class Client:
             raise ApiError(f"상품 수 조회 실패: {explain_error(r)}")
         return int(r.json().get("totalElements", 0))
 
+    def iter_products(self, on_wait=None, on_page=None):
+        """상품 목록을 끝까지 (한 번에 500개씩). 원상품 하나씩 API가 준 그대로 돌려준다 (기존 상품 가져오기용)."""
+        page, n = 1, 0
+        while True:
+            r = self.request("POST", "/v1/products/search", json={"page": page, "size": 500}, on_wait=on_wait)
+            if r.status_code != 200:
+                raise ApiError(f"상품 목록 조회 실패: {explain_error(r)}")
+            j = r.json()
+            items = j.get("contents") or []
+            for it in items:
+                n += 1
+                yield it
+            total = int(j.get("totalElements") or n)
+            if on_page:
+                on_page(n, total)
+            if not items or page >= int(j.get("totalPages") or 0) or page >= 400:
+                break
+            page += 1
+
     def status_counts(self, on_wait=None):
         """상품 목록을 끝까지 받아 판매 상태별로 센다 {SALE: n, SUSPENSION: n(판매중지), OUTOFSTOCK: n, …, _total: n}.
         전시 상태도 같이 센다 {_disp_ON: n, _disp_SUSPENSION: n(전시중지 = 고구마), …}."""
@@ -491,9 +510,23 @@ class FakeClient:
     _seq = 0
     _class_lock = threading.Lock()
 
-    def __init__(self, *_):
+    def __init__(self, store=None, *_):
         self._n = 0
         self._lock = threading.Lock()
+        self.store_id = (store or {}).get("id")
+
+    def iter_products(self, on_wait=None, on_page=None):
+        """시연: 기록 폴더의 fake_store_products.json {스토어 번호: [상품 …]} (API 모양 그대로)."""
+        from . import config
+        p = os.path.join(config.DATA_DIR, "fake_store_products.json")
+        items = []
+        if os.path.exists(p):
+            with open(p, encoding="utf-8") as f:
+                items = json.load(f).get(str(self.store_id), [])
+        for i, it in enumerate(items, 1):
+            yield it
+            if on_page and (i % 500 == 0 or i == len(items)):
+                on_page(i, len(items))
 
     def test(self):
         return True
@@ -555,7 +588,7 @@ class FakeClient:
 def make_client(store):
     """store: db.store(..., with_secret=True)"""
     if os.environ.get("UPLOADER_FAKE_API") == "1":
-        return FakeClient()
+        return FakeClient(store)
     if not store.get("client_id") or not store.get("client_secret"):
         raise ApiError(f"'{store.get('name')}' 스토어의 API 키가 없습니다. 스토어 화면에서 넣어 주세요.")
     return Client(store["client_id"], store["client_secret"])

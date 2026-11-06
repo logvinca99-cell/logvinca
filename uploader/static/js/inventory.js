@@ -33,6 +33,7 @@ App.page("inventory", {
     el.innerHTML = `<div class="page">
       <header class="page-head"><h1>원본 상품</h1>
         <div class="head-actions">
+          <a class="btn" href="#adopt" title="다른 방법으로 이미 올린 상품: 업로드했던 엑셀 + 스토어 상품 목록 → 원본 + 판매 중 복사본">기존 상품 가져오기</a>
           <button class="btn primary" id="i-eye" title="원본 대표 사진만 그리드로 보며 이상한 상품을 골라 지우기 · 본 쪽은 검수 완료">눈검수</button>
           <button class="btn" id="i-tagman" title="출처 태그(어디서·언제 가져왔는지) 모아 보기·이름 바꾸기·예전 원본에 채우기">출처 태그</button>
           <button class="btn" id="i-catmap" title="엑셀 카테고리를 스마트스토어 카테고리에 맞추기">카테고리 맞추기</button>
@@ -176,6 +177,7 @@ App.page("inventory", {
       rep.length ? `<span class="flag rep" title="${esc(rep.join("\n"))}">반복</span>` : "",
       p.has_video ? `<span class="flag video" title="상세설명에 동영상 있음 (경고 아님)">동영상</span>` : "",
       chemFlag(p), eyeFlag(p),
+      p.adopted ? '<span class="flag adopted" title="기존 상품 가져오기로 들어옴 — 원본 이름이 없어 올라가 있던 이름이 원본 자리에">가져옴 · 원본 이름 없음</span>' : "",
     ].join("");
     const on = this.selAll || this.sel.has(p.id);
     return `<tr data-id="${p.id}" class="${on ? "sel" : ""}">
@@ -232,7 +234,7 @@ App.page("inventory", {
     $("#i-reset").addEventListener("click", () => {
       $("#i-q").value = $("#i-pmin").value = $("#i-pmax").value = ""; $("#i-missing").value = ""; $("#i-ai").value = ""; $("#i-chem").value = ""; $("#i-tag").value = "";
       this.tile = "all";
-      this.setFilter({ status: "", copies: "", q: "", price_min: "", price_max: "", store_missing: "", ai: "", chem: "", src_tag: "", eye: "" });
+      this.setFilter({ status: "", copies: "", q: "", price_min: "", price_max: "", store_missing: "", ai: "", chem: "", src_tag: "", eye: "", adopted: "" });
     });
     $("#i-rows").addEventListener("click", (e) => {
       const cr = e.target.closest("tr[data-copy]");
@@ -442,6 +444,7 @@ App.page("inventory", {
         <span class="s-tag-add"><input id="s-tag-in" placeholder="태그 더하기 (쉼표로 여러 개)" size="18"> <button class="btn sm" id="s-tag-go">달기</button></span>`],
       ["카테고리", (d.category_fix ? `${esc(d.category_fix)} <span class="flag">직접 정함</span> <span class="muted small">(엑셀: ${esc(d.category)})</span>` : esc(d.category))
         + ` <button class="btn sm" id="s-cat">바꾸기</button>`],
+      ...(d.adopted ? [["원본 이름", '<span class="flag adopted">가져옴 · 원본 이름 없음</span> <span class="muted small">기존 상품 가져오기로 들어와 올라가 있던 이름이 원본 자리에 있습니다</span>']] : []),
       ["눈검수", `${eyeFlag(d)} <button class="btn sm" id="s-eye">${d.eye_at ? "검수 완료 풀기" : "검수 완료로 표시"}</button>`],
       ["생활화학", `${d.chem_judge ? `<b>${esc(CHEM_LABEL[d.chem_judge] || d.chem_judge)}</b> <span class="muted small">${esc(d.chem_reason || "")}</span>` : '<span class="muted">판정 안 함</span>'}
         ${d.drop_pending ? ' <span class="flag warn">판매 중 내리고 지우는 중</span>' : ""} <button class="btn sm" id="s-chem">판정 바꾸기</button>`], ...Object.entries(d.fields).map(([k, v]) => [esc(k), esc(v)]),

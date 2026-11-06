@@ -41,7 +41,7 @@ def listing_targets(db, f):
             f" AND NOT (l.op='create' AND l.origin_no='' AND s.eye_at IS NULL)")
     where = (where + f" AND {cond}") if where else f" WHERE {cond}"
     return db.q(f"""SELECT l.id, l.store_id, l.source_id, l.name, l.price, l.status, l.message, l.op, l.round,
-        l.origin_no, l.channel_no, l.seller_code, l.registered_at, l.name_id, l.round_reset, CASE WHEN l.op='delete' THEN 0 ELSE s.image_count END AS image_count
+        l.origin_no, l.channel_no, l.seller_code, l.registered_at, l.name_id, l.round_reset, l.price_fixed, CASE WHEN l.op='delete' THEN 0 ELSE s.image_count END AS image_count
         FROM listings l JOIN sources s ON s.id=l.source_id{where} ORDER BY l.id""", args)
 
 
@@ -390,7 +390,8 @@ class Runner:
             code = seller_code(cfg, store, t)
             # 가격은 올리는 이 순간의 기준으로 다시 정한다 (원본가·스토어 가격 조정·흔들기). 등록·최신화·다시 올리기 모두 같게.
             key = (self.db.one("SELECT source_key FROM sources WHERE id=?", (t["source_id"],)) or {}).get("source_key", "")
-            price = convert.store_price(convert.net_price(row), f"{key}|{sid}", cfg, store)
+            # 가져온 복사본(가격 고정)은 지금 가격 그대로
+            price = t["price"] if t.get("price_fixed") else convert.store_price(convert.net_price(row), f"{key}|{sid}", cfg, store)
             if price != t["price"]:
                 self.db.set_listing(lid, None, price=price)
                 t = {**t, "price": price}

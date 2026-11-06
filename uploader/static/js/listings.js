@@ -235,7 +235,9 @@ App.page("listings", {
     const noname = !l.name_id && !live && l.status !== "deleted";
     const flags = (noname ? `<span class="flag bad" title="원본 상품명 그대로라 올리지 않습니다">상품명 변경 필요</span>` : "")
       + (l.rep_word ? `<span class="flag warn" title="'${esc(l.rep_word)}'가 3번 이상 나옵니다 — 상품명 바꾸기로 다시 만드세요">반복: ${esc(l.rep_word)}</span>` : "")
-      + (l.name_origin ? `<span class="org org-${l.name_origin}" title="${l.name_origin === "ctx" ? "AI 키워드 이름의 양식 (A = 첫 복사용, B = 양식이 조금 다른 두 번째) — 원본 상품 화면에서 A·B 전체를 볼 수 있음" : ""}">${l.name_origin === "ctx" && l.ai_label ? `AI 이름 ${esc(l.ai_label)}` : ORIGIN[l.name_origin] || l.name_origin}</span>` : "") + lockFlag(l) + salesFlag(l) + eyeFlag(l);
+      + (l.name_origin ? `<span class="org org-${l.name_origin}" title="${l.name_origin === "ctx" ? "AI 키워드 이름의 양식 (A = 첫 복사용, B = 양식이 조금 다른 두 번째) — 원본 상품 화면에서 A·B 전체를 볼 수 있음" : ""}">${l.name_origin === "ctx" && l.ai_label ? `AI 이름 ${esc(l.ai_label)}` : ORIGIN[l.name_origin] || l.name_origin}</span>` : "") + lockFlag(l) + salesFlag(l) + eyeFlag(l)
+      + (l.adopted ? '<span class="flag adopted" title="기존 상품 가져오기로 들어온 원본 (원본 이름 없음)">가져옴</span>' : "")
+      + (l.price_fixed ? '<span class="flag" title="가져온 복사본: 최신화·다시 올리기 때 지금 가격 그대로">가격 고정</span>' : "");
     return `<tr data-id="${l.id}" class="${on ? "sel" : ""} ${l.status === "deleted" ? "off" : ""}">
       <td class="w-check" data-stop><input type="checkbox" ${on ? "checked" : ""} ${this.selAll ? "disabled" : ""} aria-label="고르기"></td>
       <td>${img(l.thumb)}</td>

@@ -163,7 +163,7 @@ function priceCell(x, srcPrice) {
     ${x.off ? `<div class="p-sub r nowrap" title="네이버 판매가 ${num(x.shown)}원 · 즉시할인 ${num(x.off)}원 → 손님 가격 ${num(fin)}원">판매가 ${num(x.shown)} · ${x.disc_pct}%</div>`
       : x.old_rule ? `<div class="p-sub r" title="예전 규칙으로 올라간 상품이라 네이버 판매가·할인은 판매자센터에서 확인하세요. 최신화·다시 올리기를 하면 지금 기준으로 올라갑니다">예전 규칙</div>` : ""}</td>`;
 }
-const ORIGIN = { original: "원본", ctx: "AI 키워드", shuffle: "셔플", recombine: "재조합(예전)", import: "가져옴", ai: "AI", manual: "직접" };
+const ORIGIN = { original: "원본", ctx: "AI 키워드", shuffle: "셔플", recombine: "재조합(예전)", import: "가져옴", adopt: "올라가 있던 이름", ai: "AI", manual: "직접" };
 
 const App = {
   pages: {}, current: null, state: null, stores: [], run: null, listeners: {}, taskSeen: {},
@@ -350,6 +350,9 @@ const App = {
         + (r.invalid ? ` · 검사 오류 ${num(r.invalid)}개 (원본 상품 화면에서 확인)` : "") + " · 이어서 상품명 변경 → 복사",
       chem: () => `생활화학 판정 끝: 물건 ${num(r.tool)}개(인증 대상 아님으로 올림) · 화학제품 ${num(r.chemical)}개(보류) · 애매 ${num(r.unclear)}개`
         + (r.requeued ? ` · 실패했던 복사본 ${num(r.requeued)}건 다시 등록 대기` : "") + (r.chemical + r.unclear ? " · 원본 상품 '생활화학 보류'에서 검수" : ""),
+      adopt: () => `기존 상품 가져오기 끝 (${r.store}): 연결 ${num(r.linked)}개` + (r.already ? ` · 이미 연결 ${num(r.already)}` : "")
+        + ` · 스토어에 없어서 뺌 ${num((r.dropped || 0) + (r.no_code || 0))} · 스토어에만 있음 ${num(r.store_only)}` + (r.dup_same ? ` · 같은 스토어 중복 ${num(r.dup_same)}` : "") + (r.dup ? ` · 같은 사진 다른 스토어 ${num(r.dup)}` : "")
+        + " — 가져오기 화면에서 목록 받기",
       srctags: () => `출처 태그 채우기 끝: 원본 ${num(r.total)}개 중 ${num(r.changed)}개에 더함 · 수집 스토어 ${num(r.store)}개 · 가져온 날 ${num(r.date)}개`,
       mail: () => `메일함: 확인 ${num(r.checked)}통 · 새로 ${num(r.new)}통` + (r.warn ? ` · 경고·제재 ${num(r.warn)}통` : "") + (r.auth ? ` · 인증번호 ${num(r.auth)}통` : ""),
       revalidate: () => `다시 검사 끝: ${num(r.total)}개` + (r.invalid !== undefined ? ` · 오류 ${num(r.invalid)}개` : ""),
