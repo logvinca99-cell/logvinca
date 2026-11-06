@@ -80,6 +80,21 @@ function ymdToday() {
 function srcTagChips(tags, rm = false) {
   return (tags || []).map((t) => `<span class="stag ${/^\d{4}-\d{2}-\d{2}$/.test(t) ? "date" : ""}" title="출처 태그">${esc(t)}${rm ? `<button type="button" class="stag-x" data-rm-tag="${esc(t)}" title="이 태그 빼기">✕</button>` : ""}</span>`).join("");
 }
+/* 적는 대로 저장하는 메모 칸: ta(textarea)·st(저장 표시)·save(text) → {at} */
+function autoSaveMemo(ta, st, save) {
+  let t = null;
+  const go = async () => {
+    t = null;
+    try { const r = await save(ta.value); if (st) st.textContent = `${when(r.at)} 저장됨`; }
+    catch (e) { if (st) st.textContent = "저장 못 함"; App.toast(`메모를 저장하지 못했습니다: ${e.message}`, true); }
+  };
+  ta.addEventListener("input", () => { clearTimeout(t); if (st) st.textContent = "적는 중…"; t = setTimeout(go, 700); });
+  ta.addEventListener("blur", () => { if (t) { clearTimeout(t); go(); } });
+  const grow = () => { ta.style.height = "auto"; ta.style.height = `${Math.min(600, Math.max(ta.scrollHeight + 2, 90))}px`; };
+  ta.addEventListener("input", grow);
+  setTimeout(grow, 0);
+}
+
 /* 눈검수(검수) 표시: 원본 기준 */
 function eyeFlag(x) {
   return x.eye_at ? `<span class="flag eye-ok" title="${when(x.eye_at)} 검수 완료">검수 완료</span>` : '<span class="flag eye-no" title="새로 올리려면 눈검수 또는 \'검수 완료로 표시\'">미검수</span>';

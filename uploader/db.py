@@ -273,6 +273,7 @@ class DB:
                     # 눈검수(복사본 화면 썸네일 그리드)로 본 때 — 원본 기준이라 다른 스토어 복사본에도 '본 것'으로
                     ("eye_at", "REAL")],
         "stores": [("code", "TEXT NOT NULL DEFAULT ''"), ("orders_synced_to", "REAL"),
+                   ("memo_at", "REAL"),   # 스토어 메모를 고친 때 (스토어 화면 카드에서 바로 적음)
                    ("wm_text", "TEXT NOT NULL DEFAULT ''"), ("importer", "TEXT NOT NULL DEFAULT ''"),
                    # 스토어 템플릿: 상세 상단·하단(HTML), 관부가세 코드, 가격 조정 %, 표시 할인율 % (비우면 설정 공통값)
                    ("tpl_top_html", "TEXT NOT NULL DEFAULT ''"), ("tpl_bottom_html", "TEXT NOT NULL DEFAULT ''"),

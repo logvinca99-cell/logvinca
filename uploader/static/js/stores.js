@@ -64,6 +64,16 @@ App.page("stores", {
           || `<div class="st-empty">스토어를 여기로 끌어 오거나 '+ 스토어'를 누르세요.</div>`}</div>` : ""}
       </section>`;
     }).join("") : `<div class="card pad"><p class="muted">아직 사업자·스토어가 없습니다. <b>사업자 추가</b>로 사업자를 만들고 그 안에 스토어를 추가하세요.</p></div>`;
+    // 카드 메모: 적는 대로 저장
+    $$("#s-groups textarea[data-memo]").forEach((ta) => {
+      const id = +ta.dataset.memo;
+      autoSaveMemo(ta, $(`[data-memo-st="${id}"]`), async (text) => {
+        const r = await App.api(`/api/stores/${id}/memo`, { json: { memo: text } });
+        const s = this.rows.find((x) => x.id === id);
+        if (s) { s.memo = text; s.memo_at = r.memo_at; }
+        return { at: r.memo_at };
+      });
+    });
   },
 
   rowHtml(s) {
@@ -78,6 +88,8 @@ App.page("stores", {
       <div class="st-meta">${s.naver_count_at ? `연결 확인 ${when(s.naver_count_at)}${line ? `<br>${esc(line)}` : ""}` : '<span class="c-warn">연결 확인 전 (사용량이 정확하지 않음)</span>'}</div>
       <div class="st-meta">실패 <b class="${s.n_fail ? "c-err" : ""}">${num(s.n_fail)}</b> · 판매 이력 <b>${num(s.n_sold)}</b> · 내림 ${num(s.n_deleted)}${s.n_locked ? ` · 잠금 ${num(s.n_locked)}` : ""}
         · <a href="#listings?store_id=${s.id}">복사본 보기</a></div>
+      <div class="st-memo"><div class="st-memo-head"><b>메모</b> <span class="muted small" data-memo-st="${s.id}">${s.memo_at ? `${when(s.memo_at)} 저장` : "나만 보는 메모 · 적는 대로 저장"}</span></div>
+        <textarea data-memo="${s.id}" rows="2" placeholder="예) 셀업 수집(earth777) 상품으로 채움 · 다음 달부터 최신화 위주로">${esc(s.memo || "")}</textarea></div>
       ${storeLinks(s)}
       <div class="store-acts"><button class="btn sm" data-act="edit" data-id="${s.id}">수정</button>
         <button class="btn sm" data-act="tpl" data-id="${s.id}">템플릿</button>
@@ -417,7 +429,7 @@ App.page("stores", {
             ${s.chrome_profile ? `<option value="${esc(s.chrome_profile)}" selected>${esc(s.chrome_profile)}</option>` : ""}</select>
             <span class="muted small" id="s-cp-note">크롬 프로필 불러오는 중…</span></span></label>
         <label class="field">받는 메일 주소 <span class="muted">(메일함에서 이 스토어 메일을 구분 · 예: me+redcoco@gmail.com · 비우면 메일 안의 스토어 이름으로)</span><input name="mail_to" value="${esc(s.mail_to || "")}"></label>
-        <label class="field">메모<input name="memo" value="${esc(s.memo || "")}"></label>
+        <label class="field">메모 <span class="muted">(스토어 카드에서도 바로 적을 수 있음)</span><textarea name="memo" rows="4">${esc(s.memo || "")}</textarea></label>
         <label class="check"><input type="checkbox" name="enabled" ${s.enabled ? "checked" : ""}> 사용 (끄면 새 계획에서 빠짐)</label>
       </div>`,
       buttons: [
@@ -429,7 +441,7 @@ App.page("stores", {
         { label: "취소" },
         { label: "저장", primary: true, onClick: async (b) => {
           const v = { id: s.id };
-          $$("input, select", b).forEach((x) => { if (x.name) v[x.name] = x.type === "checkbox" ? x.checked : x.value; });
+          $$("input, select, textarea", b).forEach((x) => { if (x.name) v[x.name] = x.type === "checkbox" ? x.checked : x.value; });
           try { await App.api("/api/stores", { json: v }); await this.load(); App.refreshState(); }
           catch (e) { App.toast(e.message, true); return false; }
         } },

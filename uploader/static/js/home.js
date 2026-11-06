@@ -6,6 +6,11 @@ App.page("home", {
     el.innerHTML = `<div class="page">
       <header class="page-head"><h1>한눈에 보기</h1>
         <div class="head-actions"><a class="btn" href="#inventory">원본 상품</a><a class="btn primary" href="#listings">등록하러 가기</a></div></header>
+      <section class="card pad h-memo"><div class="sec-head"><h2>업무 메모</h2><span class="muted small" id="h-memo-st">오늘 할 일·하고 있는 일 · 적는 대로 저장</span></div>
+        <textarea id="h-memo" placeholder="예)
+□ 오늘: 뉴시즌8 눈검수 30쪽까지
+□ 온누리 → 레드꼬꼬 남은 자리 채우기
+■ 진행 중: 마하mall 최신화 (11/6 시작)"></textarea></section>
       <div class="tiles" id="h-tiles"></div>
       <div id="h-steps"></div>
       <section class="card pad">
@@ -14,6 +19,13 @@ App.page("home", {
       </section>
     </div>`;
     this.el = el;
+    App.api("/api/home/memo").then((m) => {
+      const ta = $("#h-memo");
+      if (!ta) return;
+      ta.value = m.memo || "";
+      if (m.at) $("#h-memo-st").textContent = `${when(m.at)} 저장`;
+      autoSaveMemo(ta, $("#h-memo-st"), (text) => App.api("/api/home/memo", { json: { memo: text } }));
+    }).catch(() => {});
     this.onDone = () => this.load();
     App.on("task-done", this.onDone);
     App.on("run-done", this.onDone);

@@ -866,3 +866,11 @@ body.eye-open .tasks { display: none; }
 /* 검수 표시 */
 .flag.eye-ok { background: var(--ok-soft); color: var(--ok); }
 .flag.eye-no { background: var(--line); color: var(--text-2); }
+/* 메모 (홈 업무 메모·스토어 메모) */
+.h-memo textarea, .st-memo textarea { width: 100%; resize: vertical; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel-2, var(--bg)); color: var(--text); font: inherit; font-size: 14px; line-height: 1.55; }
+.h-memo textarea { min-height: 110px; }
+.h-memo { margin-bottom: 14px; }
+.st-memo { margin: 8px 0 4px; }
+.st-memo-head { display: flex; gap: 6px; align-items: baseline; font-size: 13px; margin-bottom: 3px; }
+.st-memo textarea { min-height: 56px; font-size: 13px; padding: 7px 9px; }

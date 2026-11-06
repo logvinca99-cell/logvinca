@@ -735,6 +735,27 @@ def create_app(db=None):
         db.x("UPDATE stores SET goguma_manual=? WHERE id=?", (None if v in (None, "") else max(0, int(v)), sid))
         return jsonify(db.store(sid))
 
+    @app.post("/api/stores/<int:sid>/memo")
+    def store_memo(sid):
+        """스토어 메모 (이 스토어를 무슨 상품으로 채웠고 앞으로 어떻게 할지 — 나만 보는 메모, 적는 대로 저장)."""
+        now = time.time()
+        db.x("UPDATE stores SET memo=?, memo_at=? WHERE id=?", (str(body().get("memo") or "")[:20000], now, sid))
+        return jsonify({"memo_at": now})
+
+    @app.get("/api/home/memo")
+    def home_memo_get():
+        r = {x["k"]: x["v"] for x in db.q("SELECT k, v FROM meta WHERE k IN ('home_memo','home_memo_at')")}
+        return jsonify({"memo": r.get("home_memo") or "", "at": float(r["home_memo_at"]) if r.get("home_memo_at") else None})
+
+    @app.post("/api/home/memo")
+    def home_memo_set():
+        """한눈에 보기 맨 위 업무 메모 (매일 할 일·하고 있는 일 — 적는 대로 저장)."""
+        now = time.time()
+        with db.tx() as c:
+            c.execute("INSERT OR REPLACE INTO meta(k, v) VALUES('home_memo', ?)", (str(body().get("memo") or "")[:50000],))
+            c.execute("INSERT OR REPLACE INTO meta(k, v) VALUES('home_memo_at', ?)", (str(now),))
+        return jsonify({"at": now})
+
     @app.post("/api/stores/<int:sid>/region")
     def store_region(sid):
         """스토어 출고 형태 표시 (해외·국내·안 정함)."""
