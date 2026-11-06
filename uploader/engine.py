@@ -516,7 +516,8 @@ class Runner:
             d = time.strftime("%Y-%m-%d", time.localtime(reg)) if reg else "올라간 날"
             have = f"지금은 {time.strftime('%Y-%m-%d', time.localtime(kf))}부터만 있음" if kf else "아직 받은 주문 없음"
             raise naver.ApiError(f"판매 이력 확인 전이라 지우지 않음 · 이 상품은 {d}에 올라갔는데 주문은 {have} → "
-                                 f"판매 현황 → '기간 지정해서 주문 가져오기'로 {d} ~ 오늘을 받은 뒤 다시 시도")
+                                 f"복사본 화면 위 [판매 이력 확인]에서 판매자센터 주문 파일을 넣거나 팔린 것을 직접 잠근 뒤 "
+                                 f"'판매 이력 확인 완료' (또는 네이버에서 {d} ~ 오늘 주문 받기) 후 다시 시도")
 
     def _count(self, sid, lid, ok):
         """ok: True 성공 / False 실패 / None 건너뜀"""

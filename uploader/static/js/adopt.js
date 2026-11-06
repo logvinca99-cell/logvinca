@@ -19,7 +19,7 @@ App.page("adopt", {
           <li>스토어에 있는 상품 → <b>원본</b>(엑셀 내용, 스토어 상하단은 빼고) + 그 스토어의 <b>판매 중 복사본</b>. 내리기·최신화·다른 스토어로 복사가 똑같이 됩니다.</li>
           <li><b>원본가 = 그 스토어의 지금 손님 가격</b>(엑셀 판매가가 아님 — 따로 건 할인까지 반영). 복사본은 <b>최신화 때도 손님 가격 그대로</b>(가격 고정 — 최신화 직전에 네이버에서 다시 읽음, 옵션 추가금도), 다른 스토어로 복사할 때는 이 원본가에 받는 스토어 템플릿 적용.</li>
           <li>원본에는 <b>'가져옴 · 원본 이름 없음'</b> 표시 (올라가 있던 이름이 원본 자리). 대표 사진이 같은 원본이 이미 있으면 <b>그 원본(원본 이름·AI 키워드·상세)은 그대로</b> 두고 원본가만 바꿉니다('가져옴').</li>
-          <li><b>판매 이력</b>: 가져온 상품은 그 상품이 올라간 날부터 주문을 받아 둬야 최신화·내리기를 합니다(팔린 상품을 지우지 않게). 아래 기록의 <b>[주문 받기]</b>.</li>
+          <li><b>판매 이력</b>: 가져온 상품은 판매 이력을 확인해야 최신화·내리기를 합니다(팔린 상품을 지우지 않게). 아래 기록의 <b>[판매 이력 확인]</b> — 판매자센터 주문 파일을 넣거나 팔린 것을 직접 잠근 뒤 '판매 이력 확인 완료'. 그 뒤로는 최신화할 때마다 새 기간만 받아 잠급니다.</li>
           <li>브랜드·제조사·모델명·원산지는 '상세페이지 참조'로 바꿔 둡니다 (올릴 때 스토어에 맞게 들어감).</li>
           <li>엑셀에는 있는데 <b>스토어에서 지운 상품은 버립니다</b> — 그 원본이 다른 경로로 이미 들어와 있으면 <b>[원본까지 삭제]</b>로 지웁니다. 스토어에는 있는데 엑셀에 없는 상품은 가져오지 않고 <b>목록으로 알려 드립니다</b>(아래 기록에서 엑셀로 받기).</li>
         </ul></section>
@@ -86,6 +86,8 @@ App.page("adopt", {
         if (!r.ids.length) return App.toast("지울 원본이 없습니다 (이미 지웠거나, 지금 그 스토어에 판매 중).");
         return App.chemDelete({ ids: r.ids }, () => this.loadRuns());
       }
+      const sb = e.target.closest("[data-sales]");
+      if (sb) return App.salesConfirm(+sb.dataset.sales, () => this.loadRuns());
       const o = e.target.closest("[data-orders]");
       if (o) {
         if (!confirm(`이 스토어 주문을 ${o.dataset.from}부터 오늘까지 받습니다.\n네이버는 하루 단위로 나눠 조회해서 기간이 길면 시간이 걸립니다(뒤에서 돌아감).\n다 받으면 가져온 상품을 최신화·내리기할 수 있습니다 (팔린 상품은 잠겨서 안 지움).`)) return;
@@ -102,8 +104,10 @@ App.page("adopt", {
           ${s.linked ? `<div class="small muted">연결된 것: ${esc(st(s))}${s.managed ? ` · 이 프로그램이 올린 상품 ${num(s.managed)}개는 그대로` : ""}</div>` : ""}
           ${s.existing ? `<div class="small muted">이미 있던 원본 ${num(s.existing)}개는 내용 그대로(원본가만 손님 가격으로)</div>` : ""}
           ${s.dropped_src ? `<div class="small"><span class="c-warn">스토어에서 지운 상품의 원본 ${num(s.dropped_src)}개</span> <button class="btn tiny danger" data-drop="${r.id}">원본까지 삭제</button></div>` : ""}
-          ${s.need_orders ? `<div class="small"><span class="c-warn">판매 이력 확인 전 — ${ymdOf(s.reg_min)}부터 주문이 있어야 최신화·내리기</span>
-            <button class="btn tiny" data-orders="${r.store_id}" data-from="${ymdOf(s.reg_min)}">주문 받기 (${ymdOf(s.reg_min)} ~ 오늘)</button></div>` : ""}</td>
+          ${r.sales && r.sales.adopted ? (r.sales.need
+            ? `<div class="small"><span class="c-warn">판매 이력 확인 전 ${num(r.sales.need)}개 — 최신화·내리기 안 함</span>
+              <button class="btn tiny primary" data-sales="${r.store_id}">판매 이력 확인</button></div>`
+            : `<div class="small c-ok">판매 이력 확인됨 (${ymdOf(r.sales.known_from)}부터) <button class="btn tiny ghost" data-sales="${r.store_id}">보기</button></div>`) : ""}</td>
         <td class="num">${num(s.rows || 0)}</td>
         ${ADOPT_KINDS.map(([k]) => `<td class="num">${s[k] ? `<a href="/api/adopt/${r.id}/items.csv?kind=${k}" title="엑셀(CSV)로 받기">${num(s[k])} ⬇</a>` : (r.status === "done" ? "0" : "")}</td>`).join("")}
         <td class="num">${r.status === "done" ? `상단 ${num(s.top_removed || 0)} · 하단 ${num(s.bottom_removed || 0)}` : ""}</td></tr>`; }).join("")}

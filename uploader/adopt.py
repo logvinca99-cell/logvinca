@@ -463,9 +463,15 @@ def _drop_token(token):
 
 
 def runs(db, limit=30):
-    out = []
+    out, sales = [], {}
     for r in db.q("SELECT * FROM adopt_run ORDER BY id DESC LIMIT ?", (limit,)):
         r["stats"] = json.loads(r["stats"] or "{}")
+        if r["store_id"] not in sales:
+            try:
+                sales[r["store_id"]] = orders.sales_status(db, r["store_id"])
+            except ValueError:
+                sales[r["store_id"]] = None
+        r["sales"] = sales[r["store_id"]]   # 지금 판매 이력 상태 (확인 전 남은 가져온 상품 수 등)
         out.append(r)
     return out
 

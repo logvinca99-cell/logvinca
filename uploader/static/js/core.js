@@ -394,11 +394,63 @@ const App = {
   /* 엑셀 올리기 (원본 불러오기·상세 정리): 서버가 가격 칸을 먼저 확인 — 이상한 줄이 있으면 경고 창, 확인하면 그대로 진행 */
   async sendChecked(url, fd, extra = {}) {
     let r;
-    this.toast("엑셀 가격 칸(판매가·할인가·원가) 확인 중…");
+    if (/\/api\/(sources|clean)\/import/.test(url)) this.toast("엑셀 가격 칸(판매가·할인가·원가) 확인 중…");
     try { r = await this.api(url, { method: "POST", body: fd }); } catch (e) { this.toast(e.message, true); return null; }
     if (r && r.price_warn) return this.priceWarn(url, r, extra);
     return this.startTask(Promise.resolve(r));
   },
+  /* 가져온 상품의 판매 이력 확인: 판매자센터 주문 파일을 넣거나 팔린 것을 직접 잠근 뒤 '판매 이력 확인 완료'
+     → 그 날부터 판매 이력을 아는 것으로 (그 뒤로는 최신화·내리기 때마다 마지막 확인부터만 새로 받아 잠금) */
+  async salesConfirm(storeId, after) {
+    let s;
+    try { s = await this.api(`/api/stores/${storeId}/sales`); } catch (e) { return this.toast(e.message, true); }
+    const d = (ts) => { if (!ts) return ""; const x = new Date(ts * 1000); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`; };
+    const from = d(s.reg_min) || ymdToday();
+    this.openModal({
+      title: `판매 이력 확인 — ${s.store}`, wide: true,
+      body: `<div class="notice ${s.need ? "warn" : "ok"}">${s.need
+          ? `가져온 상품 <b>${num(s.adopted)}</b>개 중 <b>${num(s.need)}</b>개는 판매 이력 확인 전이라 <b>최신화·내리기를 하지 않습니다</b> (팔린 상품을 지우지 않게).`
+          : `가져온 상품 <b>${num(s.adopted)}</b>개 모두 판매 이력을 확인했습니다 — 최신화·내리기 때마다 마지막 확인 뒤 주문만 새로 받아 잠급니다.`}</div>
+        <dl class="kv" style="margin-top:10px">
+          <dt>가져온 상품이 처음 올라간 날</dt><dd>${s.reg_min ? d(s.reg_min) : "-"}</dd>
+          <dt>판매 이력을 아는 기간</dt><dd>${s.known_from ? `${d(s.known_from)} ~ 오늘` : "아직 없음"}</dd>
+          <dt>판매 이력 파일로 넣은 주문</dt><dd>${s.file_orders ? `${num(s.file_orders)}건 (${d(s.file_from)} ~ ${d(s.file_to)}) · 맞춘 복사본 ${num(s.file_listings)}개` : "없음"}</dd>
+          <dt>잠긴 가져온 상품</dt><dd>${num(s.locked)}개${s.manual ? ` (직접 잠금 ${num(s.manual)}개)` : ""}</dd>
+        </dl>
+        <ol class="small" style="line-height:1.8;padding-left:18px;margin:10px 0">
+          <li>판매자센터 → 주문(주문통합검색 등)에서 <b>${from} ~ 오늘</b> 주문을 엑셀로 받아 <b>[판매 이력 파일 넣기]</b> — 상품번호로 맞춰 팔린 상품을 자동으로 잠급니다.</li>
+          <li>팔린 걸 직접 아는 상품은 복사본 화면에서 골라 <b>[잠금]</b>.</li>
+          <li>다 했으면 아래 날짜를 확인하고 <b>[판매 이력 확인 완료]</b> — 이 날부터의 판매 이력은 확인한 것으로 보고, 그 뒤로는 최신화할 때마다 새 기간만 받아 잠급니다.</li>
+        </ol>
+        <div class="cl-row"><label class="field" style="margin:0">이 날부터 판매 이력을 확인함<input type="date" id="sc-from" value="${from}"></label>
+          <label class="btn"><input type="file" id="sc-file" accept=".xlsx,.xlsm,.csv" hidden>판매 이력 파일 넣기</label></div>`,
+      buttons: [
+        { label: "닫기" },
+        { label: "네이버에서 주문 받기", onClick: async (b) => {
+          const f = $("#sc-from", b).value;
+          if (!confirm(`${s.store} 주문을 ${f}부터 오늘까지 네이버에서 받습니다 (하루 단위로 나눠 조회 — 기간이 길면 시간이 걸림).`)) return false;
+          await this.startTask(this.api("/api/orders/sync", { json: { from: f, store_ids: [s.store_id] } }));
+        } },
+        { label: "판매 이력 확인 완료", primary: true, onClick: async (b) => {
+          const f = $("#sc-from", b).value;
+          if (!confirm(`${s.store}: ${f}부터 오늘까지의 판매 이력을 확인했나요?\n(판매자센터 주문 파일을 넣었거나 팔린 상품을 잠금)\n\n확인하면 그 날 뒤에 올라간 가져온 상품은 최신화·내리기를 합니다 — 잠긴 것은 그대로 지우지 않습니다.`)) return false;
+          try {
+            const r = await this.api(`/api/stores/${s.store_id}/sales_confirm`, { json: { from: f } });
+            this.toast(`판매 이력 확인 완료 (${f}부터)` + (r.need ? ` · 아직 그 전에 올라간 가져온 상품 ${num(r.need)}개는 확인 전` : ""));
+            if (after) after(r);
+          } catch (e) { this.toast(e.message, true); return false; }
+        } },
+      ],
+    });
+    $("#sc-file").addEventListener("change", (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      this.closeModal();
+      this.upload("/api/orders/import", f);
+      this.toast("판매 이력 파일을 넣는 중 — 끝나면 [판매 이력 확인]을 다시 눌러 '판매 이력 확인 완료'를 누르세요.");
+    });
+  },
+
   priceWarn(url, r, extra) {
     const w = r.price_warn;
     const why = (k) => esc(w.labels[k] || k);

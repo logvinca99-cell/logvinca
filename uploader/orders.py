@@ -194,6 +194,37 @@ def known_from(store):
     return store.get("orders_from") if store.get("orders_synced_to") else None
 
 
+def sales_status(db, store_id):
+    """가져온 상품(가격 고정)의 판매 이력 확인 상태 — '판매 이력 확인' 창용."""
+    st = db.one("SELECT id, name, orders_from, orders_synced_to FROM stores WHERE id=?", (int(store_id),))
+    if not st:
+        raise ValueError("스토어를 찾지 못했습니다.")
+    kf = known_from(st)
+    a = db.one("""SELECT COUNT(*) AS n, MIN(registered_at) AS reg_min, SUM(locked=1) AS locked, SUM(manual_lock=1) AS manual,
+        SUM(? IS NULL OR registered_at < ?) AS need
+        FROM listings WHERE store_id=? AND price_fixed=1 AND origin_no!='' AND status!='deleted'""",
+               (kf, (kf or 0) - 3600, st["id"]))
+    f = db.one("""SELECT COUNT(*) AS n, MIN(o.ordered_at) AS mn, MAX(o.ordered_at) AS mx, COUNT(DISTINCT o.listing_id) AS lst
+        FROM orders o JOIN listings l ON l.id=o.listing_id WHERE l.store_id=? AND o.source='file'""", (st["id"],))
+    return {"store_id": st["id"], "store": st["name"], "known_from": kf, "synced_to": st["orders_synced_to"],
+            "adopted": a["n"] or 0, "reg_min": a["reg_min"], "need": a["need"] or 0, "locked": a["locked"] or 0, "manual": a["manual"] or 0,
+            "file_orders": f["n"] or 0, "file_from": f["mn"], "file_to": f["mx"], "file_listings": f["lst"] or 0}
+
+
+def confirm_sales(db, store_id, from_ts):
+    """판매 이력을 직접 확인함 (판매자센터 주문 파일을 넣거나 직접 잠금): 이 스토어는 from_ts부터 판매 이력을 안다.
+    그 뒤로는 최신화·내리기 때마다 마지막 확인부터만 새로 받아 잠근다."""
+    st = db.one("SELECT orders_from, orders_synced_to FROM stores WHERE id=?", (int(store_id),))
+    if not st:
+        raise ValueError("스토어를 찾지 못했습니다.")
+    if not from_ts:
+        raise ValueError("날짜를 넣어 주세요.")
+    cur = known_from(st)
+    new_from = min(from_ts, cur) if cur else from_ts
+    db.x("UPDATE stores SET orders_from=?, orders_synced_to=COALESCE(orders_synced_to, ?) WHERE id=?", (new_from, time.time(), int(store_id)))
+    return sales_status(db, store_id)
+
+
 def sync_stores(db, stores_with_clients, progress=None, should_stop=None, days=None, since=None, until=None):
     """여러 스토어를 동시에 가져온다 (스토어마다 API 애플리케이션이 따로라 한도도 따로). 중단하면 하던 날짜에서 바로 멈춘다."""
     total = {"stores": 0, "orders": 0, "new": 0, "matched": 0, "errors": []}

@@ -1644,6 +1644,21 @@ def create_app(db=None):
             return fail(str(e))
         return jsonify({"task": tid})
 
+    @app.get("/api/stores/<int:sid>/sales")
+    def store_sales(sid):
+        try:
+            return jsonify(orders.sales_status(db, sid))
+        except ValueError as e:
+            return fail(str(e), 404)
+
+    @app.post("/api/stores/<int:sid>/sales_confirm")
+    def store_sales_confirm(sid):
+        """가져온 상품의 판매 이력을 직접 확인함 (주문 파일·직접 잠금) → 그 날부터 판매 이력을 아는 것으로."""
+        try:
+            return jsonify(orders.confirm_sales(db, sid, _date_ts(body().get("from"))))
+        except ValueError as e:
+            return fail(str(e))
+
     @app.post("/api/orders/import")
     def orders_import():
         return file_task("orders", "판매 이력 파일 가져오기", orders.import_sales_file)

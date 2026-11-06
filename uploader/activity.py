@@ -145,6 +145,8 @@ ACTIONS = {
     "trash_restore": ("휴지통", lambda b, r: ("휴지통에서 되살림", _count_of(r, "count", "restored", "ids"), "")),
     "trash_purge": ("휴지통", lambda b, r: ("휴지통 비우기" if b.get("empty") else "휴지통에서 완전히 삭제", _count_of(r, "count", "purged", "deleted"), "")),
     "listing_set_name": ("상품명", lambda b, r: ("상품명 직접 고침", 1, str(r.get("name") or "")[:120])),
+    "store_sales_confirm": ("주문", lambda b, r: (f"판매 이력 확인 완료 · {r.get('store', '')} · {b.get('from')}부터", r.get("adopted"),
+                                                 f"확인 전 남은 가져온 상품 {r.get('need', 0)}개")),
     "lock": ("복사본", lambda b, r: ("잠금" if b.get("lock") else "잠금 풀기", r.get("count"), f"아직 잠긴 것 {r['still_locked']}건" if r.get("still_locked") else "")),
     "cancel": ("복사본", lambda b, r: ("대기 취소", r.get("cancelled"), "")),
     "sources_bulk_edit": ("원본", lambda b, r: ("원본 일괄 수정" + (" · 판매자코드 비우기" if b.get("clear_seller_code") else "")

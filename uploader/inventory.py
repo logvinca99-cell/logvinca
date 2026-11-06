@@ -1684,6 +1684,10 @@ def listing_counts(db, store_id=None, plan_id=None):
     nvc = db.one(f"""SELECT SUM(nv_status!='' AND nv_status NOT IN ({ok})) AS nv_bad, SUM(nv_status='') AS nv_unknown,
         SUM(nv_status='GONE') AS nv_gone, SUM(bait_state IN ('on','fail')) AS bait_left
         FROM listings WHERE origin_no!='' AND status!='deleted'{nvw}""", a)
+    need = db.one(f"""SELECT COUNT(*) AS n FROM listings l JOIN stores t ON t.id=l.store_id
+        WHERE l.price_fixed=1 AND l.origin_no!='' AND l.status!='deleted'
+        AND (t.orders_from IS NULL OR t.orders_synced_to IS NULL OR l.registered_at < t.orders_from - 3600){''.join(' AND l.' + x for x in w)}""", a)
+    out = {**out, "need_sales": need["n"] or 0}
     return {**out, "eye_done": e["eye_done"] or 0, "eye_todo": e["eye_todo"] or 0,
             "nv_bad": nvc["nv_bad"] or 0, "nv_unknown": nvc["nv_unknown"] or 0, "nv_gone": nvc["nv_gone"] or 0,
             "bait_left": nvc["bait_left"] or 0}

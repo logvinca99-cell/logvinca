@@ -57,6 +57,7 @@ App.page("listings", {
           <a class="btn" href="#orders" title="판매자센터 주문을 가져오고 기간·스토어별로 보기">판매 현황</a>
         </div></header>
       <div class="card run" id="l-run"></div>
+      <div id="l-sales"></div>
       <div class="tiles" id="l-tiles"></div>
       <div class="filters-row">
         <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
@@ -160,6 +161,9 @@ App.page("listings", {
     this.counts = res.counts || {};
     this.rows = res.rows;
     this.total = res.total;
+    $("#l-sales").innerHTML = this.counts.need_sales ? `<div class="notice warn" style="margin-bottom:10px">가져온 상품 <b>${num(this.counts.need_sales)}</b>개는
+      <b>판매 이력 확인 전</b>이라 최신화·내리기를 하지 않습니다 (팔린 상품을 지우지 않게). <button class="btn tiny primary" id="l-sales-go">판매 이력 확인</button></div>` : "";
+    $("#l-sales-go")?.addEventListener("click", () => App.salesConfirm(+this.f.store_id, () => this.load()));
     const active = this.f.eye ? `eye_${this.f.eye}` : this.f.nv === "bad" ? "nv_bad" : this.f.bait_left ? "bait_left" : this.f.status;
     $("#l-tiles").innerHTML = tilesHtml(LST_TILES.filter((t) => !t.only || this.counts[t.key] || active === t.key), { ...this.counts, all: this.counts.all_ }, active);
     $("#l-rows").innerHTML = res.rows.length ? res.rows.map((l) => this.rowHtml(l)).join("")
