@@ -3,7 +3,8 @@
 "use strict";
 
 const ADOPT_KINDS = [["linked", "연결"], ["already", "이미 연결"], ["dropped", "스토어에 없어 뺌"], ["store_only", "스토어에만 있음"],
-  ["dup_same", "같은 스토어 중복"], ["dup", "같은 사진 다른 스토어"]];
+  ["dup_same", "같은 스토어 중복"], ["dup", "같은 사진 다른 스토어"], ["price_diff", "엑셀≠손님 가격"], ["mobile_disc", "모바일 할인"]];
+const ymdOf = (ts) => { const d = new Date(ts * 1000); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
 App.page("adopt", {
   async mount(el) {
@@ -16,9 +17,11 @@ App.page("adopt", {
           네이버 상품 목록과 <b>판매자코드</b>로 맞춰서:</p>
         <ul class="small" style="margin:0;padding-left:18px;line-height:1.7">
           <li>스토어에 있는 상품 → <b>원본</b>(엑셀 내용, 스토어 상하단은 빼고) + 그 스토어의 <b>판매 중 복사본</b>. 내리기·최신화·다른 스토어로 복사가 똑같이 됩니다.</li>
-          <li>원본에는 <b>'가져옴 · 원본 이름 없음'</b> 표시 (올라가 있던 이름이 원본 자리). 복사본은 <b>최신화 때 지금 가격 그대로</b>(가격 고정), 다른 스토어로 복사할 때는 엑셀 판매가를 원본가로 받는 스토어 템플릿 적용.</li>
+          <li><b>원본가 = 그 스토어의 지금 손님 가격</b>(엑셀 판매가가 아님 — 따로 건 할인까지 반영). 복사본은 <b>최신화 때도 손님 가격 그대로</b>(가격 고정 — 최신화 직전에 네이버에서 다시 읽음, 옵션 추가금도), 다른 스토어로 복사할 때는 이 원본가에 받는 스토어 템플릿 적용.</li>
+          <li>원본에는 <b>'가져옴 · 원본 이름 없음'</b> 표시 (올라가 있던 이름이 원본 자리). 대표 사진이 같은 원본이 이미 있으면 <b>그 원본(원본 이름·AI 키워드·상세)은 그대로</b> 두고 원본가만 바꿉니다('가져옴').</li>
+          <li><b>판매 이력</b>: 가져온 상품은 그 상품이 올라간 날부터 주문을 받아 둬야 최신화·내리기를 합니다(팔린 상품을 지우지 않게). 아래 기록의 <b>[주문 받기]</b>.</li>
           <li>브랜드·제조사·모델명·원산지는 '상세페이지 참조'로 바꿔 둡니다 (올릴 때 스토어에 맞게 들어감).</li>
-          <li>엑셀에는 있는데 <b>스토어에서 지운 상품은 버립니다</b>. 스토어에는 있는데 엑셀에 없는 상품은 가져오지 않고 <b>목록으로 알려 드립니다</b>(아래 기록에서 엑셀로 받기).</li>
+          <li>엑셀에는 있는데 <b>스토어에서 지운 상품은 버립니다</b> — 그 원본이 다른 경로로 이미 들어와 있으면 <b>[원본까지 삭제]</b>로 지웁니다. 스토어에는 있는데 엑셀에 없는 상품은 가져오지 않고 <b>목록으로 알려 드립니다</b>(아래 기록에서 엑셀로 받기).</li>
         </ul></section>
       <section class="card pad">
         <div class="sec-head"><h2>1. 업로드했던 엑셀 올리기</h2><span class="muted small">파일 하나 = 스토어 하나</span></div>
@@ -76,6 +79,19 @@ App.page("adopt", {
     const rs = await App.api("/api/adopt/runs");
     const box = $("#ad-runs");
     if (!box) return;
+    box.onclick = async (e) => {
+      const d = e.target.closest("[data-drop]");
+      if (d) {   // 스토어에서 지운(문제 있어 지운) 상품의 원본 → 원본과 모든 스토어 복사본 삭제 (판매 이력·잠금은 남김)
+        const r = await App.api(`/api/adopt/${d.dataset.drop}/drop_sources`);
+        if (!r.ids.length) return App.toast("지울 원본이 없습니다 (이미 지웠거나, 지금 그 스토어에 판매 중).");
+        return App.chemDelete({ ids: r.ids }, () => this.loadRuns());
+      }
+      const o = e.target.closest("[data-orders]");
+      if (o) {
+        if (!confirm(`이 스토어 주문을 ${o.dataset.from}부터 오늘까지 받습니다.\n네이버는 하루 단위로 나눠 조회해서 기간이 길면 시간이 걸립니다(뒤에서 돌아감).\n다 받으면 가져온 상품을 최신화·내리기할 수 있습니다 (팔린 상품은 잠겨서 안 지움).`)) return;
+        App.startTask(App.api("/api/orders/sync", { json: { from: o.dataset.from, store_ids: [+o.dataset.orders] } }));
+      }
+    };
     if (!rs.length) { box.innerHTML = '<p class="muted">아직 가져온 기록이 없습니다.</p>'; return; }
     const st = (s) => Object.entries(s.status || {}).map(([k, v]) => `${NAVER_STATUS[k] || k} ${num(v)}`).join(" · ");
     box.innerHTML = `<table class="grid"><thead><tr><th>#</th><th>시각</th><th>스토어 · 파일</th><th class="num">파일 상품</th>
@@ -83,11 +99,15 @@ App.page("adopt", {
       ${rs.map((r) => { const s = r.stats || {}; return `<tr><td>${r.id}</td><td class="nowrap">${when(r.created_at)}</td>
         <td><b>${esc(r.store_name)}</b><div class="small muted">${esc(r.file_name)}</div>
           ${r.status === "running" ? '<span class="badge s-running">가져오는 중</span>' : r.status === "error" ? `<span class="badge s-fail">오류</span> <span class="small c-err">${esc(s.error || "")}</span>` : ""}
-          ${s.linked ? `<div class="small muted">연결된 것: ${esc(st(s))}${s.managed ? ` · 이 프로그램이 올린 상품 ${num(s.managed)}개는 그대로` : ""}</div>` : ""}</td>
+          ${s.linked ? `<div class="small muted">연결된 것: ${esc(st(s))}${s.managed ? ` · 이 프로그램이 올린 상품 ${num(s.managed)}개는 그대로` : ""}</div>` : ""}
+          ${s.existing ? `<div class="small muted">이미 있던 원본 ${num(s.existing)}개는 내용 그대로(원본가만 손님 가격으로)</div>` : ""}
+          ${s.dropped_src ? `<div class="small"><span class="c-warn">스토어에서 지운 상품의 원본 ${num(s.dropped_src)}개</span> <button class="btn tiny danger" data-drop="${r.id}">원본까지 삭제</button></div>` : ""}
+          ${s.need_orders ? `<div class="small"><span class="c-warn">판매 이력 확인 전 — ${ymdOf(s.reg_min)}부터 주문이 있어야 최신화·내리기</span>
+            <button class="btn tiny" data-orders="${r.store_id}" data-from="${ymdOf(s.reg_min)}">주문 받기 (${ymdOf(s.reg_min)} ~ 오늘)</button></div>` : ""}</td>
         <td class="num">${num(s.rows || 0)}</td>
         ${ADOPT_KINDS.map(([k]) => `<td class="num">${s[k] ? `<a href="/api/adopt/${r.id}/items.csv?kind=${k}" title="엑셀(CSV)로 받기">${num(s[k])} ⬇</a>` : (r.status === "done" ? "0" : "")}</td>`).join("")}
         <td class="num">${r.status === "done" ? `상단 ${num(s.top_removed || 0)} · 하단 ${num(s.bottom_removed || 0)}` : ""}</td></tr>`; }).join("")}
       </tbody></table>
-      <p class="small muted" style="margin:8px 0 0">숫자를 누르면 그 목록을 엑셀(CSV)로 받습니다. '스토어에만 있음'은 그 스토어에 올라가 있지만 이 파일에 없는 상품(가져오지 않음), <b>'같은 스토어 중복'</b>은 대표 사진이 같은 상품을 그 스토어에 두 번 올린 것(먼저 것만 연결 — 나머지는 스토어에서 지우세요), '같은 사진 다른 스토어'는 대표 사진이 같은 원본이 다른 스토어에도 올라가 있는 것(한 상품은 한 스토어에만 — 하나 지우세요).</p>`;
+      <p class="small muted" style="margin:8px 0 0">숫자를 누르면 그 목록을 엑셀(CSV)로 받습니다. '엑셀≠손님 가격'은 엑셀 판매가와 스토어 손님 가격이 다른 상품(스토어 손님 가격으로 넣음), '모바일 할인'은 모바일에서만 더 싼 상품(최신화하면 모바일 할인이 사라짐). '스토어에만 있음'은 그 스토어에 올라가 있지만 이 파일에 없는 상품(가져오지 않음), <b>'같은 스토어 중복'</b>은 대표 사진이 같은 상품을 그 스토어에 두 번 올린 것(먼저 것만 연결 — 나머지는 스토어에서 지우세요), '같은 사진 다른 스토어'는 대표 사진이 같은 원본이 다른 스토어에도 올라가 있는 것(한 상품은 한 스토어에만 — 하나 지우세요).</p>`;
   },
 });

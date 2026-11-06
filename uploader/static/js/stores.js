@@ -268,7 +268,7 @@ App.page("stores", {
         </div>
         <h3 class="sec-title">가격</h3>
         <p class="muted small" style="margin:0">손님 가격 = (판매가 - 할인가) × (1 + 가격 조정 %) × 흔들기(범위 안에서 상품마다 다르게, 원본가와 같은 값은 안 나옴), 100원 올림.
-          표시 할인율은 금액으로 걸어 <b>정확히 그 %</b>가 되게 판매가를 정합니다. 칸을 비우면 설정의 기본값입니다.</p>
+          표시 할인율은 <b>손님 가격을 그대로 두고</b> 네이버 판매가를 100원 단위로 정해 그 %에 가깝게 금액으로 겁니다. 칸을 비우면 설정의 기본값입니다.</p>
         <div class="four">
           <label class="field">가격 조정 % <span class="muted">(마진, 예: 10)</span>
             <input id="t-price" type="number" step="0.5" value="${t.price_pct ?? ""}" placeholder="0"></label>

@@ -14,7 +14,24 @@ const LST_TILES = [
   { key: "deleted", label: "내림", dot: "var(--dup)" },
   { key: "eye_done", label: "검수 완료", dot: "var(--ok)" },
   { key: "eye_todo", label: "미검수 (새로 못 올림)", dot: "var(--muted)" },
+  { key: "nv_bad", label: "판매중지·판매금지 등 (최신화 안 함)", dot: "var(--err)" },
+  { key: "bait_left", label: "도둑방지 가격 남음 (최신화하세요)", dot: "var(--warn)", only: true },
 ];
+// 네이버 상태 (스토어처럼): 판매 중은 표시 안 함, 품절은 노랑, 판매중지·판매금지·스토어에 없음 등은 빨강
+const NV_LABEL = { SALE: "판매 중", OUTOFSTOCK: "품절", SUSPENSION: "판매중지", PROHIBITION: "판매금지", WAIT: "판매 대기", CLOSE: "판매 종료",
+  UNADMISSION: "승인 대기", REJECTION: "승인 거부", DELETE: "스토어에 없음", GONE: "스토어에 없음" };
+function nvFlag(l) {
+  if (!l.origin_no || l.status === "deleted") return "";
+  const at = l.nv_at ? ` · ${when(l.nv_at)} 확인` : "";
+  if (!l.nv_status) return "";
+  let out = "";
+  if (l.nv_status !== "SALE") {
+    const warn = l.nv_status === "OUTOFSTOCK";
+    out += `<span class="flag ${warn ? "warn" : "bad"}" title="네이버 판매 상태${at}${warn ? "" : " — 최신화하지 않습니다 (지우고 다시 올리면 다시 판매되므로)"}">${esc(NV_LABEL[l.nv_status] || l.nv_status)}</span>`;
+  }
+  if (l.nv_disp === "SUSPENSION") out += `<span class="flag warn" title="네이버 전시 상태: 전시중지(고구마)${at}">전시중지</span>`;
+  return out;
+}
 
 App.page("listings", {
   async mount(el, params) {
@@ -34,6 +51,7 @@ App.page("listings", {
           <a class="btn ghost sm" href="#listings">스토어 목록</a>${store ? storeLinks(store) : ""}</div>
         <div class="head-actions">
           <button class="btn primary" id="l-eye" title="썸네일만 그리드로 보며 이상한 상품을 골라 지우기">눈검수</button>
+          <button class="btn" id="l-nv" title="네이버 상품 목록을 받아 판매 중 복사본마다 판매 중·품절·판매중지·판매금지·스토어에 없음을 표시 (최신화 직전에도 자동으로 확인)">네이버 상태 확인</button>
           <a class="btn ghost" id="l-export">결과 CSV</a>
           <label class="btn" title="아바닛 등 주문 수집 웹에서 내려받은 주문 파일"><input type="file" id="l-sales-file" accept=".xlsx,.xlsm,.csv" hidden>판매 이력 파일 가져오기</label>
           <a class="btn" href="#orders" title="판매자센터 주문을 가져오고 기간·스토어별로 보기">판매 현황</a>
@@ -57,6 +75,7 @@ App.page("listings", {
     $("#l-store").value = String(params.store_id);
     $("#l-eye").addEventListener("click", () => Eye.open({ storeId: +this.f.store_id, storeName: store?.name || "", filter: this.query(),
       after: (r) => { if (r.deleted) this.clearSel(); this.estKey = ""; this.load(); } }));
+    $("#l-nv").addEventListener("click", () => App.startTask(App.api("/api/listings/nvcheck", { json: { store_id: +this.f.store_id } })));
     if (!store) App.toast("스토어를 찾지 못했습니다.", true);
     $("#l-age").value = this.f.age_days || "";
     this.bind();
@@ -141,7 +160,8 @@ App.page("listings", {
     this.counts = res.counts || {};
     this.rows = res.rows;
     this.total = res.total;
-    $("#l-tiles").innerHTML = tilesHtml(LST_TILES, { ...this.counts, all: this.counts.all_ }, this.f.eye ? `eye_${this.f.eye}` : this.f.status);
+    const active = this.f.eye ? `eye_${this.f.eye}` : this.f.nv === "bad" ? "nv_bad" : this.f.bait_left ? "bait_left" : this.f.status;
+    $("#l-tiles").innerHTML = tilesHtml(LST_TILES.filter((t) => !t.only || this.counts[t.key] || active === t.key), { ...this.counts, all: this.counts.all_ }, active);
     $("#l-rows").innerHTML = res.rows.length ? res.rows.map((l) => this.rowHtml(l)).join("")
       : `<tr class="empty-row"><td colspan="7">${this.counts.all_ ? "조건에 맞는 건이 없습니다."
         : '이 스토어에 복사본이 없습니다. <a href="#inventory">원본 상품</a>에서 원본을 고르고 <b>다른 스토어로 복사</b>를 누르세요.'}</td></tr>`;
@@ -236,8 +256,9 @@ App.page("listings", {
     const flags = (noname ? `<span class="flag bad" title="원본 상품명 그대로라 올리지 않습니다">상품명 변경 필요</span>` : "")
       + (l.rep_word ? `<span class="flag warn" title="'${esc(l.rep_word)}'가 3번 이상 나옵니다 — 상품명 바꾸기로 다시 만드세요">반복: ${esc(l.rep_word)}</span>` : "")
       + (l.name_origin ? `<span class="org org-${l.name_origin}" title="${l.name_origin === "ctx" ? "AI 키워드 이름의 양식 (A = 첫 복사용, B = 양식이 조금 다른 두 번째) — 원본 상품 화면에서 A·B 전체를 볼 수 있음" : ""}">${l.name_origin === "ctx" && l.ai_label ? `AI 이름 ${esc(l.ai_label)}` : ORIGIN[l.name_origin] || l.name_origin}</span>` : "") + lockFlag(l) + salesFlag(l) + eyeFlag(l)
-      + (l.adopted ? '<span class="flag adopted" title="기존 상품 가져오기로 들어온 원본 (원본 이름 없음)">가져옴</span>' : "")
-      + (l.price_fixed ? '<span class="flag" title="가져온 복사본: 최신화·다시 올리기 때 지금 가격 그대로">가격 고정</span>' : "");
+      + (l.adopted ? '<span class="flag adopted" title="기존 상품 가져오기로 들어온 원본">가져옴</span>' : "")
+      + (l.price_fixed ? '<span class="flag" title="가져온 복사본: 최신화·다시 올리기 때 손님 가격 그대로 (최신화 직전에 네이버에서 다시 읽음 — 판매자센터에서 바꾼 가격·옵션 추가금도)">가격 고정</span>' : "")
+      + nvFlag(l) + (l.bait_state === "on" || l.bait_state === "fail" ? '<span class="flag warn" title="예전 도둑방지 가격이 아직 네이버에 걸려 있음 — 최신화하면 원래 가격으로">도둑방지 가격 남음</span>' : "");
     return `<tr data-id="${l.id}" class="${on ? "sel" : ""} ${l.status === "deleted" ? "off" : ""}">
       <td class="w-check" data-stop><input type="checkbox" ${on ? "checked" : ""} ${this.selAll ? "disabled" : ""} aria-label="고르기"></td>
       <td>${img(l.thumb)}</td>
@@ -553,7 +574,11 @@ App.page("listings", {
       const t = e.target.closest("[data-filter]");
       if (!t) return;
       const k = t.dataset.filter;
-      if (k.startsWith("eye_")) { this.f.eye = k.slice(4); this.f.status = "all"; } else { this.f.status = k; this.f.eye = ""; }
+      this.f.nv = ""; this.f.bait_left = "";
+      if (k.startsWith("eye_")) { this.f.eye = k.slice(4); this.f.status = "all"; }
+      else if (k === "nv_bad") { this.f.nv = "bad"; this.f.status = "all"; this.f.eye = ""; }
+      else if (k === "bait_left") { this.f.bait_left = "1"; this.f.status = "all"; this.f.eye = ""; }
+      else { this.f.status = k; this.f.eye = ""; }
       this.page = 0; this.clearSel(); this.load();
     });
     let timer;
@@ -612,7 +637,7 @@ App.page("listings", {
               <dt>카테고리</dt><dd>${esc(l.category)}${l.category_fixed ? ` <span class="flag">직접 정함</span> <span class="muted small">(엑셀: ${esc(l.category_excel)})</span>` : ""}
                 <button class="btn sm d-cat">바꾸기</button></dd>
               <dt>판매가</dt><dd>손님 가격 <b>${num(l.final)}원</b> <span class="muted">(원본가 ${num(l.source_price)}원)</span>
-                ${l.off ? `<br><span class="muted">네이버 판매가 ${num(l.shown)}원 · 즉시할인 ${num(l.off)}원 (${l.disc_pct}%)</span>` : ""}
+                ${l.off ? `<br><span class="muted">네이버 판매가 ${num(l.shown)}원 · 즉시할인 ${num(l.off)}원 (할인율 ${(l.off / l.shown * 100).toFixed(1)}% — 손님 가격을 그대로 두고 ${l.disc_pct}%에 가깝게)</span>` : ""}
 </dd>
               <dt>다른 스토어</dt><dd>${l.siblings.length ? l.siblings.map((x) => `<div><button class="go-store" data-go="${x.id}">→ ${esc(x.store_name)}</button> ${esc(x.name)} <span class="muted">(${STATUS[x.status] || x.status})</span></div>`).join("") : "같은 원본이 다른 스토어에는 없음"}</dd></dl>`
             + `<div class="notice ${l.locked ? "info" : ""} lock-box"><div><b>${l.locked ? "잠금" : "잠금 아님"}</b>${l.locked ? ` · ${esc(l.lock_note)} · 최신화·내리기로 지우지 않습니다` : " · 최신화·내리기 가능"}

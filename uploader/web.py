@@ -7,16 +7,17 @@ import os
 import tempfile
 import threading
 import time
+import uuid
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import VERSION, activity, adopt, aiwords, chem, chrome, clean, eye, mail, srctags, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
+from . import VERSION, activity, adopt, aiwords, chem, chrome, clean, eye, excel, mail, nvstate, srctags, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
 from .db import DB
 from .tasks import Tasks
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 FILTER_KEYS = ("q", "status", "category", "ai", "chem", "src_tag", "eye", "adopted", "store_missing", "store_has", "import_id", "max_listings", "price_min", "price_max", "copies",
-               "min_names", "store_id", "plan_id", "op", "age_days", "sold", "locked")
+               "min_names", "store_id", "plan_id", "op", "age_days", "sold", "locked", "nv", "bait_left")
 STORE_FIELDS = ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "capacity", "enabled", "memo", "wm_text", "importer",
                 "business_id", "chrome_profile", "mail_to")
 
@@ -99,14 +100,56 @@ def create_app(db=None):
         code = getattr(e, "code", 500)
         return jsonify({"error": str(e)}), code if isinstance(code, int) else 500
 
-    def file_task(kind, title, fn):
+    price_hold = {}   # 가격 칸 확인으로 잡아 둔 파일: 토큰 → (경로, 파일 이름, 잡은 때)
+
+    def _upload_or_held(price_check):
+        """올린 파일(또는 가격 확인 뒤 다시 보낸 토큰) → ((경로, 이름), None) 또는 (None, 돌려줄 응답)."""
+        tok = request.form.get("token") or ""
+        if tok:
+            v = price_hold.pop(tok, None)
+            if not v or not os.path.exists(v[0]):
+                return None, fail("잡아 둔 파일이 없습니다. 파일을 다시 올려 주세요.")
+            return (v[0], v[1]), None
         f = request.files.get("file")
         if not f or not f.filename:
-            return fail("파일을 골라 주세요.")
+            return None, fail("파일을 골라 주세요.")
         if not f.filename.lower().endswith((".xlsx", ".xlsm", ".csv")):
-            return fail("xlsx 또는 csv 파일만 불러올 수 있습니다.")
+            return None, fail("xlsx 또는 csv 파일만 불러올 수 있습니다.")
         path = _save_upload(f)
-        name = f.filename
+        if price_check and request.form.get("price_ok") != "1":
+            try:
+                scan = convert.price_scan(excel.iter_rows(path, f.filename, parse=False))
+            except Exception:  # noqa: BLE001 - 읽기 오류는 불러오기 작업에서 알림
+                scan = {"n": 0}
+            if scan["n"]:
+                now = time.time()
+                for k, v in list(price_hold.items()):   # 한 시간 넘게 둔 것은 지움
+                    if now - v[2] > 3600:
+                        price_hold.pop(k, None)
+                        try:
+                            os.remove(v[0])
+                        except OSError:
+                            pass
+                tok = uuid.uuid4().hex
+                price_hold[tok] = (path, f.filename, now)
+                return None, jsonify({"price_warn": scan, "token": tok, "file": f.filename})
+        return (path, f.filename), None
+
+    @app.post("/api/upload/drop")
+    def upload_drop():
+        v = price_hold.pop(str(body().get("token") or ""), None)
+        if v:
+            try:
+                os.remove(v[0])
+            except OSError:
+                pass
+        return jsonify({"ok": True})
+
+    def file_task(kind, title, fn, price_check=False):
+        got, resp = _upload_or_held(price_check)
+        if resp is not None:
+            return resp
+        path, name = got
 
         def job(progress, should_stop):
             try:
@@ -153,13 +196,12 @@ def create_app(db=None):
 
     @app.post("/api/clean/import")
     def clean_import():
-        f = request.files.get("file")
-        if not f:
-            return fail("셀업 엑셀 파일을 골라 주세요.")
-        path = _save_upload(f)
+        got, resp = _upload_or_held(True)
+        if resp is not None:
+            return resp
+        path, name = got
         opts = {k: request.form.get(k, "1") == "1" for k in ("price", "code", "info", "store_tag")}
         opts["tags"] = request.form.get("tags") or ""
-        name = f.filename
 
         def job(**kw):
             try:
@@ -467,7 +509,7 @@ def create_app(db=None):
         if what == "prices":
             rows = db.q("""SELECT l.id, l.store_id, s.price, s.source_key, st.tpl_price_pct, st.tpl_jitter_min, st.tpl_jitter_max FROM listings l
                 JOIN sources s ON s.id=l.source_id JOIN stores st ON st.id=l.store_id
-                WHERE l.origin_no='' AND l.status IN ('planned','fail')""")
+                WHERE l.origin_no='' AND l.status IN ('planned','fail') AND l.price_fixed=0""")
             with db.tx() as c:
                 for r in rows:
                     c.execute("UPDATE listings SET price=? WHERE id=?",
@@ -770,6 +812,10 @@ def create_app(db=None):
     def adopt_runs():
         return jsonify(adopt.runs(db))
 
+    @app.get("/api/adopt/<int:rid>/drop_sources")
+    def adopt_drop_sources(rid):
+        return jsonify({"ids": adopt.drop_source_ids(db, rid)})
+
     @app.get("/api/adopt/<int:rid>/items.csv")
     def adopt_items_csv(rid):
         try:
@@ -911,7 +957,7 @@ def create_app(db=None):
     def import_sources():
         tags, store = request.form.get("tags") or "", request.form.get("store_tag", "0") == "1"
         return file_task("import", "원본 불러오기", lambda db_, fh, name, **kw: inventory.import_products(
-            db_, fh, name, src_tags=tags, store_tag=store, **kw))
+            db_, fh, name, src_tags=tags, store_tag=store, **kw), price_check=True)
 
     # ── 출처 태그 (어디서·언제 가져온 원본인지)
 
@@ -1382,6 +1428,24 @@ def create_app(db=None):
             eye.page_done(db, int(b["store_id"]), int(b["last_id"]), len(b.get("ids") or []), b.get("size"), b.get("todo"))
             return jsonify({"count": len(sids), **eye.stats(db, int(b["store_id"]))})
         return jsonify({"count": len(sids)})
+
+    @app.post("/api/listings/nvcheck")
+    def listings_nvcheck():
+        """그 스토어 판매 중 복사본의 네이버 상태(판매 중·품절·판매중지·판매금지·스토어에 없음)를 확인한다."""
+        st = db.store(int(body().get("store_id") or 0), with_secret=True)
+        if not st:
+            return fail("스토어를 골라 주세요.")
+        if not st.get("has_keys") and os.environ.get("UPLOADER_FAKE_API") != "1":
+            return fail(f"'{st['name']}' 스토어의 API 키가 없습니다.")
+
+        def job(progress=None, should_stop=None):
+            res = nvstate.check_store(db, st["id"], naver.make_client(st), progress=progress, should_stop=should_stop)
+            res["message"] = f"{st['name']} · " + nvstate.summary(res)
+            return res
+        try:
+            return jsonify({"task": tasks.start("nvcheck", f"네이버 상태 확인 · {st['name']}", job)})
+        except RuntimeError as e:
+            return fail(str(e))
 
     @app.post("/api/listings/revert")
     def listings_revert():
@@ -2008,7 +2072,7 @@ def create_app(db=None):
         res = orders.query_orders(db, f, page, size)
         res["auto"] = auto
         res["stores"] = [{"id": s["id"], "name": s["name"], "code": s["code"], "synced_to": s["orders_synced_to"],
-                          "has_keys": s["has_keys"]} for s in db.stores()]
+                          "known_from": orders.known_from(s), "has_keys": s["has_keys"]} for s in db.stores()]
         return jsonify(res)
 
     @app.post("/api/orders/rematch")
@@ -2072,8 +2136,8 @@ def create_app(db=None):
         # 눈검수 안 한 원본이라 새 등록을 안 하는 복사본 (상품명은 바꾼 것)
         uw, ua = inventory.listing_where({**f, "status": "all"} if not f.get("visible") else f)
         unreviewed = db.one(f"""SELECT COUNT(*) AS n FROM listings l JOIN sources s ON s.id=l.source_id{uw}
-            {'AND' if uw else 'WHERE'} l.status IN ('planned','fail') AND l.op='create' AND l.origin_no='' AND l.name_id IS NOT NULL
-            AND s.eye_at IS NULL""", ua)["n"]
+            {'AND' if uw else 'WHERE'} l.status IN ('planned','fail') AND l.name_id IS NOT NULL
+            AND {engine.UNREVIEWED_NEW}""", ua)["n"]
         # 종류별 건수 (지금 범위 안에서, 종류 고르기와 무관하게)
         kinds = {}
         for t in engine.listing_targets(db, {**f, "kinds": None}):

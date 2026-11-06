@@ -56,11 +56,13 @@ App.page("clean", {
   },
 
   async upload(file) {
+    const extra = {};
+    for (const k of ["price", "code", "info"]) extra[k] = $(`#cl-o-${k}`).checked ? "1" : "0";
+    Object.assign(extra, App.tagValues("cl"));
     const fd = new FormData();
     fd.append("file", file);
-    for (const k of ["price", "code", "info"]) fd.append(k, $(`#cl-o-${k}`).checked ? "1" : "0");
-    Object.entries(App.tagValues("cl")).forEach(([k, v]) => fd.append(k, v));
-    await App.startTask(App.api("/api/clean/import", { method: "POST", body: fd }));
+    Object.entries(extra).forEach(([k, v]) => fd.append(k, v));
+    await App.sendChecked("/api/clean/import", fd, extra);   // 가격 칸이 이상하면 경고 → 확인하면 진행
   },
 
   async refresh() {

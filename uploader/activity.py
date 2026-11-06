@@ -30,7 +30,7 @@ CREATE INDEX IF NOT EXISTS activity_started ON activity(started_at);
 
 # 오래 걸리는 작업 종류 → 묶음
 TASK_GROUP = {"mail": "메일함", "srctags": "원본", "adopt": "원본", "clean_import": "상세 정리", "clean_chem": "상세 정리", "clean_send": "상세 정리", "chem": "원본", "rename": "상품명", "names": "상품명", "ctxkw": "AI 키워드", "plan": "복사·등록", "import": "원본",
-              "revalidate": "원본", "orders": "주문", "keywords": "상품명", "kipris": "금지어·사전",
+              "revalidate": "원본", "orders": "주문", "nvcheck": "복사·등록", "keywords": "상품명", "kipris": "금지어·사전",
               "lexicon": "금지어·사전", "dictfile": "금지어·사전"}
 
 SECRET = re.compile(r"key|secret|password|token|license|client_id", re.I)

@@ -174,9 +174,24 @@ def sync_store(db, store, client, days=None, since=None, until=None, should_stop
     for o in orders:
         o["store_id"] = store["id"]
     new, matched = save_orders(db, orders, "naver", store["id"])
+    cov_from, cov_to = store.get("orders_from"), store.get("orders_synced_to")
     if incremental:
         db.x("UPDATE stores SET orders_synced_to=? WHERE id=?", (until, store["id"]))
+        if not last and (not cov_from or since < cov_from):   # 처음 받은 때 → 여기부터 판매 이력을 앎
+            db.x("UPDATE stores SET orders_from=? WHERE id=?", (since, store["id"]))
+    else:
+        # 기간 지정: 판매 이력을 아는 구간과 이어지면(빈틈 없음) 아는 처음 시각을 앞당긴다
+        if cov_to and until >= (cov_from or cov_to) - 600:
+            if not cov_from or since < cov_from:
+                db.x("UPDATE stores SET orders_from=? WHERE id=?", (since, store["id"]))
+        elif not cov_to and until >= now - 3600:   # 아직 이어 받기를 안 한 스토어: 오늘까지 받았으면 거기서부터 이어 받기
+            db.x("UPDATE stores SET orders_from=?, orders_synced_to=? WHERE id=?", (since, until, store["id"]))
     return {"orders": len(orders), "new": new, "matched": matched}
+
+
+def known_from(store):
+    """이 스토어의 판매 이력을 빈틈없이 아는 처음 시각 (모르면 None)."""
+    return store.get("orders_from") if store.get("orders_synced_to") else None
 
 
 def sync_stores(db, stores_with_clients, progress=None, should_stop=None, days=None, since=None, until=None):

@@ -6,12 +6,13 @@
 """
 
 import collections
+import json
 import queue
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import activity, config, convert, naver, optimage, orders, templates, watermark
+from . import activity, config, convert, naver, nvstate, optimage, orders, templates, watermark
 
 IMAGE_DOWNLOAD_THREADS = 16
 DETAIL_SCOPE = 0
@@ -28,6 +29,10 @@ KIND_COND = {   # 시작할 때 고르는 종류
 }
 
 
+# 눈검수 안 한 원본이라 새로 올리지 않는 복사본: 그 스토어에 한 번도 안 올린 새 등록
+UNREVIEWED_NEW = "l.op='create' AND l.origin_no='' AND l.registered_at IS NULL AND s.eye_at IS NULL"
+
+
 def listing_targets(db, f):
     """처리할 건: 조건에 맞는 대기·실패 건 (새 등록 / 최신화 / 내리기).
     f['kinds']: 고른 종류만 (create·refresh·delete·fail, 없으면 전부). f['ids']: 고른 복사본만.
@@ -36,9 +41,9 @@ def listing_targets(db, f):
     where, args = listing_where(f if f.get("visible") else {**f, "status": "all"})
     kinds = [k for k in (f.get("kinds") or KIND_COND) if k in KIND_COND]
     # 상품명을 아직 안 바꾼(원본 상품명 그대로인) 새 등록은 올리지 않는다 → 복사본 화면 '상품명 변경 필요'
-    # 눈검수 안 한 원본의 새 등록도 올리지 않는다 (최신화·다시 올리기·내리기는 그대로)
+    # 눈검수 안 한 원본의 새 등록도 올리지 않는다 — 그 스토어에 한 번도 안 올린 것만 (최신화 실패 뒤 다시 등록·내린 것 다시 올리기는 그대로)
     cond = (f"({' OR '.join(KIND_COND[k] for k in kinds) or '0'}) AND NOT (l.op IN ('create','reupload') AND l.name_id IS NULL)"
-            f" AND NOT (l.op='create' AND l.origin_no='' AND s.eye_at IS NULL)")
+            f" AND NOT ({UNREVIEWED_NEW})")
     where = (where + f" AND {cond}") if where else f" WHERE {cond}"
     return db.q(f"""SELECT l.id, l.store_id, l.source_id, l.name, l.price, l.status, l.message, l.op, l.round,
         l.origin_no, l.channel_no, l.seller_code, l.registered_at, l.name_id, l.round_reset, l.price_fixed, CASE WHEN l.op='delete' THEN 0 ELSE s.image_count END AS image_count
@@ -288,7 +293,19 @@ class Runner:
                 except Exception as e:  # noqa: BLE001
                     sales_ok = False
                     self._log("err", f"주문을 가져오지 못해 이 스토어의 최신화·내리기는 하지 않습니다: {e}", store["name"])
-            store = {**store, "_sales_ok": sales_ok}
+            # 최신화가 있으면 네이버 상태(판매중지·판매금지·스토어에서 지움)를 먼저 확인한다 — 그런 상품은 다시 올리지 않게.
+            # 가져온 복사본(가격 고정)은 이때 지금 손님 가격도 맞춘다 (판매자센터에서 바꾼 가격 그대로)
+            nv_ok = True
+            if any(t["op"] == "refresh" and t["origin_no"] for t in by_store[sid]):
+                with self.lock:
+                    self.state["stores"][sid]["status"] = "네이버 상태 확인 중"
+                try:
+                    res = nvstate.check_store(self.db, sid, client, should_stop=self.stop_ev.is_set)
+                    self._log("info", "네이버 상태 · " + nvstate.summary(res), store["name"])
+                except Exception as e:  # noqa: BLE001
+                    nv_ok = False
+                    self._log("err", f"네이버 상태를 확인하지 못해 이 스토어의 최신화는 하지 않습니다: {e}", store["name"])
+            store = {**store, "_sales_ok": sales_ok, "_nv_ok": nv_ok}
             with self.lock:
                 self.state["stores"][sid]["status"] = "처리 중"
             workers = max(1, min(int(cfg.get("workers_per_store") or 1), 8))
@@ -349,7 +366,7 @@ class Runner:
                 # 판매된 상품은 지우지 않는다 (예약 뒤에 팔렸을 수 있으니 실행 직전에 다시 확인).
                 if not store.get("_sales_ok", True):
                     raise naver.ApiError("주문(판매 이력)을 확인하지 못해 지우지 않았습니다. 다시 시도하세요.")
-                lk = self.db.one("SELECT locked, lock_note FROM listings WHERE id=?", (lid,))
+                lk = self.db.one("SELECT locked, lock_note, price, nv_status FROM listings WHERE id=?", (lid,))
                 if lk["locked"]:
                     self.db.set_listing(lid, "success", op="create", stage="",
                                         message=f"잠금이라 지우지 않음 ({lk['lock_note']})")
@@ -358,13 +375,33 @@ class Runner:
                     self._log("info", f"건너뜀 · {t['name'][:40]} · 잠금 ({lk['lock_note']})", store["name"])
                     self._count(sid, lid, None)
                     return
+                if t.get("price_fixed"):   # 가져온 복사본: 그 상품이 올라간 날부터 주문을 받아 둬야 판매 이력을 앎
+                    self._need_sales_history(sid, t)
+                if op == "refresh":
+                    if not store.get("_nv_ok", True):
+                        raise naver.ApiError("네이버 상태(판매중지·판매금지)를 확인하지 못해 최신화하지 않았습니다. 다시 시도하세요.")
+                    nv = lk["nv_status"]
+                    if nv and nv not in nvstate.REFRESH_OK:
+                        msg = f"네이버 '{nvstate.label(nv)}' 상태라 최신화하지 않음"
+                        self.db.set_listing(lid, "success", op="create", stage="", message=msg)
+                        self._log("info", f"건너뜀 · {t['name'][:40]} · {msg}", store["name"])
+                        self._count(sid, lid, None)
+                        return
+                    if t.get("price_fixed"):
+                        t = {**t, "price": lk["price"]}   # 방금 네이버에서 확인한 손님 가격
+                    # 지우기 전에 다시 올릴 수 있는지 먼저 확인 (카테고리·필수 값·옵션 손님 가격) — 지우고 나서 막히지 않게
+                    self._stage(lid, label, "올릴 내용 먼저 확인")
+                    if t.get("price_fixed"):
+                        self._save_live_options(client, t, on_wait)
+                    self._prepare(cfg, store, categories, t)
                 self._stage(lid, label, "네이버에서 지우는 중")
                 removed = client.delete_product(t["origin_no"], on_wait=on_wait)
                 # 이미 스토어에서 지운 상품이면 지난 연결 확인 수에 이미 빠져 있을 수 있어, 남은 자리 계산에 '지움'으로 세지 않는다
                 self._archive(t, op, counted=removed is not False)
                 if op == "delete":
                     self.db.set_listing(lid, "deleted", op="create", stage="", message="", origin_no="",
-                                        channel_no="", deleted_at=time.time(), seconds=time.time() - t0)
+                                        channel_no="", deleted_at=time.time(), seconds=time.time() - t0,
+                                        bait_state="", nv_status="", nv_disp="")
                     self._log("ok", f"내림 · {t['name'][:40]}", store["name"])
                     self._count(sid, lid, True)
                     from . import chem
@@ -375,7 +412,7 @@ class Runner:
                 # 회차 초기화한 건은 +1 하지 않고 1회차로
                 t = {**t, "round": 1 if t.get("round_reset") else t["round"] + 1, "origin_no": ""}
                 self.db.set_listing(lid, None, op="create", round=t["round"], origin_no="", channel_no="",
-                                    deleted_at=time.time(), round_reset=0)
+                                    deleted_at=time.time(), round_reset=0, bait_state="", nv_status="", nv_disp="")
                 if op == "refresh" and cfg.get("refresh_new_name"):   # 다시 올리기는 늘 같은 이름
                     t["name"] = self._new_name(cfg, t) or t["name"]
             elif op == "delete":
@@ -383,21 +420,9 @@ class Runner:
                 self._count(sid, lid, True)
                 return
 
-            row = self.db.source_row(t["source_id"])
-            cat_id, _ = convert.find_category(row.get("카테고리"), categories, cfg)
-            if not cat_id:
-                raise convert.ConvertError(f"카테고리 '{row.get('카테고리')}'를 스마트스토어에서 찾지 못했습니다.")
-            code = seller_code(cfg, store, t)
-            # 가격은 올리는 이 순간의 기준으로 다시 정한다 (원본가·스토어 가격 조정·흔들기). 등록·최신화·다시 올리기 모두 같게.
-            key = (self.db.one("SELECT source_key FROM sources WHERE id=?", (t["source_id"],)) or {}).get("source_key", "")
-            # 가져온 복사본(가격 고정)은 지금 가격 그대로
-            price = t["price"] if t.get("price_fixed") else convert.store_price(convert.net_price(row), f"{key}|{sid}", cfg, store)
-            if price != t["price"]:
-                self.db.set_listing(lid, None, price=price)
-                t = {**t, "price": price}
-            kw = dict(name=t["name"], price=t["price"], importer=convert.importer_for(store, cfg),
-                      as_phone=store.get("as_phone") or cfg.get("as_phone"), seller_code=code, store=store)
-            convert.build_body(row, cfg, cat_id, **kw)  # 이미지 올리기 전에 빠진 값부터 확인
+            row, cat_id, kw = self._prepare(cfg, store, categories, t)   # 이미지 올리기 전에 빠진 값부터 확인
+            t = {**t, "price": kw["price"]}
+            code = kw["seller_code"]
             # 스토어 템플릿 상단·하단 (이미지는 이 스토어 이름으로 한 번만 올리고 이번 실행 동안 같이 씀)
             tpl = self.__dict__.setdefault("_tpl_cache", {})
             if store["id"] not in tpl:
@@ -433,7 +458,7 @@ class Runner:
             sec = time.time() - t0
             self.db.set_listing(lid, "success", op="create", stage="", message=" / ".join(notes), seconds=sec,
                                 seller_code=code, registered_at=time.time(),
-                                sale_shown=shown,
+                                sale_shown=shown, nv_status="SALE", nv_disp="ON", nv_at=time.time(),
                                 origin_no=str(res.get("originProductNo", "")),
                                 channel_no=str(res.get("smartstoreChannelProductNo", "")))
             what = {"refresh": "최신화", "reupload": "다시 올리기"}.get(op, "등록")
@@ -443,6 +468,55 @@ class Runner:
             self.db.set_listing(lid, "fail", stage="", message=str(e)[:1000], seconds=time.time() - t0)
             self._log("err", f"실패 · {t['name'][:40]} · {e}", store["name"])
             self._count(sid, lid, False)
+
+    def _prepare(self, cfg, store, categories, t):
+        """올릴 내용 준비·확인 (row, 카테고리 번호, build_body 인자). 막히는 게 있으면 여기서 예외 — 최신화는 지우기 전에 부른다.
+        가격은 올리는 이 순간의 기준으로 다시 정한다 (원본가·스토어 가격 조정·흔들기). 등록·최신화·다시 올리기 모두 같게.
+        가져온 복사본(가격 고정)은 지금 손님 가격 그대로, 옵션도 올라가 있던 옵션 손님 가격 그대로."""
+        sid, lid = store["id"], t["id"]
+        row = self.db.source_row(t["source_id"])
+        cat_id, _ = convert.find_category(row.get("카테고리"), categories, cfg)
+        if not cat_id:
+            raise convert.ConvertError(f"카테고리 '{row.get('카테고리')}'를 스마트스토어에서 찾지 못했습니다.")
+        key = (self.db.one("SELECT source_key FROM sources WHERE id=?", (t["source_id"],)) or {}).get("source_key", "")
+        price = t["price"] if t.get("price_fixed") else convert.store_price(convert.net_price(row), f"{key}|{sid}", cfg, store)
+        if price != t["price"]:
+            self.db.set_listing(lid, None, price=price)
+        kw = dict(name=t["name"], price=price, importer=convert.importer_for(store, cfg),
+                  as_phone=store.get("as_phone") or cfg.get("as_phone"), seller_code=seller_code(cfg, store, t), store=store,
+                  opt_prices=self._fixed_opts(lid) if t.get("price_fixed") else None)
+        convert.build_body(row, cfg, cat_id, **kw)
+        return row, cat_id, kw
+
+    def _save_live_options(self, client, t, on_wait):
+        """가격 고정 복사본: 지우기 전에 네이버에 올라가 있는 옵션 손님 가격을 읽어 둔다 (다시 올릴 때 그대로). 못 읽으면 지우지 않음."""
+        row = self.db.source_row(t["source_id"])
+        if not convert.options(row):
+            return
+        try:
+            live = convert.live_prices(client._get_origin(t["origin_no"], on_wait=on_wait))
+        except Exception as e:  # noqa: BLE001
+            raise naver.ApiError(f"올라가 있는 옵션 가격을 읽지 못해 최신화하지 않았습니다 ({e})") from None
+        if live["opts"]:
+            self.db.set_listing(t["id"], None, opt_fixed=json.dumps([[*k, v] for k, v in live["opts"].items()], ensure_ascii=False))
+
+    def _fixed_opts(self, lid):
+        r = self.db.one("SELECT opt_fixed FROM listings WHERE id=?", (lid,))
+        try:
+            return {tuple(x[:3]): int(x[3]) for x in json.loads((r or {}).get("opt_fixed") or "[]")}
+        except (ValueError, TypeError, IndexError):
+            return {}
+
+    def _need_sales_history(self, sid, t):
+        """가져온 상품은 이 프로그램이 판매 이력을 모르는 채로 들어옴 → 그 상품이 올라간 날부터 주문을 받아 둔 뒤에만 지운다."""
+        st = self.db.one("SELECT orders_from, orders_synced_to FROM stores WHERE id=?", (sid,)) or {}
+        kf = orders.known_from(st)
+        reg = t.get("registered_at") or 0
+        if not kf or kf > reg + 3600:
+            d = time.strftime("%Y-%m-%d", time.localtime(reg)) if reg else "올라간 날"
+            have = f"지금은 {time.strftime('%Y-%m-%d', time.localtime(kf))}부터만 있음" if kf else "아직 받은 주문 없음"
+            raise naver.ApiError(f"판매 이력 확인 전이라 지우지 않음 · 이 상품은 {d}에 올라갔는데 주문은 {have} → "
+                                 f"판매 현황 → '기간 지정해서 주문 가져오기'로 {d} ~ 오늘을 받은 뒤 다시 시도")
 
     def _count(self, sid, lid, ok):
         """ok: True 성공 / False 실패 / None 건너뜀"""

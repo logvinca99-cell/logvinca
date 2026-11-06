@@ -14,12 +14,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import random
 
-from . import aiwords, config, convert, ctxkw, excel, keywords, lexicon, namegen, naver, srctags
+from . import aiwords, config, convert, ctxkw, excel, keywords, lexicon, namegen, naver, nvstate, srctags
 from .db import pack, unpack
 
 CHUNK = 500
-NAME_ORIGIN_ORDER = {"manual": 0, "import": 1, "ctx": 2, "ai": 3, "shuffle": 4, "recombine": 5, "original": 6}
-ORIGIN_LABEL = {"original": "원본", "ctx": "AI 맥락", "shuffle": "셔플", "recombine": "재조합", "import": "가져옴", "ai": "AI", "manual": "직접"}
+NAME_ORIGIN_ORDER = {"manual": 0, "import": 1, "ctx": 2, "ai": 3, "shuffle": 4, "recombine": 5, "original": 6, "adopt": 7}
+ORIGIN_LABEL = {"original": "원본", "adopt": "올라가 있던 이름", "ctx": "AI 맥락", "shuffle": "셔플", "recombine": "재조합", "import": "가져옴", "ai": "AI", "manual": "직접"}
 
 
 def source_key(row):
@@ -73,7 +73,7 @@ def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=No
     categories = naver.cached_categories()
     now = time.time()
     iid = db.x("INSERT INTO imports(kind, file_name, created_at) VALUES('products', ?, ?)", (file_name, now))
-    stats = {"total": 0, "added": 0, "updated": 0, "invalid": 0, "name_dup": 0}
+    stats = {"total": 0, "added": 0, "updated": 0, "invalid": 0, "name_dup": 0, "adopted_kept": 0}
     refs = {}
     touched = []
     batch = []
@@ -90,7 +90,27 @@ def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=No
                 vals = (s["name"], s["price"], s["category"], s["thumb"], s["option_count"], s["image_count"],
                         int(s["has_video"]), tags, pack(row), json.dumps(errors, ensure_ascii=False),
                         json.dumps(warnings, ensure_ascii=False), int(not errors), s["seller_code"], iid, now)
-                old = c.execute("SELECT id, name, src_tags FROM sources WHERE source_key=?", (key,)).fetchone()
+                old = c.execute("SELECT id, name, src_tags, adopted, data FROM sources WHERE source_key=?", (key,)).fetchone()
+                if old and old["adopted"]:
+                    # 기존 상품 가져오기로 들어온 원본: 스토어 손님 가격·올라가 있는 상세를 지킨다 (다른 엑셀로 덮어쓰지 않음).
+                    # '원본 이름 없음'(1)이면 이 엑셀의 상품명을 원본 이름으로만 채운다 → 2(원본 이름 있음)
+                    sid = old["id"]
+                    stats["adopted_kept"] += 1
+                    if old["adopted"] == 1 and s["name"] and s["name"] != old["name"]:
+                        d = unpack(old["data"])
+                        d["상품명"] = s["name"]
+                        c.execute("UPDATE sources SET name=?, data=?, adopted=2, updated_at=? WHERE id=?", (s["name"], pack(d), now, sid))
+                        ctxkw.invalidate(c, sid)
+                        add_names(c, sid, [s["name"]], "original", now)
+                    tg = srctags.for_row(row, src_tags, store_tag)
+                    if tg:
+                        new_tags = srctags.merge(old["src_tags"], tg)
+                        if new_tags != old["src_tags"]:
+                            c.execute("UPDATE sources SET src_tags=? WHERE id=?", (new_tags, sid))
+                    touched.append(sid)
+                    if ref is not None:
+                        refs[ref] = sid
+                    continue
                 if old:
                     c.execute("""UPDATE sources SET name=?, price=?, category=?, thumb=?, option_count=?,
                         image_count=?, has_video=?, tags=?, data=?, errors=?, warnings=?, valid=?, seller_code=?,
@@ -268,7 +288,9 @@ def source_where(f):
         w.append("id IN (SELECT source_id FROM names WHERE origin='ctx' AND listing_id IS NULL)")
     elif ai == "used":      # 받았지만 후보를 다 씀
         w.append("id IN (SELECT source_id FROM ctx_kw WHERE status='ok') AND id NOT IN (SELECT source_id FROM names WHERE origin='ctx' AND listing_id IS NULL)")
-    if f.get("adopted") in ("1", 1, True):     # 기존 상품 가져오기로 들어온 원본 (원본 이름 없음)
+    if f.get("adopted") in ("1", 1, True):     # 기존 상품 가져오기로 들어온 원본 (1 원본 이름 없음 · 2 원본 이름 있음)
+        w.append("adopted>0")
+    elif f.get("adopted") == "noname":
         w.append("adopted=1")
     elif f.get("adopted") in ("0", 0):
         w.append("adopted=0")
@@ -425,7 +447,7 @@ def generate_recombine(db, ids, per_source, progress=None, should_stop=None):
         with db.tx() as c:
             for r in rows:
                 free = c.execute("SELECT COUNT(*) FROM names WHERE source_id=? AND listing_id IS NULL "
-                                 "AND (origin!='original' OR ?)", (r["id"], use_orig)).fetchone()[0]
+                                 "AND (origin NOT IN ('original','adopt') OR ?)", (r["id"], use_orig)).fetchone()[0]
                 need = per_source - free
                 stats["sources"] += 1
                 if len(namegen.new_word_candidates(r["name"], cfg, cfg["_lex"], r["category"], **_kw_args(r))) < new_min:
@@ -663,7 +685,7 @@ def assign_ctx_names(db, sids, only=None, newest=False):
 
 def _free_names(c, sid, use_orig):
     rows = [dict(r) for r in c.execute(
-        "SELECT id, name, origin FROM names WHERE source_id=? AND listing_id IS NULL AND (origin!='original' OR ?)",
+        "SELECT id, name, origin FROM names WHERE source_id=? AND listing_id IS NULL AND (origin NOT IN ('original','adopt') OR ?)",
         (sid, int(use_orig)))]
     rows.sort(key=lambda n: (NAME_ORIGIN_ORDER.get(n["origin"], 9), n["id"]))
     return rows
@@ -911,7 +933,7 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
                     if old:
                         # 전에 내렸던 스토어: 같은 줄을 다음 회차로 (이름 그대로, 설정하면 원본 상품명으로 돌려 다시 바꾸게)
                         if cfg.get("refresh_new_name"):
-                            c.execute("DELETE FROM names WHERE listing_id=? AND origin!='original'", (old["id"],))
+                            c.execute("DELETE FROM names WHERE listing_id=? AND origin NOT IN ('original','adopt')", (old["id"],))
                             c.execute("UPDATE names SET listing_id=NULL WHERE listing_id=?", (old["id"],))
                             c.execute("UPDATE listings SET name_id=NULL, name=? WHERE id=?", (s["name"], old["id"]))
                         c.execute("""UPDATE listings SET status='planned', op='create', round=round+1, plan_id=?,
@@ -969,7 +991,7 @@ def rename_shuffle(db, ids, fixed_n=3, extra=(), progress=None, should_stop=None
             reject = ctxkw.make_rejecter(c, cfg, lex)
             for r in part:
                 if r["name_id"]:
-                    c.execute("DELETE FROM names WHERE id=? AND origin NOT IN ('original','manual','import')", (r["name_id"],))
+                    c.execute("DELETE FROM names WHERE id=? AND origin NOT IN ('original','manual','import','adopt')", (r["name_id"],))
                     c.execute("UPDATE names SET listing_id=NULL WHERE id=?", (r["name_id"],))
                 name = shuffle.make(r["orig"], fixed_n, extra, forb, seed=f"{r['id']}:{now}", reject=reject, max_chars=max_chars,
                                     rep=ctxkw.repeat_check(cfg, lex))
@@ -1063,7 +1085,7 @@ def rename_ctx(db, ids, fallback=False, progress=None, should_stop=None, redo=Tr
             old = c.execute("SELECT name, origin FROM names WHERE id=?", (r["name_id"],)).fetchone()
             if old:
                 avoid.setdefault(r["source_id"], set()).add(old["name"])
-            if old and old["origin"] in ("original", "manual", "import"):
+            if old and old["origin"] in ("original", "manual", "import", "adopt"):
                 c.execute("UPDATE names SET listing_id=NULL WHERE id=?", (r["name_id"],))   # 직접 넣은 이름은 후보로 돌림
             else:
                 # 바꿔 버린 이름은 '다 쓴 이름'(listing_id=-1)으로 남겨, 다시 바꿀 때 같은 이름이 돌아오지 않게 한다
@@ -1174,7 +1196,7 @@ def rename_listings(db, ids, method="recombine", progress=None, should_stop=None
                 for l in ls:
                     if l["name_id"]:
                         old[l["id"]] = _new_words(s["name"], l["name"])
-                        c.execute("DELETE FROM names WHERE id=? AND origin!='original'", (l["name_id"],))
+                        c.execute("DELETE FROM names WHERE id=? AND origin NOT IN ('original','adopt')", (l["name_id"],))
                         c.execute("UPDATE names SET listing_id=NULL WHERE id=?", (l["name_id"],))
                 if method != "pool" and len(namegen.new_word_candidates(
                         s["name"], cfg, cfg["_lex"], s.get("category") or "", **_kw_args(s))) < new_min:
@@ -1235,7 +1257,7 @@ def set_listing_name(db, lid, name):
         nid = c.execute("SELECT id, name FROM names WHERE source_id=? AND norm=?",
                         (l["source_id"], namegen.normalize(namegen.clean(name, 100)))).fetchone()
         if l["name_id"]:
-            c.execute("DELETE FROM names WHERE id=? AND origin!='original'", (l["name_id"],))
+            c.execute("DELETE FROM names WHERE id=? AND origin NOT IN ('original','adopt')", (l["name_id"],))
             c.execute("UPDATE names SET listing_id=NULL WHERE id=?", (l["name_id"],))
         # 직접 고친 이름은 AI 키워드가 와도 덮어쓰지 않음 (ctx_wait=0)
         c.execute("UPDATE listings SET name_id=?, name=?, updated_at=?, ctx_wait=0 WHERE id=?", (nid["id"], nid["name"], now, lid))
@@ -1382,7 +1404,8 @@ def move_listings(db, ids, to_store):
                 old_trash.append(r["id"])
             else:
                 c.execute("""UPDATE listings SET store_id=?, price=?, status='planned', op='create', round=1, round_reset=0, seller_code='',
-                    message='', stage='', sale_shown=NULL, updated_at=? WHERE id=?""", (to["id"], price, now, r["id"]))
+                    message='', stage='', sale_shown=NULL, price_fixed=0, opt_fixed='', registered_at=NULL, nv_status='', nv_disp='',
+                    updated_at=? WHERE id=?""", (to["id"], price, now, r["id"]))
             have.add(r["source_id"])
             touched.add(r["source_id"])
             free -= 1
@@ -1463,7 +1486,7 @@ def reprice_pending(db, store_id=None):
     cfg = config.load()
     rows = db.q("""SELECT l.id, l.store_id, l.price AS cur, s.price, s.source_key, st.tpl_price_pct, st.tpl_jitter_min, st.tpl_jitter_max
         FROM listings l JOIN sources s ON s.id=l.source_id JOIN stores st ON st.id=l.store_id
-        WHERE l.origin_no='' AND l.status IN ('planned','fail')""" + (" AND l.store_id=?" if store_id else ""),
+        WHERE l.origin_no='' AND l.status IN ('planned','fail') AND l.price_fixed=0""" + (" AND l.store_id=?" if store_id else ""),
                 (int(store_id),) if store_id else ())
     n = 0
     with db.tx() as c:
@@ -1506,6 +1529,16 @@ def listing_where(f):
     if f.get("op"):
         w.append("l.op=?")
         a.append(f["op"])
+    nv = f.get("nv") or ""
+    if nv == "bad":                 # 최신화하지 않는 네이버 상태 (판매중지·판매금지·스토어에 없음 …)
+        w.append(f"l.origin_no!='' AND l.status!='deleted' AND l.nv_status!='' AND l.nv_status NOT IN ({','.join(repr(x) for x in nvstate.REFRESH_OK)})")
+    elif nv == "unknown":           # 아직 확인 안 함
+        w.append("l.origin_no!='' AND l.status!='deleted' AND l.nv_status=''")
+    elif nv:
+        w.append("l.origin_no!='' AND l.status!='deleted' AND l.nv_status=?")
+        a.append(nv)
+    if f.get("bait_left") in ("1", 1, True):   # 예전 도둑방지 가격이 아직 네이버에 걸려 있음 → 최신화로 원래 가격
+        w.append("l.origin_no!='' AND l.bait_state IN ('on','fail')")
     if f.get("eye") == "todo":      # 눈검수 안 한 원본의 복사본
         w.append("s.eye_at IS NULL")
     elif f.get("eye") == "done":
@@ -1540,6 +1573,7 @@ def query_listings(db, f, page=0, size=100):
         l.channel_no, l.seller_code, l.registered_at, l.deleted_at, l.seconds, l.plan_id, l.updated_at,
         s.id AS source_id, s.source_key, s.seller_code AS source_code, s.name AS source_name,
         s.price AS source_price, s.thumb, s.category, s.n_listings AS source_copies, s.eye_at, s.drop_pending, s.adopted, l.price_fixed,
+        l.nv_status, l.nv_disp, l.nv_at, l.bait_state,
         t.id AS store_id, t.name AS store_name, t.store_url,
         COALESCE(NULLIF(t.code,''), 'S'||printf('%02d', t.id)) AS store_code,
         n.origin AS name_origin, n.id AS name_no, k.words AS ctx_words
@@ -1580,6 +1614,9 @@ def price_viewer(db):
         p = pct.get(store_id, 0)
         shown, off, final = convert.display_prices(price or 0, p, unit)
         if live and shown != sale_shown:
+            s2, o2, f2 = convert.display_prices_exact(price or 0, p, unit)
+            if s2 == sale_shown:   # 할인율을 정확히 맞추던 예전 계산으로 올라간 상품 (손님 가격이 조금 높음 — 다음 최신화 때 맞춰짐)
+                return {"final": f2, "shown": s2, "off": o2, "disc_pct": p}
             # 이미 올라간 상품인데 지금 기준과 판매가가 다르면(예전 규칙으로 올림 등) 계산값을 보이지 않는다
             return {"final": price, "shown": sale_shown or 0, "off": 0, "disc_pct": 0, "old_rule": True}
         return {"final": final, "shown": shown, "off": off, "disc_pct": p}
@@ -1641,4 +1678,12 @@ def listing_counts(db, store_id=None, plan_id=None):
     # 눈검수: 원본 기준 (내린 것은 빼고)
     e = db.one(f"""SELECT SUM(s.eye_at IS NOT NULL) AS eye_done, SUM(s.eye_at IS NULL) AS eye_todo
         FROM listings l JOIN sources s ON s.id=l.source_id WHERE l.status!='deleted'{''.join(' AND l.' + x for x in w)}""", a)
-    return {**out, "eye_done": e["eye_done"] or 0, "eye_todo": e["eye_todo"] or 0}
+    # 네이버 상태 (판매 중 복사본): 최신화하지 않는 상태 수, 도둑방지 가격 남은 수
+    nvw = ''.join(' AND ' + x for x in w)
+    ok = ",".join(repr(x) for x in nvstate.REFRESH_OK)
+    nvc = db.one(f"""SELECT SUM(nv_status!='' AND nv_status NOT IN ({ok})) AS nv_bad, SUM(nv_status='') AS nv_unknown,
+        SUM(nv_status='GONE') AS nv_gone, SUM(bait_state IN ('on','fail')) AS bait_left
+        FROM listings WHERE origin_no!='' AND status!='deleted'{nvw}""", a)
+    return {**out, "eye_done": e["eye_done"] or 0, "eye_todo": e["eye_todo"] or 0,
+            "nv_bad": nvc["nv_bad"] or 0, "nv_unknown": nvc["nv_unknown"] or 0, "nv_gone": nvc["nv_gone"] or 0,
+            "bait_left": nvc["bait_left"] or 0}

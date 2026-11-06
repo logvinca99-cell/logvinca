@@ -352,7 +352,10 @@ const App = {
         + (r.requeued ? ` · 실패했던 복사본 ${num(r.requeued)}건 다시 등록 대기` : "") + (r.chemical + r.unclear ? " · 원본 상품 '생활화학 보류'에서 검수" : ""),
       adopt: () => `기존 상품 가져오기 끝 (${r.store}): 연결 ${num(r.linked)}개` + (r.already ? ` · 이미 연결 ${num(r.already)}` : "")
         + ` · 스토어에 없어서 뺌 ${num((r.dropped || 0) + (r.no_code || 0))} · 스토어에만 있음 ${num(r.store_only)}` + (r.dup_same ? ` · 같은 스토어 중복 ${num(r.dup_same)}` : "") + (r.dup ? ` · 같은 사진 다른 스토어 ${num(r.dup)}` : "")
-        + " — 가져오기 화면에서 목록 받기",
+        + (r.dropped_src ? ` · 지운 상품의 원본 ${num(r.dropped_src)}개 (원본까지 삭제 대상)` : "")
+        + (r.need_orders ? " · 판매 이력 받기 필요(그 전엔 최신화·내리기 안 함)" : "")
+        + " — 가져오기 화면에서 확인",
+      nvcheck: () => `네이버 상태 확인 끝: ${r.message || ""}`,
       srctags: () => `출처 태그 채우기 끝: 원본 ${num(r.total)}개 중 ${num(r.changed)}개에 더함 · 수집 스토어 ${num(r.store)}개 · 가져온 날 ${num(r.date)}개`,
       mail: () => `메일함: 확인 ${num(r.checked)}통 · 새로 ${num(r.new)}통` + (r.warn ? ` · 경고·제재 ${num(r.warn)}통` : "") + (r.auth ? ` · 인증번호 ${num(r.auth)}통` : ""),
       revalidate: () => `다시 검사 끝: ${num(r.total)}개` + (r.invalid !== undefined ? ` · 오류 ${num(r.invalid)}개` : ""),
@@ -386,7 +389,39 @@ const App = {
     const fd = new FormData();
     fd.append("file", file);
     Object.entries(extra).forEach(([k, v]) => fd.append(k, v));
-    return this.startTask(this.api(url, { method: "POST", body: fd }));
+    return this.sendChecked(url, fd, extra);
+  },
+  /* 엑셀 올리기 (원본 불러오기·상세 정리): 서버가 가격 칸을 먼저 확인 — 이상한 줄이 있으면 경고 창, 확인하면 그대로 진행 */
+  async sendChecked(url, fd, extra = {}) {
+    let r;
+    this.toast("엑셀 가격 칸(판매가·할인가·원가) 확인 중…");
+    try { r = await this.api(url, { method: "POST", body: fd }); } catch (e) { this.toast(e.message, true); return null; }
+    if (r && r.price_warn) return this.priceWarn(url, r, extra);
+    return this.startTask(Promise.resolve(r));
+  },
+  priceWarn(url, r, extra) {
+    const w = r.price_warn;
+    const why = (k) => esc(w.labels[k] || k);
+    return new Promise((resolve) => this.openModal({
+      title: `가격 칸 확인 — 이상한 줄 ${num(w.n)}개 (전체 ${num(w.total)}개)`, wide: true,
+      body: `<p><b>${esc(r.file)}</b>: 할인가(S열)는 <b>할인 금액</b>이 규칙입니다 — 손님 가격 = 판매가 − 할인가. 이 파일에는 다르게 적은 것 같은 줄이 있습니다.</p>
+        <ul>${Object.entries(w.by).map(([k, n]) => `<li>${why(k)} — <b>${num(n)}</b>개</li>`).join("")}</ul>
+        <div class="tbl-wrap"><table class="tbl small"><thead><tr><th>줄</th><th>상품명</th><th class="r">판매가</th><th class="r">할인가</th><th class="r">원가</th>
+          <th class="r">손님 가격(이대로 넣으면)</th><th>이유</th></tr></thead><tbody>${w.examples.map((x) => `<tr><td>${x.line}</td><td>${esc(x.name)}</td>
+          <td class="r">${num(x.price)}</td><td class="r">${num(x.off)}</td><td class="r">${x.cost ? num(x.cost) : ""}</td><td class="r"><b>${num(x.final)}</b></td>
+          <td class="small">${why(x.why)}</td></tr>`).join("")}</tbody></table></div>
+        <p class="small muted">엑셀을 고쳐서 다시 올리는 걸 추천합니다. '그래도 넣기'를 누르면 손님 가격 = 판매가 − 할인가(할인가가 판매가 이상이면 판매가)로 넣습니다.</p>`,
+      buttons: [
+        { label: "넣지 않기", onClick: () => { this.api("/api/upload/drop", { json: { token: r.token } }).catch(() => {}); resolve(null); } },
+        { label: "그래도 넣기", danger: true, onClick: async () => {
+          const fd = new FormData();
+          fd.append("token", r.token);
+          fd.append("price_ok", "1");
+          Object.entries(extra).forEach(([k, v]) => fd.append(k, v));
+          resolve(await this.startTask(this.api(url, { method: "POST", body: fd })));
+        } },
+      ],
+    }));
   },
 
   // ── 출처 태그 (어디서·언제 가져온 원본인지)

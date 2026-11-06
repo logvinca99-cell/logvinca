@@ -251,6 +251,7 @@ class DB:
         activity.ensure(self)
         mail.ensure(self)
         trash.ensure(self)
+        self._orders_from_init()
         # 프로그램이 등록 도중 꺼졌으면 남은 상태를 되돌린다.
         self.c.execute("UPDATE listings SET status='fail', stage='', message='프로그램이 등록 도중 종료됨' "
                        "WHERE status='running'")
@@ -276,6 +277,8 @@ class DB:
                     # 기존 상품 가져오기로 들어온 원본 (원본 이름 없음 — 올라가 있던 이름이 원본 자리)
                     ("adopted", "INTEGER NOT NULL DEFAULT 0")],
         "stores": [("code", "TEXT NOT NULL DEFAULT ''"), ("orders_synced_to", "REAL"),
+                   # 네이버 주문을 빈틈없이 받아 둔 처음 시각 (여기부터 orders_synced_to까지는 판매 이력을 다 앎)
+                   ("orders_from", "REAL"),
                    ("memo_at", "REAL"),   # 스토어 메모를 고친 때 (스토어 화면 카드에서 바로 적음)
                    ("wm_text", "TEXT NOT NULL DEFAULT ''"), ("importer", "TEXT NOT NULL DEFAULT ''"),
                    # 스토어 템플릿: 상세 상단·하단(HTML), 관부가세 코드, 가격 조정 %, 표시 할인율 % (비우면 설정 공통값)
@@ -300,6 +303,11 @@ class DB:
         "names": [("variant", "TEXT NOT NULL DEFAULT ''")],
         "listings": [("sale_shown", "INTEGER"),
                      ("price_fixed", "INTEGER NOT NULL DEFAULT 0"),   # 가져온 복사본: 최신화·다시 올리기 때 지금 가격 그대로   # 네이버에 넣은 판매가 (표시 할인 전)
+                     # 네이버 상태 (스토어처럼): 판매 상태 SALE·OUTOFSTOCK·SUSPENSION(판매중지)·PROHIBITION(판매금지)… · GONE(스토어에 없음),
+                     # 전시 상태 ON·SUSPENSION(전시중지), 확인한 때 — 가져올 때·최신화 직전·'네이버 상태 확인'으로 채움
+                     ("nv_status", "TEXT NOT NULL DEFAULT ''"), ("nv_disp", "TEXT NOT NULL DEFAULT ''"), ("nv_at", "REAL"),
+                     # 가격 고정 복사본: 최신화 직전에 읽은 옵션 손님 가격 [[옵션명1, 옵션명2, 옵션명3, 추가금], …] (다시 올릴 때 그대로)
+                     ("opt_fixed", "TEXT NOT NULL DEFAULT ''"),
                      ("sold_count", "INTEGER NOT NULL DEFAULT 0"), ("last_sold_at", "REAL"),
                      ("cancel_count", "INTEGER NOT NULL DEFAULT 0"), ("manual_lock", "INTEGER NOT NULL DEFAULT 0"),
                      ("locked", "INTEGER NOT NULL DEFAULT 0"), ("lock_note", "TEXT NOT NULL DEFAULT ''"),("op", "TEXT NOT NULL DEFAULT 'create'"), ("round", "INTEGER NOT NULL DEFAULT 1"),
@@ -324,6 +332,15 @@ class DB:
             p = os.path.join(data_dir, d)
             if os.path.isdir(p):
                 shutil.rmtree(p, ignore_errors=True)   # 수집용 크롬 창이 열려 있으면 일부가 남을 수 있음 (다음 실행 때 다시)
+
+    def _orders_from_init(self):
+        """예전부터 주문을 받던 스토어: 판매 이력을 아는 처음 시각을 받아 둔 네이버 주문 중 가장 이른 것으로 (모르면 비워 둠)."""
+        for r in self.c.execute("SELECT id FROM stores WHERE orders_from IS NULL AND orders_synced_to IS NOT NULL").fetchall():
+            m = self.c.execute("SELECT MIN(ordered_at) FROM orders WHERE store_id=? AND source='naver' AND ordered_at>0",
+                               (r["id"],)).fetchone()[0]
+            if m:
+                self.c.execute("UPDATE stores SET orders_from=? WHERE id=?", (m, r["id"]))
+        self.c.commit()
 
     def _migrate_columns(self):
         for table, cols in self.NEW_COLUMNS.items():
@@ -426,7 +443,7 @@ class DB:
             n_listings=(SELECT COUNT(*) FROM listings l WHERE l.source_id=sources.id),   -- 내림도 자리를 차지 (원본당 최대 수에 셈)
             n_success=(SELECT COUNT(*) FROM listings l WHERE l.source_id=sources.id AND l.origin_no!=''),
             n_free_names=(SELECT COUNT(*) FROM names n WHERE n.source_id=sources.id AND n.listing_id IS NULL
-                          AND (n.origin!='original' OR ?))
+                          AND (n.origin NOT IN ('original','adopt') OR ?))
             {where}""", (int(bool(config.load().get("use_original_name"))), *args))
 
     # ── 스토어

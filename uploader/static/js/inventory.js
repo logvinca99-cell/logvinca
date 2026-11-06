@@ -177,7 +177,8 @@ App.page("inventory", {
       rep.length ? `<span class="flag rep" title="${esc(rep.join("\n"))}">반복</span>` : "",
       p.has_video ? `<span class="flag video" title="상세설명에 동영상 있음 (경고 아님)">동영상</span>` : "",
       chemFlag(p), eyeFlag(p),
-      p.adopted ? '<span class="flag adopted" title="기존 상품 가져오기로 들어옴 — 원본 이름이 없어 올라가 있던 이름이 원본 자리에">가져옴 · 원본 이름 없음</span>' : "",
+      p.adopted === 1 ? '<span class="flag adopted" title="기존 상품 가져오기로 들어옴 — 원본 이름이 없어 올라가 있던 이름이 원본 자리에 (원본 엑셀을 불러오면 원본 이름만 채워짐)">가져옴 · 원본 이름 없음</span>'
+        : p.adopted ? '<span class="flag adopted" title="기존 상품 가져오기로 스토어 상품과 연결됨 — 원본가는 그 스토어 손님 가격, 다른 엑셀로 덮어쓰지 않음">가져옴</span>' : "",
     ].join("");
     const on = this.selAll || this.sel.has(p.id);
     return `<tr data-id="${p.id}" class="${on ? "sel" : ""}">
@@ -444,7 +445,8 @@ App.page("inventory", {
         <span class="s-tag-add"><input id="s-tag-in" placeholder="태그 더하기 (쉼표로 여러 개)" size="18"> <button class="btn sm" id="s-tag-go">달기</button></span>`],
       ["카테고리", (d.category_fix ? `${esc(d.category_fix)} <span class="flag">직접 정함</span> <span class="muted small">(엑셀: ${esc(d.category)})</span>` : esc(d.category))
         + ` <button class="btn sm" id="s-cat">바꾸기</button>`],
-      ...(d.adopted ? [["원본 이름", '<span class="flag adopted">가져옴 · 원본 이름 없음</span> <span class="muted small">기존 상품 가져오기로 들어와 올라가 있던 이름이 원본 자리에 있습니다</span>']] : []),
+      ...(d.adopted === 1 ? [["원본 이름", '<span class="flag adopted">가져옴 · 원본 이름 없음</span> <span class="muted small">기존 상품 가져오기로 들어와 올라가 있던 이름이 원본 자리에 있습니다 (원본 엑셀을 불러오면 원본 이름만 채움 — 가격·상세는 그대로)</span>']]
+        : d.adopted ? [["가져옴", '<span class="flag adopted">가져옴</span> <span class="muted small">스토어 상품과 연결됨 · 원본가 = 그 스토어 손님 가격 · 다른 엑셀로 덮어쓰지 않음</span>']] : []),
       ["눈검수", `${eyeFlag(d)} <button class="btn sm" id="s-eye">${d.eye_at ? "검수 완료 풀기" : "검수 완료로 표시"}</button>`],
       ["생활화학", `${d.chem_judge ? `<b>${esc(CHEM_LABEL[d.chem_judge] || d.chem_judge)}</b> <span class="muted small">${esc(d.chem_reason || "")}</span>` : '<span class="muted">판정 안 함</span>'}
         ${d.drop_pending ? ' <span class="flag warn">판매 중 내리고 지우는 중</span>' : ""} <button class="btn sm" id="s-chem">판정 바꾸기</button>`], ...Object.entries(d.fields).map(([k, v]) => [esc(k), esc(v)]),

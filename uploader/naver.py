@@ -508,6 +508,7 @@ class FakeClient:
 
     fake = True
     _seq = 0
+    _bodies = {}
     _class_lock = threading.Lock()
 
     def __init__(self, store=None, *_):
@@ -582,7 +583,24 @@ class FakeClient:
             # 실제 네이버처럼 모든 스토어에서 겹치지 않는 번호
             FakeClient._seq = max(FakeClient._seq + 1, int(time.time() * 1000) % 10**9)
             n = FakeClient._seq
+            FakeClient._bodies[str(9000000000 + n)] = body   # 시연: 올린 내용을 기억 (_get_origin·시험용)
         return {"originProductNo": 9000000000 + n, "smartstoreChannelProductNo": 8000000000 + n}
+
+    def _get_origin(self, origin_no, on_wait=None):
+        """시연: fake_store_products.json 상품의 '_origin'(네이버 원상품 모양), 없으면 이번에 올린 내용, 없으면 목록 값으로 만든 것."""
+        for it in self.iter_products():
+            if str(it.get("originProductNo")) == str(origin_no):
+                if it.get("_origin"):
+                    return it["_origin"]
+                ch = (it.get("channelProducts") or [{}])[0]
+                sale, final = int(ch.get("salePrice") or 0), int(ch.get("discountedPrice") or 0)
+                o = {"salePrice": sale}
+                if 0 < final < sale:
+                    o["customerBenefit"] = {"immediateDiscountPolicy": {"discountMethod": {"value": sale - final, "unitType": "WON"}}}
+                return {"originProduct": o}
+        if str(origin_no) in FakeClient._bodies:
+            return FakeClient._bodies[str(origin_no)]
+        raise ApiError("상품 읽기 실패: 404 NOT_FOUND 상품이 존재하지 않습니다.")
 
 
 def make_client(store):

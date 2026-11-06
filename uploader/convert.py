@@ -101,6 +101,75 @@ def options(row):
     return None
 
 
+def option_key(c):
+    """옵션 조합을 맞춰 보는 열쇠 (옵션명1·2·3, 앞뒤 공백 무시)."""
+    return tuple(str(c.get(f"optionName{i}") or "").strip() for i in (1, 2, 3))
+
+
+def live_prices(body):
+    """네이버 원상품(GET 그대로) → {final 손님 가격, opts {옵션 열쇠: 손님이 내는 옵션 추가금}}.
+    즉시할인이 %면 옵션 추가금에도 같은 %가 빠지므로 그만큼 뺀 값을 손님 가격으로 본다 (10원 단위 반올림)."""
+    o = (body or {}).get("originProduct") or {}
+    sale = to_int(o.get("salePrice"))
+    dm = (((o.get("customerBenefit") or {}).get("immediateDiscountPolicy") or {}).get("discountMethod") or {})
+    v, unit = to_float(dm.get("value")), str(dm.get("unitType") or "")
+    pct = v / 100 if unit == "PERCENT" and 0 < v < 100 else 0.0
+    off = int(sale * pct) // 10 * 10 if pct else (int(v) if unit == "WON" and 0 < v < sale else 0)
+    opts = {}
+    for c in (((o.get("detailAttribute") or {}).get("optionInfo") or {}).get("optionCombinations") or []):
+        p = to_int(c.get("price"))
+        opts[option_key(c)] = int(round(p * (1 - pct) / 10.0)) * 10 if pct else p
+    return {"final": sale - off, "opts": opts}
+
+
+def to_float(v, default=0.0):
+    try:
+        return float(str(v).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return default
+
+
+# 엑셀 가격 칸 확인 (할인가는 '할인 금액'이 규칙 — 다른 뜻으로 적은 파일을 미리 잡는다)
+PRICE_FLAG = {"pct": "할인가가 100원 미만 — 퍼센트(%)를 적은 것 같음",
+              "half": "할인가가 판매가의 절반 넘음 — '할인된 가격'을 적은 것 같음",
+              "over": "할인가가 판매가 이상 — 할인을 안 한 것으로 처리됨",
+              "cost": "원가가 손님 가격(판매가 - 할인가)보다 큼"}
+
+
+def price_flag(row):
+    """이상한 가격 칸이면 PRICE_FLAG 열쇠, 아니면 ''."""
+    price, off, cost = to_int(row.get("판매가")), to_int(row.get("할인가")), to_int(row.get("원가"))
+    if off > 0 and price > 0:
+        if off < 100:
+            return "pct"
+        if off >= price:
+            return "over"
+        if off * 2 > price:
+            return "half"
+    if cost > 0 and cost > net_price(row) > 0:
+        return "cost"
+    return ""
+
+
+def price_scan(rows, limit=8):
+    """엑셀 줄들 → {n 이상한 줄 수, total, by {열쇠: 수}, labels, examples [{line, name, 판매가, 할인가, 원가, 손님가격, why}]}."""
+    out = {"n": 0, "total": 0, "by": {}, "labels": PRICE_FLAG, "examples": []}
+    for i, row in enumerate(rows, 2):
+        if not row.get("상품명"):
+            continue
+        out["total"] += 1
+        k = price_flag(row)
+        if not k:
+            continue
+        out["n"] += 1
+        out["by"][k] = out["by"].get(k, 0) + 1
+        if len(out["examples"]) < limit:
+            out["examples"].append({"line": i, "name": str(row.get("상품명") or "")[:60], "price": to_int(row.get("판매가")),
+                                    "off": to_int(row.get("할인가")), "cost": to_int(row.get("원가")),
+                                    "final": net_price(row), "why": k})
+    return out
+
+
 def option_count(row):
     o = options(row) or {}
     return len(o.get("optionCombinations") or []) + len(o.get("optionSimple") or []) \
@@ -618,8 +687,22 @@ def stock_qty(row, cfg):
 
 
 def display_prices(final, pct, unit=100):
-    """표시 할인율: 손님이 내는 값이 final 이상이고, 할인율이 정확히 pct%가 되는 (판매가, 할인 금액, 최종가).
-    판매가·할인 금액 모두 unit(100원) 단위. 30%면 판매가가 1,000원 단위가 되어 최종가가 final보다 조금(최대 수백 원) 높을 수 있다."""
+    """표시 할인율: (네이버 판매가, 할인 금액, 손님 가격). 손님 가격은 늘 final 그대로(1원도 안 바꿈).
+    판매가 = final ÷ (1 - pct%)를 unit(100원) 단위로 올린 값, 할인 금액 = 판매가 - final → 할인율은 pct%에 아주 가깝게(조금 위).
+    final이 10원 단위가 아니면 10원 단위로 올린다(네이버 판매가 규칙)."""
+    p = float(pct or 0) / 100
+    final = int(final or 0)
+    if final <= 0 or not 0 < p < 1:
+        return final, 0, final
+    final = round_up(final, 10)
+    shown = round_up(math.ceil(final / (1 - p) - 1e-9), unit)
+    if shown <= final:
+        return final, 0, final
+    return shown, shown - final, final
+
+
+def display_prices_exact(final, pct, unit=100):
+    """(예전 규칙) 할인율을 정확히 pct%로 맞추느라 손님 가격이 final보다 최대 수백 원 높아지던 계산. 예전에 올린 상품 화면 표시용."""
     from fractions import Fraction
     p = Fraction(str(pct or 0)) / 100
     if final <= 0 or not 0 < p < 1:
@@ -651,11 +734,12 @@ def store_discount_pct(store, cfg):
 
 
 def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_phone=None, seller_code=None,
-               importer=None, store=None, opt_urls=None):
+               importer=None, store=None, opt_urls=None, opt_prices=None):
     """url_map: 원본 이미지 주소 → 네이버 이미지 주소. 없는 주소는 원본 그대로 쓴다.
     name / price / as_phone / seller_code: 스토어별로 바꿔 쓸 값 (없으면 엑셀 값).
     store: 스토어 템플릿 (tpl_top_html·tpl_bottom_html·tpl_customs·tpl_discount_pct). 상단·하단 이미지는
-           엔진이 네이버 주소로 바꾼 HTML을 store['_tpl_top']·['_tpl_bottom']에 넣어 준다."""
+           엔진이 네이버 주소로 바꾼 HTML을 store['_tpl_top']·['_tpl_bottom']에 넣어 준다.
+    opt_prices: {(옵션명1, 옵션명2, 옵션명3): 손님이 내는 옵션 추가금} — 가격 고정 상품은 네이버에 올라가 있던 옵션 손님 가격 그대로."""
     store = store or {}
     url_map = url_map or {}
     errors, _ = validate(row, cfg)
@@ -665,7 +749,8 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
     base_price = net_price(row)   # 판매가 - 할인가 (엑셀 할인가는 이미 빼서 원본가로 씀)
     name = str(name or row["상품명"]).strip()
     unit = to_int(cfg.get("price_round"), 100) or 100
-    sale_price = round_up(price or base_price, unit)   # 손님 가격 (할인·옵션 계산 기준)
+    # 손님 가격 (할인·옵션 계산 기준). 정해 준 가격(스토어 가격·가격 고정)은 그대로(10원 단위만 맞춤)
+    sale_price = round_up(price, 10) if price else round_up(base_price, unit)
     images = [url_map.get(u, u) for u in thumbnails(row)[:10]]
 
     fee = to_int(row.get("배송비"))
@@ -710,7 +795,10 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
     if o:
         o = copy.deepcopy(o)
         for c in o.get("optionCombinations") or []:
-            if c.get("price"):
+            k = option_key(c)
+            if opt_prices and k in opt_prices:
+                c["price"] = int(opt_prices[k])   # 가격 고정: 올라가 있던 옵션 손님 가격 그대로
+            elif c.get("price"):
                 c["price"] = round_up(to_int(c["price"]), unit)   # 옵션 추가금도 100원 단위 올림
         fixed = to_int(cfg.get("stock_fixed"), 0)
         if fixed > 0:   # 재고는 상품·옵션 모두 늘 같은 수 (엑셀 값과 상관없이)
