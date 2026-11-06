@@ -29,7 +29,7 @@ CREATE INDEX IF NOT EXISTS activity_started ON activity(started_at);
 """
 
 # 오래 걸리는 작업 종류 → 묶음
-TASK_GROUP = {"mail": "메일함", "srctags": "원본", "adopt": "원본", "clean_import": "상세 정리", "clean_chem": "상세 정리", "clean_send": "상세 정리", "chem": "원본", "rename": "상품명", "names": "상품명", "ctxkw": "AI 키워드", "plan": "복사·등록", "import": "원본",
+TASK_GROUP = {"mail": "메일함", "srctags": "원본", "adopt": "원본", "adopt_check": "원본", "clean_import": "상세 정리", "clean_chem": "상세 정리", "clean_send": "상세 정리", "chem": "원본", "rename": "상품명", "names": "상품명", "ctxkw": "AI 키워드", "plan": "복사·등록", "import": "원본",
               "revalidate": "원본", "orders": "주문", "nvcheck": "복사·등록", "keywords": "상품명", "kipris": "금지어·사전",
               "lexicon": "금지어·사전", "dictfile": "금지어·사전"}
 
@@ -136,12 +136,16 @@ def _count_of(r, *keys):
 # 요청 이름 → (묶음, 제목 또는 함수(body, resp) → (제목, 대상 수, 결과))
 ACTIONS = {
     "schedule": ("복사본", _schedule),
-    "listings_delete": ("복사본", lambda b, r: ("복사본 삭제 (휴지통으로)" + (" + 원본도" if b.get("with_source") else ""),
+    "listings_delete": ("복사본", lambda b, r: ("복사본 삭제 (휴지통으로)" + (" + 원본도" if b.get("with_source") else "") + (" · 네이버는 그대로, 이 프로그램에서만" if b.get("keep_naver") else ""),
                                               _count_of(r, "count", "moved", "trashed", "ids"),
                                               f"원본 {r.get('sources_moved', 0)}개도 휴지통으로" + (f" · 다른 스토어에 올라가 있어 원본은 남긴 {r['sources_skipped_live']}개" if r.get("sources_skipped_live") else "")
                                               if b.get("with_source") else "")),
     "listings_reset_round": ("복사본", lambda b, r: ("회차 초기화 (1회차로)" + (" · 모든 스토어 전체" if b.get("all") else ""), r.get("count"), "")),
-    "sources_delete": ("원본", lambda b, r: ("원본 삭제 (휴지통으로)", _count_of(r, "count", "moved", "trashed", "ids"), "")),
+    "sources_delete": ("원본", lambda b, r: ("원본 삭제 (휴지통으로)" + (" · 네이버는 그대로, 이 프로그램에서만" if b.get("keep_naver") else ""),
+                                          _count_of(r, "count", "moved", "trashed", "ids"),
+                                          f"판매 중 복사본이 있어 뺀 원본 {r['skipped_live']}개" if r.get("skipped_live") else "")),
+    "adopt_undo": ("원본", lambda b, r: ("기존 상품 가져오기 되돌리기 (이 프로그램에서만 — 네이버 상품은 그대로)", r.get("listings"),
+                                      f"원본 {r.get('sources', 0)}개 휴지통 · 예전부터 있던 원본 {r.get('kept_sources', 0)}개는 남김")),
     "trash_restore": ("휴지통", lambda b, r: ("휴지통에서 되살림", _count_of(r, "count", "restored", "ids"), "")),
     "trash_purge": ("휴지통", lambda b, r: ("휴지통 비우기" if b.get("empty") else "휴지통에서 완전히 삭제", _count_of(r, "count", "purged", "deleted"), "")),
     "listing_set_name": ("상품명", lambda b, r: ("상품명 직접 고침", 1, str(r.get("name") or "")[:120])),

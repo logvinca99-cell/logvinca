@@ -356,6 +356,7 @@ const App = {
         + (r.need_orders ? " · 판매 이력 받기 필요(그 전엔 최신화·내리기 안 함)" : "")
         + " — 가져오기 화면에서 확인",
       nvcheck: () => `네이버 상태 확인 끝: ${r.message || ""}`,
+      adopt_check: () => `맞춰 보기 끝 (${r.store}): 새로 연결될 상품 ${num(r.linked)}개 · 스토어에 없어 뺄 ${num((r.dropped || 0) + (r.no_code || 0))} · 판매자코드 맞는 줄 ${Math.round((r.match_rate || 0) * 1000) / 10}% — 기존 상품 가져오기 화면에서 결과 확인 후 가져오기`,
       srctags: () => `출처 태그 채우기 끝: 원본 ${num(r.total)}개 중 ${num(r.changed)}개에 더함 · 수집 스토어 ${num(r.store)}개 · 가져온 날 ${num(r.date)}개`,
       mail: () => `메일함: 확인 ${num(r.checked)}통 · 새로 ${num(r.new)}통` + (r.warn ? ` · 경고·제재 ${num(r.warn)}통` : "") + (r.auth ? ` · 인증번호 ${num(r.auth)}통` : ""),
       revalidate: () => `다시 검사 끝: ${num(r.total)}개` + (r.invalid !== undefined ? ` · 오류 ${num(r.invalid)}개` : ""),
@@ -774,11 +775,25 @@ const App = {
         <li>네이버에 안 올라간 원본 <b>${num(pv.now)}개</b> → 바로 휴지통</li>
         <li>판매 중인 복사본 <b>${num(pv.drop_listings)}건</b>(원본 ${num(pv.drop_sources)}개) → <b>${now ? "네이버에서 바로 내린 뒤" : "'이 쪽 완료·다음'(또는 닫기) 때 네이버에서 내린 뒤"}</b> 원본도 휴지통</li>
         ${pv.kept_sold ? `<li>판매 이력·잠금이 있는 원본 <b>${num(pv.kept_sold)}개</b> → 지우지 않고 남김</li>` : ""}</ul>
-        <p class="small muted">휴지통에서 되살릴 수 있지만, 네이버에서 내린 상품은 다시 올려야 합니다.</p>`,
+        <p class="small muted">휴지통에서 되살릴 수 있지만, 네이버에서 내린 상품은 다시 올려야 합니다.</p>
+        <label class="check del-keep"><input type="checkbox" id="del-keep"><span><b>네이버 상품은 그대로 두고 이 프로그램에서만 빼기</b>
+          <span class="muted small" style="display:block">판매 중인 복사본도 네이버에서 내리지 않고, 이 프로그램에서만 휴지통으로 (잘못 가져온 상품을 빼고 다시 가져올 때 등)</span></span></label>`,
       ok: "모두 삭제합니다",
     });
+    const keep = $("#del-keep")?.checked;
     if (!ok) return null;
+    if (keep) return this._forget({ ...target }, after);
     return this._deleteEverywhere(target, after, now);
+  },
+  /* 이 프로그램에서만 빼기 (원본·복사본 모두 휴지통, 네이버 상품은 그대로 — 내리지 않음) */
+  async _forget(body, after) {
+    try {
+      const r = await this.api("/api/sources/delete", { json: { ...body, keep_naver: true } });
+      this.toast(`원본 ${num(r.moved)}개(복사본 함께)를 이 프로그램에서만 뺐습니다 — 네이버 상품은 그대로` + (r.skipped_live ? ` · 지금 처리 중이라 남긴 원본 ${num(r.skipped_live)}개` : ""));
+      this.refreshState();
+      if (after) after(r);
+      return r;
+    } catch (e) { this.toast(e.message, true); return null; }
   },
   async _deleteEverywhere(target, after, now = true) {
     try {
@@ -816,15 +831,18 @@ const App = {
           ${wait && pe.drop_listings ? '<p class="small c-warn">지금 등록이 도는 중이라 내리기는 대기에 넣습니다. 등록이 끝난 뒤 시작에서 \'내리기\'를 실행하세요.</p>' : ""}
           <p class="small muted">휴지통에서 되살릴 수 있지만, 네이버에서 내린 상품은 다시 올려야 합니다.</p></div>
         <div id="del-all-off" hidden><p>고른 복사본 <b>${num(pc.copies)}건</b>만 휴지통으로 옮깁니다. 붙어 있던 상품명은 원본의 안 쓴 후보로 돌아가고 원본은 남습니다.</p>
-          <p class="small muted">네이버에 올라가 있거나 처리 중인 복사본은 지우지 않습니다(먼저 '내리기').</p></div>`,
+          <p class="small muted">네이버에 올라가 있거나 처리 중인 복사본은 지우지 않습니다(먼저 '내리기') — 아래를 켜면 판매 중인 것도 이 프로그램에서만 뺍니다.</p></div>
+        <label class="check del-keep"><input type="checkbox" id="del-keep"><span><b>네이버 상품은 그대로 두고 이 프로그램에서만 빼기</b>
+          <span class="muted small" style="display:block">판매 중인 복사본도 네이버에서 내리지 않고, 이 프로그램에서만 휴지통으로 (잘못 가져온 상품을 빼고 다시 가져올 때 등)</span></span></label>`,
       ok: "삭제합니다",
     });
-    const cb = $("#del-all");
+    const cb = $("#del-all"), kb = $("#del-keep");
     cb.addEventListener("change", () => { $("#del-all-on").hidden = !cb.checked; $("#del-all-off").hidden = cb.checked; });
     if (!(await p)) return null;
+    if (kb.checked && cb.checked) return this._forget({ listing_filter: target }, after);
     if (cb.checked) return this._deleteEverywhere({ listing_filter: target }, after, now);
     try {
-      const r = await this.api("/api/listings/delete", { json: { ...target, with_source: false } });
+      const r = await this.api("/api/listings/delete", { json: { ...target, with_source: false, keep_naver: kb.checked } });
       this.toast(`복사본 ${num(r.moved)}건을 휴지통으로 옮겼습니다` + (r.skipped_live ? ` · 네이버에 올라가 있거나 처리 중이라 뺀 ${num(r.skipped_live)}건` : ""));
       this.refreshState();
       if (after) after(r);

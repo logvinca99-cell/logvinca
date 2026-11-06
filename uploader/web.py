@@ -799,13 +799,38 @@ def create_app(db=None):
         except Exception as e:  # noqa: BLE001
             return fail(f"파일을 읽지 못했습니다: {e}")
 
+    @app.post("/api/adopt/check")
+    def adopt_check():
+        """가져오기 전에 맞춰 보기 (아무것도 바꾸지 않음): 스토어 상품 목록을 받아 연결될 수·버릴 수·예시."""
+        b = body()
+        try:
+            return jsonify({"task": adopt.check(db, tasks, b.get("token"), b.get("store_id"), b)})
+        except (ValueError, RuntimeError) as e:
+            return fail(str(e))
+
     @app.post("/api/adopt/start")
     def adopt_start():
         b = body()
-        opts = {k: bool(b.get(k, True)) for k in ("strip_top", "strip_bottom", "mark_eye")}
         try:
-            return jsonify({"task": adopt.start(db, tasks, b.get("token"), b.get("store_id"), opts)})
+            return jsonify({"task": adopt.start(db, tasks, b.get("token"), b.get("store_id"), b)})
         except (ValueError, RuntimeError) as e:
+            return fail(str(e))
+
+    @app.get("/api/adopt/<int:rid>/undo")
+    def adopt_undo_preview(rid):
+        try:
+            return jsonify(adopt.undo_preview(db, rid))
+        except ValueError as e:
+            return fail(str(e), 404)
+
+    @app.post("/api/adopt/<int:rid>/undo")
+    def adopt_undo(rid):
+        """가져오기 되돌리기: 이 프로그램에서만 뺌 (네이버 상품은 그대로)."""
+        if runner.state["running"]:
+            return fail("등록이 진행 중일 때는 되돌릴 수 없습니다. 끝난 뒤에 다시 시도하세요.")
+        try:
+            return jsonify(adopt.undo_run(db, rid))
+        except ValueError as e:
             return fail(str(e))
 
     @app.get("/api/adopt/runs")
@@ -1230,12 +1255,15 @@ def create_app(db=None):
 
     @app.post("/api/sources/delete")
     def sources_delete():
+        """원본을 휴지통으로. keep_naver: 판매 중인 복사본이 있어도 이 프로그램에서만 뺌 (네이버 상품은 그대로 — 내리지 않음).
+        listing_filter: 복사본 화면에서 고른 복사본의 원본."""
         if runner.state["running"]:
             return fail("등록이 진행 중일 때는 지울 수 없습니다. 끝난 뒤에 다시 시도하세요.")
-        ids = inventory.source_ids(db, _filter_from(body()))
+        b = body()
+        ids = _ctx_sources(b) if b.get("listing_filter") else inventory.source_ids(db, _filter_from(b))
         if not ids:
             return fail("고른 원본이 없습니다.")
-        return jsonify(trash.trash_sources(db, ids))
+        return jsonify(trash.trash_sources(db, ids, keep_naver=bool(b.get("keep_naver"))))
 
     @app.post("/api/listings/delete")
     def listings_delete():
@@ -1247,9 +1275,10 @@ def create_app(db=None):
         if not ids:
             return fail("고른 복사본이 없습니다.")
         sids = _source_ids_of(ids)
-        out = trash.trash_listings(db, ids)
+        keep = bool(b.get("keep_naver"))   # 판매 중인 것도 이 프로그램에서만 뺌 (네이버 상품은 그대로)
+        out = trash.trash_listings(db, ids, keep_naver=keep)
         if b.get("with_source"):   # 원본도 휴지통으로 (그 원본의 다른 스토어 복사본도 함께 — 네이버에 올라가 있는 원본은 뺌)
-            s = trash.trash_sources(db, sids)
+            s = trash.trash_sources(db, sids, keep_naver=keep)
             out.update(sources_moved=s["moved"], sources_skipped_live=s["skipped_live"])
         return jsonify(out)
 

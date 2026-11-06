@@ -65,88 +65,87 @@ def upload_dir():
     return d
 
 
-# ───────────────────────── 스토어 상하단 찾기
+# ───────────────────────── 공통 이미지 (스토어 상단·하단·안내 배너)
+# 상세 정리 '② 공통 이미지'와 같은 방식: 이미지마다 몇 개 상품 상세에 들어 있는지 세서 많은 순으로 모두 보여 주고, 고른 것을 뺀다.
+# (맨 앞·맨 뒤 덩어리가 글자까지 똑같아야 빼던 예전 방식은 상단이 조금 다른 상품 수백 개를 놓쳤음)
 
-_OPEN = re.compile(r"<div\b", re.I)
-_CLOSE = re.compile(r"</div\s*>", re.I)
-
-
-def _balanced(s):
-    return len(_OPEN.findall(s)) == len(_CLOSE.findall(s))
+COMMON_MIN = 10        # 이 수 이상 상품에 들어 있는 이미지만 보여 줌
+PRESELECT_RATIO = 0.05  # 상품 5% 넘게 들어 있으면 미리 골라 둠 (스토어 상단·하단은 거의 모든 상품에 있음)
 
 
-def _common_prefix(strs):
-    a, b = min(strs), max(strs)   # 정렬했을 때 양 끝의 공통 앞부분 = 전체의 공통 앞부분
-    i = 0
-    n = min(len(a), len(b))
-    while i < n and a[i] == b[i]:
-        i += 1
-    return a[:i]
+def common_images(rows, rule_srcs=(), min_count=COMMON_MIN, limit=300):
+    """엑셀 줄들 → {total 상세 있는 상품 수, images [{src, count, pos 상단·하단·가운데, pick 미리 고름, remembered}], more}."""
+    counts, pos_sum = Counter(), {}
+    total = 0
+    for r in rows:
+        srcs = clean.img_srcs(r.get("상세설명"))
+        if not srcs:
+            continue
+        total += 1
+        last = max(1, len(srcs) - 1)
+        for j, src in enumerate(srcs):
+            if src in pos_sum and counts[src] and pos_sum[src][1] == total:
+                continue   # 한 상품 안에서 같은 이미지는 한 번만
+            counts[src] += 1
+            ps = pos_sum.get(src, (0.0, 0))
+            pos_sum[src] = (ps[0] + (j / last if len(srcs) > 1 else 0.0), total)
+    known = set(rule_srcs or ())
+    out = []
+    for src, n in counts.most_common():
+        if n < max(2, int(min_count or 2)) and src not in known:
+            break
+        avg = pos_sum[src][0] / n
+        out.append({"src": src, "count": n, "pos": "상단" if avg < 0.3 else "하단" if avg > 0.7 else "가운데",
+                    "pick": n >= total * PRESELECT_RATIO or src in known, "remembered": src in known})
+    return {"total": total, "images": out[:limit], "more": max(0, len(out) - limit)}
 
 
-def detect_edges(details):
-    """스토어가 모든 상품에 똑같이 넣은 상세 맨 앞(상단)·맨 뒤(하단) 덩어리를 찾는다 → (상단 HTML, 하단 HTML).
-    맨 앞 300자(맨 뒤 300자)가 같은 상품이 30% 넘으면 그 상품들의 공통 부분을 <div> 짝이 맞는 곳까지 잘라 씀."""
-    ds = [d.strip() for d in details if d and d.strip()]
-    if len(ds) < 5:
-        return "", ""
-    top = bottom = ""
-    head, n = Counter(d[:300] for d in ds).most_common(1)[0]
-    if n >= len(ds) * 0.3 and len(head) >= 300:
-        cp = _common_prefix([d for d in ds if d.startswith(head)])
-        for m in reversed(list(_CLOSE.finditer(cp))):
-            cand = cp[:m.end()]
-            if _balanced(cand) and re.search(r"<img\b", cand, re.I):
-                top = cand
-                break
-    tail, n = Counter(d[-300:] for d in ds).most_common(1)[0]
-    if n >= len(ds) * 0.3 and len(tail) >= 300:
-        cs = _common_prefix([d[::-1] for d in ds if d.endswith(tail)])[::-1]
-        for m in _OPEN.finditer(cs):
-            cand = cs[m.start():]
-            if _balanced(cand) and re.search(r"<img\b", cand, re.I):
-                bottom = cand
-                break
-    return top, bottom
+_PAD = r"(?:\s|<br\s*/?>|&nbsp;)*"
+_EMPTY = re.compile(rf"<(div|p|center|span|a)\b[^>]*>{_PAD}</\1>", re.I)
 
 
-def strip_edges(html, top, bottom):
-    """상세에서 상단·하단 덩어리를 뺀다 → (새 상세, 상단 뺐나, 하단 뺐나)."""
-    d = str(html or "").strip()
-    t = b = False
-    if top and d.startswith(top):
-        d, t = d[len(top):].lstrip(), True
-    if bottom and d.endswith(bottom):
-        d, b = d[:-len(bottom)].rstrip(), True
-    return d, t, b
+def image_remover(srcs):
+    """고른 이미지 주소들 → 상세에서 한 번에 빼는 함수 (html → (새 html, 뺀 수)). 이미지만 감싸던 칸, 비게 된 칸도 같이 뺀다."""
+    srcs = [x for x in dict.fromkeys(str(v).strip() for v in (srcs or [])) if x]
+    if not srcs:
+        return lambda html: (str(html or ""), 0)
+    alt = "|".join(re.escape(x) for x in sorted(srcs, key=len, reverse=True))
+    img = rf"""<img\b[^>]*\bsrc\s*=\s*["'](?:{alt})["'][^>]*>"""
+    wrap = re.compile(rf"<(div|p|a|span|center)\b[^>]*>{_PAD}{img}{_PAD}</\1>", re.I)
+    one = re.compile(img, re.I)
+
+    def fn(html):
+        html = str(html or "")
+        html, k1 = wrap.subn("", html)
+        html, k2 = one.subn("", html)
+        if k1 or k2:
+            for _ in range(3):   # 이미지를 빼서 비게 된 칸 (여러 장을 감싸던 상단·하단 칸)
+                html, k = _EMPTY.subn("", html)
+                if not k:
+                    break
+        return html.strip(), k1 + k2
+    return fn
 
 
 # ───────────────────────── 1. 파일 미리 보기
 
 def prepare(db, path, filename):
-    """올린 파일을 읽어 미리 보기: 상품 수, 판매자코드, 스토어 짐작(브랜드·판매자코드 머리), 찾은 상단·하단."""
+    """올린 파일을 읽어 미리 보기: 상품 수, 판매자코드, 스토어 짐작(브랜드), 공통 이미지(상단·하단 배너 등) 전부."""
     rows = [r for r in excel.iter_rows(path, filename) if r.get("상품명")]
     codes = [str(r.get("판매자코드") or "").strip() for r in rows]
-    top, bottom = detect_edges([r.get("상세설명") for r in rows])
-    n_top = n_bot = 0
-    for r in rows:
-        _, t, b = strip_edges(r.get("상세설명"), top, bottom)
-        n_top += t
-        n_bot += b
+    rule_srcs = [r["value"] for r in clean.rules(db) if r["kind"] == "image"]
     brand = Counter(str(r.get("브랜드") or "").strip() for r in rows).most_common(1)
     brand = brand[0][0] if brand else ""
     guess = None
-    for s in db.stores():
-        nm = str(s["name"] or "")
+    for st in db.stores():
+        nm = str(st["name"] or "")
         if brand and (brand in nm or nm in brand or brand.lower() in nm.lower()):
-            guess = s["id"]
+            guess = st["id"]
             break
     prefix = Counter(re.sub(r"\d+$", "", c) for c in codes if c).most_common(1)
     return {"rows": len(rows), "no_code": codes.count(""), "dup_code": len(codes) - len(set(codes)),
             "code_prefix": prefix[0][0] if prefix else "", "code_example": next((c for c in codes if c), ""),
-            "brand": brand, "guess_store": guess,
-            "top": top, "bottom": bottom, "top_imgs": clean.img_srcs(top)[:6], "bottom_imgs": clean.img_srcs(bottom)[:8],
-            "n_top": n_top, "n_bottom": n_bot}
+            "brand": brand, "guess_store": guess, "common": common_images(rows, rule_srcs)}
 
 
 # ───────────────────────── 2. 가져오기
@@ -154,31 +153,47 @@ def prepare(db, path, filename):
 _product = nvstate.product   # 커머스API 상품 목록 한 개 → 필요한 값만 (판매·전시 상태, 손님 가격, 모바일 할인)
 
 
-def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=None):
-    """가져오기 한 번. opts: strip_top, strip_bottom, mark_eye (기본 모두 켬)."""
-    st = {"rows": 0, "linked": 0, "already": 0, "dropped": 0, "store_only": 0, "dup": 0, "dup_same": 0, "no_code": 0,
-          "top_removed": 0, "bottom_removed": 0, "store_products": 0, "status": {}, "managed": 0,
-          "price_diff": 0, "mobile_disc": 0, "dropped_src": 0, "existing": 0, "code_changed": 0}
+def fetch_products(db, store_id, progress=None, should_stop=None):
+    """그 스토어 네이버 상품 목록 (지운 것 빼고, 필요한 값만)."""
     store = db.store(int(store_id), with_secret=True)
     if not store:
         raise ValueError("스토어를 찾지 못했습니다.")
     client = naver.make_client(store)
+    if progress:
+        progress(0, None, f"'{store['name']}' 네이버 상품 목록 받는 중…")
+    out = []
+    for it in client.iter_products(on_page=lambda n, total: progress and progress(n, total, f"'{store['name']}' 네이버 상품 목록 {n:,}/{total:,}")):
+        p = _product(it)
+        if p["status"] != "DELETE":
+            out.append(p)
+        if should_stop and should_stop():
+            raise RuntimeError("중단했습니다.")
+    return out
+
+
+def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=None, dry=False, products=None):
+    """가져오기 한 번. opts: remove_imgs(뺄 공통 이미지 주소들), mark_eye(기본 켬).
+    dry=True면 맞춰 보기만 (아무것도 바꾸지 않고 결과·예시만). products: 맞춰 볼 때 받은 스토어 상품 목록 (다시 받지 않게)."""
+    st = {"rows": 0, "linked": 0, "already": 0, "dropped": 0, "store_only": 0, "dup": 0, "dup_same": 0, "no_code": 0,
+          "img_items": 0, "img_removed": 0, "img_kinds": len(opts.get("remove_imgs") or []), "store_products": 0, "status": {}, "managed": 0,
+          "price_diff": 0, "mobile_disc": 0, "dropped_src": 0, "existing": 0, "code_changed": 0}
+    samples = {"linked": [], "dropped": [], "store_only": [], "price_diff": []}
+
+    def sample(kind, **kw):
+        if dry and len(samples[kind]) < 8:
+            samples[kind].append(kw)
+    store = db.store(int(store_id), with_secret=True)
+    if not store:
+        raise ValueError("스토어를 찾지 못했습니다.")
     items = []
 
     def add_item(kind, **kw):
         items.append((run_id, kind, kw.get("code", ""), kw.get("name", "")[:300], kw.get("channel_no", ""), kw.get("status", ""),
                       kw.get("reg_at"), kw.get("source_id"), kw.get("note", "")))
 
-    # ① 스토어 상품 목록 (목록만 받아 빠름)
-    if progress:
-        progress(0, None, f"'{store['name']}' 네이버 상품 목록 받는 중…")
-    products = []
-    for it in client.iter_products(on_page=lambda n, total: progress and progress(n, total, f"'{store['name']}' 네이버 상품 목록 {n:,}/{total:,}")):
-        p = _product(it)
-        if p["status"] != "DELETE":
-            products.append(p)
-        if should_stop and should_stop():
-            raise RuntimeError("중단했습니다.")
+    # ① 스토어 상품 목록 (목록만 받아 빠름 — 맞춰 볼 때 받은 것이 있으면 그대로)
+    if products is None:
+        products = fetch_products(db, store["id"], progress, should_stop)
     st["store_products"] = len(products)
     by_code = {}
     for p in products:
@@ -186,16 +201,12 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
             by_code[p["code"]] = p
     managed = {r["channel_no"] for r in db.q("SELECT channel_no FROM listings WHERE store_id=? AND channel_no!=''", (store["id"],))}
 
-    # ② 파일 읽기 + 상하단 찾기
+    # ② 파일 읽기
     if progress:
         progress(0, None, "파일 읽는 중…")
     rows = [r for r in excel.iter_rows(path, filename) if r.get("상품명")]
     st["rows"] = len(rows)
-    top, bottom = detect_edges([r.get("상세설명") for r in rows]) if (opts.get("strip_top", True) or opts.get("strip_bottom", True)) else ("", "")
-    if not opts.get("strip_top", True):
-        top = ""
-    if not opts.get("strip_bottom", True):
-        bottom = ""
+    strip = image_remover(opts.get("remove_imgs"))
 
     # ③ 판매자코드로 맞추기: 스토어에 있는 것만 원본으로 (정리: 상하단 빼기, 브랜드·제조사·모델명·원산지 '상세페이지 참조')
     #    원본가 = 그 스토어의 지금 손님 가격 (엑셀 판매가가 아님 — 셀업·판매자센터에서 따로 건 할인까지 반영된 값)
@@ -213,10 +224,10 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
                 unmatched.append((code, str(r.get("상품명") or ""), inventory.source_key(r)))   # 아래 ⑦에서 판정
             continue
         r = dict(r)
-        d, t, b = strip_edges(r.get("상세설명"), top, bottom)
+        d, k = strip(r.get("상세설명"))
         r["상세설명"] = d
-        st["top_removed"] += t
-        st["bottom_removed"] += b
+        st["img_items"] += bool(k)
+        st["img_removed"] += k
         xl = convert.net_price(r)
         r, _ = clean.auto_fix(r, {"price": True, "code": False, "info": True}, [])
         final = p["final"] or p["sale"]
@@ -225,6 +236,7 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
                 st["price_diff"] += 1
                 add_item("price_diff", code=p["code"], name=p["name"], channel_no=p["channel_no"], status=p["status"], reg_at=p["reg_at"],
                          note=f"엑셀 {xl:,}원 → 스토어 손님 가격 {final:,}원")
+                sample("price_diff", code=p["code"], name=p["name"], xl=xl, final=final)
             r["판매가"], r["할인가"] = final, None
         if p.get("mobile") and p["channel_no"] not in managed:
             st["mobile_disc"] += 1
@@ -238,6 +250,9 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
         elif not p["code"] or p["code"] not in file_codes:
             st["store_only"] += 1
             add_item("store_only", code=p["code"], name=p["name"], channel_no=p["channel_no"], status=p["status"], reg_at=p["reg_at"])
+            sample("store_only", code=p["code"], name=p["name"], status=p["status"], final=p["final"])
+    if dry:
+        return _dry_rest(db, store, st, samples, rows, keep, matched, managed, unmatched)
 
     # ④ 원본으로 넣기. 대표 사진이 같은 원본이 이미 있으면 덮어쓰지 않는다 (원래 원본 이름·AI 키워드·상세를 지킴):
     #    예전에 불러온 원본이면 원본가만 이 스토어 손님 가격으로 바꾸고 '가져옴 · 원본 이름 있음'(2), 이미 가져온 원본이면 그대로.
@@ -267,15 +282,18 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
             st["existing"] += 1
             refs[i] = x["id"]
             new_tags = srctags.merge(x["src_tags"], tags)
+            d = unpack(x["data"])
+            html, k = strip(d.get("상세설명"))   # 고른 공통 이미지(스토어 배너)는 이미 있던 원본 상세에서도 뺀다 (나머지 내용은 그대로)
+            if k:
+                d["상세설명"] = html
             if not x["adopted"]:   # 예전에 불러온 원본 → 원본가만 이 스토어 손님 가격으로
                 final = matched[i]["final"] or matched[i]["sale"]
-                d = unpack(x["data"])
                 if final > 0:
                     d["판매가"], d["할인가"] = final, None
                 c.execute("UPDATE sources SET adopted=2, price=?, data=?, src_tags=?, updated_at=? WHERE id=?",
                           (convert.net_price(d), pack(d), new_tags, now, x["id"]))
-            elif new_tags != x["src_tags"]:
-                c.execute("UPDATE sources SET src_tags=? WHERE id=?", (new_tags, x["id"]))
+            elif k or new_tags != x["src_tags"]:
+                c.execute("UPDATE sources SET data=?, src_tags=?, updated_at=? WHERE id=?", (pack(d), new_tags, now, x["id"]))
     rows_by_i = dict(keep)
     new_rows = [(i, rows_by_i[i]) for k, i in first.items() if k not in exist]
     if new_rows:
@@ -382,13 +400,64 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
     with db.tx() as c:
         c.executemany("""INSERT INTO adopt_item(run_id, kind, code, name, channel_no, status, reg_at, source_id, note)
             VALUES(?,?,?,?,?,?,?,?,?)""", items)
-    st["top"], st["bottom"] = clean.img_srcs(top)[:6], clean.img_srcs(bottom)[:8]
     # 판매 이력: 받아 둔 주문을 가져온 복사본과 다시 맞추고, 가져온 상품이 올라간 날부터 주문을 알고 있는지
     st["orders_matched"] = orders.rematch(db)
     reg = [x[6] for x in items if x[1] == "linked" and x[6]]
     st["reg_min"] = min(reg) if reg else None
     st["orders_from"] = orders.known_from(db.store(store["id"]) or {})
     st["need_orders"] = bool(st["reg_min"] and (not st["orders_from"] or st["orders_from"] > st["reg_min"] + 3600))
+    return st
+
+
+def _dry_rest(db, store, st, samples, rows, keep, matched, managed, unmatched):
+    """맞춰 보기: 원본·복사본을 만들지 않고 연결될 수·버릴 수·예시만 센다 (가져오기와 같은 판정)."""
+    keys = {i: inventory.source_key(r) for i, r in keep}
+    ks = sorted(set(keys.values()) | {k for _, _, k in unmatched if k})
+    exist = {}
+    for j in range(0, len(ks), 900):
+        ch = ks[j:j + 900]
+        for x in db.q(f"SELECT id, source_key, adopted FROM sources WHERE source_key IN ({','.join('?' * len(ch))})", ch):
+            exist[x["source_key"]] = x
+    sids = sorted({x["id"] for x in exist.values()})
+    live_here = set()
+    for j in range(0, len(sids), 900):
+        ch = sids[j:j + 900]
+        live_here |= {x["source_id"] for x in db.q(f"""SELECT source_id FROM listings WHERE store_id=? AND origin_no!='' AND status!='deleted'
+            AND source_id IN ({','.join('?' * len(ch))})""", (store["id"], *ch))}
+    seen = set()
+    rows_by_i = dict(keep)
+    for i, r in keep:
+        p, k = matched[i], keys[i]
+        x = exist.get(k)
+        if k not in seen and x:
+            st["existing"] += 1
+        if p["channel_no"] in managed:
+            st["already"] += 1
+        elif k in seen or (x and x["id"] in live_here):
+            st["dup_same"] += 1
+        else:
+            st["linked"] += 1
+            st["status"][p["status"]] = st["status"].get(p["status"], 0) + 1
+            if len(samples["linked"]) < 8:
+                samples["linked"].append({"code": p["code"], "xl_name": str(rows_by_i[i].get("상품명") or "")[:80], "name": p["name"][:80],
+                                          "final": p["final"] or p["sale"], "status": p["status"]})
+        seen.add(k)
+    drop_src = set()
+    for code, name, k in unmatched:
+        x = exist.get(k)
+        if x and x["id"] in live_here:
+            st["already"] += 1
+            st["code_changed"] += 1
+            continue
+        st["dropped"] += 1
+        if x:
+            drop_src.add(x["id"])
+        if len(samples["dropped"]) < 8:
+            samples["dropped"].append({"code": code, "name": name[:80], "src": bool(x)})
+    st["dropped_src"] = len(drop_src)
+    with_code = st["rows"] - st["no_code"]
+    st["match_rate"] = round(len(keep) / with_code, 4) if with_code else 0
+    st["samples"] = samples
     return st
 
 
@@ -409,18 +478,57 @@ def drop_source_ids(db, run_id):
     return [i for i in ids if i not in live]
 
 
+CHECK_VALID_SEC = 3 * 3600    # 맞춰 본 결과로 가져올 수 있는 시간
+SNAPSHOT_REUSE_SEC = 1800     # 맞춰 볼 때 받은 스토어 상품 목록을 다시 쓰는 시간 (넘으면 다시 받음)
+
+
+def _opts_of(o):
+    return {"remove_imgs": [str(x) for x in (o.get("remove_imgs") or []) if str(x).strip()][:500],
+            "mark_eye": bool(o.get("mark_eye", True))}
+
+
+def check(db, tasks, token, store_id, opts):
+    """가져오기 전에 맞춰 보기 (아무것도 바꾸지 않음) → 작업 번호. 결과는 작업 결과와 파일 기록에 남는다."""
+    meta = _token_meta(token)
+    store = db.store(int(store_id or 0))
+    if not store:
+        raise ValueError("이 파일을 올렸던 스토어를 골라 주세요.")
+    opts = _opts_of(opts)
+
+    def job(progress=None, should_stop=None):
+        products = fetch_products(db, store["id"], progress, should_stop)
+        out = run(db, None, store["id"], meta["path"], meta["file"], opts, progress, should_stop, dry=True, products=products)
+        now = time.time()
+        with open(_snap_path(token), "w", encoding="utf-8") as f:
+            json.dump({"store_id": store["id"], "at": now, "products": products}, f, ensure_ascii=False)
+        _save_meta(token, {**_token_meta(token), "checked": {"store_id": store["id"], "at": now, "result": out}})
+        return {**out, "store": store["name"], "store_id": store["id"], "file": meta["file"], "token": token}
+    return tasks.start("adopt_check", f"가져오기 맞춰 보기 · {store['name']} · {meta['file']}", job)
+
+
 def start(db, tasks, token, store_id, opts):
-    """미리 본 파일로 가져오기 작업을 시작 → 작업 번호."""
+    """맞춰 본 파일로 가져오기 작업을 시작 → 작업 번호. 맞춰 보기를 안 했거나 다른 스토어로 맞춰 봤으면 시작하지 않는다."""
     meta = _token_meta(token)
     store = db.store(int(store_id or 0))
     if not store:
         raise ValueError("가져올 스토어를 골라 주세요.")
+    ck = meta.get("checked") or {}
+    if ck.get("store_id") != store["id"] or time.time() - float(ck.get("at") or 0) > CHECK_VALID_SEC:
+        raise ValueError("먼저 [맞춰 보기]로 이 스토어와 맞춰 본 결과를 확인하세요.")
+    opts = _opts_of(opts)
     rid = db.x("INSERT INTO adopt_run(created_at, store_id, store_name, file_name) VALUES(?,?,?,?)",
                (time.time(), store["id"], store["name"], meta["file"]))
 
     def job(progress=None, should_stop=None):
         try:
-            out = run(db, rid, store["id"], meta["path"], meta["file"], opts, progress, should_stop)
+            products = None
+            try:
+                snap = json.load(open(_snap_path(token), encoding="utf-8"))
+                if snap.get("store_id") == store["id"] and time.time() - float(snap.get("at") or 0) < SNAPSHOT_REUSE_SEC:
+                    products = snap["products"]
+            except (OSError, ValueError):
+                pass
+            out = run(db, rid, store["id"], meta["path"], meta["file"], opts, progress, should_stop, products=products)
             db.x("UPDATE adopt_run SET stats=?, status='done', finished_at=? WHERE id=?", (json.dumps(out, ensure_ascii=False), time.time(), rid))
             return {**out, "run_id": rid, "store": store["name"], "file": meta["file"]}
         except Exception as e:  # noqa: BLE001
@@ -429,6 +537,19 @@ def start(db, tasks, token, store_id, opts):
         finally:
             _drop_token(token)
     return tasks.start("adopt", f"기존 상품 가져오기 · {store['name']} · {meta['file']}", job)
+
+
+def _snap_path(token):
+    return os.path.join(upload_dir(), token + ".products.json")
+
+
+def _save_meta(token, meta):
+    p = os.path.join(upload_dir(), "")
+    for fn in os.listdir(p):
+        if fn.startswith(token) and fn.endswith(".json") and not fn.endswith(".products.json"):
+            with open(os.path.join(p, fn), "w", encoding="utf-8") as f:
+                json.dump(meta, f, ensure_ascii=False)
+            return
 
 
 def save_upload(fileobj, filename):
@@ -446,7 +567,7 @@ def _token_meta(token):
         raise ValueError("파일을 다시 올려 주세요.")
     p = os.path.join(upload_dir(), "")
     for fn in os.listdir(p):
-        if fn.startswith(token) and fn.endswith(".json"):
+        if fn.startswith(token) and fn.endswith(".json") and not fn.endswith(".products.json"):
             with open(os.path.join(p, fn), encoding="utf-8") as f:
                 return json.load(f)
     raise ValueError("올린 파일이 없습니다. 파일을 다시 올려 주세요.")
@@ -460,6 +581,53 @@ def _drop_token(token):
                 os.remove(os.path.join(p, fn))
             except OSError:
                 pass
+
+
+def undo_preview(db, run_id):
+    """이 가져오기로 연결한 복사본·새로 생긴 원본 수 (되돌리기 확인용)."""
+    run = db.one("SELECT * FROM adopt_run WHERE id=?", (int(run_id),))
+    if not run:
+        raise ValueError("가져온 기록을 찾지 못했습니다.")
+    lids, new_src, kept = _undo_targets(db, run)
+    return {"run_id": run["id"], "store": run["store_name"], "listings": len(lids), "sources": len(new_src), "kept_sources": len(kept),
+            "status": run["status"]}
+
+
+def _undo_targets(db, run):
+    sids = [r["source_id"] for r in db.q("SELECT DISTINCT source_id FROM adopt_item WHERE run_id=? AND kind='linked' AND source_id IS NOT NULL",
+                                         (run["id"],))]
+    lids, new_src, kept = [], [], []
+    for j in range(0, len(sids), 900):
+        ch = sids[j:j + 900]
+        m = ",".join("?" * len(ch))
+        lids += [r["id"] for r in db.q(f"""SELECT id FROM listings WHERE store_id=? AND price_fixed=1 AND source_id IN ({m})""",
+                                       (run["store_id"], *ch))]
+        for r in db.q(f"""SELECT s.id, s.adopted, (SELECT COUNT(*) FROM listings l WHERE l.source_id=s.id
+                AND NOT (l.store_id=? AND l.price_fixed=1)) AS others FROM sources s WHERE s.id IN ({m})""", (run["store_id"], *ch)):
+            (new_src if r["adopted"] == 1 and not r["others"] else kept).append(r["id"])
+    return lids, new_src, kept
+
+
+def undo_run(db, run_id):
+    """가져오기 되돌리기: 이 가져오기로 연결한 복사본과, 이 가져오기로 새로 생긴 원본(다른 복사본이 없는 것)을 휴지통으로.
+    네이버 상품은 그대로 둔다 (내리지 않음). 예전부터 있던 원본은 남기고 '가져옴' 표시만 지운다."""
+    from . import trash
+    run = db.one("SELECT * FROM adopt_run WHERE id=?", (int(run_id),))
+    if not run:
+        raise ValueError("가져온 기록을 찾지 못했습니다.")
+    if run["status"] == "running":
+        raise ValueError("가져오는 중입니다. 끝난 뒤에 되돌리세요.")
+    lids, new_src, kept = _undo_targets(db, run)
+    a = trash.trash_listings(db, lids, keep_naver=True)
+    b = trash.trash_sources(db, new_src, keep_naver=True)
+    for j in range(0, len(kept), 900):
+        ch = kept[j:j + 900]
+        db.x(f"UPDATE sources SET adopted=0 WHERE adopted>0 AND id IN ({','.join('?' * len(ch))}) AND id NOT IN (SELECT source_id FROM listings WHERE price_fixed=1)", ch)
+    stats = json.loads(run["stats"] or "{}")
+    stats["undone_at"] = time.time()
+    stats["undone"] = {"listings": a["moved"], "sources": b["moved"], "kept_sources": len(kept)}
+    db.x("UPDATE adopt_run SET status='undone', stats=? WHERE id=?", (json.dumps(stats, ensure_ascii=False), run["id"]))
+    return {"listings": a["moved"], "sources": b["moved"], "kept_sources": len(kept), "skipped": a["skipped_live"] + b["skipped_live"]}
 
 
 def runs(db, limit=30):

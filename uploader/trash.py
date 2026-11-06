@@ -64,15 +64,17 @@ def _busy_listing(r):
 
 # ───────────────────────── 휴지통으로
 
-def trash_sources(db, ids):
+def trash_sources(db, ids, keep_naver=False):
     """원본을 휴지통으로 (그 원본의 복사본·이름 후보·지난 회차·AI 키워드도 함께).
-    네이버에 올라가 있거나 처리 중인 복사본이 있는 원본은 빼고 그 수를 돌려준다."""
+    네이버에 올라가 있거나 처리 중인 복사본이 있는 원본은 빼고 그 수를 돌려준다.
+    keep_naver=True: 네이버에 올라가 있는 복사본이 있어도 이 프로그램에서만 뺀다 (네이버 상품은 그대로 — 내리지 않음). 처리 중인 것은 뺌."""
     st = {"moved": 0, "skipped_live": 0}
     now = time.time()
+    live_cond = "status IN ('queued','running')" if keep_naver else "(origin_no!='' OR status IN ('queued','running'))"
     for chunk in _chunks(ids):
         m = ",".join("?" * len(chunk))
         busy = {r["source_id"] for r in db.q(f"""SELECT DISTINCT source_id FROM listings WHERE source_id IN ({m})
-            AND status!='deleted' AND (origin_no!='' OR status IN ('queued','running'))""", chunk)}
+            AND status!='deleted' AND {live_cond}""", chunk)}
         go = [i for i in chunk if i not in busy]
         st["skipped_live"] += len(busy)
         with db.tx() as c:
@@ -90,6 +92,9 @@ def trash_sources(db, ids):
                 stores = [r["name"] for r in c.execute(f"""SELECT t.name FROM listings l JOIN stores t ON t.id=l.store_id
                     WHERE l.id IN ({lm})""", lids).fetchall()]
                 extra = f"원본가 {src[0]['price']:,}원 · 복사본 {len(lids)}개 함께" + (f" ({', '.join(stores)})" if stores else "")
+                n_live = sum(1 for x in snap["listings"] if x["origin_no"] and x["status"] != "deleted")
+                if n_live:
+                    extra += f" · 판매 중 {n_live}건은 네이버에 그대로 (이 프로그램에서만 뺌)"
                 c.execute("INSERT INTO trash(kind, ref_id, title, extra, deleted_at, data) VALUES('source',?,?,?,?,?)",
                           (sid, src[0]["name"], extra, now, pack(snap)))
                 c.execute(f"UPDATE orders SET listing_id=NULL WHERE listing_id IN ({lm})", lids)
@@ -102,8 +107,9 @@ def trash_sources(db, ids):
     return st
 
 
-def trash_listings(db, ids):
-    """복사본을 휴지통으로 (아직 안 올린 것·내린 것만). 붙어 있던 이름은 원본의 안 쓴 후보로 돌아간다."""
+def trash_listings(db, ids, keep_naver=False):
+    """복사본을 휴지통으로 (아직 안 올린 것·내린 것만). 붙어 있던 이름은 원본의 안 쓴 후보로 돌아간다.
+    keep_naver=True: 네이버에 올라가 있는 것도 이 프로그램에서만 뺀다 (네이버 상품은 그대로 — 내리지 않음). 처리 중인 것은 뺌."""
     st = {"moved": 0, "skipped_live": 0}
     now = time.time()
     touched = set()
@@ -112,7 +118,7 @@ def trash_listings(db, ids):
         rows = db.q(f"""SELECT l.id, l.source_id, l.origin_no, l.status, l.name, l.price, l.round, l.seller_code,
             l.registered_at, l.deleted_at, t.name AS store, s.name AS source_name
             FROM listings l JOIN stores t ON t.id=l.store_id JOIN sources s ON s.id=l.source_id WHERE l.id IN ({m})""", chunk)
-        go = [r for r in rows if not _busy_listing(r)]
+        go = [r for r in rows if not (r["status"] in ("queued", "running") if keep_naver else _busy_listing(r))]
         st["skipped_live"] += len(rows) - len(go)
         with db.tx() as c:
             for r in go:
@@ -121,6 +127,7 @@ def trash_listings(db, ids):
                 snap["source_name"] = r["source_name"]
                 day = (lambda t: time.strftime("%Y-%m-%d", time.localtime(t)) if t else "")
                 state = (f"내림 {day(r['deleted_at'])}" if r["status"] == "deleted"
+                         else "판매 중 — 네이버에 그대로 (이 프로그램에서만 뺌)" if r["origin_no"]
                          else "실패" if r["status"] == "fail" else "등록 대기")
                 extra = " · ".join(x for x in (
                     f"원본 #{r['source_id']}", r["seller_code"] or "관리코드 없음(안 올림)", f"{r['round']}회차", state,

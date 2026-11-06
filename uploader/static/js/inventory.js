@@ -355,13 +355,17 @@ App.page("inventory", {
     const ok = await App.confirmDanger({
       title: `원본 ${num(n)}개 삭제`,
       body: `<p>고른 원본 <b>${num(n)}개</b>를 <b>휴지통</b>으로 옮깁니다. 그 원본의 복사본(아직 안 올린 것·내린 것)과 이름 후보도 함께 옮겨집니다.</p>
-        <p class="muted small">네이버에 올라가 있거나 처리 중인 복사본이 있는 원본은 지우지 않습니다(먼저 복사본에서 '내리기').
-          휴지통에서 되살리거나 완전히 지울 수 있습니다.</p>`,
+        <p class="muted small">네이버에 올라가 있거나 처리 중인 복사본이 있는 원본은 지우지 않습니다(먼저 복사본에서 '내리기') — 아래를 켜면 그런 원본도 이 프로그램에서만 뺍니다.
+          휴지통에서 되살리거나 완전히 지울 수 있습니다.</p>
+        <label class="check del-keep"><input type="checkbox" id="del-keep"><span><b>네이버 상품은 그대로 두고 이 프로그램에서만 빼기</b>
+          <span class="muted small" style="display:block">판매 중인 복사본도 네이버에서 내리지 않고, 이 프로그램에서만 휴지통으로 (잘못 가져온 상품을 빼고 다시 가져올 때 등)</span></span></label>`,
     });
+    const keep = $("#del-keep")?.checked;
     if (!ok) return;
     try {
-      const r = await App.api("/api/sources/delete", { json: this.target() });
-      App.toast(`원본 ${num(r.moved)}개를 휴지통으로 옮겼습니다` + (r.skipped_live ? ` · 네이버에 올라가 있는 복사본이 있어 뺀 원본 ${num(r.skipped_live)}개` : ""));
+      const r = await App.api("/api/sources/delete", { json: { ...this.target(), keep_naver: !!keep } });
+      App.toast(`원본 ${num(r.moved)}개를 휴지통으로 옮겼습니다` + (keep ? " (네이버 상품은 그대로)" : "")
+        + (r.skipped_live ? (keep ? ` · 지금 처리 중이라 남긴 원본 ${num(r.skipped_live)}개` : ` · 네이버에 올라가 있는 복사본이 있어 뺀 원본 ${num(r.skipped_live)}개 ('네이버는 그대로 두고 이 프로그램에서만 빼기'를 켜면 뺄 수 있음)`) : ""));
       this.clearSel(); this.load(); App.refreshState();
     } catch (e) { App.toast(e.message, true); }
   },
