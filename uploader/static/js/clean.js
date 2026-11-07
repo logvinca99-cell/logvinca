@@ -135,8 +135,8 @@ App.page("clean", {
         <span class="small muted">최신 네이버 카테고리 목록과 대조 (형식 이상·폐지/오타·중간 분류) · 생활화학/살생물제 인증 대상 카테고리면 물건→'인증 대상 아님', 화학제품·애매→보류 (애매하면 AI)</span></div>
         <div id="cl-cat"></div><div id="cl-hold"></div>`),
       step(8, "원본 상품으로 넣기 · 새 엑셀로 저장", `<div class="cl-row"><button class="btn primary big" id="cl-send">원본 상품으로 넣기 (정리 중 <span id="cl-send-n">-</span>개)</button>
-        <a class="btn" id="cl-export" href="/api/clean/${this.bid}/export">새 엑셀로 저장 (원래이름_수정.xlsx)</a></div>
-        <p class="small muted" style="margin:6px 0 0">생활화학 보류·지운 상품은 넣지 않습니다. 대표 사진이 같은 원본이 이미 있으면 내용을 갱신하고 출처 태그는 더합니다(엑셀 불러오기와 같음). 넣은 뒤 원본 상품 화면에서 상품명 변경 → 복사로 이어 가세요.</p>`),
+        <a class="btn" id="cl-export" href="/api/clean/${this.bid}/export" title="이 묶음의 정리 중·보류 상품을 올린 엑셀과 같은 열로 받습니다 (지운 상품 제외)">⬇ 엑셀 받기 — 이 묶음의 정리 중·보류 상품 (원래이름_수정.xlsx)</a></div>
+        <p class="small muted" style="margin:6px 0 0">생활화학 보류·지운 상품은 넣지 않습니다. 상품명이 완전히 같은 원본이 이미 있으면 내용을 갱신하고 출처 태그는 더합니다(엑셀 불러오기와 같음). 넣은 뒤 원본 상품 화면에서 상품명 변경 → 복사로 이어 가세요.</p>`),
     ].join("");
     this.bind();
     this.loadRules();

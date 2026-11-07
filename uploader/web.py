@@ -117,11 +117,11 @@ def create_app(db=None):
             return None, fail("xlsx 또는 csv 파일만 불러올 수 있습니다.")
         path = _save_upload(f)
         if price_check and request.form.get("price_ok") != "1":
-            try:
-                scan = convert.price_scan(excel.iter_rows(path, f.filename, parse=False))
+            try:   # 가격 칸 + 대표 이미지 주소 겹침 (상품명이 다른데 이미지가 같은 줄)
+                scan = inventory.upload_scan(db, excel.iter_rows(path, f.filename))
             except Exception:  # noqa: BLE001 - 읽기 오류는 불러오기 작업에서 알림
-                scan = {"n": 0}
-            if scan["n"]:
+                scan = {"price": {"n": 0}, "img": {"n": 0}}
+            if scan["price"]["n"] or scan["img"]["n"]:
                 now = time.time()
                 for k, v in list(price_hold.items()):   # 한 시간 넘게 둔 것은 지움
                     if now - v[2] > 3600:
@@ -132,7 +132,7 @@ def create_app(db=None):
                             pass
                 tok = uuid.uuid4().hex
                 price_hold[tok] = (path, f.filename, now)
-                return None, jsonify({"price_warn": scan, "token": tok, "file": f.filename})
+                return None, jsonify({"price_warn": scan["price"], "img_dup": scan["img"], "token": tok, "file": f.filename})
         return (path, f.filename), None
 
     @app.post("/api/upload/drop")
@@ -202,6 +202,7 @@ def create_app(db=None):
         path, name = got
         opts = {k: request.form.get(k, "1") == "1" for k in ("price", "code", "info", "store_tag")}
         opts["tags"] = request.form.get("tags") or ""
+        opts["skip_img_dup"] = request.form.get("img_dup") == "drop"
 
         def job(**kw):
             try:
@@ -507,7 +508,7 @@ def create_app(db=None):
         what = body().get("what")
         cfg = config.load()
         if what == "prices":
-            rows = db.q("""SELECT l.id, l.store_id, s.price, s.source_key, st.tpl_price_pct, st.tpl_jitter_min, st.tpl_jitter_max FROM listings l
+            rows = db.q("""SELECT l.id, l.store_id, s.price, COALESCE(NULLIF(s.price_seed,''), s.source_key) AS source_key, st.tpl_price_pct, st.tpl_jitter_min, st.tpl_jitter_max FROM listings l
                 JOIN sources s ON s.id=l.source_id JOIN stores st ON st.id=l.store_id
                 WHERE l.origin_no='' AND l.status IN ('planned','fail') AND l.price_fixed=0""")
             with db.tx() as c:
@@ -981,8 +982,9 @@ def create_app(db=None):
     @app.post("/api/sources/import")
     def import_sources():
         tags, store = request.form.get("tags") or "", request.form.get("store_tag", "0") == "1"
+        skip = request.form.get("img_dup") == "drop"   # 대표 이미지 주소 겹치는 줄 버리기 (올릴 때 창에서 고름)
         return file_task("import", "원본 불러오기", lambda db_, fh, name, **kw: inventory.import_products(
-            db_, fh, name, src_tags=tags, store_tag=store, **kw), price_check=True)
+            db_, fh, name, src_tags=tags, store_tag=store, skip_img_dup=skip, **kw), price_check=True)
 
     # ── 출처 태그 (어디서·언제 가져온 원본인지)
 

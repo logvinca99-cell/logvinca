@@ -51,7 +51,6 @@ App.page("listings", {
         <div class="head-actions">
           <button class="btn primary" id="l-eye" title="썸네일만 그리드로 보며 이상한 상품을 골라 지우기">눈검수</button>
           <button class="btn" id="l-nv" title="네이버 상품 목록을 받아 판매 중 복사본마다 판매 중·품절·판매중지·판매금지·스토어에 없음을 표시 (최신화 직전에도 자동으로 확인)">네이버 상태 확인</button>
-          <a class="btn ghost" id="l-export">결과 CSV</a>
           <label class="btn" title="아바닛 등 주문 수집 웹에서 내려받은 주문 파일"><input type="file" id="l-sales-file" accept=".xlsx,.xlsm,.csv" hidden>판매 이력 파일 가져오기</label>
           <a class="btn" href="#orders" title="판매자센터 주문을 가져오고 기간·스토어별로 보기">판매 현황</a>
         </div></header>
@@ -168,7 +167,6 @@ App.page("listings", {
     $("#l-rows").innerHTML = res.rows.length ? res.rows.map((l) => this.rowHtml(l)).join("")
       : `<tr class="empty-row"><td colspan="7">${this.counts.all_ ? "조건에 맞는 건이 없습니다."
         : '이 스토어에 복사본이 없습니다. <a href="#inventory">원본 상품</a>에서 원본을 고르고 <b>다른 스토어로 복사</b>를 누르세요.'}</td></tr>`;
-    $("#l-export").href = `/api/listings/export.csv?${new URLSearchParams(this.query())}`;
     this.renderBar();
     if (!App.run?.running) this.renderIdle();
   },
@@ -205,6 +203,9 @@ App.page("listings", {
         { id: "eyeoff", label: "검수 완료 풀기" },
         "|",
         { id: "remove", label: "삭제", danger: true, title: "기본: 원본까지 같이 삭제 (그 원본의 모든 스토어 복사본, 판매 중인 것은 내린 뒤) · 끄면 고른 복사본만 휴지통" },
+        "|",
+        { id: "export", always: true, label: n && !this.selAll ? `⬇ 엑셀(CSV) 받기 — 고른 ${num(n)}건` : `⬇ 엑셀(CSV) 받기 — ${this.selAll ? "조건에 맞는" : "지금 보이는 조건"} ${num(this.total)}건`,
+          title: "복사본 목록을 엑셀(CSV)로 받습니다: 스토어·판매자 관리코드·회차·등록 상품명·원본 번호·원본 판매자코드·원본 상품명·판매가·원본가·상태·할 일·올린 날·원상품번호·채널상품번호·메시지" },
       ],
       onPageCheck: (on) => { this.selAll = false; this.rows.forEach((l) => (on ? this.sel.add(l.id) : this.sel.delete(l.id))); this.load(); },
       onAll: () => { this.selAll = true; this.sel.clear(); this.load(); },
@@ -217,6 +218,10 @@ App.page("listings", {
 
   async action(id) {
     if (id === "rename") this.renameModal();
+    if (id === "export") {   // 고른 것이 있으면 그것만, 없으면 지금 보이는 조건 전체
+      const q = this.sel.size && !this.selAll ? { store_id: this.f.store_id, ids: [...this.sel].join(",") } : this.query();
+      window.location.href = `/api/listings/export.csv?${new URLSearchParams(q)}`;
+    }
     if (id === "refresh" || id === "delete" || id === "reupload") this.schedule(id);
     if (id === "lock" || id === "unlock") this.lock(id === "lock");
     if (id === "remove") App.deleteCopies(this.target(), () => { this.clearSel(); this.estKey = ""; this.load(); });

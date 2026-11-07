@@ -305,7 +305,7 @@ const App = {
   taskMsg(t) {
     const r = t.result || {};
     const msg = {
-      import: () => `원본 불러오기 끝: 새로 ${num(r.added)}개 · 갱신 ${num(r.updated)}개 · 오류 ${num(r.invalid)}개`,
+      import: () => `원본 불러오기 끝: 새로 ${num(r.added)}개 · 갱신(상품명 같음) ${num(r.updated)}개 · 오류 ${num(r.invalid)}개` + (r.img_skipped ? ` · 대표 이미지 겹쳐서 버림 ${num(r.img_skipped)}개` : ""),
       names: () => r.not_found !== undefined
         ? `상품명 가져오기 끝: 새 이름 ${num(r.added)}개 · 다른 이름과 중복 ${num(r.dup)}개 · 원본 못 찾음 ${num(r.not_found)}줄`
           + (r.rejected ? ` · 반복·금지 단어로 버림 ${num(r.rejected)}개 (예: ${r.rejected_examples?.[0] || ""})` : "")
@@ -342,7 +342,7 @@ const App = {
         + (r.capacity ? ` · 스토어 자리 부족 ${num(r.capacity)}` : "") + (r.invalid ? ` · 오류 원본 ${num(r.invalid)}개는 뺌` : "")
         + (r.named ? ` · AI 키워드 이름 바로 붙음 ${num(r.named)}건` : "")
         + (r.created - (r.named || 0) > 0 ? " · 나머지는 복사본 화면 '이름 변경 필요'에서 상품명을 바꾼 뒤 올리세요" : ""),
-      clean_import: () => `엑셀 올리기 끝: ${num(r.total)}개 → 정리함 · 가격 한 칸으로 ${num(r.price)}개 · 상품코드 비움 ${num(r.code)}개`
+      clean_import: () => `엑셀 올리기 끝: ${num(r.total)}개 → 정리함 · 가격 한 칸으로 ${num(r.price)}개 · 상품코드 비움 ${num(r.code)}개` + (r.img_skipped ? ` · 대표 이미지 겹쳐서 버림 ${num(r.img_skipped)}개` : "")
         + (r.rule_imgs ? ` · 기억한 공통 이미지 뺌 ${num(r.rule_imgs)}장` : "") + " · 상세 정리 화면에서 이어서",
       clean_chem: () => `생활화학 판정 끝: 인증 대상 카테고리 상품 ${num(r.target)}개 · 물건 ${num(r.tool)} · 화학제품 ${num(r.chemical)} · 애매 ${num(r.unclear)}`
         + (r.chemical + r.unclear ? " (보류 목록에서 검수)" : "") + (r.error ? ` · ${r.error}` : ""),
@@ -452,24 +452,37 @@ const App = {
     });
   },
 
+  /* 원본 엑셀 올리기 전 확인 창: 가격 칸이 이상한 줄 · 대표 이미지 주소가 겹치는 줄(상품명은 다름) → 포함할지 버릴지 고르고 넣기 */
   priceWarn(url, r, extra) {
-    const w = r.price_warn;
-    const why = (k) => esc(w.labels[k] || k);
-    return new Promise((resolve) => this.openModal({
-      title: `가격 칸 확인 — 이상한 줄 ${num(w.n)}개 (전체 ${num(w.total)}개)`, wide: true,
-      body: `<p><b>${esc(r.file)}</b>: 할인가(S열)는 <b>할인 금액</b>이 규칙입니다 — 손님 가격 = 판매가 − 할인가. 이 파일에는 다르게 적은 것 같은 줄이 있습니다.</p>
+    const w = r.price_warn || { n: 0 }, im = r.img_dup || { n: 0 };
+    const why = (k) => esc((w.labels || {})[k] || k);
+    const priceHtml = w.n ? `<h3 style="margin:0 0 6px">가격 칸 — 이상한 줄 ${num(w.n)}개 (전체 ${num(w.total)}개)</h3>
+        <p>할인가(S열)는 <b>할인 금액</b>이 규칙입니다 — 손님 가격 = 판매가 − 할인가. 다르게 적은 것 같은 줄이 있습니다.</p>
         <ul>${Object.entries(w.by).map(([k, n]) => `<li>${why(k)} — <b>${num(n)}</b>개</li>`).join("")}</ul>
         <div class="tbl-wrap"><table class="tbl small"><thead><tr><th>줄</th><th>상품명</th><th class="r">판매가</th><th class="r">할인가</th><th class="r">원가</th>
           <th class="r">손님 가격(이대로 넣으면)</th><th>이유</th></tr></thead><tbody>${w.examples.map((x) => `<tr><td>${x.line}</td><td>${esc(x.name)}</td>
           <td class="r">${num(x.price)}</td><td class="r">${num(x.off)}</td><td class="r">${x.cost ? num(x.cost) : ""}</td><td class="r"><b>${num(x.final)}</b></td>
           <td class="small">${why(x.why)}</td></tr>`).join("")}</tbody></table></div>
-        <p class="small muted">엑셀을 고쳐서 다시 올리는 걸 추천합니다. '그래도 넣기'를 누르면 손님 가격 = 판매가 − 할인가(할인가가 판매가 이상이면 판매가)로 넣습니다.</p>`,
+        <p class="small muted">가격 칸이 이상한 줄도 넣으면 손님 가격 = 판매가 − 할인가(할인가가 판매가 이상이면 판매가)로 들어갑니다.</p>` : "";
+    const imgHtml = im.n ? `<h3 style="margin:14px 0 6px">대표 이미지 주소 겹침 — ${num(im.n)}개</h3>
+        <p>상품명은 다른데 <b>대표 이미지 주소가 같은</b> 줄입니다 (이 파일 안 앞줄과 겹침 ${num(im.in_file)}개 · 이미 있는 원본과 겹침 ${num(im.with_sources)}개).
+          원본 구분은 <b>상품명(완전히 같음)</b>이라 이대로 넣으면 각각 따로 원본이 됩니다.</p>
+        <div class="tbl-wrap"><table class="tbl small"><thead><tr><th>줄</th><th>상품명</th><th>겹치는 곳</th><th>그쪽 상품명</th></tr></thead>
+          <tbody>${im.examples.map((x) => `<tr><td>${x.line}</td><td>${esc(x.name)}</td><td>${esc(x.where)}</td><td>${esc(x.other)}</td></tr>`).join("")}</tbody></table></div>
+        <div style="margin-top:8px"><label class="check"><input type="radio" name="img-dup" value="keep"><span><b>포함해서 저장</b> — 이미지가 겹쳐도 모두 원본으로 넣음</span></label>
+          <label class="check"><input type="radio" name="img-dup" value="drop"><span><b>겹치는 상품은 버리고 저장</b> — 이미 있는 원본(또는 이 파일 앞줄)과 대표 이미지가 같은 줄 ${num(im.n)}개는 넣지 않음</span></label></div>` : "";
+    return new Promise((resolve) => this.openModal({
+      title: `올리기 전 확인 — ${r.file}`, wide: true,
+      body: priceHtml + imgHtml,
       buttons: [
-        { label: "넣지 않기", onClick: () => { this.api("/api/upload/drop", { json: { token: r.token } }).catch(() => {}); resolve(null); } },
-        { label: "그래도 넣기", danger: true, onClick: async () => {
+        { label: "넣지 않기", noConfirm: true, onClick: () => { this.api("/api/upload/drop", { json: { token: r.token } }).catch(() => {}); resolve(null); } },
+        { label: "이대로 넣기", primary: true, onClick: async (b) => {
+          const pick = $("input[name=img-dup]:checked", b)?.value;
+          if (im.n && !pick) { this.toast("대표 이미지가 겹치는 상품을 포함할지 버릴지 골라 주세요.", true); return false; }
           const fd = new FormData();
           fd.append("token", r.token);
           fd.append("price_ok", "1");
+          if (pick) fd.append("img_dup", pick);
           Object.entries(extra).forEach(([k, v]) => fd.append(k, v));
           resolve(await this.startTask(this.api(url, { method: "POST", body: fd })));
         } },
@@ -585,6 +598,7 @@ const App = {
   // ── 창 (가운데)
 
   openModal({ title, body, buttons = [], wide = false }) {
+    this._endConfirmStep();
     $("#m-title").textContent = title;
     const b = $("#m-body");
     b.innerHTML = typeof body === "string" ? body : "";
@@ -595,6 +609,8 @@ const App = {
     $$("#m-foot button").forEach((el) => el.addEventListener("click", async () => {
       const x = buttons[+el.dataset.i];
       if (!x.onClick) return this.closeModal();
+      // 2차 확인: 확인·저장·실행 버튼은 누른 기능과 무엇이 어떻게 되는지 한 번 더 보여 주고 [확인 — 실행]을 눌러야 실행
+      if (!x.noConfirm && !NO_CONFIRM.test(x.label)) return this._confirmStep(title, x, b);
       el.disabled = true;
       try { if ((await x.onClick(b)) !== false) this.closeModal(); }
       finally { el.disabled = false; }
@@ -602,7 +618,48 @@ const App = {
     $("#modal-bg").hidden = false;
     setTimeout(() => $("[autofocus]", b)?.focus(), 50);
   },
-  closeModal() { $("#modal-bg").hidden = true; },
+  closeModal() { this._endConfirmStep(); $("#modal-bg").hidden = true; },
+
+  /* 2차 확인 화면 (같은 창 안에서): 창 제목·누른 버튼·창 설명·지금 고른 설정을 보여 주고 [← 돌아가기] / [확인 — 실행] */
+  _confirmStep(title, x, b) {
+    const txt = (el) => (el?.innerText || "").replace(/\s+/g, " ").trim();
+    const intro = [...b.querySelectorAll(".notice, p, li")].filter((el) => !el.closest("table") && el.offsetParent !== null)
+      .map(txt).filter(Boolean).slice(0, 6).map((t) => t.length > 220 ? t.slice(0, 220) + "…" : t);
+    const picks = [];
+    b.querySelectorAll("input, select, textarea").forEach((el) => {
+      if (el.offsetParent === null || el.type === "hidden" || el.type === "file") return;
+      const lab = el.closest("label");
+      const own = lab ? txt(lab).replace(el.tagName === "SELECT" ? txt(el) : "", "").trim() : (el.placeholder || el.name || "");
+      if (el.type === "checkbox" || el.type === "radio") { if (el.checked) picks.push(`✔ ${own}`); }
+      else if (el.tagName === "SELECT") { const o = el.selectedOptions?.[0]; if (o && o.value !== "") picks.push(`${own}: ${o.textContent.trim()}`); }
+      else if (String(el.value || "").trim()) picks.push(`${own}: ${String(el.value).trim().slice(0, 120)}`);
+    });
+    const box = document.createElement("div");
+    box.id = "m-confirm";
+    box.innerHTML = `<div class="m-confirm-body">
+        <div class="notice warn"><b>한 번 더 확인하세요.</b> 【${esc(title)}】 창에서 <b>【${esc(x.label)}】</b>을(를) 누르셨습니다.</div>
+        ${x.confirm ? `<p>${x.confirm}</p>` : ""}
+        ${intro.length ? `<p class="small muted" style="margin:10px 0 4px">이 창의 설명 (이대로 실행됩니다)</p><ul class="small">${intro.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>` : ""}
+        ${picks.length ? `<p class="small muted" style="margin:10px 0 4px">지금 고른 설정</p><ul class="small">${picks.slice(0, 14).map((t) => `<li>${esc(t)}</li>`).join("")}</ul>` : ""}
+        <p class="small">맞으면 <b>[확인 — 실행]</b>, 아니면 <b>[← 돌아가기]</b>로 돌아가 고치세요.</p></div>
+      <div class="m-confirm-foot"><button class="btn" data-back>← 돌아가기</button><button class="btn ${x.danger ? "danger" : "primary"}" data-go>확인 — 실행 (${esc(x.label)})</button></div>`;
+    $("#m-body").hidden = true;
+    $("#m-foot").hidden = true;
+    $("#modal").appendChild(box);
+    $("[data-back]", box).addEventListener("click", () => this._endConfirmStep());
+    $("[data-go]", box).addEventListener("click", async (ev) => {
+      ev.target.disabled = true;
+      let res;
+      try { res = await x.onClick(b); } finally { ev.target.disabled = false; }
+      if (res !== false) this.closeModal(); else this._endConfirmStep();
+    });
+  },
+  _endConfirmStep() {
+    const c = $("#m-confirm");
+    if (c) c.parentNode.removeChild(c);
+    if ($("#m-body")) $("#m-body").hidden = false;
+    if ($("#m-foot")) $("#m-foot").hidden = false;
+  },
 
   // ── 맥락 키워드: 실행 전 비용 안내 → 일괄(기본) / 즉시
 
@@ -856,7 +913,7 @@ const App = {
       const end = (v) => { if (!done) { done = true; resolve(v); } };
       this.openModal({
         title, body: `<div class="form">${body}</div>`,
-        buttons: [{ label: "취소", onClick: () => { end(false); } }, { label: ok, danger: true, primary: true, onClick: () => { end(true); } }],
+        buttons: [{ label: "취소", noConfirm: true, onClick: () => { end(false); } }, { label: ok, danger: true, primary: true, onClick: () => { end(true); } }],
       });
       const obs = new MutationObserver(() => { if ($("#modal-bg").hidden) { obs.disconnect(); end(false); } });
       obs.observe($("#modal-bg"), { attributes: true, attributeFilter: ["hidden"] });
@@ -1074,6 +1131,7 @@ function byBusiness(stores) {
   return out;
 }
 
+const NO_CONFIRM = /^(취소|닫기|넣지 않기|아니요|돌아가기)/;   // 2차 확인 없이 바로 (아무것도 실행하지 않는 버튼)
 const NAVER_STATUS = { SALE: "판매 중", SUSPENSION: "판매중지", OUTOFSTOCK: "품절", WAIT: "판매 대기", CLOSE: "판매 종료",
   PROHIBITION: "판매 금지", UNADMISSION: "승인 대기", REJECTION: "승인 거부", DELETE: "삭제", UNKNOWN: "상태 모름" };
 

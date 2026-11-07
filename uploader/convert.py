@@ -72,6 +72,12 @@ def _norm_url(u):
     return u.split("?")[0].split("#")[0].lower()
 
 
+def name_key(name):
+    """원본 구분값: 상품명이 '완전히' 같아야 같은 원본 (띄어쓰기·기호·순서까지 똑같아야 함, 앞뒤 공백만 무시).
+    대표 이미지 주소가 같아도 상품명이 다르면 다른 원본이다."""
+    return "n:" + hashlib.sha1(str(name or "").strip().encode()).hexdigest()[:24]
+
+
 def source_fingerprint(row):
     """원본 상품을 구분하는 값. 스토어마다 바뀌는 판매자코드 대신 바뀌지 않는 대표 썸네일 주소를 쓴다.
     썸네일이 없으면 상세 이미지(모든 상품 공통 배너는 거르기 어려워 앞 5장 묶음), 그것도 없으면 상품명."""
@@ -207,7 +213,8 @@ def summary(row, cfg):
     th = thumbnails(row)
     return {
         "row_key": str(row.get("id") or ""),
-        "source_key": source_fingerprint(row),
+        "source_key": name_key(row.get("상품명")),
+        "img_key": source_fingerprint(row),   # 대표 이미지 주소 (원본 엑셀 올릴 때 겹침 확인용 — 원본 구분에는 안 씀)
         "seller_code": str(row.get("판매자코드") or ""),
         "name": str(row.get("상품명") or "").strip(),
         "price": net_price(row),

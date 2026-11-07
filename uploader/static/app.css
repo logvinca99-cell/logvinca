@@ -886,3 +886,9 @@ body.eye-open .tasks { display: none; }
 .ad-tile { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--panel-2); }
 .ad-tile b { font-size: 20px; }
 .ad-tile.ok b { color: var(--ok); } .ad-tile.warn b { color: var(--warn); }
+/* 창의 2차 확인 화면 */
+#m-confirm { display: flex; flex-direction: column; min-height: 0; }
+#m-confirm .m-confirm-body { padding: 8px 20px 16px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+#m-confirm .m-confirm-body ul { margin: 0; padding-left: 18px; line-height: 1.6; }
+#m-confirm .m-confirm-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); }
+.modal-body[hidden], .modal-foot[hidden] { display: none !important; }

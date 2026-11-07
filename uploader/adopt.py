@@ -254,9 +254,9 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
     if dry:
         return _dry_rest(db, store, st, samples, rows, keep, matched, managed, unmatched)
 
-    # ④ 원본으로 넣기. 대표 사진이 같은 원본이 이미 있으면 덮어쓰지 않는다 (원래 원본 이름·AI 키워드·상세를 지킴):
+    # ④ 원본으로 넣기. 상품명이 완전히 같은 원본이 이미 있으면 덮어쓰지 않는다 (원래 원본 이름·AI 키워드·상세를 지킴):
     #    예전에 불러온 원본이면 원본가만 이 스토어 손님 가격으로 바꾸고 '가져옴 · 원본 이름 있음'(2), 이미 가져온 원본이면 그대로.
-    #    파일 안에서 대표 사진이 같은 줄은 첫 줄만 원본으로 (나머지는 같은 원본 — 아래에서 '같은 스토어 중복')
+    #    원본 열쇠는 상품명(완전히 같음) — 대표 이미지는 기준이 아님
     if progress:
         progress(0, len(keep), f"원본으로 넣는 중 {len(keep):,}개")
     tags = ["가져옴", store["name"]]
@@ -266,6 +266,11 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
             r["_source_key"] = keys[i]
     first, refs = {}, {}
     for i, r in keep:
+        if matched[i]["channel_no"] in managed:   # 이미 이 프로그램이 관리하는 상품 → 원본을 새로 만들지 않고 '이미 연결'
+            p = matched[i]
+            st["already"] += 1
+            add_item("already", code=p["code"], name=p["name"], channel_no=p["channel_no"], status=p["status"], reg_at=p["reg_at"])
+            continue
         k = keys[i]
         if k in first:
             continue
@@ -305,8 +310,8 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
         refs.update(imp.get("refs") or {})
     if exist:
         inventory.reprice_pending(db)   # 원본가가 바뀐 예전 원본의 아직 안 올린 복사본 가격도 다시
-    for i, r in keep:   # 파일 안에서 대표 사진이 같은 뒷줄 → 첫 줄의 원본
-        if i not in refs and first.get(keys[i]) in refs:
+    for i, r in keep:   # 파일 안에서 열쇠가 같은 뒷줄(판매자코드가 같은 줄) → 첫 줄의 원본
+        if i not in refs and matched[i]["channel_no"] not in managed and first.get(keys[i]) in refs:
             refs[i] = refs[first[keys[i]]]
 
     # ⑤ 그 스토어의 판매 중 복사본으로 연결 (가격 고정, 이름 = 올라가 있는 이름)
@@ -395,9 +400,9 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
 
 
 def _assign_keys(db, store_id, keep, matched):
-    """스토어 상품 하나 = 원본 하나 (1대1). 대표 사진이 같은 상품이 여럿이어도 다른 상품으로 본다:
-    사진이 같은 원본이 없거나 그 원본이 바로 이 스토어 상품이면 사진 열쇠, 아니면 '사진#판매자코드' 열쇠로 따로 원본을 만든다
-    (다시 가져와도 같은 열쇠 → 같은 원본)."""
+    """스토어 상품 하나 = 원본 하나 (판매자코드로 1대1, 대표 이미지는 기준이 아님).
+    원본 열쇠는 상품명(완전히 같음). 같은 상품명의 원본이 없거나 그 원본이 바로 이 스토어 상품이면 상품명 열쇠,
+    아니면 '상품명#판매자코드' 열쇠로 따로 원본을 만든다 (다시 가져와도 같은 열쇠 → 같은 원본)."""
     base = {i: inventory.source_key(r) for i, r in keep}
     bks = sorted(set(base.values()))
     sid_of, live = {}, {}
@@ -434,7 +439,7 @@ def _history_codes(db, store_id):
 
 
 def _unmatched_source(db, k, code):
-    """스토어에 없는 줄의 원본: 이 가져오기가 만든 '사진#판매자코드' 원본이 있으면 그것, 없으면 사진이 같은 원본."""
+    """스토어에 없는 줄의 원본: 이 가져오기가 만든 '상품명#판매자코드' 원본이 있으면 그것, 없으면 상품명이 완전히 같은 원본."""
     for key in ((f"{k}#{code}" if k and code else None), k):
         if key:
             r = db.one("SELECT id FROM sources WHERE source_key=?", (key,))

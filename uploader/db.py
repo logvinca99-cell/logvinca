@@ -1,6 +1,6 @@
 """기록 저장소 (data/inventory.db, SQLite).
 
-sources   원본 상품 (인벤토리). 대표 썸네일 주소로 구분하고(source_key), 다시 불러오면 내용을 갱신한다.
+sources   원본 상품 (인벤토리). 상품명(완전히 같음)으로 구분하고(source_key), 다시 불러오면 내용을 갱신한다.
           엑셀의 판매자코드는 seller_code에 참고로만 둔다 (스토어마다 바뀌므로 구분에 쓰지 않음).
           엑셀 한 줄 전체는 압축해서 data에 둔다 (상품 하나 약 2~3KB).
 names     상품명 후보. norm(정규화한 이름)이 표 전체에서 UNIQUE → 모든 스토어에서 이름이 겹치지 않음.
@@ -252,6 +252,7 @@ class DB:
         mail.ensure(self)
         trash.ensure(self)
         self._orders_from_init()
+        self._name_keys()
         # 프로그램이 등록 도중 꺼졌으면 남은 상태를 되돌린다.
         self.c.execute("UPDATE listings SET status='fail', stage='', message='프로그램이 등록 도중 종료됨' "
                        "WHERE status='running'")
@@ -275,7 +276,11 @@ class DB:
                     # 눈검수(복사본 화면 썸네일 그리드)로 본 때 — 원본 기준이라 다른 스토어 복사본에도 '본 것'으로
                     ("eye_at", "REAL"),
                     # 기존 상품 가져오기로 들어온 원본 (원본 이름 없음 — 올라가 있던 이름이 원본 자리)
-                    ("adopted", "INTEGER NOT NULL DEFAULT 0")],
+                    ("adopted", "INTEGER NOT NULL DEFAULT 0"),
+                    # 대표 이미지 주소 열쇠 (원본 엑셀 올릴 때 겹침 확인용 — 원본 구분에는 안 씀)
+                    ("img_key", "TEXT NOT NULL DEFAULT ''"),
+                    # 스토어 가격 흔들기 기준 (원본 열쇠를 상품명으로 바꿔도 손님 가격이 그대로이게 예전 열쇠를 씀)
+                    ("price_seed", "TEXT NOT NULL DEFAULT ''")],
         "stores": [("code", "TEXT NOT NULL DEFAULT ''"), ("orders_synced_to", "REAL"),
                    # 네이버 주문을 빈틈없이 받아 둔 처음 시각 (여기부터 orders_synced_to까지는 판매 이력을 다 앎)
                    ("orders_from", "REAL"),
@@ -332,6 +337,38 @@ class DB:
             p = os.path.join(data_dir, d)
             if os.path.isdir(p):
                 shutil.rmtree(p, ignore_errors=True)   # 수집용 크롬 창이 열려 있으면 일부가 남을 수 있음 (다음 실행 때 다시)
+
+    def _name_keys(self):
+        """원본 구분을 대표 이미지 주소 → 상품명(완전히 같음)으로. 아직 안 바꾼 원본만 (열쇠가 'n:'으로 시작 안 함).
+        가격 흔들기 기준(price_seed)은 예전 열쇠로 남겨 손님 가격이 바뀌지 않게 한다.
+        상품명이 같은 원본이 이미 여럿이면 합치지 않고 '#번호'를 붙여 따로 둔다 (가져온 원본은 '#판매자코드')."""
+        rows = self.c.execute("SELECT id, source_key, name, data, adopted FROM sources WHERE source_key NOT LIKE 'n:%' ORDER BY id").fetchall()
+        if not rows:
+            return
+        from .convert import name_key, source_fingerprint
+        used = {r[0] for r in self.c.execute("SELECT source_key FROM sources WHERE source_key LIKE 'n:%'")}
+        dup = 0
+        for r in rows:
+            base = name_key(r["name"])
+            key = base
+            if key in used:
+                code = ""
+                if r["adopted"]:
+                    x = self.c.execute("""SELECT COALESCE((SELECT h.seller_code FROM listing_history h WHERE h.listing_id=l.id AND h.seller_code!=''
+                        ORDER BY h.round LIMIT 1), l.seller_code) AS code FROM listings l WHERE l.source_id=? AND l.price_fixed=1 LIMIT 1""",
+                                       (r["id"],)).fetchone()
+                    code = (x["code"] if x else "") or ""
+                key = f"{base}#{code}" if code and f"{base}#{code}" not in used else f"{base}#{r['id']}"
+                dup += not r["adopted"]
+            used.add(key)
+            try:
+                img = source_fingerprint(unpack(r["data"]))
+            except Exception:  # noqa: BLE001
+                img = ""
+            self.c.execute("UPDATE sources SET source_key=?, img_key=?, price_seed=CASE WHEN price_seed='' THEN ? ELSE price_seed END WHERE id=?",
+                           (key, img, r["source_key"], r["id"]))
+        self.c.commit()
+        self.name_key_dups = dup   # 상품명이 같은 원본이 여럿이라 따로 둔 수 (안내용)
 
     def _orders_from_init(self):
         """예전부터 주문을 받던 스토어: 판매 이력을 아는 처음 시각을 받아 둔 네이버 주문 중 가장 이른 것으로 (모르면 비워 둠)."""

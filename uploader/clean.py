@@ -183,7 +183,9 @@ def import_excel(db, path, filename, opts=None, progress=None, should_stop=None)
     bid = db.x("INSERT INTO clean_batch(created_at, file_name, tags, store_tag) VALUES(?,?,?,?)",
                (now, filename, srctags.join(srctags.parse(opts.get("tags"))), int(opts.get("store_tag", True))))
     cols, n = [], 0
-    st = {"total": 0, "price": 0, "code": 0, "rule_imgs": 0, "skipped_empty": 0}
+    st = {"total": 0, "price": 0, "code": 0, "rule_imgs": 0, "skipped_empty": 0, "img_skipped": 0}
+    from . import inventory
+    skip_img = inventory.img_skipper(db) if opts.get("skip_img_dup") else None
     batch = []
 
     def flush():
@@ -202,6 +204,9 @@ def import_excel(db, path, filename, opts=None, progress=None, should_stop=None)
                 cols.append(k)
         if not any(v not in (None, "") for v in row.values()):
             st["skipped_empty"] += 1
+            continue
+        if skip_img and row.get("상품명") and skip_img(row):   # 대표 이미지 주소 겹침 → 버리기로 고름
+            st["img_skipped"] += 1
             continue
         fixed, notes = auto_fix(row, opts, rule_srcs)
         for k in ("price", "code"):

@@ -23,9 +23,65 @@ ORIGIN_LABEL = {"original": "원본", "adopt": "올라가 있던 이름", "ctx":
 
 
 def source_key(row):
-    """원본 구분값: 대표 썸네일 주소 기준 (판매자코드는 스토어마다 바뀌므로 쓰지 않는다).
-    기존 상품 가져오기는 대표 사진이 같아도 스토어 상품마다 따로 원본을 만들도록 '_source_key'(사진#판매자코드)를 넣어 준다."""
-    return row.get("_source_key") or convert.source_fingerprint(row)
+    """원본 구분값: 상품명이 완전히 같으면 같은 원본 (convert.name_key). 대표 이미지 주소는 기준이 아니다.
+    기존 상품 가져오기는 스토어 상품과 1대1이 되도록 겹치면 '_source_key'(상품명#판매자코드)를 넣어 준다."""
+    return row.get("_source_key") or convert.name_key(row.get("상품명"))
+
+
+def upload_scan(db, rows, limit=8):
+    """원본 엑셀 올리기 전 확인 (한 번 읽기): 가격 칸 + 대표 이미지 주소 겹침.
+    이미지 겹침 = 상품명이 다른데 대표 이미지 주소가 같은 줄 (파일 안의 앞줄 또는 이미 있는 원본과). 상품명이 같으면 같은 원본(갱신)이라 안 셈."""
+    price = {"n": 0, "total": 0, "by": {}, "labels": convert.PRICE_FLAG, "examples": []}
+    img = {"n": 0, "in_file": 0, "with_sources": 0, "examples": []}
+    known = {r["img_key"]: (r["id"], r["name"]) for r in db.q("SELECT id, img_key, name FROM sources WHERE img_key!=''")}
+    seen = {}
+    for i, row in enumerate(rows, 2):
+        name = str(row.get("상품명") or "").strip()
+        if not name:
+            continue
+        price["total"] += 1
+        k = convert.price_flag(row)
+        if k:
+            price["n"] += 1
+            price["by"][k] = price["by"].get(k, 0) + 1
+            if len(price["examples"]) < limit:
+                price["examples"].append({"line": i, "name": name[:60], "price": convert.to_int(row.get("판매가")),
+                                          "off": convert.to_int(row.get("할인가")), "cost": convert.to_int(row.get("원가")),
+                                          "final": convert.net_price(row), "why": k})
+        if not convert.thumbnails(row):
+            continue
+        ik = convert.source_fingerprint(row)
+        other = None
+        if ik in seen and seen[ik][1] != name:
+            other, img_where = seen[ik][1], f"이 파일 {seen[ik][0]}행"
+            img["in_file"] += 1
+        elif ik in known and known[ik][1] != name:
+            other, img_where = known[ik][1], f"이미 있는 원본 #{known[ik][0]}"
+            img["with_sources"] += 1
+        if other is not None:
+            img["n"] += 1
+            if len(img["examples"]) < limit:
+                img["examples"].append({"line": i, "name": name[:60], "other": str(other)[:60], "where": img_where,
+                                        "thumb": (convert.thumbnails(row) or [""])[0]})
+        else:
+            seen.setdefault(ik, (i, name))
+    return {"price": price, "img": img}
+
+
+def img_skipper(db):
+    """이미지 겹침 버리기: 상품명이 다른데 대표 이미지 주소가 이미 있는 원본(또는 앞서 넣은 줄)과 같으면 True → 그 줄은 안 넣음."""
+    known = {r["img_key"]: r["name"] for r in db.q("SELECT img_key, name FROM sources WHERE img_key!=''")}
+
+    def skip(row):
+        name = str(row.get("상품명") or "").strip()
+        if not convert.thumbnails(row):
+            return False
+        ik = convert.source_fingerprint(row)
+        if ik in known and known[ik] != name:
+            return True
+        known.setdefault(ik, name)
+        return False
+    return skip
 
 
 def add_names(c, source_id, names, origin, now=None, cfg=None, rejected=None):
@@ -55,16 +111,17 @@ def add_names(c, source_id, names, origin, now=None, cfg=None, rejected=None):
 
 # ───────────────────────── 1. 원본 불러오기
 
-def import_products(db, fileobj, filename, progress=None, should_stop=None, src_tags=None, store_tag=False):
-    """원본 엑셀(셀업 양식) 불러오기. 대표 썸네일이 같은 원본은 내용을 갱신한다. src_tags: 모든 원본에 붙일 출처 태그."""
+def import_products(db, fileobj, filename, progress=None, should_stop=None, src_tags=None, store_tag=False, skip_img_dup=False):
+    """원본 엑셀(셀업 양식) 불러오기. 상품명이 완전히 같은 원본은 내용을 갱신한다. src_tags: 모든 원본에 붙일 출처 태그.
+    skip_img_dup: 대표 이미지 주소가 겹치는(상품명은 다른) 줄은 버림 (올릴 때 창에서 고름)."""
     st = import_rows(db, ((None, r) for r in excel.iter_rows(fileobj, filename)), filename,
                      total_hint=excel.count_rows(fileobj, filename), progress=progress, should_stop=should_stop,
-                     src_tags=src_tags, store_tag=store_tag)
+                     src_tags=src_tags, store_tag=store_tag, skip_img=img_skipper(db) if skip_img_dup else None)
     st.pop("refs", None)
     return st
 
 
-def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=None, src_tags=None, store_tag=False):
+def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=None, src_tags=None, store_tag=False, skip_img=None):
     """원본 줄들을 원본 상품으로 (엑셀 불러오기·상세 정리 공용). rows: (참조, 엑셀 줄 사전) 반복자.
     src_tags: 모든 줄에 붙일 출처 태그, store_tag: 수집URL의 스토어도 태그로 (이미 있는 원본은 태그를 더함).
     돌려주는 refs: {참조: 원본 번호} (넣거나 갱신한 것만)."""
@@ -74,7 +131,7 @@ def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=No
     categories = naver.cached_categories()
     now = time.time()
     iid = db.x("INSERT INTO imports(kind, file_name, created_at) VALUES('products', ?, ?)", (file_name, now))
-    stats = {"total": 0, "added": 0, "updated": 0, "invalid": 0, "name_dup": 0, "adopted_kept": 0}
+    stats = {"total": 0, "added": 0, "updated": 0, "invalid": 0, "name_dup": 0, "adopted_kept": 0, "img_skipped": 0}
     refs = {}
     touched = []
     batch = []
@@ -124,8 +181,9 @@ def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=No
                 else:
                     sid = c.execute("""INSERT INTO sources(name, price, category, thumb, option_count, image_count,
                         has_video, tags, data, errors, warnings, valid, seller_code, import_id, updated_at, source_key,
-                        created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (*vals, key, now)).lastrowid
+                        created_at, price_seed) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (*vals, key, now, key)).lastrowid
                     stats["added"] += 1
+                c.execute("UPDATE sources SET img_key=? WHERE id=?", (s["img_key"], sid))
                 tg = srctags.for_row(row, src_tags, store_tag)
                 if tg:
                     new_tags = srctags.merge(old["src_tags"] if old else "", tg)
@@ -145,6 +203,9 @@ def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=No
         if should_stop and should_stop():
             break
         if not row.get("상품명"):
+            continue
+        if skip_img and skip_img(row):   # 대표 이미지 주소 겹침 → 버리기로 고름
+            stats["img_skipped"] += 1
             continue
         batch.append((ref, row))
         stats["total"] += 1
@@ -562,7 +623,7 @@ def import_names(db, fileobj, filename, progress=None, should_stop=None):
                     src = c.execute("SELECT id, name FROM sources WHERE id IN (SELECT source_id FROM names "
                                     "WHERE norm=? AND origin='original')", (namegen.normalize(key),)).fetchone()
                 elif by_thumb:
-                    src = c.execute("SELECT id, name FROM sources WHERE source_key=?", (key,)).fetchone()
+                    src = c.execute("SELECT id, name FROM sources WHERE img_key=?", (key,)).fetchone()
                 else:
                     src = c.execute("SELECT id, name FROM sources WHERE seller_code=? OR source_key=?",
                                     (key, key)).fetchone()
@@ -890,7 +951,7 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
             break
         chunk = ids[i:i + CHUNK]
         marks = ",".join("?" * len(chunk))
-        srcs = db.q(f"SELECT id, source_key, name, price, tags, category, valid FROM sources WHERE id IN ({marks})", chunk)
+        srcs = db.q(f"SELECT id, COALESCE(NULLIF(price_seed,''), source_key) AS source_key, name, price, tags, category, valid FROM sources WHERE id IN ({marks})", chunk)
         active, dead = {}, {}
         for r in db.q(f"SELECT id, source_id, store_id, status, name_id, round FROM listings WHERE source_id IN ({marks})",
                       chunk):
@@ -1310,7 +1371,7 @@ def relist(db, f):
     """내린(내림) 복사본을 다시 올릴 대기로 되돌린다: 다음 회차·같은 이름, 가격은 지금 스토어 기준으로 다시. 스토어 남은 자리만큼만."""
     cfg = config.load()
     where, args = listing_where({**f, "status": "deleted"})
-    rows = db.q(f"""SELECT l.id, l.store_id, l.price AS cur, l.price_fixed, s.price, s.source_key FROM listings l JOIN sources s ON s.id=l.source_id{where}
+    rows = db.q(f"""SELECT l.id, l.store_id, l.price AS cur, l.price_fixed, s.price, COALESCE(NULLIF(s.price_seed,''), s.source_key) AS source_key FROM listings l JOIN sources s ON s.id=l.source_id{where}
         ORDER BY l.id""", args)
     if not rows:
         return []
@@ -1376,7 +1437,7 @@ def move_listings(db, ids, to_store):
     rows = []
     for i in range(0, len(ids), 900):
         ch = ids[i:i + 900]
-        rows += db.q(f"""SELECT l.id, l.store_id, l.source_id, l.name, l.name_id, l.status, l.origin_no, l.locked, s.price AS src_price, s.source_key
+        rows += db.q(f"""SELECT l.id, l.store_id, l.source_id, l.name, l.name_id, l.status, l.origin_no, l.locked, s.price AS src_price, COALESCE(NULLIF(s.price_seed,''), s.source_key) AS source_key
             FROM listings l JOIN sources s ON s.id=l.source_id WHERE l.id IN ({','.join('?' * len(ch))}) ORDER BY l.id""", ch)
     old_trash, touched = [], set()
     now = time.time()
@@ -1476,7 +1537,7 @@ def reprice_net(db):
     with db.tx() as c:
         for r in c.execute("SELECT id, data FROM sources").fetchall():
             c.execute("UPDATE sources SET price=? WHERE id=?", (convert.net_price(unpack(r["data"])), r["id"]))
-        for r in c.execute("""SELECT l.id, l.store_id, s.price, s.source_key, st.tpl_price_pct, st.tpl_jitter_min, st.tpl_jitter_max FROM listings l
+        for r in c.execute("""SELECT l.id, l.store_id, s.price, COALESCE(NULLIF(s.price_seed,''), s.source_key) AS source_key, st.tpl_price_pct, st.tpl_jitter_min, st.tpl_jitter_max FROM listings l
                 JOIN sources s ON s.id=l.source_id JOIN stores st ON st.id=l.store_id
                 WHERE l.origin_no='' AND l.status IN ('planned','fail')""").fetchall():
             c.execute("UPDATE listings SET price=? WHERE id=?",
@@ -1486,7 +1547,7 @@ def reprice_net(db):
 def reprice_pending(db, store_id=None):
     """아직 안 올린(대기·실패) 복사본 가격을 지금 스토어 템플릿 기준으로 다시 정한다. 바꾼 수."""
     cfg = config.load()
-    rows = db.q("""SELECT l.id, l.store_id, l.price AS cur, s.price, s.source_key, st.tpl_price_pct, st.tpl_jitter_min, st.tpl_jitter_max
+    rows = db.q("""SELECT l.id, l.store_id, l.price AS cur, s.price, COALESCE(NULLIF(s.price_seed,''), s.source_key) AS source_key, st.tpl_price_pct, st.tpl_jitter_min, st.tpl_jitter_max
         FROM listings l JOIN sources s ON s.id=l.source_id JOIN stores st ON st.id=l.store_id
         WHERE l.origin_no='' AND l.status IN ('planned','fail') AND l.price_fixed=0""" + (" AND l.store_id=?" if store_id else ""),
                 (int(store_id),) if store_id else ())
