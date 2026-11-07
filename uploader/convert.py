@@ -725,13 +725,9 @@ def display_prices_exact(final, pct, unit=100):
 
 
 def store_price(net, key, cfg, store):
-    """원본가 → 이 스토어에 올릴 최종 가격 (스토어 템플릿의 가격 조정 %·흔들기 범위, 비우면 설정 기본 범위)."""
-    store = store or {}
-    lo = store.get("tpl_jitter_min")
-    hi = store.get("tpl_jitter_max")
-    lo = cfg.get("price_jitter_min", -3) if lo is None else lo
-    hi = cfg.get("price_jitter_max", 3) if hi is None else hi
-    return adjusted_price(net, key, cfg, store.get("tpl_price_pct"), (lo, hi))
+    """기준 구매가(원본가) → 이 스토어 손님 가격 = 기준 구매가 × (1 + 스토어 템플릿 마진율(가격 조정 %)), 100원 올림.
+    (예전 '흔들기'는 없앰 — 스토어마다 다르게 하려면 템플릿 마진율을 다르게. key는 쓰지 않음)"""
+    return adjusted_price(net, key, cfg, (store or {}).get("tpl_price_pct"), None)
 
 
 def store_discount_pct(store, cfg):

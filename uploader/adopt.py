@@ -310,12 +310,9 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
             html, k = strip(d.get("상세설명"))   # 고른 공통 이미지(스토어 배너)는 이미 있던 원본 상세에서도 뺀다 (나머지 내용은 그대로)
             if k:
                 d["상세설명"] = html
-            if not x["adopted"]:   # 예전에 불러온 원본 → 원본가만 이 스토어 손님 가격으로
-                final = matched[i]["final"] or matched[i]["sale"]
-                if final > 0:
-                    d["판매가"], d["할인가"] = final, None
-                c.execute("UPDATE sources SET adopted=2, price=?, data=?, src_tags=?, updated_at=? WHERE id=?",
-                          (convert.net_price(d), pack(d), new_tags, now, x["id"]))
+            if not x["adopted"]:   # 예전에 불러온 원본 → 기준 구매가는 그대로 (다른 스토어 손님 가격이 바뀌지 않게), '가져옴' 표시만
+                c.execute("UPDATE sources SET adopted=2, data=?, src_tags=?, updated_at=? WHERE id=?",
+                          (pack(d), new_tags, now, x["id"]))
             elif k or new_tags != x["src_tags"]:
                 c.execute("UPDATE sources SET data=?, src_tags=?, updated_at=? WHERE id=?", (pack(d), new_tags, now, x["id"]))
     rows_by_i = dict(keep)
@@ -337,7 +334,7 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
         for i, sid in refs.items():
             p = matched[i]
             sids.add(sid)
-            c.execute("UPDATE sources SET adopted=CASE WHEN adopted=0 THEN 1 ELSE adopted END"
+            c.execute("UPDATE sources SET price_src=CASE WHEN price_src='' AND adopted=0 THEN 'adopt' ELSE price_src END, adopted=CASE WHEN adopted=0 THEN 1 ELSE adopted END"
                       + (", eye_at=COALESCE(eye_at, ?)" if opts.get("mark_eye", True) else "") + " WHERE id=?",
                       ((now, sid) if opts.get("mark_eye", True) else (sid,)))
             if p["channel_no"] in managed:

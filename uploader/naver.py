@@ -405,6 +405,23 @@ class Client:
             r = self.request("PUT", f"/v2/products/origin-products/{origin_no}", json=body, on_wait=on_wait)
         return r
 
+    def update_price(self, origin_no, final, pct, unit=100, on_wait=None):
+        """판매 중 상품의 손님 가격만 바꾸기 (지우지 않음): 지금 상품을 읽어 판매가·즉시할인(금액)만 바꿔 다시 보냄. → 새 네이버 판매가"""
+        from . import convert
+        body = self._get_origin(origin_no, on_wait=on_wait)
+        o = body.get("originProduct") or {}
+        shown, off, _ = convert.display_prices(final, pct, unit)
+        o["salePrice"] = shown
+        cb = o.setdefault("customerBenefit", {})
+        if off > 0:
+            cb["immediateDiscountPolicy"] = {"discountMethod": {"value": off, "unitType": "WON"}}
+        else:
+            cb.pop("immediateDiscountPolicy", None)
+        r = self._put(origin_no, body, on_wait)
+        if r.status_code != 200:
+            raise ApiError(f"가격 바꾸기 실패: {explain_error(r)}")
+        return shown
+
     def _put_origin(self, origin_no, body, on_wait=None):
         r = self._put(origin_no, body, on_wait)
         if r.status_code != 200:
@@ -585,6 +602,14 @@ class FakeClient:
             n = FakeClient._seq
             FakeClient._bodies[str(9000000000 + n)] = body   # 시연: 올린 내용을 기억 (_get_origin·시험용)
         return {"originProductNo": 9000000000 + n, "smartstoreChannelProductNo": 8000000000 + n}
+
+    def update_price(self, origin_no, final, pct, unit=100, on_wait=None):
+        """시연: 가격만 바꾸기 (가끔 실패)."""
+        from . import convert
+        time.sleep(random.uniform(0.05, 0.2))
+        if random.random() < 0.03:
+            raise ApiError("가격 바꾸기 실패: 500 시연용 실패")
+        return convert.display_prices(final, pct, unit)[0]
 
     def _get_origin(self, origin_no, on_wait=None):
         """시연: fake_store_products.json 상품의 '_origin'(네이버 원상품 모양), 없으면 이번에 올린 내용, 없으면 목록 값으로 만든 것."""

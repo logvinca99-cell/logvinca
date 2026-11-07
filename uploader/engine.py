@@ -519,8 +519,8 @@ class Runner:
         cat_id, _ = convert.find_category(row.get("카테고리"), categories, cfg)
         if not cat_id:
             raise convert.ConvertError(f"카테고리 '{row.get('카테고리')}'를 스마트스토어에서 찾지 못했습니다.")
-        key = (self.db.one("SELECT COALESCE(NULLIF(price_seed,''), source_key) AS k FROM sources WHERE id=?", (t["source_id"],)) or {}).get("k", "")
-        price = t["price"] if t.get("price_fixed") else convert.store_price(convert.net_price(row), f"{key}|{sid}", cfg, store)
+        base = (self.db.one("SELECT price FROM sources WHERE id=?", (t["source_id"],)) or {}).get("price") or convert.net_price(row)
+        price = t["price"] if t.get("price_fixed") else convert.store_price(base, "", cfg, store)   # 기준 구매가 × 그 스토어 마진율
         if price != t["price"]:
             self.db.set_listing(lid, None, price=price)
         kw = dict(name=t["name"], price=price, importer=convert.importer_for(store, cfg),

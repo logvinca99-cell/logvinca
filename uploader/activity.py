@@ -29,7 +29,7 @@ CREATE INDEX IF NOT EXISTS activity_started ON activity(started_at);
 """
 
 # 오래 걸리는 작업 종류 → 묶음
-TASK_GROUP = {"mail": "메일함", "srctags": "원본", "adopt": "원본", "adopt_check": "원본", "clean_import": "상세 정리", "clean_chem": "상세 정리", "clean_send": "상세 정리", "chem": "원본", "rename": "상품명", "names": "상품명", "ctxkw": "AI 키워드", "plan": "복사·등록", "import": "원본",
+TASK_GROUP = {"mail": "메일함", "srctags": "원본", "baseprice": "원본", "adopt": "원본", "adopt_check": "원본", "clean_import": "상세 정리", "clean_chem": "상세 정리", "clean_send": "상세 정리", "chem": "원본", "rename": "상품명", "names": "상품명", "ctxkw": "AI 키워드", "plan": "복사·등록", "import": "원본",
               "revalidate": "원본", "orders": "주문", "nvcheck": "복사·등록", "keywords": "상품명", "kipris": "금지어·사전",
               "lexicon": "금지어·사전", "dictfile": "금지어·사전"}
 
@@ -144,6 +144,8 @@ ACTIONS = {
     "sources_delete": ("원본", lambda b, r: ("원본 삭제 (휴지통으로)" + (" · 네이버는 그대로, 이 프로그램에서만" if b.get("keep_naver") else ""),
                                           _count_of(r, "count", "moved", "trashed", "ids"),
                                           f"판매 중 복사본이 있어 뺀 원본 {r['skipped_live']}개" if r.get("skipped_live") else "")),
+    "baseprice_apply": ("원본", lambda b, r: ("기준 구매가 수정" + (f" · {b.get('how')}" if b.get("how") else ""), r.get("sources"),
+                                            f"안 올린 복사본 {r.get('pending', 0)}건 다시 계산 · 판매 중 {r.get('live', 0)}건 네이버 가격 바꾸기")),
     "adopt_undo": ("원본", lambda b, r: ("기존 상품 가져오기 되돌리기 (이 프로그램에서만 — 네이버 상품은 그대로)", r.get("listings"),
                                       f"원본 {r.get('sources', 0)}개 휴지통 · 예전부터 있던 원본 {r.get('kept_sources', 0)}개는 남김")),
     "trash_restore": ("휴지통", lambda b, r: ("휴지통에서 되살림", _count_of(r, "count", "restored", "ids"), "")),

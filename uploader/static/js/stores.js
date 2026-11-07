@@ -267,13 +267,11 @@ App.page("stores", {
           <label class="field">수입사·A/S 전화 <span class="muted">스토어 '수정'에서 정합니다</span></label>
         </div>
         <h3 class="sec-title">가격</h3>
-        <p class="muted small" style="margin:0">손님 가격 = (판매가 - 할인가) × (1 + 가격 조정 %) × 흔들기(범위 안에서 상품마다 다르게, 원본가와 같은 값은 안 나옴), 100원 올림.
+        <p class="muted small" style="margin:0">손님 가격 = 기준 구매가 × (1 + 마진율(가격 조정 %)), 100원 올림. 스토어마다 마진율을 다르게 넣으면 가격이 달라집니다.
           표시 할인율은 <b>손님 가격을 그대로 두고</b> 네이버 판매가를 100원 단위로 정해 그 %에 가깝게 금액으로 겁니다. 칸을 비우면 설정의 기본값입니다.</p>
         <div class="four">
           <label class="field">가격 조정 % <span class="muted">(마진, 예: 10)</span>
             <input id="t-price" type="number" step="0.5" value="${t.price_pct ?? ""}" placeholder="0"></label>
-          <label class="field">흔들기 최소 % <span class="muted">(예: -3)</span><input id="t-jlo" type="number" step="0.5" value="${t.jitter_min ?? ""}" placeholder="기본 ${cfg.price_jitter_min ?? -3}"></label>
-          <label class="field">흔들기 최대 % <span class="muted">(예: 3)</span><input id="t-jhi" type="number" step="0.5" value="${t.jitter_max ?? ""}" placeholder="기본 ${cfg.price_jitter_max ?? 3}"></label>
           <label class="field">표시 할인율 % <span class="muted">(0 = 할인 없음)</span>
             <input id="t-disc" type="number" min="0" max="89" step="1" value="${t.discount_pct ?? ""}" placeholder="기본 ${cfg.display_discount_pct ?? 30}"></label>
         </div>
@@ -312,7 +310,7 @@ App.page("stores", {
       buttons: [{ label: "닫기" }, { label: "저장", primary: true, onClick: async (b) => {
         try {
           const r = await App.api(`/api/stores/${s.id}/template`, { json: { top_html: $("#t-top", b).value, bottom_html: $("#t-bottom", b).value,
-            customs: $("#t-customs", b).value, jitter_min: $("#t-jlo", b).value, jitter_max: $("#t-jhi", b).value, wm_text: $("#t-wm", b).value, ship_addr: $("#t-ship", b).value, return_addr: $("#t-ret", b).value, price_pct: $("#t-price", b).value, discount_pct: $("#t-disc", b).value,
+            customs: $("#t-customs", b).value, jitter_min: "", jitter_max: "", wm_text: $("#t-wm", b).value, ship_addr: $("#t-ship", b).value, return_addr: $("#t-ret", b).value, price_pct: $("#t-price", b).value, discount_pct: $("#t-disc", b).value,
             opt_style: $("#t-optstyle", b).value, opt_color: optColor } });
           App.toast(`${s.name} 템플릿을 저장했습니다` + (r.repriced ? ` · 아직 안 올린 복사본 ${num(r.repriced)}건 가격을 다시 정했습니다` : ""));
         } catch (e) { App.toast(e.message, true); return false; }
@@ -334,14 +332,14 @@ App.page("stores", {
     // 가격 예시 (원본가 50,000원 기준)
     const ex = () => {
       const pct = (id, d) => { const v = $(id).value; return v === "" ? +d : +v; };
-      const m = pct("#t-price", 0), lo = pct("#t-jlo", cfg.price_jitter_min ?? -3), hi = pct("#t-jhi", cfg.price_jitter_max ?? 3), dp = pct("#t-disc", cfg.display_discount_pct ?? 30);
+      const m = pct("#t-price", 0), dp = pct("#t-disc", cfg.display_discount_pct ?? 30);
       const r100 = (x) => Math.ceil(x / 100) * 100;
-      const a = r100(50000 * (1 + m / 100) * (1 + lo / 100)), z = r100(50000 * (1 + m / 100) * (1 + hi / 100));
+      const a = r100(50000 * (1 + m / 100));
       let shown = "";
-      if (dp > 0 && dp < 90) { const sh = Math.ceil(a / (1 - dp / 100) / 1000) * 1000; shown = ` · 표시 예: 판매가 ${num(sh)}원 → ${dp}% 할인 (${num(Math.round(sh * dp / 100))}원)`; }
-      $("#t-price-ex").textContent = `예) 원본가 50,000원 → 손님 가격 ${num(a)}~${num(z)}원${shown}`;
+      if (dp > 0 && dp < 90) { const sh = Math.ceil(a / (1 - dp / 100) / 100) * 100; shown = ` · 네이버 판매가 ${num(sh)}원 − 할인 ${num(sh - a)}원 = 손님 ${num(a)}원`; }
+      $("#t-price-ex").textContent = `예) 기준 구매가 50,000원 → 손님 가격 ${num(a)}원${shown}`;
     };
-    ["#t-price", "#t-jlo", "#t-jhi", "#t-disc"].forEach((id) => $(id).addEventListener("input", ex));
+    ["#t-price", "#t-disc"].forEach((id) => $(id).addEventListener("input", ex));
     ex();
     // 옵션표 모양·색 (optColor ''면 설정 공통 색)
     let optColor = t.opt_color || "";

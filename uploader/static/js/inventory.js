@@ -34,6 +34,7 @@ App.page("inventory", {
       <header class="page-head"><h1>원본 상품</h1>
         <div class="head-actions">
           <a class="btn" href="#adopt" title="다른 방법으로 이미 올린 상품: 업로드했던 엑셀 + 스토어 상품 목록 → 원본 + 판매 중 복사본">기존 상품 가져오기</a>
+          <button class="btn" id="i-bp" title="역마진 등으로 기준 구매가(모든 스토어 손님 가격의 기준)를 엑셀로 고치기 — 판매 중 상품은 네이버 가격만 바로 바꿈">기준 구매가 수정</button>
           <button class="btn primary" id="i-eye" title="원본 대표 사진만 그리드로 보며 이상한 상품을 골라 지우기 · 본 쪽은 검수 완료">눈검수</button>
           <button class="btn" id="i-tagman" title="출처 태그(어디서·언제 가져왔는지) 모아 보기·이름 바꾸기·예전 원본에 채우기">출처 태그</button>
           <button class="btn" id="i-catmap" title="엑셀 카테고리를 스마트스토어 카테고리에 맞추기">카테고리 맞추기</button>
@@ -230,6 +231,7 @@ App.page("inventory", {
     $("#i-ai").addEventListener("change", (e) => this.setFilter({ ai: e.target.value }));
     $("#i-chem").addEventListener("change", (e) => this.setFilter({ chem: e.target.value }));
     $("#i-tag").addEventListener("change", (e) => this.setFilter({ src_tag: e.target.value }));
+    $("#i-bp").addEventListener("click", () => App.basePrice({ after: () => this.load() }));
     $("#i-tagman").addEventListener("click", () => this.tagManager());
     $("#i-eye").addEventListener("click", () => Eye.open({ kind: "source", storeName: "원본 상품", filter: this.query(), after: () => this.load() }));
     $("#i-reset").addEventListener("click", () => {
@@ -390,7 +392,7 @@ App.page("inventory", {
         <label class="check"><input type="checkbox" id="p-eye" checked><span><b>검수 완료한 원본만 복사</b> <span class="muted small" id="p-eye-n"></span></span></label>
         <div class="plan-sum" id="p-sum"></div>
         <p class="muted small">상품명: AI 키워드로 만들어 둔 이름 후보가 있으면 바로 붙고, 없으면 복사본 화면에서 '이름 변경 필요'로 보입니다.
-          가격은 스토어 템플릿의 가격 조정과 ±${App.state.settings.price_jitter_pct}%, 100원 단위 올림.</p></div>`,
+          손님 가격 = 기준 구매가 × (1 + 받는 스토어 템플릿 마진율), 100원 단위 올림.</p></div>`,
       buttons: [{ label: "취소" }, {
         label: "복사하기", primary: true, onClick: async (b) => {
           const store_ids = $$(".store-pick input:checked", b).map((x) => +x.value);
@@ -426,7 +428,7 @@ App.page("inventory", {
     try { d = await App.api(`/api/sources/${id}`); } catch (e) { return App.toast(e.message, true); }
     const self = this;
     App.openDrawer({
-      title: d.name, sub: `원본 #${d.id}${d.seller_code ? " · " + d.seller_code : ""} · 원본가 ${num(d.price)}원`, tab,
+      title: d.name, sub: `원본 #${d.id}${d.seller_code ? " · " + d.seller_code : ""} · 기준 구매가 ${num(d.price)}원`, tab,
       foot: d.source_url ? `<a class="btn" href="${esc(d.source_url)}" target="_blank" rel="noopener noreferrer">원본 상품 페이지 ↗</a>` : "",
       tabs: [
         { key: "info", label: "정보", render: (b) => self.renderInfo(b, d) },
@@ -445,12 +447,13 @@ App.page("inventory", {
     const notes = [];
     if (d.errors.length) notes.push(`<div class="notice err"><b>고쳐야 등록할 수 있어요</b><ul>${d.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>`);
     if (d.warnings.length) notes.push(`<div class="notice warn"><b>확인해 보세요</b><ul>${d.warnings.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>`);
-    const kv = [["출처 태그", `<span id="s-tags">${srcTagChips(d.src_tags, true) || '<span class="muted">없음</span>'}</span>
+    const kv = [["기준 구매가", `<b>${num(d.price)}원</b> <span class="muted small">${d.price_src === "manual" ? "직접 수정" : d.price_src === "adopt" ? "기존 상품 가져오기 (그 스토어 손님 가격)" : "처음 원본 파일"} · 모든 스토어 손님 가격 = 기준 구매가 × (1 + 스토어 마진율)</span>
+        <button class="btn sm" id="s-bp">수정</button>`], ["출처 태그", `<span id="s-tags">${srcTagChips(d.src_tags, true) || '<span class="muted">없음</span>'}</span>
         <span class="s-tag-add"><input id="s-tag-in" placeholder="태그 더하기 (쉼표로 여러 개)" size="18"> <button class="btn sm" id="s-tag-go">달기</button></span>`],
       ["카테고리", (d.category_fix ? `${esc(d.category_fix)} <span class="flag">직접 정함</span> <span class="muted small">(엑셀: ${esc(d.category)})</span>` : esc(d.category))
         + ` <button class="btn sm" id="s-cat">바꾸기</button>`],
       ...(d.adopted === 1 ? [["원본 이름", '<span class="flag adopted">가져옴 · 원본 이름 없음</span> <span class="muted small">기존 상품 가져오기로 들어와 올라가 있던 이름이 원본 자리에 있습니다 (원본 엑셀을 불러오면 원본 이름만 채움 — 가격·상세는 그대로)</span>']]
-        : d.adopted ? [["가져옴", '<span class="flag adopted">가져옴</span> <span class="muted small">스토어 상품과 연결됨 · 원본가 = 그 스토어 손님 가격 · 다른 엑셀로 덮어쓰지 않음</span>']] : []),
+        : d.adopted ? [["가져옴", '<span class="flag adopted">가져옴</span> <span class="muted small">기존 상품 가져오기로 스토어 상품과 연결됨</span>']] : []),
       ["눈검수", `${eyeFlag(d)} <button class="btn sm" id="s-eye">${d.eye_at ? "검수 완료 풀기" : "검수 완료로 표시"}</button>`],
       ["생활화학", `${d.chem_judge ? `<b>${esc(CHEM_LABEL[d.chem_judge] || d.chem_judge)}</b> <span class="muted small">${esc(d.chem_reason || "")}</span>` : '<span class="muted">판정 안 함</span>'}
         ${d.drop_pending ? ' <span class="flag warn">판매 중 내리고 지우는 중</span>' : ""} <button class="btn sm" id="s-chem">판정 바꾸기</button>`], ...Object.entries(d.fields).map(([k, v]) => [esc(k), esc(v)]),
@@ -465,6 +468,7 @@ App.page("inventory", {
         </table></div>` : "") +
       (d.tags_list.length ? `<div><h3 class="sec-title">엑셀 태그</h3><div class="tags">${d.tags_list.map((t) => `<span>${esc(t)}</span>`).join("")}</div></div>` : "");
     $("#s-chem", b)?.addEventListener("click", () => App.chemSet({ ids: [d.id] }, `원본 #${d.id}`, () => { this.openSource(d.id); this.load(); }));
+    $("#s-bp", b)?.addEventListener("click", () => App.basePrice({ sourceId: d.id, current: d, after: () => { if ($("#i-rows")) this.load(); } }));
     $("#s-eye", b)?.addEventListener("click", () => App.eyeSet({ ids: [d.id] }, !d.eye_at, `원본 #${d.id}`, () => { this.openSource(d.id); this.load(); }));
     const tagDo = async (add, remove) => {
       try {

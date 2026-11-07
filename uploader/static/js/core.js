@@ -356,6 +356,7 @@ const App = {
         + (r.need_orders ? " · 판매 이력 받기 필요(그 전엔 최신화·내리기 안 함)" : "")
         + " — 가져오기 화면에서 확인",
       nvcheck: () => `네이버 상태 확인 끝: ${r.message || ""}`,
+      baseprice: () => `기준 구매가 수정 → ${r.message || ""}`,
       adopt_check: () => `맞춰 보기 끝 (${r.store}): 새로 연결될 상품 ${num(r.linked)}개 · 스토어에 없어 뺄 ${num((r.dropped || 0) + (r.no_code || 0))} · 판매자코드 맞는 줄 ${Math.round((r.match_rate || 0) * 1000) / 10}% — 기존 상품 가져오기 화면에서 결과 확인 후 가져오기`,
       srctags: () => `출처 태그 채우기 끝: 원본 ${num(r.total)}개 중 ${num(r.changed)}개에 더함 · 수집 스토어 ${num(r.store)}개 · 가져온 날 ${num(r.date)}개`,
       mail: () => `메일함: 확인 ${num(r.checked)}통 · 새로 ${num(r.new)}통` + (r.warn ? ` · 경고·제재 ${num(r.warn)}통` : "") + (r.auth ? ` · 인증번호 ${num(r.auth)}통` : ""),
@@ -450,6 +451,67 @@ const App = {
       this.upload("/api/orders/import", f);
       this.toast("판매 이력 파일을 넣는 중 — 끝나면 [판매 이력 확인]을 다시 눌러 '판매 이력 확인 완료'를 누르세요.");
     });
+  },
+
+  /* 기준 구매가 수정 (역마진 등): sourceId가 있으면 그 원본 하나(원본 상세 창), 없으면 엑셀 양식으로 여러 개.
+     미리보기(예전 → 새 기준 구매가, 스토어별 새 손님 가격) → [바꾸기] → 안 올린 복사본은 바로 다시 계산, 판매 중은 네이버 가격만 바로 바꿈 */
+  basePrice({ sourceId = null, current = null, after = null } = {}) {
+    let pv = null;
+    const SRC = { file: "처음 원본 파일", adopt: "기존 상품 가져오기(그 스토어 손님 가격)", manual: "직접 수정" };
+    const table = (d) => `<div class="tbl-wrap"><table class="tbl small"><thead><tr><th>줄</th><th>찾은 방법</th><th>원본</th>
+        <th class="r">기준 구매가</th><th>복사본 (스토어: 지금 → 새 손님 가격)</th><th>상태</th></tr></thead><tbody>${d.items.map((x) => `<tr>
+        <td>${x.line || ""}</td><td class="small">${esc(x.how || "")}${x.key ? `<div class="muted">${esc(x.key)}</div>` : ""}</td>
+        <td>${x.source_name ? esc(x.source_name.slice(0, 40)) : ""}</td>
+        <td class="r nowrap">${x.status === "ok" ? `${num(x.old)} → <b>${num(x.new)}</b>` : num(x.new || 0)}</td>
+        <td class="small">${(x.copies || []).map((c) => `${esc(c.store)}${c.live ? " (판매 중)" : ""}: ${num(c.old)} → <b>${num(c.new)}</b>${c.busy ? " · 처리 중이라 다음에" : ""}`).join("<br>")}</td>
+        <td class="small">${x.status === "ok" ? '<span class="c-ok">바꿈</span>' : `<span class="c-err">${esc(x.why || "")}</span>`}</td></tr>`).join("")}</tbody></table></div>
+      <div class="notice ${d.ok ? "info" : "warn"}" style="margin-top:8px">바꿀 원본 <b>${num(d.ok)}</b>개${d.bad ? ` · 못 바꾸는 줄 ${num(d.bad)}개(위 빨간 글씨)` : ""} —
+        아직 안 올린 복사본 ${num(d.pending)}건은 가격을 바로 다시 계산하고, <b>판매 중 ${num(d.live)}건은 네이버 가격만 바로 바꿉니다</b>(상품은 지우지 않음 — 리뷰·판매 기록 그대로).
+        이 원본을 앞으로 복사하거나 마진율을 바꿔도 새 기준 구매가에서 계산합니다.</div>`;
+    const body = sourceId
+      ? `<p>기준 구매가는 모든 스토어 손님 가격의 기준입니다 (손님 가격 = 기준 구매가 × (1 + 그 스토어 마진율)). 역마진 등으로 고칠 때만 바꾸세요.</p>
+        <dl class="kv"><dt>지금 기준 구매가</dt><dd>${num(current?.price || 0)}원 <span class="muted small">(${esc(SRC[current?.price_src] || SRC.file)})</span></dd></dl>
+        <div class="cl-row"><label class="field" style="margin:0">새 기준 구매가 (원)<input id="bp-new" type="number" min="1" step="10" autofocus></label>
+          <label class="field" style="margin:0;flex:1">메모 <span class="muted small">(예: 역마진 — 구매가 올라감)</span><input id="bp-memo"></label>
+          <button class="btn" id="bp-pv">미리보기</button></div><div id="bp-out"></div><div id="bp-log"></div>`
+      : `<p>여러 원본의 기준 구매가를 엑셀로 한꺼번에 고칩니다. <a href="/api/baseprice/template.xlsx">⬇ 양식 받기</a> — 찾는 칸(<b>원본 상품명 / 복사본 상품명(AI로 만든 이름) / 판매자 관리코드 / 상품번호</b>)은 넷 중 하나만 채우고 <b>새 기준 구매가</b>를 넣으세요. 상품명은 완전히 같을 때만 찾습니다.</p>
+        <label class="btn"><input type="file" id="bp-file" accept=".xlsx,.xlsm,.csv" hidden>수정 엑셀 올리기 (미리보기)</label><div id="bp-out"></div>`;
+    this.openModal({
+      title: sourceId ? "기준 구매가 수정" : "기준 구매가 수정 (엑셀)", wide: true, body,
+      buttons: [{ label: "닫기" }, { label: "바꾸기", primary: true,
+        confirm: "기준 구매가를 바꿉니다. 판매 중 복사본은 네이버 가격을 바로 바꿉니다(상품은 지우지 않음).",
+        onClick: async () => {
+          if (!pv || !pv.ok) { this.toast("먼저 미리보기에서 바꿀 원본을 확인하세요.", true); return false; }
+          const items = pv.items.filter((x) => x.status === "ok").map((x) => ({ source_id: x.source_id, price: x.new, memo: x.memo || "" }));
+          try {
+            const r = await this.api("/api/baseprice/apply", { json: { items, how: sourceId ? "원본 상세" : pv.file } });
+            this.toast(`기준 구매가 ${num(r.sources)}개 바꿈 · 안 올린 복사본 ${num(r.pending)}건 다시 계산` + (r.live ? ` · 판매 중 ${num(r.live)}건 네이버 가격 바꾸는 중` : "") + (r.error ? ` · ${r.error}` : ""), !!r.error);
+            if (r.task) { this.taskSeen[r.task] = "running"; this.refreshState(); }
+            if (after) after(r);
+          } catch (e) { this.toast(e.message, true); return false; }
+        } }],
+    });
+    const show = (d) => { pv = d; $("#bp-out").innerHTML = table(d); };
+    if (sourceId) {
+      $("#bp-pv").addEventListener("click", async () => {
+        try { show(await this.api("/api/baseprice/preview", { json: { source_id: sourceId, price: +$("#bp-new").value, memo: $("#bp-memo").value } })); }
+        catch (e) { this.toast(e.message, true); }
+      });
+      this.api(`/api/sources/${sourceId}/price_log`).then((L) => {
+        if (L.length && $("#bp-log")) $("#bp-log").innerHTML = `<p class="small muted" style="margin:10px 0 4px">바꾼 기록</p><ul class="small">${L.map((x) =>
+          `<li>${when(x.at)} · ${num(x.old_price)} → <b>${num(x.new_price)}</b>원 ${esc(x.how)}${x.memo ? ` · ${esc(x.memo)}` : ""}</li>`).join("")}</ul>`;
+      }).catch(() => {});
+    } else {
+      $("#bp-file").addEventListener("change", async (e) => {
+        const f = e.target.files[0];
+        e.target.value = "";
+        if (!f) return;
+        const fd = new FormData();
+        fd.append("file", f);
+        $("#bp-out").innerHTML = '<p class="muted"><span class="spin"></span> 읽는 중…</p>';
+        try { show(await this.api("/api/baseprice/preview", { method: "POST", body: fd })); } catch (err) { $("#bp-out").innerHTML = ""; this.toast(err.message, true); }
+      });
+    }
   },
 
   /* 원본 엑셀 올리기 전 확인 창: 가격 칸이 이상한 줄 · 대표 이미지 주소가 겹치는 줄(상품명은 다름) → 포함할지 버릴지 고르고 넣기 */

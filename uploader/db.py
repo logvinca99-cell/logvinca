@@ -239,8 +239,9 @@ class DB:
         self._migrate_columns()   # 새로 만든 db: SCHEMA에 없는 나중에 더한 열도 붙인다
         self._migrate_data()
         self._remove_dropped(os.path.dirname(path))
-        from . import activity, adopt, aiwords, clean, ctxkw, eye, keywords, kipris, lexicon, mail, trash
+        from . import activity, adopt, aiwords, baseprice, clean, ctxkw, eye, keywords, kipris, lexicon, mail, trash
         clean.ensure(self)
+        baseprice.ensure(self)
         adopt.ensure(self)
         eye.ensure(self)
         lexicon.ensure(self)
@@ -280,7 +281,9 @@ class DB:
                     # 대표 이미지 주소 열쇠 (원본 엑셀 올릴 때 겹침 확인용 — 원본 구분에는 안 씀)
                     ("img_key", "TEXT NOT NULL DEFAULT ''"),
                     # 스토어 가격 흔들기 기준 (원본 열쇠를 상품명으로 바꿔도 손님 가격이 그대로이게 예전 열쇠를 씀)
-                    ("price_seed", "TEXT NOT NULL DEFAULT ''")],
+                    ("price_seed", "TEXT NOT NULL DEFAULT ''"),
+                    # 기준 구매가(원본가)가 어디서 왔나: file 처음 원본 파일 / adopt 기존 상품 가져오기(그 스토어 손님 가격) / manual 직접 수정
+                    ("price_src", "TEXT NOT NULL DEFAULT ''"), ("price_at", "REAL")],
         "stores": [("code", "TEXT NOT NULL DEFAULT ''"), ("orders_synced_to", "REAL"),
                    # 네이버 주문을 빈틈없이 받아 둔 처음 시각 (여기부터 orders_synced_to까지는 판매 이력을 다 앎)
                    ("orders_from", "REAL"),

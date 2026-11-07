@@ -11,7 +11,7 @@ import uuid
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import VERSION, activity, adopt, aiwords, chem, chrome, clean, eye, excel, mail, nvstate, srctags, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
+from . import VERSION, activity, adopt, aiwords, baseprice, chem, chrome, clean, eye, excel, mail, nvstate, srctags, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
 from .db import DB
 from .tasks import Tasks
 
@@ -839,6 +839,58 @@ def create_app(db=None):
     @app.get("/api/adopt/runs")
     def adopt_runs():
         return jsonify(adopt.runs(db))
+
+    # ── 기준 구매가 수정 (역마진 등) — 원본 상세 창·엑셀
+
+    @app.get("/api/baseprice/template.xlsx")
+    def baseprice_template():
+        from urllib.parse import quote
+        return Response(baseprice.template_xlsx(), mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('기준구매가_수정양식.xlsx')}"})
+
+    @app.post("/api/baseprice/preview")
+    def baseprice_preview():
+        """수정 엑셀 미리보기 (아무것도 안 바꿈) — 또는 json {source_id, price}로 한 개."""
+        if request.files.get("file"):
+            f = request.files["file"]
+            path = _save_upload(f)
+            try:
+                return jsonify(baseprice.preview(db, path, f.filename))
+            except Exception as e:  # noqa: BLE001
+                return fail(f"파일을 읽지 못했습니다: {e}")
+            finally:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+        b = body()
+        new = convert.to_int(b.get("price"))
+        if new <= 0 or not db.one("SELECT 1 FROM sources WHERE id=?", (int(b.get("source_id") or 0),)):
+            return fail("새 기준 구매가를 넣어 주세요.")
+        it = {"line": 0, "key": "", "how": "원본 상세", "new": new, "memo": str(b.get("memo") or ""), "status": "ok",
+              **baseprice.effect(db, int(b["source_id"]), new)}
+        return jsonify({"items": [it], "ok": 1, "bad": 0, "live": it["n_live"], "pending": it["n_pending"], "file": ""})
+
+    @app.post("/api/baseprice/apply")
+    def baseprice_apply():
+        """기준 구매가 바꾸기 → 안 올린 복사본은 바로, 판매 중 복사본은 네이버 가격만 바로 바꾸는 작업."""
+        b = body()
+        items = [x for x in (b.get("items") or []) if x.get("source_id") and convert.to_int(x.get("price")) > 0]
+        if not items:
+            return fail("바꿀 원본이 없습니다.")
+        st = baseprice.apply(db, items, str(b.get("how") or ""))
+        out = {"sources": st["sources"], "pending": st["pending"], "live": len(st["live"]), "task": None}
+        if st["live"]:
+            try:
+                out["task"] = tasks.start("baseprice", f"네이버 가격 바꾸기 · {len(st['live']):,}건",
+                                          lambda **kw: baseprice.push_live(db, st["live"], **kw))
+            except RuntimeError as e:
+                out["error"] = f"네이버 가격 바꾸기를 시작하지 못함 ({e}) — 다음 최신화 때 새 가격으로 올라갑니다"
+        return jsonify(out)
+
+    @app.get("/api/sources/<int:sid>/price_log")
+    def source_price_log(sid):
+        return jsonify(baseprice.log(db, sid))
 
     @app.get("/api/adopt/<int:rid>/drop_sources")
     def adopt_drop_sources(rid):
