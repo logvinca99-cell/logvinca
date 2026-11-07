@@ -120,7 +120,7 @@ def trash_sources(db, ids, keep_naver=False):
                         "ctx_kw": _rows(c, "SELECT * FROM ctx_kw WHERE source_id=?", (sid,))}
                 stores = [r["name"] for r in c.execute(f"""SELECT t.name FROM listings l JOIN stores t ON t.id=l.store_id
                     WHERE l.id IN ({lm})""", lids).fetchall()]
-                extra = f"원본가 {src[0]['price']:,}원 · 복사본 {len(lids)}개 함께" + (f" ({', '.join(stores)})" if stores else "")
+                extra = f"기준 구매가 {src[0]['price']:,}원 · 복사본 {len(lids)}개 함께" + (f" ({', '.join(stores)})" if stores else "")
                 n_live = sum(1 for x in snap["listings"] if x["origin_no"] and x["status"] != "deleted")
                 if n_live:
                     extra += f" · 판매 중 {n_live}건은 네이버에 그대로 (이 프로그램에서만 뺌)"

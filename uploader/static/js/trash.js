@@ -65,7 +65,7 @@ App.page("trash", {
       title: d.title, sub: `휴지통 · ${d.kind === "source" ? "원본" : "복사본"} #${d.ref_id} · ${when(d.deleted_at)}에 지움`,
       tabs: [{ key: "info", label: "지울 때 기록", render: (b) => {
         b.innerHTML = d.kind === "source"
-          ? `<dl class="kv"><dt>원본</dt><dd>#${d.source.id} ${esc(d.source.name)}</dd><dt>원본가</dt><dd>${num(d.source.price)}원</dd><dt>카테고리</dt><dd>${esc(d.source.category)}</dd></dl>
+          ? `<dl class="kv"><dt>원본</dt><dd>#${d.source.id} ${esc(d.source.name)}</dd><dt>기준 구매가</dt><dd>${num(d.source.price)}원</dd><dt>카테고리</dt><dd>${esc(d.source.category)}</dd></dl>
             <h3 class="sec-title">함께 지운 복사본 ${d.listings.length}개</h3>${d.listings.length ? `<table class="opt-table"><tr><th>스토어</th><th>상품명</th><th>관리코드</th><th>상태</th><th>올린 날</th><th class="r">가격</th></tr>${d.listings.map(row).join("")}</table>` : '<p class="muted small">없음</p>'}
             ${hist(d.history)}<h3 class="sec-title">이름 후보 ${d.names.length}개</h3><ul class="name-list">${d.names.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>`
           : `<dl class="kv"><dt>스토어</dt><dd>${esc(d.store)}</dd><dt>상품명</dt><dd>${esc(d.listing.name)}</dd><dt>원본</dt><dd>${esc(d.source_name)}</dd>

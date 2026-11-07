@@ -175,7 +175,8 @@ App.page("settings", {
         <button class="btn" data-reapply="names" title="아직 아무 복사본에도 안 쓴 AI·셔플 이름 후보를 지움 → 새 설정으로 다시 만들 수 있음">안 쓴 이름 후보 지우기</button></div></div>`);
     $$("[data-reapply]", el).forEach((b) => b.addEventListener("click", async () => {
       const what = b.dataset.reapply;
-      if (what === "names" && !confirm("아직 안 쓴 AI·셔플 이름 후보를 모두 지울까요? (복사본에 쓴 이름·직접 넣은 이름은 그대로)")) return;
+      if (what === "prices" && !await App.yes("대기 중인 복사본 가격 다시 계산", "아직 안 올린(대기·실패) 복사본 가격을 지금 기준(기준 구매가 × 그 스토어 마진율, 100원 올림)으로 다시 계산합니다. 판매 중 상품은 그대로입니다.", { label: "다시 계산" })) return;
+      if (what === "names" && !await App.yes("안 쓴 이름 후보 지우기", "아직 안 쓴 AI·셔플 이름 후보를 모두 지울까요? (복사본에 쓴 이름·직접 넣은 이름은 그대로)", { label: "지우기", danger: true })) return;
       try {
         const r = await App.api("/api/settings/reapply", { json: { what } });
         App.toast(what === "prices" ? `복사본 ${num(r.count)}건의 가격을 다시 계산했습니다` : `이름 후보 ${num(r.count)}개를 지웠습니다. 원본 상품·복사본 화면에서 다시 만드세요`);

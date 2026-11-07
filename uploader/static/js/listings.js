@@ -206,7 +206,7 @@ App.page("listings", {
         { id: "remove", label: "삭제", danger: true, title: "기본: 원본까지 같이 삭제 (그 원본의 모든 스토어 복사본, 판매 중인 것은 내린 뒤) · 끄면 고른 복사본만 휴지통" },
         "|",
         { id: "export", always: true, label: n && !this.selAll ? `⬇ 엑셀(CSV) 받기 — 고른 ${num(n)}건` : `⬇ 엑셀(CSV) 받기 — ${this.selAll ? "조건에 맞는" : "지금 보이는 조건"} ${num(this.total)}건`,
-          title: "복사본 목록을 엑셀(CSV)로 받습니다: 스토어·판매자 관리코드·회차·등록 상품명·원본 번호·원본 판매자코드·원본 상품명·판매가·원본가·상태·할 일·올린 날·원상품번호·채널상품번호·메시지" },
+          title: "복사본 목록을 엑셀(CSV)로 받습니다: 스토어·판매자 관리코드·회차·등록 상품명·원본 번호·원본 판매자코드·원본 상품명·판매가·기준 구매가·상태·할 일·올린 날·원상품번호·채널상품번호·메시지" },
       ],
       onPageCheck: (on) => { this.selAll = false; this.rows.forEach((l) => (on ? this.sel.add(l.id) : this.sel.delete(l.id))); this.load(); },
       onAll: () => { this.selAll = true; this.sel.clear(); this.load(); },
@@ -230,7 +230,7 @@ App.page("listings", {
     if (id === "move") this.moveModal();
     if (id === "revert") {
       const n = this.selAll ? this.total : this.sel.size;
-      if (!confirm(`고른 복사본 ${num(n)}건을 원본으로 되돌릴까요?\n\n이 스토어에서 복사본이 없어지고(휴지통에 기록), 원본은 그대로 남아 다른 스토어로 다시 복사할 수 있습니다.\n붙어 있던 상품명은 원본의 후보로 돌아갑니다.\n네이버에 올라가 있거나 처리 중인 것·판매 이력(잠금)이 있는 것은 빼고 합니다.`)) return;
+      if (!await App.yes("원본으로 되돌리기", `고른 복사본 ${num(n)}건을 원본으로 되돌릴까요?\n\n이 스토어에서 복사본이 없어지고(휴지통에 기록), 원본은 그대로 남아 다른 스토어로 다시 복사할 수 있습니다.\n붙어 있던 상품명은 원본의 후보로 돌아갑니다.\n네이버에 올라가 있거나 처리 중인 것·판매 이력(잠금)이 있는 것은 빼고 합니다.`, { label: "되돌리기", danger: true })) return;
       try {
         const r = await App.api("/api/listings/revert", { json: this.target() });
         App.toast(`복사본 ${num(r.reverted)}건을 원본으로 되돌렸습니다` + (r.live ? ` · 올라가 있거나 처리 중이라 뺀 ${num(r.live)}건` : "") + (r.locked ? ` · 판매 이력·잠금으로 뺀 ${num(r.locked)}건` : ""));
@@ -238,13 +238,13 @@ App.page("listings", {
       } catch (err) { App.toast(err.message, true); }
     }
     if (id === "eyeon" || id === "eyeoff") App.eyeSet({ listing_filter: this.target() }, id === "eyeon", `고른 복사본 ${num(this.selAll ? this.total : this.sel.size)}건의 원본`, () => this.load());
-    if (id === "chem") App.startTask(App.api("/api/chem/judge", { json: { listing_filter: this.target() } }));
+    if (id === "chem" && await App.yes("생활화학 판정", CHEM_JUDGE_TXT, { label: "판정 시작" })) App.startTask(App.api("/api/chem/judge", { json: { listing_filter: this.target() } }));
     if (id === "category") {
       const n = this.selAll ? this.total : this.sel.size;
       App.pickCategory({ target: { listing_filter: this.target() }, what: `고른 복사본 ${num(n)}건의 원본`, after: () => this.load() });
     }
     if (id === "cancel") {
-      if (!confirm("고른 건 중 대기·실패 할 일을 취소할까요?\n새 등록이면 계획을 지우고 이름을 후보로 돌립니다. 최신화·내리기면 판매 중으로 되돌립니다.")) return;
+      if (!await App.yes("대기·실패 취소", "고른 건 중 대기·실패 할 일을 취소할까요?\n새 등록이면 계획을 지우고 이름을 후보로 돌립니다. 최신화·내리기면 판매 중으로 되돌립니다.", { label: "할 일 취소", danger: true })) return;
       try {
         const r = await App.api("/api/listings/cancel", { json: this.target() });
         App.toast(`${num(r.cancelled)}건을 취소했습니다.`);
@@ -308,7 +308,7 @@ App.page("listings", {
             <span class="sp-name"><span class="code">${esc(s.code)}</span> ${esc(s.name)}</span>
             ${usageBar(s.used, s.capacity)}<span class="sp-free ${s.free < 100 ? "c-err" : "muted"}">남은 자리 ${num(s.free)}</span></label>`).join("")).join("")}</div>
         <div class="plan-sum" id="mv-sum">받을 스토어를 고르세요.</div></div>`,
-      buttons: [{ label: "취소" }, { label: "보내기", primary: true, onClick: async (b) => {
+      buttons: [{ label: "취소" }, { label: "보내기", primary: true, validate: (b) => ($("input[name=mv-to]:checked", b) ? "" : "받을 스토어를 고르세요."), onClick: async (b) => {
         const to = +($("input[name=mv-to]:checked", b)?.value || 0);
         if (!to) { App.toast("받을 스토어를 고르세요.", true); return false; }
         try {
@@ -345,7 +345,6 @@ App.page("listings", {
       buttons: [{ label: "취소" }, { label: "1회차로 되돌리기", danger: true, primary: true, onClick: async (b) => {
         const v = $("input[name=rr]:checked", b).value;
         const body = v === "all" ? { all: true } : v === "store" ? { store_id: this.f.store_id, status: "all" } : this.target();
-        if (v === "all" && !confirm("모든 스토어의 복사본 회차를 1로 되돌리고 지난 회차 기록을 지웁니다. 계속할까요?")) return false;
         try {
           const r = await App.api("/api/listings/reset_round", { json: body });
           App.toast(`복사본 ${num(r.count)}건을 1회차로 되돌렸습니다. 판매 중·내린 건은 다음에 다시 올릴 때 1회차로 올라갑니다.`);
@@ -403,7 +402,12 @@ App.page("listings", {
             App.ctxConfirm({ listing_filter: target }, (ok, mode) => {
               if (!ok) return;
               if (mode !== "instant") return go();
-              const h = (t) => { if (t.kind === "ctxkw") { App.off("task-done", h); go(); } };
+              const h = (t) => {
+                if (t.kind !== "ctxkw") return;
+                App.off("task-done", h);
+                if (t.status === "done") go();   // 키워드를 못 받았으면 이름을 바꾸지 않음
+                else App.toast("AI 키워드를 받지 못해 상품명은 바꾸지 않았습니다. 다시 시도하세요.", true);
+              };
               App.on("task-done", h);
             });
             return false;
@@ -495,7 +499,7 @@ App.page("listings", {
     const n = limit || this.est?.count || 0;
     const what = RUN_KINDS.filter(([k]) => scope.kinds.includes(k)).map(([k, l]) => `${l} ${num(this.est?.kinds?.[k] || 0)}`).join(" · ");
     const where = { store: "이 스토어 전체", sel: "고른 복사본", visible: "지금 보이는 조건" }[this.runRange || "store"];
-    if (!limit && !confirm(`${where}에서 ${num(n)}건을 처리합니다.\n(${what})\n계속할까요?`)) return;
+    if (!await App.yes(limit ? "1건만 시험" : "시작", `${where}에서 ${num(n)}건을 처리합니다.\n(${what})` + (limit ? "\n\n고른 종류에 '내리기'가 있으면 그 1건은 네이버에서 내려갑니다." : ""), { label: limit ? "1건 처리" : "시작" })) return;
     try {
       App.run = await App.api("/api/run", { json: { ...scope, limit: limit || null } });
       this.renderRun(App.run);
@@ -533,7 +537,7 @@ App.page("listings", {
         App.run = await App.api(`/api/run/${App.run?.paused ? "resume" : "pause"}`, { method: "POST" }); this.renderRun(App.run);
       });
       $("#r-stop").addEventListener("click", async () => {
-        if (!confirm("등록을 중단할까요? 처리 중인 건까지만 마치고 멈춥니다. 남은 건은 대기로 돌아갑니다.")) return;
+        if (!await App.yes("등록 중단", "등록을 중단할까요? 처리 중인 건까지만 마치고 멈춥니다. 남은 건은 대기로 돌아갑니다.", { label: "중단", danger: true })) return;
         App.run = await App.api("/api/run/stop", { method: "POST" }); this.renderRun(App.run);
       });
       clearInterval(this.timer);
@@ -644,7 +648,7 @@ App.page("listings", {
               <dt>원본 번호</dt><dd>#${l.source_id}</dd>
               <dt>카테고리</dt><dd>${esc(l.category)}${l.category_fixed ? ` <span class="flag">직접 정함</span> <span class="muted small">(엑셀: ${esc(l.category_excel)})</span>` : ""}
                 <button class="btn sm d-cat">바꾸기</button></dd>
-              <dt>판매가</dt><dd>손님 가격 <b>${num(l.final)}원</b> <span class="muted">(원본가 ${num(l.source_price)}원)</span>
+              <dt>판매가</dt><dd>손님 가격 <b>${num(l.final)}원</b> <span class="muted">(기준 구매가 ${num(l.source_price)}원)</span>
                 ${l.off ? `<br><span class="muted">네이버 판매가 ${num(l.shown)}원 · 즉시할인 ${num(l.off)}원 (할인율 ${(l.off / l.shown * 100).toFixed(1)}% — 손님 가격을 그대로 두고 ${l.disc_pct}%에 가깝게)</span>` : ""}
 </dd>
               <dt>다른 스토어</dt><dd>${l.siblings.length ? l.siblings.map((x) => `<div><button class="go-store" data-go="${x.id}">→ ${esc(x.store_name)}</button> ${esc(x.name)} <span class="muted">(${STATUS[x.status] || x.status})</span></div>`).join("") : "같은 원본이 다른 스토어에는 없음"}</dd></dl>`
@@ -668,9 +672,9 @@ App.page("listings", {
           $("#d-src", b)?.addEventListener("click", () => App.pages.inventory.openSource(l.source_id));
           $$(".d-cat", b).forEach((x) => x.addEventListener("click", () => App.pickCategory({
             target: { ids: [l.source_id] }, current: l.category, excel: l.category_excel, what: `원본 #${l.source_id}`,
-            after: () => { this.openListing(id); this.load(); } })));
+            after: () => { this.openListing(id); if ($("#l-rows")) this.load(); } })));
           $("#d-rename", b)?.addEventListener("click", () => this.renameModal([id]));
-          $(".d-chem", b)?.addEventListener("click", () => App.startTask(App.api("/api/chem/judge", { json: { ids: [l.source_id] } })));
+          $(".d-chem", b)?.addEventListener("click", async () => { if (await App.yes("생활화학 판정", CHEM_JUDGE_TXT, { label: "판정 시작" })) App.startTask(App.api("/api/chem/judge", { json: { ids: [l.source_id] } })); });
           $$("[data-go]", b).forEach((x) => x.addEventListener("click", () => { App.closeDrawer(); this.goto(+x.dataset.go); }));
           $("#d-lock", b)?.addEventListener("click", async () => {
             const r = await this.lock(!l.manual_lock, [id]);
@@ -701,6 +705,7 @@ App.page("listings", {
         ? `<span class="muted"></span><button class="btn primary" id="d-run">이 건만 지금 처리</button>` : "",
     });
     $("#d-run")?.addEventListener("click", async () => {
+      if (!await App.yes("이 건만 지금 처리", `이 복사본 한 건의 할 일(${$("#d-run").dataset.op || "대기 중인 일"})을 지금 바로 처리합니다. 내리기면 네이버에서 내려가고, 최신화면 지우고 다시 올립니다.`, { label: "지금 처리" })) return;
       try {
         App.run = await App.api("/api/run", { json: { ids: [id] } }); App.closeDrawer();
         if ($("#l-run")) this.renderRun(App.run); else App.renderSideRun();

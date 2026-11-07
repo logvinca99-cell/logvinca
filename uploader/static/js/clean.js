@@ -152,14 +152,14 @@ App.page("clean", {
     $("#cl-ord").addEventListener("keydown", (e) => { if (e.key === "Enter") this.openEditor(+e.target.value || 2); });
     $("#cl-ed-save").addEventListener("click", () => this.saveEditor());
     $("#cl-ed-revert").addEventListener("click", () => this.revertEditor());
-    $("#cl-ed-del").addEventListener("click", async () => { if (this.ed && confirm("이 상품을 정리함에서 지울까요? (위 '지움'에서 되살릴 수 있음)")) { await this.del([this.ed.id]); this.ed.next ? this.openEditor(this.ed.next) : null; } });
+    $("#cl-ed-del").addEventListener("click", async () => { if (this.ed && await App.yes("정리함에서 지우기", "이 상품을 정리함에서 지울까요? (위 '지움'에서 되살릴 수 있음)", { label: "지우기", danger: true })) { await this.del([this.ed.id]); this.ed.next ? this.openEditor(this.ed.next) : null; } });
     $("#cl-broken-go").addEventListener("click", () => this.findBroken());
     $("#cl-miss-go").addEventListener("click", () => this.findMissing());
     $("#cl-cat-go").addEventListener("click", () => this.checkCats());
-    $("#cl-chem-go").addEventListener("click", () => App.startTask(App.api(`/api/clean/${this.bid}/chem`, { json: {} })));
+    $("#cl-chem-go").addEventListener("click", async () => { if (await App.yes("생활화학 판정", CHEM_JUDGE_TXT, { label: "판정 시작" })) App.startTask(App.api(`/api/clean/${this.bid}/chem`, { json: {} })); });
     $("#cl-send").addEventListener("click", async () => {
       if (!this.counts?.new) return App.toast("정리 중인 상품이 없습니다.", true);
-      if (!confirm(`정리 중인 ${num(this.counts.new)}개를 원본 상품으로 넣을까요?${this.counts.hold ? `\n생활화학 보류 ${num(this.counts.hold)}개는 넣지 않습니다.` : ""}`)) return;
+      if (!await App.yes("원본 상품으로 넣기", `정리 중인 ${num(this.counts.new)}개를 원본 상품으로 넣을까요?${this.counts.hold ? `\n생활화학 보류 ${num(this.counts.hold)}개는 넣지 않습니다.` : ""}`, { label: "넣기" })) return;
       await App.startTask(App.api(`/api/clean/${this.bid}/send`, { json: {} }));
     });
     // 결과 목록 안의 '행' 누르면 편집으로
@@ -209,6 +209,7 @@ App.page("clean", {
     $("#cl-common-del").addEventListener("click", async () => {
       const srcs = $$("[data-src]:checked", box).map((c) => c.dataset.src);
       if (!srcs.length) return App.toast("지울 이미지를 골라 주세요.", true);
+      if (!await App.yes("공통 이미지 지우기", `고른 이미지 ${num(srcs.length)}종을 정리함 상품 상세에서 지웁니다.` + ($("#cl-remember").checked ? "\n다음에 올리는 엑셀에서도 자동으로 뺍니다." : ""), { label: "지우기", danger: true })) return;
       try {
         const r = await App.api(`/api/clean/${this.bid}/common/remove`, { json: { srcs, remember: $("#cl-remember").checked } });
         App.toast(`상품 ${num(r.items)}개에서 이미지 ${num(r.images)}장을 지웠습니다` + (r.remembered ? ` · ${num(r.remembered)}종은 다음에도 자동으로 뺌` : ""));
@@ -223,7 +224,7 @@ App.page("clean", {
     if (!box) return;
     box.innerHTML = rs.length ? `<div class="cl-imgs">${rs.map((r) => `<div class="cl-img"><img src="${esc(r.value)}" loading="lazy" onerror="onImgError(this)">
       <span>${when(r.created_at)} · <button class="link-btn" data-rule="${r.id}">그만 빼기</button></span></div>`).join("")}</div>` : '<p class="muted small">기억한 이미지가 없습니다.</p>';
-    $$("[data-rule]", box).forEach((b) => b.addEventListener("click", async () => { await App.api("/api/clean/rules/delete", { json: { ids: [+b.dataset.rule] } }); this.loadRules(); }));
+    $$("[data-rule]", box).forEach((b) => b.addEventListener("click", async () => { if (!await App.yes("기억한 이미지 그만 빼기", "이 이미지를 다음에 올리는 엑셀에서 더는 자동으로 빼지 않습니다 (이미 뺀 상품은 그대로).", { label: "그만 빼기" })) return; await App.api("/api/clean/rules/delete", { json: { ids: [+b.dataset.rule] } }); this.loadRules(); }));
   },
 
   // ③ 전화번호
@@ -245,6 +246,7 @@ App.page("clean", {
     $("#cl-phone-del").addEventListener("click", async () => {
       const picks = $$("[data-ph]:checked", box).map((c) => ({ id: +c.dataset.ph, text: c.dataset.t }));
       if (!picks.length) return App.toast("지울 번호를 골라 주세요.", true);
+      if (!await App.yes("전화번호 지우기", `고른 번호 ${num(picks.length)}개를 정리함 상품 상세에서 지웁니다.`, { label: "지우기", danger: true })) return;
       const r = await App.api("/api/clean/phones/remove", { json: { picks } });
       App.toast(`상품 ${num(r.items)}개에서 번호 ${num(r.removed)}개를 지웠습니다`);
       this.refresh(); this.findPhones();
@@ -312,7 +314,7 @@ App.page("clean", {
   },
 
   async revertEditor() {
-    if (!this.ed || !confirm("이 상품의 상세를 처음(엑셀에서 올린 그대로)으로 되돌릴까요?")) return;
+    if (!this.ed || !await App.yes("처음 상세로 되돌리기", "이 상품의 상세를 처음(엑셀에서 올린 그대로)으로 되돌릴까요?", { label: "되돌리기", danger: true })) return;
     await App.api(`/api/clean/item/${this.ed.id}/revert`, { json: {} });
     App.toast("처음 상세로 되돌렸습니다");
     this.refresh();
@@ -348,7 +350,7 @@ App.page("clean", {
     $("[data-del-picked]", box)?.addEventListener("click", async () => {
       const ids = $$("[data-pick]:checked", box).map((c) => +c.dataset.pick);
       if (!ids.length) return App.toast("고른 상품이 없습니다.", true);
-      if (!confirm(`${num(ids.length)}개를 정리함에서 지울까요?`)) return;
+      if (!await App.yes("정리함에서 지우기", `${num(ids.length)}개를 정리함에서 지울까요?`, { label: "지우기", danger: true })) return;
       await this.del(ids);
       again();
     });
@@ -400,6 +402,8 @@ App.page("clean", {
     $("#cl-hold-all").addEventListener("change", (e) => $$("[data-hold]", box).forEach((c) => { c.checked = e.target.checked; }));
     const setKind = async (ids, kind) => {
       if (!ids.length) return App.toast("고른 상품이 없습니다.", true);
+      if (!await App.yes(kind === "tool" ? "물건으로 판정" : "화학제품으로 판정", `보류 상품 ${num(ids.length)}개를 ${kind === "tool" ? "'물건'으로 바꿉니다 — 카테고리 그대로 '인증 대상 아님'으로 올라갑니다" : "'화학제품'으로 둡니다 — 올리지 않습니다"}.`, { label: "바꾸기" })) return;
+      if (!ids.length) return App.toast("고른 상품이 없습니다.", true);
       const r = await App.api("/api/clean/items/chem", { json: { ids, kind } });
       App.toast(`${num(r.count)}개를 '${CHEM_LABEL[kind]}'(으)로 정했습니다`);
       this.loadHold(); this.refresh();
@@ -409,7 +413,7 @@ App.page("clean", {
       const ids = picked();
       if (b.dataset.hbulk === "delete") {
         if (!ids.length) return App.toast("고른 상품이 없습니다.", true);
-        if (!confirm(`보류 상품 ${num(ids.length)}개를 정리함에서 지울까요? (아직 원본이 아니라 정리함에서만 지움)`)) return;
+        if (!await App.yes("보류 상품 지우기", `보류 상품 ${num(ids.length)}개를 정리함에서 지울까요? (아직 원본이 아니라 정리함에서만 지움)`, { label: "지우기", danger: true })) return;
         await this.del(ids); this.loadHold();
       } else setKind(ids, b.dataset.hbulk);
     }));

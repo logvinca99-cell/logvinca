@@ -90,6 +90,7 @@ App.page("lexicon", {
       if (k) return rv(k.dataset.kind);
       const bl = e.target.closest("[data-block]");
       if (!bl) return;
+      if (!await App.yes(bl.dataset.v === "1" ? "AI 키워드 차단" : "AI 키워드 차단 풀기", `'${bl.dataset.block}'을(를) ${bl.dataset.v === "1" ? "차단합니다" : "다시 씁니다"} — 이 단어가 든 원본의 이름 후보를 다시 만들고, 아직 안 올린 복사본 이름도 바뀝니다.`, { label: bl.dataset.v === "1" ? "차단" : "풀기" })) return;
       bl.disabled = true;
       try {
         const r = await App.api("/api/ctx/block", { json: { word: bl.dataset.block, block: bl.dataset.v === "1" } });

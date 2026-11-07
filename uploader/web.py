@@ -2228,7 +2228,7 @@ def create_app(db=None):
         buf = io.StringIO()
         w = csv.writer(buf)
         w.writerow(["스토어", "판매자 관리코드", "회차", "등록 상품명", "원본 번호", "원본 판매자코드", "원본 상품명",
-                    "판매가", "원본가", "상태", "할 일", "올린 날", "원상품번호", "채널상품번호", "메시지"])
+                    "판매가", "기준 구매가", "상태", "할 일", "올린 날", "원상품번호", "채널상품번호", "메시지"])
         page = 0
         while True:
             res = inventory.query_listings(db, f, page, 500)

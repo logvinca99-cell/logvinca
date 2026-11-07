@@ -46,7 +46,7 @@ App.page("inventory", {
       <div class="filters-row">
         <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
           <input id="i-q" placeholder="상품명·판매자코드·카테고리·태그 검색"></div>
-        <span class="price-range" title="원본가 구간">원본가 <input id="i-pmin" type="number" min="0" step="1000" placeholder="최소">원 ~
+        <span class="price-range" title="기준 구매가 구간">기준 구매가 <input id="i-pmin" type="number" min="0" step="1000" placeholder="최소">원 ~
           <input id="i-pmax" type="number" min="0" step="1000" placeholder="최대">원</span>
         <select id="i-missing" class="sel"><option value="">스토어 조건 없음</option></select>
         <select id="i-ai" class="sel" title="AI 키워드·AI 이름 후보(A·B)">
@@ -63,7 +63,7 @@ App.page("inventory", {
         <table class="grid"><thead><tr>
           <th class="w-check"></th>
           <th class="w-thumb"></th><th>원본 상품</th><th class="w-links">바로 가기</th><th class="w-cat">카테고리</th>
-          <th class="w-num">원본가</th>
+          <th class="w-num">기준 구매가</th>
           <th class="w-copies" title="이 원본을 복사한 스토어 (원본당 최대 ${App.state.settings.max_copies}곳). 복사본은 원본 바로 아래 줄에 보입니다">복사</th>
         </tr></thead><tbody id="i-rows"></tbody></table>
         <div class="pg-foot"><div class="pg" id="i-pager"></div></div>
@@ -152,7 +152,7 @@ App.page("inventory", {
         if (id === "category") App.pickCategory({ target: this.target(), what: `고른 원본 ${num(this.selAll ? this.total : this.sel.size)}개`, after: () => this.load() });
         if (id === "tags") this.tagModal();
         if (id === "eyeon" || id === "eyeoff") App.eyeSet(this.target(), id === "eyeon", `고른 원본 ${num(this.targetCount())}개`, () => this.load());
-        if (id === "chem") App.startTask(App.api("/api/chem/judge", { json: this.target() }));
+        if (id === "chem") App.yes("생활화학 판정", CHEM_JUDGE_TXT, { label: "판정 시작" }).then((ok) => ok && App.startTask(App.api("/api/chem/judge", { json: this.target() })));
         if (id === "chemset") App.chemSet(this.target(), `고른 원본 ${num(this.targetCount())}개`, () => this.load());
         if (id === "chemdel") App.chemDelete(this.target(), () => { this.clearSel(); this.load(); });
       },
@@ -179,7 +179,7 @@ App.page("inventory", {
       p.has_video ? `<span class="flag video" title="상세설명에 동영상 있음 (경고 아님)">동영상</span>` : "",
       chemFlag(p), eyeFlag(p),
       p.adopted === 1 ? '<span class="flag adopted" title="기존 상품 가져오기로 들어옴 — 원본 이름이 없어 올라가 있던 이름이 원본 자리에 (원본 엑셀을 불러오면 원본 이름만 채워짐)">가져옴 · 원본 이름 없음</span>'
-        : p.adopted ? '<span class="flag adopted" title="기존 상품 가져오기로 스토어 상품과 연결됨 — 원본가는 그 스토어 손님 가격, 다른 엑셀로 덮어쓰지 않음">가져옴</span>' : "",
+        : p.adopted ? '<span class="flag adopted" title="기존 상품 가져오기로 스토어 상품과 연결됨 — 기준 구매가는 그 스토어 손님 가격, 다른 엑셀로 덮어쓰지 않음">가져옴</span>' : "",
     ].join("");
     const on = this.selAll || this.sel.has(p.id);
     return `<tr data-id="${p.id}" class="${on ? "sel" : ""}">
@@ -315,7 +315,7 @@ App.page("inventory", {
         const old = (rn || dl).dataset.ren || (dl && dl.dataset.del);
         const nw = rn ? prompt(`'${old}' 태그의 새 이름 (모든 원본에서 바뀜)`, old) : "";
         if (rn && (nw === null || nw.trim() === old)) return;
-        if (dl && !confirm(`모든 원본에서 '${old}' 태그를 뺄까요? (원본은 그대로)`)) return;
+        if (dl && !await App.yes("출처 태그 빼기", `모든 원본에서 '${old}' 태그를 뺄까요? (원본은 그대로)`, { label: "빼기", danger: true })) return;
         try {
           const r = await App.api("/api/srctags/rename", { json: { old, new: (nw || "").trim() } });
           App.toast(`원본 ${num(r.count)}개에서 '${old}' → ${nw ? `'${nw.trim()}'` : "뺌"}`);
@@ -394,7 +394,7 @@ App.page("inventory", {
         <p class="muted small">상품명: AI 키워드로 만들어 둔 이름 후보가 있으면 바로 붙고, 없으면 복사본 화면에서 '이름 변경 필요'로 보입니다.
           손님 가격 = 기준 구매가 × (1 + 받는 스토어 템플릿 마진율), 100원 단위 올림.</p></div>`,
       buttons: [{ label: "취소" }, {
-        label: "복사하기", primary: true, onClick: async (b) => {
+        label: "복사하기", primary: true, validate: (b) => ($$(".store-pick input:checked", b).length ? "" : "스토어를 하나 이상 고르세요."), onClick: async (b) => {
           const store_ids = $$(".store-pick input:checked", b).map((x) => +x.value);
           if (!store_ids.length) { App.toast("스토어를 하나 이상 고르세요.", true); return false; }
           const r = await App.startTask(App.api("/api/plans", {
@@ -467,16 +467,16 @@ App.page("inventory", {
           <td class="r">${o.price ? (o.price > 0 ? "+" : "") + num(o.price) + "원" : "-"}</td><td class="r">${num(o.stockQuantity)}</td></tr>`).join("")}
         </table></div>` : "") +
       (d.tags_list.length ? `<div><h3 class="sec-title">엑셀 태그</h3><div class="tags">${d.tags_list.map((t) => `<span>${esc(t)}</span>`).join("")}</div></div>` : "");
-    $("#s-chem", b)?.addEventListener("click", () => App.chemSet({ ids: [d.id] }, `원본 #${d.id}`, () => { this.openSource(d.id); this.load(); }));
+    $("#s-chem", b)?.addEventListener("click", () => App.chemSet({ ids: [d.id] }, `원본 #${d.id}`, () => { this.openSource(d.id); if ($("#i-rows")) this.load(); }));
     $("#s-bp", b)?.addEventListener("click", () => App.basePrice({ sourceId: d.id, current: d, after: () => { if ($("#i-rows")) this.load(); } }));
-    $("#s-eye", b)?.addEventListener("click", () => App.eyeSet({ ids: [d.id] }, !d.eye_at, `원본 #${d.id}`, () => { this.openSource(d.id); this.load(); }));
+    $("#s-eye", b)?.addEventListener("click", () => App.eyeSet({ ids: [d.id] }, !d.eye_at, `원본 #${d.id}`, () => { this.openSource(d.id); if ($("#i-rows")) this.load(); }));
     const tagDo = async (add, remove) => {
       try {
         await App.api("/api/srctags/apply", { json: { ids: [d.id], add, remove } });
         const nd = await App.api(`/api/sources/${d.id}`);
         d.src_tags = nd.src_tags;
         $("#s-tags", b).innerHTML = srcTagChips(d.src_tags, true) || '<span class="muted">없음</span>';
-        this.load(); this.loadTags(true);
+        if ($("#i-rows")) { this.load(); this.loadTags(true); }
       } catch (e) { App.toast(e.message, true); }
     };
     $("#s-tags", b).addEventListener("click", (e) => { const x = e.target.closest("[data-rm-tag]"); if (x) tagDo([], [x.dataset.rmTag]); });
@@ -485,7 +485,7 @@ App.page("inventory", {
     $("#s-tag-in", b).addEventListener("keydown", (e) => { if (e.key === "Enter") addIt(); });
     $("#s-cat", b)?.addEventListener("click", () => App.pickCategory({
       target: { ids: [d.id] }, current: d.category_fix || d.category, excel: d.category, what: `원본 #${d.id}`,
-      after: () => { this.openSource(d.id); this.load(); } }));
+      after: () => { this.openSource(d.id); if ($("#i-rows")) this.load(); } }));
   },
 
   renderCtx(b, d) {
@@ -517,7 +517,7 @@ App.page("inventory", {
         ${n.listing_id ? `<span class="muted small">${esc(n.store_name)} · ${STATUS[n.status] || ""}</span>`
           : n.origin === "original" ? `<span class="muted small">원본</span>`
           : `<span class="c-ok small"><b>남음</b></span> <button class="link-btn danger-text" data-del="${n.id}">지우기</button>`}</li>`).join("")}</ul>`;
-    const reload = async () => { const nd = await App.api(`/api/sources/${d.id}`); Object.assign(d, nd); this.renderNames(b, d); this.load(); };
+    const reload = async () => { const nd = await App.api(`/api/sources/${d.id}`); Object.assign(d, nd); this.renderNames(b, d); if ($("#i-rows")) this.load(); };
     $(".name-list", b).addEventListener("click", async (e) => {
       const id = e.target.dataset.del;
       if (!id) return;
@@ -560,7 +560,7 @@ App.page("inventory", {
           : miss.length ? `<p>못 찾은 카테고리 <b>${num(miss.length)}</b>가지 · 원본 <b>${num(miss.reduce((a, x) => a + x.count, 0))}</b>개. 비슷한 것을 고르거나 검색해서 고른 뒤 저장하세요. 같은 엑셀 카테고리는 다음 파일에도 그대로 맞춰집니다.</p>
             <div class="cm-list">${miss.map(row).join("")}</div>` : '<p>못 찾은 카테고리가 없습니다.</p>'}
       </div>`,
-      buttons: [{ label: "닫기" }, { label: "저장하고 다시 검사", primary: true, onClick: async (b) => {
+      buttons: [{ label: "닫기" }, { label: "저장하고 다시 검사", primary: true, validate: (b) => ($$(".cm-row", b).some((r) => $(".cm-sel", r).value) ? "" : "고른 카테고리가 없습니다."), onClick: async (b) => {
         const items = $$(".cm-row", b).map((r) => ({ from: miss[+r.dataset.i].category, to: $(".cm-sel", r).value })).filter((x) => x.to);
         if (!items.length) { App.toast("고른 카테고리가 없습니다.", true); return false; }
         try {

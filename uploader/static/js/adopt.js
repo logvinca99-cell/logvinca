@@ -34,10 +34,15 @@ App.page("adopt", {
     </div>`;
     $("#ad-file").addEventListener("change", (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) this.prepare(f); });
     this.onDone = (t) => {
-      if (t.kind === "adopt") { this.loadRuns(); if (t.status === "done") $("#ad-prep").innerHTML = ""; }
-      if (t.kind === "adopt_check" && this.d && t.result?.token === this.d.token) {
+      if (t.kind === "adopt") {
+        this.loadRuns();
+        if (t.status === "done") { if ($("#ad-prep")) $("#ad-prep").innerHTML = ""; }
+        else if ($("#ad-result")) $("#ad-result").innerHTML = `<div class="notice err">가져오지 못했습니다: ${esc(t.error || "중단됨")} — 아래 기록을 확인하고 다시 [맞춰 보기]부터 하세요.</div>`;
+      }
+      // 맞춰 보기: 실패·중단이면 결과(토큰)가 없으므로 상태로 판단 (돌던 표시가 멈추게)
+      if (t.kind === "adopt_check" && this.d && $("#ad-result") && (t.status !== "done" || t.result?.token === this.d.token)) {
         if (t.status === "done") this.renderResult(t.result);
-        else $("#ad-result").innerHTML = `<div class="notice err">맞춰 보지 못했습니다: ${esc(t.error || "")}</div>`;
+        else $("#ad-result").innerHTML = `<div class="notice err">맞춰 보지 못했습니다: ${esc(t.error || "중단됨")} — 다시 [맞춰 보기]를 누르세요.</div>`;
       }
     };
     App.on("task-done", this.onDone);
@@ -134,8 +139,7 @@ App.page("adopt", {
       const store_id = +$("#ad-store").value;
       const opts = this.opts();
       if (!this.checked || this.checked.store_id !== store_id || this.checked.key !== JSON.stringify(opts)) return this.staleResult();
-      if (low && !confirm(`판매자코드가 맞는 줄이 ${pct}%뿐입니다.\n정말 '${r.store}' 스토어에 올렸던 파일이 맞나요?`)) return;
-      if (!confirm(`'${r.file}' → '${r.store}'\n\n새로 연결 ${num(r.linked)}개(원본 + 판매 중 복사본), 스토어에 없는 ${num((r.dropped || 0) + (r.no_code || 0))}줄은 버립니다.\n가져올까요? (잘못 가져오면 기록의 [가져오기 되돌리기]로 이 프로그램에서만 뺄 수 있음 — 네이버 상품은 그대로)`)) return;
+      if (!await App.yes("이대로 가져오기", (low ? `⚠ 판매자코드가 맞는 줄이 ${pct}%뿐입니다 — 정말 '${r.store}' 스토어에 올렸던 파일이 맞나요?\n\n` : "") + `'${r.file}' → '${r.store}'\n\n새로 연결 ${num(r.linked)}개(원본 + 판매 중 복사본), 스토어에 없는 ${num((r.dropped || 0) + (r.no_code || 0))}줄은 버립니다.\n가져올까요? (잘못 가져오면 기록의 [가져오기 되돌리기]로 이 프로그램에서만 뺄 수 있음 — 네이버 상품은 그대로)`, { label: "가져오기" })) return;
       const t = await App.startTask(App.api("/api/adopt/start", { json: { token: this.d.token, store_id, ...opts } }));
       if (t) { $("#ad-prep").innerHTML = `<p class="muted"><span class="spin"></span> 가져오는 중… 오른쪽 아래에서 진행을 볼 수 있습니다. 끝나면 아래 기록에 나옵니다.</p>`; }
     });
@@ -177,13 +181,13 @@ App.page("adopt", {
       if (sb) return App.salesConfirm(+sb.dataset.sales, () => this.loadRuns());
       const o = e.target.closest("[data-orders]");
       if (o) {
-        if (!confirm(`이 스토어 주문을 ${o.dataset.from}부터 오늘까지 받습니다.\n네이버는 하루 단위로 나눠 조회해서 기간이 길면 시간이 걸립니다(뒤에서 돌아감).\n다 받으면 가져온 상품을 최신화·내리기할 수 있습니다 (팔린 상품은 잠겨서 안 지움).`)) return;
+        if (!await App.yes("네이버에서 주문 받기", `이 스토어 주문을 ${o.dataset.from}부터 오늘까지 받습니다.\n네이버는 하루 단위로 나눠 조회해서 기간이 길면 시간이 걸립니다(뒤에서 돌아감).\n다 받으면 가져온 상품을 최신화·내리기할 수 있습니다 (팔린 상품은 잠겨서 안 지움).`, { label: "받기" })) return;
         App.startTask(App.api("/api/orders/sync", { json: { from: o.dataset.from, store_ids: [+o.dataset.orders] } }));
       }
     };
     if (!rs.length) { box.innerHTML = '<p class="muted">아직 가져온 기록이 없습니다.</p>'; return; }
     const st = (s) => Object.entries(s.status || {}).map(([k, v]) => `${NAVER_STATUS[k] || k} ${num(v)}`).join(" · ");
-    box.innerHTML = `<table class="grid"><thead><tr><th>#</th><th>시각</th><th>스토어 · 파일</th><th class="num">파일 상품</th>
+    box.innerHTML = `<div class="tbl-wrap"><table class="grid"><thead><tr><th>#</th><th>시각</th><th>스토어 · 파일</th><th class="num">파일 상품</th>
       ${ADOPT_KINDS.map(([, l]) => `<th class="num">${l}</th>`).join("")}<th class="num">공통 이미지 뺀 상품</th></tr></thead><tbody>
       ${rs.map((r) => { const s = r.stats || {}; return `<tr><td>${r.id}</td><td class="nowrap">${when(r.created_at)}</td>
         <td><b>${esc(r.store_name)}</b><div class="small muted">${esc(r.file_name)}</div>
@@ -200,7 +204,7 @@ App.page("adopt", {
         <td class="num">${num(s.rows || 0)}</td>
         ${ADOPT_KINDS.map(([k]) => `<td class="num">${s[k] ? `<a href="/api/adopt/${r.id}/items.csv?kind=${k}" title="엑셀(CSV)로 받기">${num(s[k])} ⬇</a>` : (r.status === "done" ? "0" : "")}</td>`).join("")}
         <td class="num">${s.img_items !== undefined ? `${num(s.img_items)} (${num(s.img_removed || 0)}장)` : s.top_removed !== undefined ? `상단 ${num(s.top_removed || 0)} · 하단 ${num(s.bottom_removed || 0)}` : ""}</td></tr>`; }).join("")}
-      </tbody></table>
+      </tbody></table></div>
       <p class="small muted" style="margin:8px 0 0">숫자를 누르면 그 목록을 엑셀(CSV)로 받습니다. '엑셀≠손님 가격'은 엑셀 판매가와 스토어 손님 가격이 다른 상품(스토어 손님 가격으로 넣음), '상품명 중복'은 상품명이 완전히 같은 상품이 이 스토어에 또 있어 연결하지 않은 상품(앞 상품만 연결). '스토어에만 있음'은 그 스토어에 올라가 있지만 이 파일에 없는 상품(가져오지 않음). 스토어 상품과는 판매자코드로 <b>1대1</b>로 연결하고, 원본 기준은 <b>상품명(완전히 같음)</b>입니다 — 대표 사진(이미지 주소)은 기준이 아닙니다.</p>`;
   },
 });

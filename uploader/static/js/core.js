@@ -159,7 +159,7 @@ function sellerLink(s, url, label, cls = "") {
 function priceCell(x, srcPrice) {
   const fin = x.final ?? x.price;
   const diff = srcPrice ? ((fin - srcPrice) / srcPrice) * 100 : 0;
-  return `<td class="num"><b>${num(fin)}원</b><div class="p-sub r">${diff ? (diff > 0 ? "+" : "") + diff.toFixed(1) + "%" : "원본가"}</div>
+  return `<td class="num"><b>${num(fin)}원</b><div class="p-sub r">${diff ? (diff > 0 ? "+" : "") + diff.toFixed(1) + "%" : "기준 구매가 그대로"}</div>
     ${x.off ? `<div class="p-sub r nowrap" title="네이버 판매가 ${num(x.shown)}원 · 즉시할인 ${num(x.off)}원 → 손님 가격 ${num(fin)}원">판매가 ${num(x.shown)} · ${x.disc_pct}%</div>`
       : x.old_rule ? `<div class="p-sub r" title="예전 규칙으로 올라간 상품이라 네이버 판매가·할인은 판매자센터에서 확인하세요. 최신화·다시 올리기를 하면 지금 기준으로 올라갑니다">예전 규칙</div>` : ""}</td>`;
 }
@@ -209,7 +209,9 @@ const App = {
     view.innerHTML = "";
     view.scrollTop = 0;
     this.current = this.pages[page];
+    this._page = page;
     this.current.mount(view, params);
+    this.pageGuide?.(view, page);
   },
   go(hash) { if (location.hash === hash) this.route(); else location.hash = hash; },
 
@@ -428,14 +430,12 @@ const App = {
           <label class="btn"><input type="file" id="sc-file" accept=".xlsx,.xlsm,.csv" hidden>판매 이력 파일 넣기</label></div>`,
       buttons: [
         { label: "닫기" },
-        { label: "네이버에서 주문 받기", onClick: async (b) => {
+        { label: "네이버에서 주문 받기", confirm: `${esc(s.store)} 주문을 위 날짜부터 오늘까지 네이버에서 받습니다 (하루 단위로 나눠 조회 — 기간이 길면 시간이 걸림).`, onClick: async (b) => {
           const f = $("#sc-from", b).value;
-          if (!confirm(`${s.store} 주문을 ${f}부터 오늘까지 네이버에서 받습니다 (하루 단위로 나눠 조회 — 기간이 길면 시간이 걸림).`)) return false;
           await this.startTask(this.api("/api/orders/sync", { json: { from: f, store_ids: [s.store_id] } }));
         } },
-        { label: "판매 이력 확인 완료", primary: true, onClick: async (b) => {
+        { label: "판매 이력 확인 완료", primary: true, confirm: `${esc(s.store)}: 위 날짜부터 오늘까지의 판매 이력을 확인했나요? (판매자센터 주문 파일을 넣었거나 팔린 상품을 잠금) — 확인하면 그 날 뒤에 올라간 상품은 최신화·내리기를 합니다. 잠긴 것은 지우지 않습니다.`, onClick: async (b) => {
           const f = $("#sc-from", b).value;
-          if (!confirm(`${s.store}: ${f}부터 오늘까지의 판매 이력을 확인했나요?\n(판매자센터 주문 파일을 넣었거나 팔린 상품을 잠금)\n\n확인하면 그 날 뒤에 올라간 상품은 최신화·내리기를 합니다 — 잠긴 것은 그대로 지우지 않습니다.`)) return false;
           try {
             const r = await this.api(`/api/stores/${s.store_id}/sales_confirm`, { json: { from: f } });
             this.toast(`판매 이력 확인 완료 (${f}부터)` + (r.need ? ` · 아직 그 전에 올라간 상품 ${num(r.need)}개는 확인 전` : ""));
@@ -539,8 +539,11 @@ const App = {
           <tbody>${im.examples.map((x) => `<tr><td>${x.line}</td><td>${esc(x.name)}</td><td>${esc(x.where)}</td><td>${esc(x.other)}</td></tr>`).join("")}</tbody></table></div>
         <div style="margin-top:8px"><label class="check"><input type="radio" name="img-dup" value="keep"><span><b>포함해서 저장</b> — 이미지가 겹쳐도 모두 원본으로 넣음</span></label>
           <label class="check"><input type="radio" name="img-dup" value="drop"><span><b>겹치는 상품은 버리고 저장</b> — 이미 있는 원본(또는 이 파일 앞줄)과 대표 이미지가 같은 줄 ${num(im.n)}개는 넣지 않음</span></label></div>` : "";
+    let done = false;
+    const drop = () => { if (done) return; done = true; this.api("/api/upload/drop", { json: { token: r.token } }).catch(() => {}); };
     return new Promise((resolve) => this.openModal({
       title: `올리기 전 확인 — ${r.file}`, wide: true,
+      onClose: () => { if (!done) { drop(); resolve(null); } },
       body: (b) => {
         b.innerHTML = dupHtml + priceHtml + imgHtml;
         $("#pw-dupcsv", b)?.addEventListener("click", () => {
@@ -553,10 +556,12 @@ const App = {
         });
       },
       buttons: [
-        { label: "넣지 않기", noConfirm: true, onClick: () => { this.api("/api/upload/drop", { json: { token: r.token } }).catch(() => {}); resolve(null); } },
-        { label: "이대로 넣기", primary: true, onClick: async (b) => {
+        { label: "넣지 않기", noConfirm: true, onClick: () => { drop(); resolve(null); } },
+        { label: "이대로 넣기", primary: true,
+          validate: (b) => (im.n && !$("input[name=img-dup]:checked", b) ? "대표 이미지가 겹치는 상품을 포함할지 버릴지 골라 주세요." : ""),
+          onClick: async (b) => {
           const pick = $("input[name=img-dup]:checked", b)?.value;
-          if (im.n && !pick) { this.toast("대표 이미지가 겹치는 상품을 포함할지 버릴지 골라 주세요.", true); return false; }
+          done = true;
           const fd = new FormData();
           fd.append("token", r.token);
           fd.append("price_ok", "1");
@@ -675,8 +680,11 @@ const App = {
 
   // ── 창 (가운데)
 
-  openModal({ title, body, buttons = [], wide = false }) {
+  openModal({ title, body, buttons = [], wide = false, onClose = null }) {
     this._endConfirmStep();
+    const prev = this._onClose;
+    this._onClose = onClose;
+    if (prev && prev !== onClose) { try { prev(); } catch (e) { /* 이전 창 마무리 */ } }
     $("#m-title").textContent = title;
     const b = $("#m-body");
     b.innerHTML = typeof body === "string" ? body : "";
@@ -687,16 +695,44 @@ const App = {
     $$("#m-foot button").forEach((el) => el.addEventListener("click", async () => {
       const x = buttons[+el.dataset.i];
       if (!x.onClick) return this.closeModal();
+      // 고를 것을 안 골랐으면 2차 확인 전에 바로 알림
+      if (x.validate) { const why = x.validate(b); if (why) { this.toast(why, true); return; } }
       // 2차 확인: 확인·저장·실행 버튼은 누른 기능과 무엇이 어떻게 되는지 한 번 더 보여 주고 [확인 — 실행]을 눌러야 실행
       if (!x.noConfirm && !NO_CONFIRM.test(x.label)) return this._confirmStep(title, x, b);
       el.disabled = true;
       try { if ((await x.onClick(b)) !== false) this.closeModal(); }
+      catch (e) { this.toast(e.message || String(e), true); }
       finally { el.disabled = false; }
     }));
     $("#modal-bg").hidden = false;
     setTimeout(() => $("[autofocus]", b)?.focus(), 50);
   },
-  closeModal() { this._endConfirmStep(); $("#modal-bg").hidden = true; },
+  closeModal() {
+    this._endConfirmStep();
+    $("#modal-bg").hidden = true;
+    const f = this._onClose;
+    this._onClose = null;
+    if (f) { try { f(); } catch (e) { /* 창 마무리 */ } }
+  },
+  /* 브라우저 기본 확인창 대신: 무엇이 되는지 창으로 보여 주고 2차 확인 → true / false */
+  yes(title, text, { label = "확인", danger = false } = {}) {
+    return this.ask({ title, body: esc(String(text)).replace(/\n/g, "<br>"), label, danger, run: () => true });
+  },
+  /* 버튼 하나로 바로 실행하던 위험·비용 동작: 무엇이 어떻게 되는지 창으로 보여 주고 2차 확인을 거쳐 실행 */
+  ask({ title, body, label = "실행", danger = false, confirm = "", run }) {
+    return new Promise((resolve) => {
+      let done = false;
+      this.openModal({
+        title, body: typeof body === "string" ? `<div class="notice ${danger ? "warn" : ""}">${body}</div>` : body,
+        onClose: () => { if (!done) { done = true; resolve(false); } },
+        buttons: [{ label: "취소" }, { label, primary: !danger, danger, confirm, onClick: async (b) => {
+          const r = await run(b);
+          if (r === false) return false;
+          done = true; resolve(true);
+        } }],
+      });
+    });
+  },
 
   /* 2차 확인 화면 (같은 창 안에서): 창 제목·누른 버튼·창 설명·지금 고른 설정을 보여 주고 [← 돌아가기] / [확인 — 실행] */
   _confirmStep(title, x, b) {
@@ -708,18 +744,21 @@ const App = {
       if (el.offsetParent === null || el.type === "hidden" || el.type === "file") return;
       const lab = el.closest("label");
       const own = lab ? txt(lab).replace(el.tagName === "SELECT" ? txt(el) : "", "").trim() : (el.placeholder || el.name || "");
-      if (el.type === "checkbox" || el.type === "radio") { if (el.checked) picks.push(`✔ ${own}`); }
+      if (el.type === "checkbox") picks.push(el.checked ? `✔ ${own}` : `✘ (끔) ${own}`);
+      else if (el.type === "radio") { if (el.checked) picks.push(`✔ ${own}`); }
       else if (el.tagName === "SELECT") { const o = el.selectedOptions?.[0]; if (o && o.value !== "") picks.push(`${own}: ${o.textContent.trim()}`); }
       else if (el.type === "password" || /secret|password|key/i.test(el.id || el.name || "")) { if (String(el.value || "").trim()) picks.push(`${own}: ●●● (입력함)`); }
       else if (String(el.value || "").trim()) picks.push(`${own}: ${String(el.value).trim().slice(0, 120)}`);
     });
+    const terms = this.termsIn ? this.termsIn([title, x.label, x.confirm || "", ...intro].join(" "), 5) : [];
     const box = document.createElement("div");
     box.id = "m-confirm";
     box.innerHTML = `<div class="m-confirm-body">
         <div class="notice warn"><b>한 번 더 확인하세요.</b> 【${esc(title)}】 창에서 <b>【${esc(x.label)}】</b>을(를) 누르셨습니다.</div>
         ${x.confirm ? `<p>${x.confirm}</p>` : ""}
         ${intro.length ? `<p class="small muted" style="margin:10px 0 4px">이 창의 설명 (이대로 실행됩니다)</p><ul class="small">${intro.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>` : ""}
-        ${picks.length ? `<p class="small muted" style="margin:10px 0 4px">지금 고른 설정</p><ul class="small">${picks.slice(0, 14).map((t) => `<li>${esc(t)}</li>`).join("")}</ul>` : ""}
+        ${picks.length ? `<p class="small muted" style="margin:10px 0 4px">지금 고른 설정</p><ul class="small">${picks.slice(0, 14).map((t) => `<li>${esc(t)}</li>`).join("")}${picks.length > 14 ? `<li class="muted">외 ${picks.length - 14}개 (창으로 돌아가 확인)</li>` : ""}</ul>` : ""}
+        ${terms.length ? `<p class="small muted" style="margin:10px 0 4px">용어 설명</p><dl class="small m-terms">${terms.map((t) => `<dt>${esc(t.term)}</dt><dd>${esc(t.desc)}</dd>`).join("")}</dl>` : ""}
         <p class="small">맞으면 <b>[확인 — 실행]</b>, 아니면 <b>[← 돌아가기]</b>로 돌아가 고치세요.</p></div>
       <div class="m-confirm-foot"><button class="btn" data-back>← 돌아가기</button><button class="btn ${x.danger ? "danger" : "primary"}" data-go>확인 — 실행 (${esc(x.label)})</button></div>`;
     $("#m-body").hidden = true;
@@ -729,7 +768,9 @@ const App = {
     $("[data-go]", box).addEventListener("click", async (ev) => {
       ev.target.disabled = true;
       let res;
-      try { res = await x.onClick(b); } finally { ev.target.disabled = false; }
+      try { res = await x.onClick(b); }
+      catch (e) { this.toast(e.message || String(e), true); res = false; }
+      finally { ev.target.disabled = false; }
       if (res !== false) this.closeModal(); else this._endConfirmStep();
     });
   },
@@ -747,7 +788,7 @@ const App = {
     try { est = await this.api("/api/ctx/estimate", { json: target }); } catch (e) { return this.toast(e.message, true); }
     if (!est.sources) {
       if (est.old && !target.refresh) {   // 예전 지시로 받은 것만 있음 → 자동으로는 안 받고 물어봄
-        if (confirm(`고른 원본은 모두 키워드가 있습니다. 그중 ${num(est.old)}개는 예전 지시로 받은 키워드입니다.\n새 지시로 다시 받을까요? (다음 화면에 비용 안내가 나오고, 거기서 시작을 눌러야 받습니다)`))
+        if (await App.yes("AI 키워드 다시 받기", `고른 원본은 모두 키워드가 있습니다. 그중 ${num(est.old)}개는 예전 지시로 받은 키워드입니다.\n새 지시로 다시 받을까요? (다음 화면에 비용 안내가 나오고, 거기서 시작을 눌러야 받습니다)`, { label: "다시 받기" }))
           return this.ctxConfirm({ ...target, refresh: true }, after);
         if (after) after(false);
         return;
@@ -831,8 +872,7 @@ const App = {
       buttons: [
         { label: "취소" },
         ...(!save && excel && excel !== current ? [{ label: "엑셀 카테고리로 되돌리기", onClick: async () => this._saveCategory(target, "", after) }] : []),
-        { label: "이 카테고리로 저장", primary: true, onClick: async () => {
-          if (!chosen) { this.toast("목록에서 카테고리를 골라 주세요.", true); return false; }
+        { label: "이 카테고리로 저장", primary: true, validate: () => (chosen ? "" : "목록에서 카테고리를 골라 주세요."), onClick: async () => {
           return saveIt(chosen);
         } },
       ],
@@ -867,7 +907,7 @@ const App = {
 
   /* 검수 완료로 표시 / 풀기. target: 원본 조건·{ids}, 또는 {listing_filter} */
   async eyeSet(target, done, what, after) {
-    if (!done && !confirm(`${what}의 검수 완료를 풀까요? 풀면 새로 올리지 않습니다 (최신화·내리기는 그대로).`)) return;
+    if (!done && !await App.yes("검수 완료 풀기", `${what}의 검수 완료를 풀까요? 풀면 새로 올리지 않습니다 (최신화·내리기는 그대로).`, { label: "풀기", danger: true })) return;
     try {
       const r = await this.api("/api/eye/set", { json: { ...target, done } });
       this.toast(done ? `원본 ${num(r.target)}개 중 ${num(r.count)}개를 검수 완료로 표시했습니다` : `원본 ${num(r.count)}개의 검수 완료를 풀었습니다`);
@@ -1088,7 +1128,7 @@ const App = {
             const r = await this.api("/api/ctx/check", { json: {} });
             this.toast(r.ended ? `일괄 처리 끝: 키워드 받은 원본 ${num(r.ok)}개` + (r.failed ? ` · 실패 ${num(r.failed)}개` : "") : "아직 처리 중입니다 (Anthropic 쪽에서 처리 중).");
           } else if (cx.dataset.ctx === "cancel") {
-            if (!confirm("진행 중인 AI 키워드 일괄 처리를 중지할까요? 이미 끝난 결과는 저장하고, 나머지 원본은 실패(다시 받기)로 둡니다.")) return;
+            if (!await App.yes("AI 키워드 일괄 처리 중지", "진행 중인 AI 키워드 일괄 처리를 중지할까요? 이미 끝난 결과는 저장하고, 나머지 원본은 실패(다시 받기)로 둡니다.", { label: "중지", danger: true })) return;
             await this.api("/api/ctx/cancel", { json: {} });
             this.toast("중지를 요청했습니다.");
           } else if (cx.dataset.ctx === "retry") {
@@ -1135,6 +1175,7 @@ const App = {
 
   async init() {
     this.bind();
+    this.initTerms?.();
     // 판매자센터 링크(크롬 프로필이 정해진 스토어): 프로그램이 그 프로필로 크롬을 연다. 못 열면 지금 브라우저로
     document.addEventListener("click", async (e) => {
       const a = e.target.closest("a[data-seller-sid]");
@@ -1210,6 +1251,7 @@ function byBusiness(stores) {
   return out;
 }
 
+const CHEM_JUDGE_TXT = "생활화학·살생물제 인증 대상 카테고리인지 네이버에서 확인하고, 상품명·옵션으로 물건/화학제품/애매를 나눕니다. 규칙으로 못 정하는 것은 AI가 정합니다(AI 비용이 듭니다). 화학제품·애매는 생활화학 보류로 빠져 올리지 않습니다.";
 const NO_CONFIRM = /^(취소|닫기|넣지 않기|아니요|돌아가기)/;   // 2차 확인 없이 바로 (아무것도 실행하지 않는 버튼)
 const NAVER_STATUS = { SALE: "판매 중", SUSPENSION: "판매중지", OUTOFSTOCK: "품절", WAIT: "판매 대기", CLOSE: "판매 종료",
   PROHIBITION: "판매 금지", UNADMISSION: "승인 대기", REJECTION: "승인 거부", DELETE: "삭제", UNKNOWN: "상태 모름" };

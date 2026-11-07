@@ -230,7 +230,10 @@ pre.json { margin: 0; background: var(--panel-2); border-radius: 10px; padding: 
 @media (max-width: 900px) {
   .app { grid-template-columns: 1fr; }
   .side { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 16px; }
-  nav { flex-direction: row; }
+  nav { flex-direction: row; flex-wrap: wrap; }
+  .nav-item { white-space: nowrap; padding: 6px 8px; }
+  .page-head { flex-wrap: wrap; max-width: 100%; }
+  .head-actions { flex-wrap: wrap; }
   .side-foot { display: none; }
   main { padding: 16px; }
   .w-cat, .grid td.cat-td, .w-small, .grid td.small-td { display: none; }
@@ -890,5 +893,24 @@ body.eye-open .tasks { display: none; }
 #m-confirm { display: flex; flex-direction: column; min-height: 0; }
 #m-confirm .m-confirm-body { padding: 8px 20px 16px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
 #m-confirm .m-confirm-body ul { margin: 0; padding-left: 18px; line-height: 1.6; }
-#m-confirm .m-confirm-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); }
+#m-confirm .m-confirm-foot { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); }
 .modal-body[hidden], .modal-foot[hidden] { display: none !important; }
+
+/* ── 용어 설명: ⓘ, 설명 창, 화면 한 줄 안내, 용어 화면 */
+.ti { display: inline-block; margin-left: 3px; color: var(--muted); font-size: 12px; font-weight: 500; cursor: help; vertical-align: 1px; }
+.ti:hover { color: var(--accent); }
+.term-pop { position: fixed; z-index: 2000; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .18); font-size: 13px; line-height: 1.55; display: grid; gap: 4px; }
+.page-guide { margin: -6px 0 14px; padding: 8px 12px; border-radius: 8px; background: var(--panel-2); color: var(--text-2); font-size: 13px; line-height: 1.5; }
+.help-group { margin: 18px 0 6px; font-size: 15px; }
+.help-group:first-child { margin-top: 0; }
+.help-dl { display: grid; grid-template-columns: minmax(120px, 200px) 1fr; gap: 6px 16px; margin: 0; }
+.help-dl dt { font-weight: 600; }
+.help-dl dd { margin: 0; color: var(--text-2); line-height: 1.55; }
+.help-dl dt.hl, .help-dl dt.hl + dd { background: var(--accent-soft); border-radius: 4px; }
+.m-terms { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; margin: 0; }
+.m-terms dt { font-weight: 600; }
+.m-terms dd { margin: 0; color: var(--text-2); }
+@media (max-width: 700px) { .help-dl { grid-template-columns: 1fr; } .help-dl dd { margin-bottom: 8px; } }
+
+.tbl-wrap { overflow-x: auto; max-width: 100%; }

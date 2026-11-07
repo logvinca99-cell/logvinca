@@ -224,10 +224,9 @@ App.page("stores", {
         <label class="field">메모<input id="b-memo" value="${esc(b.memo || "")}"></label>
         <p class="muted small">스토어는 스토어 '수정'에서 사업자를 고르거나, 이 사업자 줄의 '스토어 추가'로 넣습니다. 사업자 하나에 최대 3개.</p></div>`,
       buttons: [
-        ...(isNew ? [] : [{ label: "삭제", danger: true, onClick: async () => {
-          const ok = await App.confirmDanger({ title: `${b.name} 삭제`, body: `<p>사업자 <b>${esc(b.name)}</b>를 지웁니다. 안의 스토어는 지우지 않고 '사업자 없음'으로 옮깁니다.</p>` });
-          if (!ok) return false;
-          await App.api(`/api/businesses/${b.id}`, { method: "DELETE" }); await this.load();
+        ...(isNew ? [] : [{ label: "삭제", danger: true, confirm: `사업자 <b>${esc(b.name)}</b>를 지웁니다. 안의 스토어는 지우지 않고 '사업자 없음'으로 옮깁니다.`, onClick: async () => {
+          try { await App.api(`/api/businesses/${b.id}`, { method: "DELETE" }); await this.load(); }
+          catch (e) { App.toast(e.message, true); return false; }
         } }]),
         { label: "취소" },
         { label: "저장", primary: true, onClick: async (m) => {
@@ -329,7 +328,7 @@ App.page("stores", {
     $("#wm-del")?.addEventListener("click", async () => {
       try { await App.api(`/api/stores/${s.id}/watermark`, { method: "DELETE" }); prev(); } catch (err) { App.toast(err.message, true); }
     });
-    // 가격 예시 (원본가 50,000원 기준)
+    // 가격 예시 (기준 구매가 50,000원 기준)
     const ex = () => {
       const pct = (id, d) => { const v = $(id).value; return v === "" ? +d : +v; };
       const m = pct("#t-price", 0), dp = pct("#t-disc", cfg.display_discount_pct ?? 30);
@@ -385,18 +384,42 @@ App.page("stores", {
     body.addEventListener("change", async (e) => {
       const inp = e.target.closest("[data-up]");
       if (!inp) return;
+      const keep = this._tplSnap(body);
       for (const f of inp.files) {
         const fd = new FormData(); fd.append("file", f); fd.append("part", inp.dataset.up);
         try { await App.api(`/api/stores/${s.id}/template/image`, { method: "POST", body: fd }); }
         catch (err) { App.toast(err.message, true); }
       }
-      this.template(s);
+      await this.template(s);
+      this._tplRestore(keep);
     });
     body.addEventListener("click", async (e) => {
       const d = e.target.closest("[data-del]");
       if (!d) return;
-      await App.api(`/api/stores/${s.id}/template/image/${encodeURIComponent(d.dataset.del)}`, { method: "DELETE" });
-      this.template(s);
+      const keep = this._tplSnap(body);
+      if (!confirm(`이 이미지를 템플릿에서 지울까요?\n(${d.dataset.del})\n\n지운 이미지는 앞으로 올리는 상품부터 빠집니다.`)) return;
+      try { await App.api(`/api/stores/${s.id}/template/image/${encodeURIComponent(d.dataset.del)}`, { method: "DELETE" }); }
+      catch (err) { return App.toast(err.message, true); }
+      await this.template(s);
+      this._tplRestore(keep);
+    });
+  },
+  /* 템플릿 창에 적던 값 (저장 전) — 이미지를 넣거나 지워 창을 다시 그려도 그대로 */
+  _tplSnap(box) {
+    const v = {};
+    $$("[name], [id]", box).forEach((el) => {
+      if (!/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName) || el.type === "file") return;
+      v[el.name || "#" + el.id] = el.type === "checkbox" || el.type === "radio" ? el.checked : el.value;
+    });
+    return v;
+  },
+  _tplRestore(v) {
+    const box = $("#m-body");
+    if (!box) return;
+    $$("[name], [id]", box).forEach((el) => {
+      const k = el.name || "#" + el.id;
+      if (!(k in v) || el.type === "file" || !/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) return;
+      if (el.type === "checkbox" || el.type === "radio") el.checked = v[k]; else el.value = v[k];
     });
   },
 
@@ -431,8 +454,7 @@ App.page("stores", {
         <label class="check"><input type="checkbox" name="enabled" ${s.enabled ? "checked" : ""}> 사용 (끄면 새 계획에서 빠짐)</label>
       </div>`,
       buttons: [
-        ...(isNew ? [] : [{ label: "삭제", danger: true, onClick: async () => {
-          if (!confirm(`'${s.name}' 스토어를 지울까요?`)) return false;
+        ...(isNew ? [] : [{ label: "삭제", danger: true, confirm: `'${esc(s.name)}' 스토어를 지웁니다.`, onClick: async () => {
           try { await App.api(`/api/stores/${s.id}`, { method: "DELETE" }); await this.load(); }
           catch (e) { App.toast(e.message, true); return false; }
         } }]),
