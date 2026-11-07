@@ -351,7 +351,7 @@ const App = {
       chem: () => `생활화학 판정 끝: 물건 ${num(r.tool)}개(인증 대상 아님으로 올림) · 화학제품 ${num(r.chemical)}개(보류) · 애매 ${num(r.unclear)}개`
         + (r.requeued ? ` · 실패했던 복사본 ${num(r.requeued)}건 다시 등록 대기` : "") + (r.chemical + r.unclear ? " · 원본 상품 '생활화학 보류'에서 검수" : ""),
       adopt: () => `기존 상품 가져오기 끝 (${r.store}): 연결 ${num(r.linked)}개` + (r.already ? ` · 이미 연결 ${num(r.already)}` : "")
-        + ` · 스토어에 없어서 뺌 ${num((r.dropped || 0) + (r.no_code || 0))} · 스토어에만 있음 ${num(r.store_only)}` + (r.dup_same ? ` · 같은 스토어 중복 ${num(r.dup_same)}` : "") + (r.dup ? ` · 같은 사진 다른 스토어 ${num(r.dup)}` : "")
+        + ` · 스토어에 없어서 뺌 ${num((r.dropped || 0) + (r.no_code || 0))} · 스토어에만 있음 ${num(r.store_only)}` + (r.dup_same ? ` · 연결 못 함 ${num(r.dup_same)}` : "")
         + (r.dropped_src ? ` · 지운 상품의 원본 ${num(r.dropped_src)}개 (원본까지 삭제 대상)` : "")
         + (r.need_orders ? " · 판매 이력 받기 필요(그 전엔 최신화·내리기 안 함)" : "")
         + " — 가져오기 화면에서 확인",
@@ -1022,7 +1022,7 @@ window.onImgError = onImgError;
 
 /* 상태 칸(누르면 거르기) 그리기 */
 function tilesHtml(defs, counts, active) {
-  return defs.map((t) => `<button class="tile ${active === t.key ? "on" : ""}" data-filter="${t.key}" style="--dot:${t.dot}">
+  return defs.map((t) => `<button class="tile ${active === t.key ? "on" : ""}" data-filter="${t.key}" style="--dot:${t.dot}"${t.title ? ` title="${esc(t.title)}"` : ""}>
     <div class="t-label">${t.label}</div><div class="t-num">${num(counts?.[t.key] ?? 0)}</div></button>`).join("");
 }
 

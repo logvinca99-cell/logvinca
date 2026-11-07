@@ -6,16 +6,16 @@ const RUN_KINDS = [["create", "등록"], ["refresh", "최신화"], ["reupload", 
 const LST_TILES = [
   { key: "all", label: "전체", dot: "var(--text-2)", count: "all_" },
   { key: "noname", label: "상품명 변경 필요", dot: "var(--err)" },
-  { key: "named", label: "올릴 준비 (이름 바꿈·안 올림)", dot: "var(--info)" },
+  { key: "named", label: "올릴 준비", dot: "var(--info)", title: "상품명을 바꿨고 + 검수 완료 + 아직 안 올린 등록 대기" },
   { key: "live", label: "판매 중", dot: "var(--ok)" },
   { key: "fail", label: "실패", dot: "var(--err)" },
   { key: "sold", label: "판매 이력 있음", dot: "var(--warn)" },
   { key: "locked", label: "잠금", dot: "var(--info)" },
   { key: "deleted", label: "내림", dot: "var(--dup)" },
   { key: "eye_done", label: "검수 완료", dot: "var(--ok)" },
-  { key: "eye_todo", label: "미검수 (새로 못 올림)", dot: "var(--muted)" },
-  { key: "nv_bad", label: "판매중지·판매금지 등 (최신화 안 함)", dot: "var(--err)" },
-  { key: "bait_left", label: "도둑방지 가격 남음 (최신화하세요)", dot: "var(--warn)", only: true },
+  { key: "eye_todo", label: "미검수", dot: "var(--muted)", title: "눈검수 안 한 원본의 복사본 — 새로 못 올림" },
+  { key: "nv_bad", label: "판매중지·금지", dot: "var(--err)", title: "판매중지·판매금지·스토어에 없음 등 — 최신화하지 않음" },
+  { key: "bait_left", label: "도둑방지 남음", dot: "var(--warn)", only: true, title: "예전 도둑방지 가격이 아직 걸려 있음 — 최신화하세요" },
 ];
 // 네이버 상태 (스토어처럼): 판매 중은 표시 안 함, 품절은 노랑, 판매중지·판매금지·스토어에 없음 등은 빨강
 const NV_LABEL = { SALE: "판매 중", OUTOFSTOCK: "품절", SUSPENSION: "판매중지", PROHIBITION: "판매금지", WAIT: "판매 대기", CLOSE: "판매 종료",
@@ -108,7 +108,7 @@ App.page("listings", {
         ${r ? `<div class="sc-run">● 지금 처리 중 · ${num(r.done || 0)} / ${num(r.total || 0)}${r.status ? ` · ${esc(r.status)}` : ""}</div>` : ""}
         <div class="sc-bigs">
           ${big(s.noname, "상품명 변경 필요", "bad")}
-          ${big(s.p_create - s.noname > 0 ? s.p_create - s.noname : 0, "올릴 준비 됨", "ready")}
+          ${big(s.named || 0, "올릴 준비 됨 (이름·검수 완료)", "ready")}
           ${big(s.live, "판매 중", "live")}
         </div>
         <div class="sc-small">

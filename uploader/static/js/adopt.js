@@ -3,7 +3,7 @@
 "use strict";
 
 const ADOPT_KINDS = [["linked", "연결"], ["already", "이미 연결"], ["dropped", "스토어에 없어 뺌"], ["store_only", "스토어에만 있음"],
-  ["dup_same", "같은 스토어 중복"], ["dup", "같은 사진 다른 스토어"], ["price_diff", "엑셀≠손님 가격"], ["mobile_disc", "모바일 할인"]];
+  ["price_diff", "엑셀≠손님 가격"], ["mobile_disc", "모바일 할인"], ["dup_same", "연결 못 함"]];
 const ymdOf = (ts) => { const d = new Date(ts * 1000); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
 App.page("adopt", {
@@ -117,7 +117,7 @@ App.page("adopt", {
         : `판매자코드가 스토어 상품과 맞는 줄 <b>${pct}%</b> (스토어 상품 ${num(r.store_products)}개)`}</div>
       <div class="ad-tiles">${tile("새로 연결 (원본 + 판매 중 복사본)", r.linked, "ok")}${tile("이미 연결돼 있음", r.already)}${tile("스토어에 없어 뺌", (r.dropped || 0) + (r.no_code || 0), "warn")}
         ${tile("└ 그중 원본에 있음 (가져온 뒤 원본까지 삭제 가능)", r.dropped_src, r.dropped_src ? "warn" : "")}${tile("스토어에만 있음 (안 가져옴)", r.store_only)}
-        ${tile("엑셀≠손님 가격 (손님 가격으로)", r.price_diff)}${tile("같은 스토어 중복 (먼저 것만)", r.dup_same)}${tile("모바일 할인", r.mobile_disc)}</div>
+        ${tile("엑셀≠손님 가격 (손님 가격으로)", r.price_diff)}${tile("모바일 할인", r.mobile_disc)}${r.dup_same ? tile("연결 못 함 (알려 주세요)", r.dup_same, "warn") : ""}</div>
       <p class="small">공통 이미지 <b>${num(r.img_kinds)}</b>종 → 상품 <b>${num(r.img_items)}</b>개에서 <b>${num(r.img_removed)}</b>장 뺌${r.existing ? ` · 이미 있던 원본 ${num(r.existing)}개는 내용 그대로(원본가만 손님 가격으로)` : ""}
         ${r.linked ? ` · 연결될 상품 상태: ${Object.entries(r.status || {}).map(([k, v]) => `${stx(k)} ${num(v)}`).join(" · ")}` : ""}</p>
       ${s.linked?.length ? `<p class="small"><b>연결될 상품 예</b> (엑셀 상품명과 스토어 상품명이 같은 상품인지 확인)</p>
@@ -199,6 +199,6 @@ App.page("adopt", {
         ${ADOPT_KINDS.map(([k]) => `<td class="num">${s[k] ? `<a href="/api/adopt/${r.id}/items.csv?kind=${k}" title="엑셀(CSV)로 받기">${num(s[k])} ⬇</a>` : (r.status === "done" ? "0" : "")}</td>`).join("")}
         <td class="num">${s.img_items !== undefined ? `${num(s.img_items)} (${num(s.img_removed || 0)}장)` : s.top_removed !== undefined ? `상단 ${num(s.top_removed || 0)} · 하단 ${num(s.bottom_removed || 0)}` : ""}</td></tr>`; }).join("")}
       </tbody></table>
-      <p class="small muted" style="margin:8px 0 0">숫자를 누르면 그 목록을 엑셀(CSV)로 받습니다. '엑셀≠손님 가격'은 엑셀 판매가와 스토어 손님 가격이 다른 상품(스토어 손님 가격으로 넣음), '모바일 할인'은 모바일에서만 더 싼 상품(최신화하면 모바일 할인이 사라짐). '스토어에만 있음'은 그 스토어에 올라가 있지만 이 파일에 없는 상품(가져오지 않음), <b>'같은 스토어 중복'</b>은 대표 사진이 같은 상품을 그 스토어에 두 번 올린 것(먼저 것만 연결 — 나머지는 스토어에서 지우세요), '같은 사진 다른 스토어'는 대표 사진이 같은 원본이 다른 스토어에도 올라가 있는 것(한 상품은 한 스토어에만 — 하나 지우세요).</p>`;
+      <p class="small muted" style="margin:8px 0 0">숫자를 누르면 그 목록을 엑셀(CSV)로 받습니다. '엑셀≠손님 가격'은 엑셀 판매가와 스토어 손님 가격이 다른 상품(스토어 손님 가격으로 넣음), '모바일 할인'은 모바일에서만 더 싼 상품(최신화하면 모바일 할인이 사라짐). '스토어에만 있음'은 그 스토어에 올라가 있지만 이 파일에 없는 상품(가져오지 않음) 스토어 상품과는 <b>1대1</b>로 연결합니다 — 대표 사진(이미지 주소)이 같아도 판매자코드가 다르면 다른 상품으로 보고 따로 원본을 만듭니다.</p>`;
   },
 });

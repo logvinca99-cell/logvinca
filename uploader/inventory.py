@@ -23,8 +23,9 @@ ORIGIN_LABEL = {"original": "원본", "adopt": "올라가 있던 이름", "ctx":
 
 
 def source_key(row):
-    """원본 구분값: 대표 썸네일 주소 기준 (판매자코드는 스토어마다 바뀌므로 쓰지 않는다)."""
-    return convert.source_fingerprint(row)
+    """원본 구분값: 대표 썸네일 주소 기준 (판매자코드는 스토어마다 바뀌므로 쓰지 않는다).
+    기존 상품 가져오기는 대표 사진이 같아도 스토어 상품마다 따로 원본을 만들도록 '_source_key'(사진#판매자코드)를 넣어 준다."""
+    return row.get("_source_key") or convert.source_fingerprint(row)
 
 
 def add_names(c, source_id, names, origin, now=None, cfg=None, rejected=None):
@@ -82,6 +83,7 @@ def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=No
         with db.tx() as c:
             for ref, row in batch:
                 key = source_key(row)
+                row.pop("_source_key", None)   # 열쇠는 원본 칸에만 (엑셀 내용에는 안 남김)
                 s = convert.summary(row, cfg)
                 fix = (c.execute("SELECT category_fix FROM sources WHERE source_key=?", (key,)).fetchone() or {"category_fix": ""})["category_fix"]
                 errors, warnings = convert.validate(convert.with_category_fix(row, fix), cfg, categories)   # 직접 고른 카테고리는 다시 불러와도 그대로
@@ -1521,8 +1523,8 @@ def listing_where(f):
         w.append("l.locked=1 AND l.status!='deleted'")
     elif st == "noname":
         w.append("l.name_id IS NULL AND l.status!='deleted' AND l.origin_no=''")
-    elif st == "named":   # 올릴 준비: 상품명을 바꿨고 아직 네이버에 안 올렸고 등록 대기 (실패·처리 중·판매 중·내림 제외)
-        w.append("l.name_id IS NOT NULL AND l.origin_no='' AND l.status='planned' AND l.op IN ('create','reupload')")
+    elif st == "named":   # 올릴 준비: 상품명을 바꿨고 + 검수 완료 + 아직 네이버에 안 올렸고 등록 대기 (실패·처리 중·판매 중·내림 제외)
+        w.append("l.name_id IS NOT NULL AND l.origin_no='' AND l.status='planned' AND l.op IN ('create','reupload') AND s.eye_at IS NOT NULL")
     elif st != "all":
         w.append("l.status=?")
         a.append(st)
@@ -1627,7 +1629,7 @@ def store_summaries(db):
     """복사본 첫 화면: 스토어마다 복사본 수·이름 변경 필요·대기·판매 중·실패."""
     rows = {r["store_id"]: r for r in db.q("""SELECT store_id, COUNT(*) AS all_,
         SUM(name_id IS NULL AND status!='deleted' AND origin_no='') AS noname,
-        SUM(name_id IS NOT NULL AND origin_no='' AND status='planned' AND op IN ('create','reupload')) AS named,
+        SUM(name_id IS NOT NULL AND origin_no='' AND status='planned' AND op IN ('create','reupload') AND source_id IN (SELECT id FROM sources WHERE eye_at IS NOT NULL)) AS named,
         SUM(status IN ('planned','queued','running')) AS pending,
         SUM(status IN ('planned','queued','running') AND op='create') AS p_create,
         SUM(status IN ('planned','queued','running') AND op='refresh') AS p_refresh,
@@ -1671,7 +1673,7 @@ def listing_counts(db, store_id=None, plan_id=None):
         SUM(origin_no!='' AND status='success') AS live, SUM(status='fail') AS fail, SUM(status='deleted') AS deleted,
         SUM(sold_count>0) AS sold, SUM(locked=1 AND status!='deleted') AS locked,
         SUM(name_id IS NULL AND status!='deleted' AND origin_no='') AS noname,
-        SUM(name_id IS NOT NULL AND origin_no='' AND status='planned' AND op IN ('create','reupload')) AS named,
+        SUM(name_id IS NOT NULL AND origin_no='' AND status='planned' AND op IN ('create','reupload') AND source_id IN (SELECT id FROM sources WHERE eye_at IS NOT NULL)) AS named,
         SUM(origin_no!='' AND registered_at<=?) AS age30, SUM(origin_no!='' AND registered_at<=?) AS age60,
         SUM(origin_no!='' AND registered_at<=?) AS age90
         FROM listings{where}""", (now - 30 * day, now - 60 * day, now - 90 * day, *a))
