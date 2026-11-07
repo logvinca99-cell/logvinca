@@ -15,7 +15,6 @@ const LST_TILES = [
   { key: "eye_done", label: "검수 완료", dot: "var(--ok)" },
   { key: "eye_todo", label: "미검수", dot: "var(--muted)", title: "눈검수 안 한 원본의 복사본 — 새로 못 올림" },
   { key: "nv_bad", label: "판매중지·금지", dot: "var(--err)", title: "판매중지·판매금지·스토어에 없음 등 — 최신화하지 않음" },
-  { key: "bait_left", label: "도둑방지 남음", dot: "var(--warn)", only: true, title: "예전 도둑방지 가격이 아직 걸려 있음 — 최신화하세요" },
 ];
 // 네이버 상태 (스토어처럼): 판매 중은 표시 안 함, 품절은 노랑, 판매중지·판매금지·스토어에 없음 등은 빨강
 const NV_LABEL = { SALE: "판매 중", OUTOFSTOCK: "품절", SUSPENSION: "판매중지", PROHIBITION: "판매금지", WAIT: "판매 대기", CLOSE: "판매 종료",
@@ -164,7 +163,7 @@ App.page("listings", {
     $("#l-sales").innerHTML = this.counts.need_sales ? `<div class="notice warn" style="margin-bottom:10px">가져온 상품 <b>${num(this.counts.need_sales)}</b>개는
       <b>판매 이력 확인 전</b>이라 최신화·내리기를 하지 않습니다 (팔린 상품을 지우지 않게). <button class="btn tiny primary" id="l-sales-go">판매 이력 확인</button></div>` : "";
     $("#l-sales-go")?.addEventListener("click", () => App.salesConfirm(+this.f.store_id, () => this.load()));
-    const active = this.f.eye ? `eye_${this.f.eye}` : this.f.nv === "bad" ? "nv_bad" : this.f.bait_left ? "bait_left" : this.f.status;
+    const active = this.f.eye ? `eye_${this.f.eye}` : this.f.nv === "bad" ? "nv_bad" : this.f.status;
     $("#l-tiles").innerHTML = tilesHtml(LST_TILES.filter((t) => !t.only || this.counts[t.key] || active === t.key), { ...this.counts, all: this.counts.all_ }, active);
     $("#l-rows").innerHTML = res.rows.length ? res.rows.map((l) => this.rowHtml(l)).join("")
       : `<tr class="empty-row"><td colspan="7">${this.counts.all_ ? "조건에 맞는 건이 없습니다."
@@ -262,7 +261,7 @@ App.page("listings", {
       + (l.name_origin ? `<span class="org org-${l.name_origin}" title="${l.name_origin === "ctx" ? "AI 키워드 이름의 양식 (A = 첫 복사용, B = 양식이 조금 다른 두 번째) — 원본 상품 화면에서 A·B 전체를 볼 수 있음" : ""}">${l.name_origin === "ctx" && l.ai_label ? `AI 이름 ${esc(l.ai_label)}` : ORIGIN[l.name_origin] || l.name_origin}</span>` : "") + lockFlag(l) + salesFlag(l) + eyeFlag(l)
       + (l.adopted ? '<span class="flag adopted" title="기존 상품 가져오기로 들어온 원본">가져옴</span>' : "")
       + (l.price_fixed ? '<span class="flag" title="가져온 복사본: 최신화·다시 올리기 때 손님 가격 그대로 (최신화 직전에 네이버에서 다시 읽음 — 판매자센터에서 바꾼 가격·옵션 추가금도)">가격 고정</span>' : "")
-      + nvFlag(l) + (l.bait_state === "on" || l.bait_state === "fail" ? '<span class="flag warn" title="예전 도둑방지 가격이 아직 네이버에 걸려 있음 — 최신화하면 원래 가격으로">도둑방지 가격 남음</span>' : "");
+      + nvFlag(l);
     return `<tr data-id="${l.id}" class="${on ? "sel" : ""} ${l.status === "deleted" ? "off" : ""}">
       <td class="w-check" data-stop><input type="checkbox" ${on ? "checked" : ""} ${this.selAll ? "disabled" : ""} aria-label="고르기"></td>
       <td>${img(l.thumb)}</td>
@@ -578,10 +577,9 @@ App.page("listings", {
       const t = e.target.closest("[data-filter]");
       if (!t) return;
       const k = t.dataset.filter;
-      this.f.nv = ""; this.f.bait_left = "";
+      this.f.nv = "";
       if (k.startsWith("eye_")) { this.f.eye = k.slice(4); this.f.status = "all"; }
       else if (k === "nv_bad") { this.f.nv = "bad"; this.f.status = "all"; this.f.eye = ""; }
-      else if (k === "bait_left") { this.f.bait_left = "1"; this.f.status = "all"; this.f.eye = ""; }
       else { this.f.status = k; this.f.eye = ""; }
       this.page = 0; this.clearSel(); this.load();
     });

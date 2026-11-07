@@ -401,7 +401,7 @@ class Runner:
                 if op == "delete":
                     self.db.set_listing(lid, "deleted", op="create", stage="", message="", origin_no="",
                                         channel_no="", deleted_at=time.time(), seconds=time.time() - t0,
-                                        bait_state="", nv_status="", nv_disp="")
+                                        nv_status="", nv_disp="")
                     self._log("ok", f"내림 · {t['name'][:40]}", store["name"])
                     self._count(sid, lid, True)
                     from . import chem
@@ -412,7 +412,7 @@ class Runner:
                 # 회차 초기화한 건은 +1 하지 않고 1회차로
                 t = {**t, "round": 1 if t.get("round_reset") else t["round"] + 1, "origin_no": ""}
                 self.db.set_listing(lid, None, op="create", round=t["round"], origin_no="", channel_no="",
-                                    deleted_at=time.time(), round_reset=0, bait_state="", nv_status="", nv_disp="")
+                                    deleted_at=time.time(), round_reset=0, nv_status="", nv_disp="")
                 if op == "refresh" and cfg.get("refresh_new_name"):   # 다시 올리기는 늘 같은 이름
                     t["name"] = self._new_name(cfg, t) or t["name"]
             elif op == "delete":

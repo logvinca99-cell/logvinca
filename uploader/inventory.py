@@ -1539,8 +1539,6 @@ def listing_where(f):
     elif nv:
         w.append("l.origin_no!='' AND l.status!='deleted' AND l.nv_status=?")
         a.append(nv)
-    if f.get("bait_left") in ("1", 1, True):   # 예전 도둑방지 가격이 아직 네이버에 걸려 있음 → 최신화로 원래 가격
-        w.append("l.origin_no!='' AND l.bait_state IN ('on','fail')")
     if f.get("eye") == "todo":      # 눈검수 안 한 원본의 복사본
         w.append("s.eye_at IS NULL")
     elif f.get("eye") == "done":
@@ -1575,7 +1573,7 @@ def query_listings(db, f, page=0, size=100):
         l.channel_no, l.seller_code, l.registered_at, l.deleted_at, l.seconds, l.plan_id, l.updated_at,
         s.id AS source_id, s.source_key, s.seller_code AS source_code, s.name AS source_name,
         s.price AS source_price, s.thumb, s.category, s.n_listings AS source_copies, s.eye_at, s.drop_pending, s.adopted, l.price_fixed,
-        l.nv_status, l.nv_disp, l.nv_at, l.bait_state,
+        l.nv_status, l.nv_disp, l.nv_at,
         t.id AS store_id, t.name AS store_name, t.store_url,
         COALESCE(NULLIF(t.code,''), 'S'||printf('%02d', t.id)) AS store_code,
         n.origin AS name_origin, n.id AS name_no, k.words AS ctx_words
@@ -1680,16 +1678,15 @@ def listing_counts(db, store_id=None, plan_id=None):
     # 눈검수: 원본 기준 (내린 것은 빼고)
     e = db.one(f"""SELECT SUM(s.eye_at IS NOT NULL) AS eye_done, SUM(s.eye_at IS NULL) AS eye_todo
         FROM listings l JOIN sources s ON s.id=l.source_id WHERE l.status!='deleted'{''.join(' AND l.' + x for x in w)}""", a)
-    # 네이버 상태 (판매 중 복사본): 최신화하지 않는 상태 수, 도둑방지 가격 남은 수
+    # 네이버 상태 (판매 중 복사본): 최신화하지 않는 상태 수
     nvw = ''.join(' AND ' + x for x in w)
     ok = ",".join(repr(x) for x in nvstate.REFRESH_OK)
     nvc = db.one(f"""SELECT SUM(nv_status!='' AND nv_status NOT IN ({ok})) AS nv_bad, SUM(nv_status='') AS nv_unknown,
-        SUM(nv_status='GONE') AS nv_gone, SUM(bait_state IN ('on','fail')) AS bait_left
+        SUM(nv_status='GONE') AS nv_gone
         FROM listings WHERE origin_no!='' AND status!='deleted'{nvw}""", a)
     need = db.one(f"""SELECT COUNT(*) AS n FROM listings l JOIN stores t ON t.id=l.store_id
         WHERE l.price_fixed=1 AND l.origin_no!='' AND l.status!='deleted'
         AND (t.orders_from IS NULL OR t.orders_synced_to IS NULL OR l.registered_at < t.orders_from - 3600){''.join(' AND l.' + x for x in w)}""", a)
     out = {**out, "need_sales": need["n"] or 0}
     return {**out, "eye_done": e["eye_done"] or 0, "eye_todo": e["eye_todo"] or 0,
-            "nv_bad": nvc["nv_bad"] or 0, "nv_unknown": nvc["nv_unknown"] or 0, "nv_gone": nvc["nv_gone"] or 0,
-            "bait_left": nvc["bait_left"] or 0}
+            "nv_bad": nvc["nv_bad"] or 0, "nv_unknown": nvc["nv_unknown"] or 0, "nv_gone": nvc["nv_gone"] or 0}
