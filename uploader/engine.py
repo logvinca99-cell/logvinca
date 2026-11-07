@@ -334,12 +334,35 @@ class Runner:
             except (Stopped, queue.Empty):
                 return
             self._one(cfg, store, client, categories, pool, cache, t)
+            self._drop_follow(t, store)
             if delay:
                 time.sleep(delay)
 
     def _stage(self, lid, label, stage):
         with self.lock:
             self.state["current"][lid] = {"name": label, "stage": stage}
+
+    def _drop_follow(self, t, store):
+        """'원본·복사본 모두 삭제'를 이 복사본이 처리 중일 때 걸었으면: 끝난 뒤 올라가 있으면 내리기 대기로, 안 올라갔으면 휴지통으로."""
+        from . import chem, trash
+        try:
+            s = self.db.one("SELECT drop_pending FROM sources WHERE id=?", (t["source_id"],))
+            if not s or not s["drop_pending"]:
+                return
+            l = self.db.one("SELECT id, status, op, origin_no, locked FROM listings WHERE id=?", (t["id"],))
+            if not l or l["status"] in ("queued", "running") or l["locked"]:
+                chem.after_drop(self.db, t["source_id"])
+                return
+            if l["origin_no"] and l["status"] != "deleted":
+                if not (l["status"] == "planned" and l["op"] == "delete"):
+                    self.db.set_listing(l["id"], "planned", op="delete", stage="", message="원본·복사본 모두 삭제 — 처리가 끝나 내리기 대기 (다시 시작하면 내림)")
+                    self._log("info", f"내리기 대기로 · {t['name'][:40]} (원본·복사본 모두 삭제 중)", store["name"])
+                return
+            if l["status"] != "deleted" or not l["origin_no"]:
+                trash.trash_listings(self.db, [l["id"]])
+            chem.after_drop(self.db, t["source_id"])
+        except Exception as e:  # noqa: BLE001 - 따라가기 실패는 기록만
+            self._log("error", f"원본·복사본 모두 삭제 이어서 하기 실패 · #{t['source_id']}: {e}", store["name"])
 
     def _one(self, cfg, store, client, categories, pool, cache, t):
         """한 건 처리. op: create(새로 등록) / refresh(지우고 다시 등록) / reupload(다시 올리기) / delete(내리기).
@@ -356,6 +379,14 @@ class Runner:
             # 지금 DB 값으로 (실행을 시작한 뒤 이름 바꾸기 등이 끼어들었을 수 있음)
             cur = self.db.one("SELECT name, name_id FROM listings WHERE id=?", (lid,)) or {}
             t = {**t, "name": cur.get("name") or t["name"], "name_id": cur.get("name_id")}
+            if op != "delete" and (self.db.one("SELECT drop_pending FROM sources WHERE id=?", (t["source_id"],)) or {}).get("drop_pending"):
+                if t["origin_no"] and op in ("refresh", "reupload"):
+                    op = "delete"   # 원본·복사본 모두 삭제 중 → 최신화 대신 내리기
+                    t = {**t, "op": op}
+                else:
+                    self.db.set_listing(lid, "fail", stage="", message="원본·복사본 모두 삭제 중이라 올리지 않음")
+                    self._count(sid, lid, None)
+                    return
             live = op in ("refresh", "delete", "reupload") and bool(t["origin_no"])
             if op != "delete" and not t.get("name_id"):
                 raise naver.ApiError("이름 변경 필요 · 원본 상품명 그대로는 올리지 않습니다 (복사본 화면에서 상품명 바꾸기)"
@@ -378,8 +409,7 @@ class Runner:
                 if lk["locked"]:
                     self.db.set_listing(lid, "success", op="create", stage="",
                                         message=f"잠금이라 지우지 않음 ({lk['lock_note']})")
-                    # '원본·복사본 모두 삭제' 중이었으면 판매 이력이 있으니 원본은 남김
-                    self.db.x("UPDATE sources SET drop_pending=0 WHERE id=? AND drop_pending=1", (t["source_id"],))
+                    # '원본·복사본 모두 삭제' 중이었으면 판매 이력이 있으니 이 줄과 원본은 남김 (나머지는 after_drop이 정리)
                     self._log("info", f"건너뜀 · {t['name'][:40]} · 잠금 ({lk['lock_note']})", store["name"])
                     self._count(sid, lid, None)
                     return

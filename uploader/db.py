@@ -484,7 +484,7 @@ class DB:
             n_success=(SELECT COUNT(*) FROM listings l WHERE l.source_id=sources.id AND l.origin_no!=''),
             n_free_names=(SELECT COUNT(*) FROM names n WHERE n.source_id=sources.id AND n.listing_id IS NULL
                           AND (n.origin NOT IN ('original','adopt') OR ?))
-            {where}""", (int(bool(config.load().get("use_original_name"))), *args))
+            {where}""", (0, *args))
 
     # ── 스토어
 

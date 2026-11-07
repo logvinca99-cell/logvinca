@@ -179,34 +179,77 @@ def trash_listings(db, ids, keep_naver=False):
 
 # ───────────────────────── 되살리기·완전히 지우기
 
+def _cols(c, table):
+    return {r[1] for r in c.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _insert_new(c, table, row, ignore=True):
+    """지금 표에 있는 칸만 넣기 (번호가 그새 다른 줄에 쓰였으면 새 번호로). → 새 번호 또는 None(무시됨)"""
+    have = _cols(c, table)
+    row = {k: v for k, v in row.items() if k in have}
+    if "id" in row and c.execute(f"SELECT 1 FROM {table} WHERE id=?", (row["id"],)).fetchone():
+        row.pop("id")
+    cols = list(row)
+    cur = c.execute(f"INSERT {'OR IGNORE ' if ignore else ''}INTO {table}({', '.join(cols)}) VALUES({', '.join('?' * len(cols))})",
+                    [_val(row[k]) for k in cols])
+    return (row.get("id") or cur.lastrowid) if cur.rowcount else None
+
+
 def _restore_listing(c, l, history):
-    """복사본 한 줄 되살리기. 스토어가 없어졌거나 같은 원본이 이미 그 스토어에 있으면 False."""
+    """복사본 한 줄 되살리기 → None(됨) 또는 못 되살린 이유."""
     if not c.execute("SELECT 1 FROM stores WHERE id=?", (l["store_id"],)).fetchone():
-        return False
+        return "그 스토어가 없어짐"
     if not c.execute("SELECT 1 FROM sources WHERE id=?", (l["source_id"],)).fetchone():
-        return False
-    if c.execute("SELECT 1 FROM listings WHERE source_id=? AND store_id=? AND status!='deleted'",
-                 (l["source_id"], l["store_id"])).fetchone():
-        return False
+        return "원본이 없음 (원본을 먼저 되살리세요)"
+    if c.execute("SELECT 1 FROM listings WHERE source_id=? AND store_id=?", (l["source_id"], l["store_id"])).fetchone():
+        return "그 스토어에 같은 원본의 복사본(내린 것 포함)이 이미 있음"
     l = dict(l)
+    if l.get("plan_id") and not c.execute("SELECT 1 FROM plans WHERE id=?", (l["plan_id"],)).fetchone():
+        l["plan_id"] = None   # 그새 없어진 복사 계획
     nid = l.get("name_id")
-    if nid and not c.execute("SELECT 1 FROM names WHERE id=? AND listing_id IS NULL", (nid,)).fetchone():
-        # 그 이름을 그새 다른 복사본이 썼거나 지워졌으면 '이름 변경 필요'로 되살린다
+    if nid and not c.execute("SELECT 1 FROM names WHERE id=? AND source_id=? AND listing_id IS NULL", (nid, l["source_id"])).fetchone():
+        # 그 이름을 그새 다른 복사본이 썼거나 지워졌으면(번호가 다른 원본 이름에 쓰였어도) '이름 변경 필요'로 되살린다
         l["name_id"] = None
         src = c.execute("SELECT name FROM sources WHERE id=?", (l["source_id"],)).fetchone()
         l["name"] = src["name"] if src else l["name"]
-    if c.execute("SELECT 1 FROM listings WHERE id=?", (l["id"],)).fetchone():
-        l.pop("id")
-    if not _insert(c, "listings", l, ignore=False):
-        return False
-    new_id = l.get("id") or c.execute("SELECT last_insert_rowid()").fetchone()[0]
+    new_id = _insert_new(c, "listings", l, ignore=False)
+    if not new_id:
+        return "넣지 못함"
     if l.get("name_id"):
         c.execute("UPDATE names SET listing_id=? WHERE id=?", (new_id, l["name_id"]))
     for h in history:
         h = {**h, "listing_id": new_id}
         h.pop("id", None)
-        _insert(c, "listing_history", h)
-    return True
+        _insert_new(c, "listing_history", h)
+    return None
+
+
+def _restore_source(c, d):
+    """원본(과 그 복사본·이름 후보·AI 키워드) 되살리기 → (새 원본 번호, None) 또는 (None, 이유).
+    원본 기준은 상품명(완전히 같음): 그새 같은 상품명의 원본이 들어왔으면 되살리지 않는다 (중복이 생기지 않게)."""
+    from . import convert
+    s = dict(d["source"])
+    name = str(s.get("name") or "").strip()
+    key = s.get("source_key") or ""
+    if not key.startswith("n:"):   # 예전 버전의 대표 이미지 열쇠 → 지금 기준(상품명)
+        s["source_key"] = key = convert.name_key(name)
+    if c.execute("SELECT 1 FROM sources WHERE source_key=? OR name=?", (key, name)).fetchone():
+        return None, "상품명이 완전히 같은 원본이 이미 있음 (그새 다시 불러옴)"
+    sid = _insert_new(c, "sources", s, ignore=False)
+    name_map = {}
+    for n in d["names"]:
+        old = n.get("id")
+        nid = _insert_new(c, "names", {**n, "listing_id": None, "source_id": sid})   # 같은 이름을 그새 다른 곳에서 쓰면 건너뜀
+        if nid:
+            name_map[old] = nid
+    hist = {}
+    for h in d["history"]:
+        hist.setdefault(h["listing_id"], []).append(h)
+    for l in d["listings"]:
+        _restore_listing(c, {**l, "source_id": sid, "name_id": name_map.get(l.get("name_id"))}, hist.get(l["id"], []))
+    for k in d.get("ctx_kw", []):
+        _insert_new(c, "ctx_kw", {**k, "source_id": sid})
+    return sid, None
 
 
 def restore(db, trash_ids):
@@ -215,36 +258,30 @@ def restore(db, trash_ids):
     for chunk in _chunks(trash_ids):
         m = ",".join("?" * len(chunk))
         items = db.q(f"SELECT id, kind, data FROM trash WHERE id IN ({m}) ORDER BY kind DESC, id", chunk)  # 원본 먼저
-        with db.tx() as c:
-            for t in items:
-                d = unpack(t["data"])
-                if t["kind"] == "source":
-                    s = d["source"]
-                    if c.execute("SELECT 1 FROM sources WHERE id=? OR source_key=?", (s["id"], s["source_key"])).fetchone():
-                        st["skipped"] += 1
-                        st["reasons"].append(f"원본 #{s['id']}: 같은 원본을 그새 다시 불러와서 되살리지 않음")
-                        continue
-                    _insert(c, "sources", s, ignore=False)
-                    for n in d["names"]:
-                        n = {**n, "listing_id": None}
-                        _insert(c, "names", n)   # 같은 이름을 그새 다른 곳에서 쓰면 건너뜀
-                    hist = {}
-                    for h in d["history"]:
-                        hist.setdefault(h["listing_id"], []).append(h)
-                    for l in d["listings"]:
-                        _restore_listing(c, l, hist.get(l["id"], []))
-                    for k in d.get("ctx_kw", []):
-                        _insert(c, "ctx_kw", k)
-                    touched.add(s["id"])
-                else:
-                    l = d["listing"]
-                    if not _restore_listing(c, l, d.get("history", [])):
-                        st["skipped"] += 1
-                        st["reasons"].append(f"복사본 #{l['id']}: 원본·스토어가 없거나 그 스토어에 같은 원본이 이미 있음")
-                        continue
-                    touched.add(l["source_id"])
-                c.execute("DELETE FROM trash WHERE id=?", (t["id"],))
-                st["restored"] += 1
+        for t in items:
+            d = unpack(t["data"])
+            try:
+                with db.tx() as c:   # 한 항목씩 (하나가 막혀도 나머지는 되살림)
+                    if t["kind"] == "source":
+                        sid, why = _restore_source(c, d)
+                        if why:
+                            st["skipped"] += 1
+                            st["reasons"].append(f"원본 '{str(d['source'].get('name') or '')[:30]}': {why} — 되살리지 않음")
+                            continue
+                        touched.add(sid)
+                    else:
+                        l = d["listing"]
+                        why = _restore_listing(c, l, d.get("history", []))
+                        if why:
+                            st["skipped"] += 1
+                            st["reasons"].append(f"복사본 '{str(l.get('name') or '')[:30]}': {why}")
+                            continue
+                        touched.add(l["source_id"])
+                    c.execute("DELETE FROM trash WHERE id=?", (t["id"],))
+                    st["restored"] += 1
+            except Exception as e:  # noqa: BLE001 - 이 항목만 건너뜀
+                st["skipped"] += 1
+                st["reasons"].append(f"#{t['id']}: 되살리다 오류 — {e}")
     db.recount_sources(touched)
     st["reasons"] = st["reasons"][:5]
     return st

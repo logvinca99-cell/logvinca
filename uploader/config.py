@@ -73,7 +73,6 @@ DEFAULTS = {
 
     # ── 상품명
     # 원본 상품명을 그대로 쓰는 것도 허용할지 (원본 스토어와 이름이 같아짐)
-    "use_original_name": False,
     # 재조합: 이름 후보가 모자라면 계획 만들 때 자동으로 만든다
     "auto_recombine": True,
     "name_max_len": 50,

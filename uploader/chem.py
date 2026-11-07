@@ -250,50 +250,71 @@ def set_judge(db, sids, kind):
 
 
 def delete_sources_everywhere(db, sids):
-    """원본과 그 원본의 모든 복사본 삭제. 네이버에 올라가 판매 중인 복사본은 내리기를 걸고(판매 이력·잠금은 보호),
-    다 내려가면 원본을 자동으로 휴지통으로. (바로 지운 원본 수, 내리기 건 복사본 번호들, 판매 이력으로 남긴 원본 수)"""
-    from . import inventory, trash
+    """원본과 그 원본의 모든 복사본 삭제.
+    - 잠긴 복사본(판매 이력·직접 잠금 — 판매 중·내림·대기 상관없이)은 그 줄만 남기고, 그런 원본은 원본도 남김.
+    - 잠기지 않은 판매 중 복사본은 내리기를 걸고(지금 처리 중인 것은 끝난 뒤 엔진이 이어서 내리기를 검),
+      아직 안 올린·내린 복사본은 바로 휴지통으로. 다 내려가면 원본도 휴지통으로 (잠긴 줄이 있으면 원본은 남김).
+    → {바로 지운 원본 수, 내리기 건 복사본 번호들, 내리고 지울 원본 수, 잠금이 있어 남긴 원본 수, 처리 중이라 끝나고 이어서 할 복사본 수}"""
+    from . import trash
     sids = [int(s) for s in sids]
-    live = {}
+    rows = {}
     for i in range(0, len(sids), 900):
         chunk = sids[i:i + 900]
-        for r in db.q(f"""SELECT id, source_id, locked FROM listings WHERE source_id IN ({','.join('?' * len(chunk))})
-                AND status!='deleted' AND origin_no!=''""", chunk):
-            live.setdefault(r["source_id"], []).append(r)
-    kept = {sid for sid, ls in live.items() if any(x["locked"] for x in ls)}   # 판매 이력·직접 잠금이 있는 원본은 남김
-    later = [sid for sid in live if sid not in kept]
-    now = [sid for sid in sids if sid not in live]
+        for r in db.q(f"""SELECT id, source_id, locked, status, origin_no FROM listings
+                WHERE source_id IN ({','.join('?' * len(chunk))})""", chunk):
+            rows.setdefault(r["source_id"], []).append(r)
+    busy_st = ("queued", "running")
+    live = lambda x: x["status"] != "deleted" and (x["origin_no"] or x["status"] in busy_st)  # noqa: E731
+    now, later, kept, busy = [], [], set(), 0
+    for sid in sids:
+        ls = rows.get(sid, [])
+        if any(x["locked"] for x in ls):
+            kept.add(sid)
+        if not any(live(x) and not x["locked"] for x in ls) and sid not in kept:
+            now.append(sid)
+        else:
+            later.append(sid)
     st = trash.trash_sources(db, now) if now else {"moved": 0, "skipped_live": 0}
     ids = []
     if later:
-        # 올라가 있는 복사본은 모두 내리기 대기로 (판매 중·실패·최신화 대기 포함, 지금 처리 중인 것은 끝난 뒤 다음에)
-        ids = [x["id"] for sid in later for x in live[sid]]
-        now_ts = time.time()
+        drop = [x["id"] for sid in later for x in rows.get(sid, []) if live(x) and not x["locked"] and x["status"] not in busy_st]
+        busy = sum(1 for sid in later for x in rows.get(sid, []) if x["status"] in busy_st and not x["locked"])
+        ts = time.time()
         with db.tx() as c:
-            for i in range(0, len(ids), 900):
-                chunk = ids[i:i + 900]
+            for i in range(0, len(drop), 900):
+                chunk = drop[i:i + 900]
                 c.execute(f"""UPDATE listings SET status='planned', op='delete', message='', updated_at=?
-                    WHERE id IN ({','.join('?' * len(chunk))}) AND status NOT IN ('queued','running')""", (now_ts, *chunk))
+                    WHERE id IN ({','.join('?' * len(chunk))}) AND status NOT IN ('queued','running') AND locked=0""", (ts, *chunk))
             for sid in later:
                 c.execute("UPDATE sources SET drop_pending=1 WHERE id=?", (sid,))
-        ids = [r["id"] for i in range(0, len(ids), 900) for r in db.q(
-            f"SELECT id FROM listings WHERE id IN ({','.join('?' * len(ids[i:i + 900]))}) AND status='planned' AND op='delete'", ids[i:i + 900])]
-        # 아직 안 올린 복사본은 지금 휴지통으로 (올라가 있는 것은 내린 뒤 원본과 함께)
-        pending = [r["id"] for r in db.q(f"""SELECT id FROM listings WHERE source_id IN ({','.join('?' * len(later))})
-            AND origin_no='' AND status NOT IN ('queued','running')""", later)]
+        ids = [r["id"] for i in range(0, len(drop), 900) for r in db.q(
+            f"SELECT id FROM listings WHERE id IN ({','.join('?' * len(drop[i:i + 900]))}) AND status='planned' AND op='delete'", drop[i:i + 900])]
+        # 아직 안 올린·내린(잠기지 않은) 복사본은 지금 휴지통으로
+        pending = [x["id"] for sid in later for x in rows.get(sid, []) if not live(x) and not x["locked"]]
         if pending:
             trash.trash_listings(db, pending)
-    return {"trashed": st["moved"], "drop_scheduled": ids, "drop_sources": len(later), "kept_sold": len(kept), "busy": st.get("skipped_live", 0)}
+        for sid in later:   # 내릴 것이 없으면(잠긴 줄만 남음) 바로 정리
+            after_drop(db, sid)
+    return {"trashed": st["moved"], "drop_scheduled": ids, "drop_sources": len([x for x in later if x not in kept]),
+            "kept_sold": len(kept), "busy": st.get("skipped_live", 0) + busy}
 
 
 def after_drop(db, source_id):
-    """내리기가 끝난 복사본의 원본이 '다 내리면 지우기'였고 올라가 있는 복사본이 더 없으면 휴지통으로."""
+    """'원본·복사본 모두 삭제' 중인 원본: 잠기지 않은 올라가 있는(또는 처리 중인) 복사본이 더 없으면
+    잠긴 줄이 없을 때 원본째 휴지통으로, 잠긴 줄이 있으면 나머지 복사본만 휴지통으로 보내고 원본·잠긴 줄은 남김."""
     from . import trash
     s = db.one("SELECT drop_pending FROM sources WHERE id=?", (source_id,))
     if not s or not s["drop_pending"]:
         return False
-    left = db.one("""SELECT COUNT(*) AS n FROM listings WHERE source_id=? AND status!='deleted'
+    left = db.one("""SELECT COUNT(*) AS n FROM listings WHERE source_id=? AND status!='deleted' AND locked=0
         AND (origin_no!='' OR status IN ('queued','running'))""", (source_id,))["n"]
     if left:
+        return False
+    if db.one("SELECT 1 FROM listings WHERE source_id=? AND locked=1", (source_id,)):
+        rest = [r["id"] for r in db.q("""SELECT id FROM listings WHERE source_id=? AND locked=0
+            AND status NOT IN ('queued','running') AND (origin_no='' OR status='deleted')""", (source_id,))]
+        if rest:
+            trash.trash_listings(db, rest)
+        db.x("UPDATE sources SET drop_pending=0 WHERE id=?", (source_id,))   # 판매 이력이 있어 원본은 남김
         return False
     return trash.trash_sources(db, [source_id])["moved"] > 0

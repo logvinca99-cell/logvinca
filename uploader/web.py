@@ -44,10 +44,23 @@ def _save_upload(f):
     return path
 
 
+def _clean_old_uploads(hours=6):
+    """예전에 올리다 남은 임시 파일(경고 창을 닫았거나 프로그램을 껐을 때) 정리."""
+    import glob
+    now = time.time()
+    for p in glob.glob(os.path.join(config.DATA_DIR, "tmp*")):
+        try:
+            if p.lower().endswith((".xlsx", ".xlsm", ".csv")) and now - os.path.getmtime(p) > hours * 3600:
+                os.remove(p)
+        except OSError:
+            pass
+
+
 def create_app(db=None):
     app = Flask(__name__, static_folder=None)
     app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 ** 3
     os.makedirs(config.DATA_DIR, exist_ok=True)
+    _clean_old_uploads()
     db = db or DB()
     runner = engine.Runner(db)
     if getattr(db, "_v3", False):
@@ -120,8 +133,8 @@ def create_app(db=None):
             try:   # 가격 칸 + 대표 이미지 주소 겹침 (상품명이 다른데 이미지가 같은 줄)
                 scan = inventory.upload_scan(db, excel.iter_rows(path, f.filename))
             except Exception:  # noqa: BLE001 - 읽기 오류는 불러오기 작업에서 알림
-                scan = {"price": {"n": 0}, "img": {"n": 0}}
-            if scan["price"]["n"] or scan["img"]["n"]:
+                scan = {"price": {"n": 0}, "img": {"n": 0}, "dup": {"n": 0}}
+            if scan["price"]["n"] or scan["img"]["n"] or scan["dup"]["n"]:
                 now = time.time()
                 for k, v in list(price_hold.items()):   # 한 시간 넘게 둔 것은 지움
                     if now - v[2] > 3600:
@@ -132,7 +145,7 @@ def create_app(db=None):
                             pass
                 tok = uuid.uuid4().hex
                 price_hold[tok] = (path, f.filename, now)
-                return None, jsonify({"price_warn": scan["price"], "img_dup": scan["img"], "token": tok, "file": f.filename})
+                return None, jsonify({"price_warn": scan["price"], "img_dup": scan["img"], "name_dup": scan["dup"], "token": tok, "file": f.filename})
         return (path, f.filename), None
 
     @app.post("/api/upload/drop")
@@ -215,6 +228,10 @@ def create_app(db=None):
         try:
             return jsonify({"task": tasks.start("clean_import", f"상세 정리 · 엑셀 올리기 · {name}", job)})
         except RuntimeError as e:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
             return fail(str(e))
 
     @app.get("/api/clean/<int:bid>/tags")
@@ -382,11 +399,14 @@ def create_app(db=None):
     @app.post("/api/chem/delete_preview")
     def chem_delete_preview():
         ids = _ctx_sources(body())
-        live = {r["source_id"]: r for r in db.q(f"""SELECT source_id, COUNT(*) AS n, MAX(locked) AS locked FROM listings
-            WHERE source_id IN ({','.join('?' * len(ids)) or 'NULL'}) AND status!='deleted' AND origin_no!='' GROUP BY source_id""", ids)} if ids else {}
-        kept = sum(1 for r in live.values() if r["locked"])
-        return jsonify({"sources": len(ids), "now": len(ids) - len(live), "drop_sources": len(live) - kept,
-                        "drop_listings": sum(r["n"] for r in live.values() if not r["locked"]), "kept_sold": kept})
+        # 실제 삭제와 같은 판정: 잠긴 줄(상태 상관없음)이 있는 원본은 남김, 잠기지 않은 판매 중(·처리 중) 복사본은 내림
+        agg = {r["source_id"]: r for r in db.q(f"""SELECT source_id, MAX(locked) AS locked,
+            SUM(locked=0 AND status!='deleted' AND (origin_no!='' OR status IN ('queued','running'))) AS n FROM listings
+            WHERE source_id IN ({','.join('?' * len(ids)) or 'NULL'}) GROUP BY source_id""", ids)} if ids else {}
+        kept = sum(1 for r in agg.values() if r["locked"])
+        later = [r for r in agg.values() if r["locked"] or r["n"]]
+        return jsonify({"sources": len(ids), "now": len(ids) - len(later), "drop_sources": sum(1 for r in later if not r["locked"]),
+                        "drop_listings": sum(r["n"] or 0 for r in later), "kept_sold": kept})
 
     @app.post("/api/chem/delete")
     def chem_delete():

@@ -183,9 +183,10 @@ def import_excel(db, path, filename, opts=None, progress=None, should_stop=None)
     bid = db.x("INSERT INTO clean_batch(created_at, file_name, tags, store_tag) VALUES(?,?,?,?)",
                (now, filename, srctags.join(srctags.parse(opts.get("tags"))), int(opts.get("store_tag", True))))
     cols, n = [], 0
-    st = {"total": 0, "price": 0, "code": 0, "rule_imgs": 0, "skipped_empty": 0, "img_skipped": 0}
+    st = {"total": 0, "price": 0, "code": 0, "rule_imgs": 0, "skipped_empty": 0, "img_skipped": 0, "dup": 0}
     from . import inventory
     skip_img = inventory.img_skipper(db) if opts.get("skip_img_dup") else None
+    dc = inventory.DupChecker(db)   # 상품명이 완전히 같은 원본이 이미 있거나 앞줄에 있으면 넣지 않음
     batch = []
 
     def flush():
@@ -205,9 +206,13 @@ def import_excel(db, path, filename, opts=None, progress=None, should_stop=None)
         if not any(v not in (None, "") for v in row.values()):
             st["skipped_empty"] += 1
             continue
+        if row.get("상품명") and dc.where(row):   # 상품명 중복 → 넣지 않음
+            st["dup"] += 1
+            continue
         if skip_img and row.get("상품명") and skip_img(row):   # 대표 이미지 주소 겹침 → 버리기로 고름
             st["img_skipped"] += 1
             continue
+        dc.add(row, i)
         fixed, notes = auto_fix(row, opts, rule_srcs)
         for k in ("price", "code"):
             st[k] += notes.get(k, 0)
@@ -603,7 +608,8 @@ def hold_list(db, bid):
 # ───────────────────────── ⑧ 원본으로 넣기·엑셀 저장
 
 def to_sources(db, bid, ids=None, progress=None, should_stop=None):
-    """정리 중(new)인 상품을 원본 상품으로 (보류·지운 것은 빼고). 대표 썸네일이 같은 원본이 있으면 갱신 (엑셀 불러오기와 같음).
+    """정리 중(new)인 상품을 원본 상품으로 (보류·지운 것은 빼고). 상품명이 완전히 같은 원본이 이미 있으면 '상품명 중복'으로 넣지 않음
+    (덮어쓰지 않음 — 그 상품은 정리함에 그대로 남음, 엑셀 불러오기와 같음).
     생활화학 판정 '물건'은 원본에도 남겨 올릴 때 '인증 대상 아님'으로."""
     from . import inventory
     if ids:

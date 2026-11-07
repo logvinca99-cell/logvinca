@@ -28,17 +28,62 @@ def source_key(row):
     return row.get("_source_key") or convert.name_key(row.get("상품명"))
 
 
+class DupChecker:
+    """상품명 중복 판정 (원본 기준 = 상품명이 '완전히' 같음): 이미 있는 원본(휴지통 제외)이나 이 파일 앞줄과 상품명이 같으면 중복.
+    중복 줄은 원본으로 넣지 않는다 (덮어쓰지 않음 — 고칠 것은 원본 상세 창·기준 구매가 수정으로)."""
+
+    def __init__(self, db):
+        self.known = {}
+        for r in db.q("SELECT id, name, source_key FROM sources"):
+            self.known.setdefault(r["source_key"], r["id"])
+            self.known.setdefault("=" + str(r["name"] or "").strip(), r["id"])
+        self.seen = {}
+
+    def where(self, row):
+        """중복이면 어디와 겹치는지 글, 아니면 None (기록은 안 함 — 넣기로 한 줄만 add)."""
+        name = str(row.get("상품명") or "").strip()
+        if not name:
+            return None
+        k = row.get("_source_key") or convert.name_key(name)
+        sid = self.known.get(k) or (None if row.get("_source_key") else self.known.get("=" + name))
+        if sid:
+            return f"이미 있는 원본 #{sid}"
+        if k in self.seen:
+            return f"이 파일 {self.seen[k]}행" if self.seen[k] else "이 파일 앞줄"
+        return None
+
+    def add(self, row, line=None):
+        name = str(row.get("상품명") or "").strip()
+        if name:
+            self.seen.setdefault(row.get("_source_key") or convert.name_key(name), line)
+
+
 def upload_scan(db, rows, limit=8):
-    """원본 엑셀 올리기 전 확인 (한 번 읽기): 가격 칸 + 대표 이미지 주소 겹침.
-    이미지 겹침 = 상품명이 다른데 대표 이미지 주소가 같은 줄 (파일 안의 앞줄 또는 이미 있는 원본과). 상품명이 같으면 같은 원본(갱신)이라 안 셈."""
+    """원본 엑셀 올리기 전 확인 (한 번 읽기): 상품명 중복(넣지 않음) + 가격 칸 + 대표 이미지 주소 겹침.
+    중복 = 상품명이 완전히 같은 원본이 이미 있거나 이 파일 앞줄에 있음 → 넣지 않음 (가격·이미지 확인에서도 뺌).
+    이미지 겹침 = 상품명이 다른데 대표 이미지 주소가 같은 줄 (파일 안의 앞줄 또는 이미 있는 원본과)."""
     price = {"n": 0, "total": 0, "by": {}, "labels": convert.PRICE_FLAG, "examples": []}
     img = {"n": 0, "in_file": 0, "with_sources": 0, "examples": []}
-    known = {r["img_key"]: (r["id"], r["name"]) for r in db.q("SELECT id, img_key, name FROM sources WHERE img_key!=''")}
+    dup = {"n": 0, "in_file": 0, "with_sources": 0, "examples": [], "rows": []}
+    known = {}
+    for r in db.q("SELECT id, img_key, name FROM sources WHERE img_key!=''"):
+        known.setdefault(r["img_key"], (r["id"], r["name"]))
     seen = {}
+    dc = DupChecker(db)
     for i, row in enumerate(rows, 2):
         name = str(row.get("상품명") or "").strip()
         if not name:
             continue
+        w = dc.where(row)
+        if w:
+            dup["n"] += 1
+            dup["in_file" if w.startswith("이 파일") else "with_sources"] += 1
+            if len(dup["examples"]) < limit:
+                dup["examples"].append({"line": i, "name": name[:80], "where": w})
+            if len(dup["rows"]) < 5000:
+                dup["rows"].append([i, name, w])
+            continue
+        dc.add(row, i)
         price["total"] += 1
         k = convert.price_flag(row)
         if k:
@@ -52,10 +97,10 @@ def upload_scan(db, rows, limit=8):
             continue
         ik = convert.source_fingerprint(row)
         other = None
-        if ik in seen and seen[ik][1] != name:
+        if ik in seen:   # 상품명 중복은 위에서 뺐으므로 여기 걸리면 상품명이 다른 것
             other, img_where = seen[ik][1], f"이 파일 {seen[ik][0]}행"
             img["in_file"] += 1
-        elif ik in known and known[ik][1] != name:
+        elif ik in known:
             other, img_where = known[ik][1], f"이미 있는 원본 #{known[ik][0]}"
             img["with_sources"] += 1
         if other is not None:
@@ -64,22 +109,22 @@ def upload_scan(db, rows, limit=8):
                 img["examples"].append({"line": i, "name": name[:60], "other": str(other)[:60], "where": img_where,
                                         "thumb": (convert.thumbnails(row) or [""])[0]})
         else:
-            seen.setdefault(ik, (i, name))
-    return {"price": price, "img": img}
+            seen[ik] = (i, name)
+    return {"price": price, "img": img, "dup": dup}
 
 
 def img_skipper(db):
-    """이미지 겹침 버리기: 상품명이 다른데 대표 이미지 주소가 이미 있는 원본(또는 앞서 넣은 줄)과 같으면 True → 그 줄은 안 넣음."""
-    known = {r["img_key"]: r["name"] for r in db.q("SELECT img_key, name FROM sources WHERE img_key!=''")}
+    """이미지 겹침 버리기: 대표 이미지 주소가 이미 있는 원본(또는 앞서 넣은 줄)과 같으면 True → 그 줄은 안 넣음.
+    (상품명 중복 줄은 그 전에 빠지므로 여기 오는 줄은 상품명이 다름)"""
+    known = {r["img_key"] for r in db.q("SELECT img_key FROM sources WHERE img_key!=''")}
 
     def skip(row):
-        name = str(row.get("상품명") or "").strip()
         if not convert.thumbnails(row):
             return False
         ik = convert.source_fingerprint(row)
-        if ik in known and known[ik] != name:
+        if ik in known:
             return True
-        known.setdefault(ik, name)
+        known.add(ik)
         return False
     return skip
 
@@ -112,88 +157,65 @@ def add_names(c, source_id, names, origin, now=None, cfg=None, rejected=None):
 # ───────────────────────── 1. 원본 불러오기
 
 def import_products(db, fileobj, filename, progress=None, should_stop=None, src_tags=None, store_tag=False, skip_img_dup=False):
-    """원본 엑셀(셀업 양식) 불러오기. 상품명이 완전히 같은 원본은 내용을 갱신한다. src_tags: 모든 원본에 붙일 출처 태그.
-    skip_img_dup: 대표 이미지 주소가 겹치는(상품명은 다른) 줄은 버림 (올릴 때 창에서 고름)."""
-    st = import_rows(db, ((None, r) for r in excel.iter_rows(fileobj, filename)), filename,
+    """원본 엑셀(셀업 양식) 불러오기. 상품명이 완전히 같은 원본이 이미 있으면(또는 파일 안에 또 나오면) '상품명 중복'으로 넣지 않는다
+    (덮어쓰지 않음). src_tags: 모든 원본에 붙일 출처 태그. skip_img_dup: 대표 이미지 주소가 겹치는(상품명은 다른) 줄은 버림 (올릴 때 창에서 고름)."""
+    st = import_rows(db, ((i, r) for i, r in enumerate(excel.iter_rows(fileobj, filename), 2)), filename,
                      total_hint=excel.count_rows(fileobj, filename), progress=progress, should_stop=should_stop,
-                     src_tags=src_tags, store_tag=store_tag, skip_img=img_skipper(db) if skip_img_dup else None)
+                     src_tags=src_tags, store_tag=store_tag, skip_img=img_skipper(db) if skip_img_dup else None, line_refs=True)
     st.pop("refs", None)
     return st
 
 
-def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=None, src_tags=None, store_tag=False, skip_img=None):
-    """원본 줄들을 원본 상품으로 (엑셀 불러오기·상세 정리 공용). rows: (참조, 엑셀 줄 사전) 반복자.
-    src_tags: 모든 줄에 붙일 출처 태그, store_tag: 수집URL의 스토어도 태그로 (이미 있는 원본은 태그를 더함).
-    돌려주는 refs: {참조: 원본 번호} (넣거나 갱신한 것만)."""
+def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=None, src_tags=None, store_tag=False, skip_img=None, line_refs=False, price_src="file"):
+    """원본 줄들을 새 원본 상품으로 (엑셀 불러오기·상세 정리·기존 상품 가져오기 공용). rows: (참조, 엑셀 줄 사전) 반복자.
+    상품명이 완전히 같은 원본이 이미 있거나 앞줄에 있으면 '상품명 중복'으로 넣지 않는다 (덮어쓰지 않음 — 원본 기준은 처음 넣은 것).
+    src_tags: 모든 줄에 붙일 출처 태그, store_tag: 수집URL의 스토어도 태그로. line_refs: 참조가 엑셀 줄 번호.
+    돌려주는 refs: {참조: 원본 번호} (새로 넣은 것만), dup_rows: [[줄, 상품명, 겹치는 곳]] (앞 5000개)."""
     src_tags = srctags.parse(src_tags)
     cfg = config.load()
     lex = lexicon.get(db)
     categories = naver.cached_categories()
     now = time.time()
     iid = db.x("INSERT INTO imports(kind, file_name, created_at) VALUES('products', ?, ?)", (file_name, now))
-    stats = {"total": 0, "added": 0, "updated": 0, "invalid": 0, "name_dup": 0, "adopted_kept": 0, "img_skipped": 0}
+    stats = {"total": 0, "added": 0, "invalid": 0, "dup": 0, "dup_rows": [], "img_skipped": 0}
     refs = {}
     touched = []
     batch = []
+    dc = DupChecker(db)
+
+    def dup_row(ref, row, where):
+        stats["dup"] += 1
+        if len(stats["dup_rows"]) < 5000:
+            stats["dup_rows"].append([ref if line_refs else None, str(row.get("상품명") or "")[:200], where])
 
     def flush():
         with db.tx() as c:
             for ref, row in batch:
                 key = source_key(row)
                 row.pop("_source_key", None)   # 열쇠는 원본 칸에만 (엑셀 내용에는 안 남김)
+                if c.execute("SELECT 1 FROM sources WHERE source_key=?", (key,)).fetchone():   # (생기면 안 됨 — 위에서 걸렀음) 덮어쓰지 않음
+                    dup_row(ref, row, "이미 있는 원본")
+                    continue
                 s = convert.summary(row, cfg)
-                fix = (c.execute("SELECT category_fix FROM sources WHERE source_key=?", (key,)).fetchone() or {"category_fix": ""})["category_fix"]
-                errors, warnings = convert.validate(convert.with_category_fix(row, fix), cfg, categories)   # 직접 고른 카테고리는 다시 불러와도 그대로
+                errors, warnings = convert.validate(row, cfg, categories)
                 warnings += _name_warnings(s["name"], lex)
                 tags = ",".join(convert.tags(row))
                 vals = (s["name"], s["price"], s["category"], s["thumb"], s["option_count"], s["image_count"],
                         int(s["has_video"]), tags, pack(row), json.dumps(errors, ensure_ascii=False),
                         json.dumps(warnings, ensure_ascii=False), int(not errors), s["seller_code"], iid, now)
-                old = c.execute("SELECT id, name, src_tags, adopted, data FROM sources WHERE source_key=?", (key,)).fetchone()
-                if old and old["adopted"]:
-                    # 기존 상품 가져오기로 들어온 원본: 스토어 손님 가격·올라가 있는 상세를 지킨다 (다른 엑셀로 덮어쓰지 않음).
-                    # '원본 이름 없음'(1)이면 이 엑셀의 상품명을 원본 이름으로만 채운다 → 2(원본 이름 있음)
-                    sid = old["id"]
-                    stats["adopted_kept"] += 1
-                    if old["adopted"] == 1 and s["name"] and s["name"] != old["name"]:
-                        d = unpack(old["data"])
-                        d["상품명"] = s["name"]
-                        c.execute("UPDATE sources SET name=?, data=?, adopted=2, updated_at=? WHERE id=?", (s["name"], pack(d), now, sid))
-                        ctxkw.invalidate(c, sid)
-                        add_names(c, sid, [s["name"]], "original", now)
-                    tg = srctags.for_row(row, src_tags, store_tag)
-                    if tg:
-                        new_tags = srctags.merge(old["src_tags"], tg)
-                        if new_tags != old["src_tags"]:
-                            c.execute("UPDATE sources SET src_tags=? WHERE id=?", (new_tags, sid))
-                    touched.append(sid)
-                    if ref is not None:
-                        refs[ref] = sid
-                    continue
-                if old:
-                    c.execute("""UPDATE sources SET name=?, price=?, category=?, thumb=?, option_count=?,
-                        image_count=?, has_video=?, tags=?, data=?, errors=?, warnings=?, valid=?, seller_code=?,
-                        import_id=?, updated_at=? WHERE id=?""", (*vals, old["id"]))
-                    if old["name"] != s["name"]:
-                        ctxkw.invalidate(c, old["id"])   # 원본 상품명이 바뀌면 AI 키워드·그 이름 후보 무효 (새 원본 이름 기준으로)
-                    sid = old["id"]
-                    stats["updated"] += 1
-                else:
-                    sid = c.execute("""INSERT INTO sources(name, price, category, thumb, option_count, image_count,
-                        has_video, tags, data, errors, warnings, valid, seller_code, import_id, updated_at, source_key,
-                        created_at, price_seed) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (*vals, key, now, key)).lastrowid
-                    stats["added"] += 1
+                # 기준 구매가 = 이 파일의 손님 가격 (판매가 - 할인가), 처음 넣을 때 고정
+                sid = c.execute("""INSERT INTO sources(name, price, category, thumb, option_count, image_count,
+                    has_video, tags, data, errors, warnings, valid, seller_code, import_id, updated_at, source_key,
+                    created_at, price_seed, price_src, price_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (*vals, key, now, key, price_src, now)).lastrowid
+                stats["added"] += 1
                 c.execute("UPDATE sources SET img_key=? WHERE id=?", (s["img_key"], sid))
                 tg = srctags.for_row(row, src_tags, store_tag)
                 if tg:
-                    new_tags = srctags.merge(old["src_tags"] if old else "", tg)
-                    if not old or new_tags != old["src_tags"]:
-                        c.execute("UPDATE sources SET src_tags=? WHERE id=?", (new_tags, sid))
+                    c.execute("UPDATE sources SET src_tags=? WHERE id=?", (srctags.merge("", tg), sid))
                 if errors:
                     stats["invalid"] += 1
-                _, dup = add_names(c, sid, [s["name"]], "original", now)
-                if not old:
-                    stats["name_dup"] += dup  # 다른 원본과 상품명이 같음
+                add_names(c, sid, [s["name"]], "original", now)
                 touched.append(sid)
                 if ref is not None:
                     refs[ref] = sid
@@ -204,9 +226,14 @@ def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=No
             break
         if not row.get("상품명"):
             continue
+        w = dc.where(row)
+        if w:   # 상품명 중복 → 넣지 않음
+            dup_row(ref, row, w)
+            continue
         if skip_img and skip_img(row):   # 대표 이미지 주소 겹침 → 버리기로 고름
             stats["img_skipped"] += 1
             continue
+        dc.add(row, ref if line_refs else None)
         batch.append((ref, row))
         stats["total"] += 1
         if len(batch) >= CHUNK:
@@ -216,10 +243,9 @@ def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=No
     if batch:
         flush()
     db.recount_sources(touched)
-    reprice_pending(db)   # 원본가가 바뀐 원본의 아직 안 올린 복사본 가격도 다시
-    db.x("UPDATE imports SET total=?, added=?, updated=?, skipped=?, note=? WHERE id=?",
-         (stats["total"], stats["added"], stats["updated"], stats["invalid"],
-          f"원본 상품명 중복 {stats['name_dup']}개", iid))
+    db.x("UPDATE imports SET total=?, added=?, updated=0, skipped=?, note=? WHERE id=?",
+         (stats["total"], stats["added"], stats["invalid"],
+          f"상품명 중복이라 안 넣음 {stats['dup']}개" + (f" · 대표 이미지 겹쳐서 버림 {stats['img_skipped']}개" if stats["img_skipped"] else ""), iid))
     stats["import_id"] = iid
     stats["refs"] = refs
     if db.one("SELECT 1 FROM dict_syn LIMIT 1"):
@@ -492,7 +518,7 @@ def generate_recombine(db, ids, per_source, progress=None, should_stop=None):
     """원본마다 안 쓴 이름 후보가 per_source개가 되도록 재조합으로 채운다."""
     cfg = config.load()
     cfg["_lex"] = lexicon.get(db)
-    use_orig = int(bool(cfg.get("use_original_name")))
+    use_orig = 0   # 원본 이름은 복사본 이름 후보가 아님
     stats = {"sources": 0, "added": 0, "short": 0, "few_words": 0}
     new_min = int(cfg.get("recombine_new_min") or 0)
     if progress:
@@ -611,7 +637,7 @@ def import_names(db, fileobj, filename, progress=None, should_stop=None):
     cfg["_lex"] = lexicon.get(db)
     rejected = []
     iid = db.x("INSERT INTO imports(kind, file_name, created_at) VALUES('names', ?, ?)", (filename, now))
-    stats = {"rows": 0, "added": 0, "dup": 0, "not_found": 0, "same_as_original": 0}
+    stats = {"rows": 0, "added": 0, "dup": 0, "not_found": 0, "ambiguous": 0, "same_as_original": 0}
     key_col = name_cols = None
     by_name = by_thumb = False
     batch = []
@@ -619,14 +645,17 @@ def import_names(db, fileobj, filename, progress=None, should_stop=None):
     def flush():
         with db.tx() as c:
             for key, names in batch:
-                if by_name:
-                    src = c.execute("SELECT id, name FROM sources WHERE id IN (SELECT source_id FROM names "
-                                    "WHERE norm=? AND origin='original')", (namegen.normalize(key),)).fetchone()
+                if by_name:   # 원본 상품명이 완전히 같은 원본
+                    found = c.execute("SELECT id, name FROM sources WHERE name=?", (key,)).fetchall()
                 elif by_thumb:
-                    src = c.execute("SELECT id, name FROM sources WHERE img_key=?", (key,)).fetchone()
+                    found = c.execute("SELECT id, name FROM sources WHERE img_key=? LIMIT 2", (key,)).fetchall()
                 else:
-                    src = c.execute("SELECT id, name FROM sources WHERE seller_code=? OR source_key=?",
-                                    (key, key)).fetchone()
+                    found = c.execute("SELECT id, name FROM sources WHERE seller_code=? OR source_key=? LIMIT 2",
+                                      (key, key)).fetchall()
+                if len(found) > 1:   # 여러 원본에 맞음 → 아무 데나 붙이지 않음
+                    stats["ambiguous"] += 1
+                    continue
+                src = found[0] if found else None
                 if not src:
                     stats["not_found"] += 1
                     continue
@@ -643,10 +672,11 @@ def import_names(db, fileobj, filename, progress=None, should_stop=None):
             cols = list(row.keys())
             key_col = next((k for k in NAME_KEY_COLS if k in cols), None)
             name_cols = [k for k in cols if "상품명" in k and not any(x in k for x in ("원본", "기존", "원래"))]
-            if "썸네일" in cols:
-                key_col, by_thumb = "썸네일", True  # 원본 엑셀 형식 그대로면 썸네일로 찾는 게 가장 정확
-            if not key_col and "원본상품명" in cols:
-                key_col, by_name = "원본상품명", True
+            orig_col = next((k for k in ("원본상품명", "원본 상품명") if k in cols), None)
+            if orig_col:
+                key_col, by_name = orig_col, True   # 원본 기준은 상품명(완전히 같음) → 가장 정확
+            elif "썸네일" in cols and not key_col:
+                key_col, by_thumb = "썸네일", True  # 원본 엑셀 형식 그대로면 썸네일로 (여러 원본에 맞으면 건너뜀)
             if not key_col or not name_cols:
                 raise ValueError(f"원본을 찾을 열(판매자코드 등)이나 새 상품명 열을 찾지 못했습니다. 이 파일의 열: {', '.join(cols)}")
         key = str(row.get(key_col) or "").strip()
@@ -671,7 +701,7 @@ def import_names(db, fileobj, filename, progress=None, should_stop=None):
     db.recount_sources()
     db.x("UPDATE imports SET total=?, added=?, skipped=?, note=? WHERE id=?",
          (stats["rows"], stats["added"], stats["dup"] + stats["not_found"],
-          f"원본 못 찾음 {stats['not_found']} · 다른 이름과 중복 {stats['dup']}", iid))
+          f"원본 못 찾음 {stats['not_found']} · 여러 원본에 맞아 건너뜀 {stats['ambiguous']} · 다른 이름과 중복 {stats['dup']}", iid))
     stats["key_col"], stats["name_cols"] = key_col, name_cols
     stats["rejected"] = len(rejected)
     stats["rejected_examples"] = rejected[:5]
@@ -833,7 +863,7 @@ def assign_name(c, lid, store_id, s, nm, now, ctx):
 
 def _fill_names(c, s, need, cfg, now):
     """이름 후보가 need개보다 적으면 재조합으로 채우고, 안 쓴 후보 목록을 돌려준다."""
-    use_orig = bool(cfg.get("use_original_name"))
+    use_orig = False
     pool = _free_names(c, s["id"], use_orig)
     if len(pool) < need and cfg.get("auto_recombine", True):
         sibs = _siblings(c, s["id"])
@@ -865,7 +895,11 @@ def plan_spread(db, ids, store_ids, per_product, seed=None):
     assigned = {sid: 0 for sid in stores}
     pair = {}
     have = {}
-    for r in db.q("SELECT source_id, store_id FROM listings WHERE status!='deleted'"):
+    gone = {}
+    for r in db.q("SELECT source_id, store_id, status FROM listings"):
+        if r["status"] == "deleted":   # 내림: 자리는 차지(원본당 최대 수에 셈), 다시 고르면 그 줄을 되살림
+            gone.setdefault(r["source_id"], set()).add(r["store_id"])
+            continue
         have.setdefault(r["source_id"], set()).add(r["store_id"])
         if r["store_id"] in assigned:
             assigned[r["store_id"]] += 1
@@ -885,10 +919,12 @@ def plan_spread(db, ids, store_ids, per_product, seed=None):
     before = dict(assigned)
     for sid in order:
         mine = set(have.get(sid, ()))
-        want = min(max_copies - len(mine), max(0, per_product - len(mine & set(stores))))
+        dead = gone.get(sid, set()) - mine
+        fresh_left = max_copies - len(mine | dead)
+        want = max(0, per_product - len(mine & set(stores)))
         picks = []
-        for _ in range(max(0, want)):
-            cand = [s for s in stores if s not in mine and free[s] > 0]
+        for _ in range(want):
+            cand = [s for s in stores if s not in mine and free[s] > 0 and (s in dead or fresh_left > 0)]
             if not cand:
                 break
             score = {s: assigned[s] + 3 * sum(pair.get(_pair(s, t), 0) for t in mine) for s in cand}
@@ -898,6 +934,8 @@ def plan_spread(db, ids, store_ids, per_product, seed=None):
                 k = _pair(pick, t)
                 pair[k] = pair.get(k, 0) + 1
             mine.add(pick)
+            if pick not in dead:
+                fresh_left -= 1
             picks.append(pick)
             assigned[pick] += 1
             free[pick] -= 1
@@ -1000,7 +1038,8 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
                             c.execute("DELETE FROM names WHERE listing_id=? AND origin NOT IN ('original','adopt')", (old["id"],))
                             c.execute("UPDATE names SET listing_id=NULL WHERE listing_id=?", (old["id"],))
                             c.execute("UPDATE listings SET name_id=NULL, name=? WHERE id=?", (s["name"], old["id"]))
-                        c.execute("""UPDATE listings SET status='planned', op='create', round=round+1, plan_id=?,
+                        c.execute("""UPDATE listings SET status='planned', op='create',
+                            round=CASE WHEN round_reset=1 THEN 1 ELSE round+1 END, round_reset=0, plan_id=?,
                             message='', stage='', updated_at=? WHERE id=?""", (pid, now, old["id"]))
                         st["revived"] += 1
                     else:
@@ -1269,7 +1308,7 @@ def rename_listings(db, ids, method="recombine", progress=None, should_stop=None
                         s["name"], cfg, cfg["_lex"], s.get("category") or "", **_kw_args(s))) < new_min:
                     st["few_words"] += 1
                 if method == "pool":
-                    pool = _free_names(c, s["id"], bool(cfg.get("use_original_name")))
+                    pool = _free_names(c, s["id"], False)
                 elif method == "ai":
                     pool = _fill_names(c, s, len(ls), {**cfg, "auto_recombine": False}, now)   # AI 이름만 (모자라면 그대로)
                 else:
@@ -1279,7 +1318,7 @@ def rename_listings(db, ids, method="recombine", progress=None, should_stop=None
                     if pool is None:
                         nm = name_for_listing(c, s, l["store_id"], cfg, now, ctx, avoid=old.get(l["id"], ()))
                         if not nm:   # 스토어에 맞춘 이름을 못 만들면 만들어 둔 후보라도
-                            free = _free_names(c, s["id"], bool(cfg.get("use_original_name")))
+                            free = _free_names(c, s["id"], False)
                             nm = free[0] if free else None
                     elif pool:
                         nm = pool.pop(0)
@@ -1443,7 +1482,9 @@ def move_listings(db, ids, to_store):
     rows = []
     for i in range(0, len(ids), 900):
         ch = ids[i:i + 900]
-        rows += db.q(f"""SELECT l.id, l.store_id, l.source_id, l.name, l.name_id, l.status, l.origin_no, l.locked, s.price AS src_price, COALESCE(NULLIF(s.price_seed,''), s.source_key) AS source_key
+        rows += db.q(f"""SELECT l.id, l.store_id, l.source_id, l.name, l.name_id, l.status, l.origin_no, l.locked, l.registered_at, l.sold_count,
+            EXISTS(SELECT 1 FROM listing_history h WHERE h.listing_id=l.id) AS has_hist,
+            s.price AS src_price, COALESCE(NULLIF(s.price_seed,''), s.source_key) AS source_key
             FROM listings l JOIN sources s ON s.id=l.source_id WHERE l.id IN ({','.join('?' * len(ch))}) ORDER BY l.id""", ch)
     old_trash, touched = [], set()
     now = time.time()
@@ -1463,7 +1504,7 @@ def move_listings(db, ids, to_store):
                 st["full"] += 1
                 continue
             price = convert.store_price(r["src_price"], f"{r['source_key']}|{to['id']}", cfg, to)
-            if r["status"] == "deleted":
+            if r["status"] == "deleted" or r["registered_at"] or r["sold_count"] or r["has_hist"]:   # 예전 스토어 기록은 그 줄에 남겨 휴지통으로
                 new = c.execute("""INSERT INTO listings(store_id, source_id, plan_id, name, price, status, op, round, created_at, updated_at)
                     VALUES(?,?,NULL,?,?,'planned','create',1,?,?)""", (to["id"], r["source_id"], r["name"], price, now, now)).lastrowid
                 if r["name_id"]:

@@ -3,7 +3,7 @@
 "use strict";
 
 const ADOPT_KINDS = [["linked", "연결"], ["already", "이미 연결"], ["dropped", "스토어에 없어 뺌"], ["store_only", "스토어에만 있음"],
-  ["price_diff", "엑셀≠손님 가격"], ["mobile_disc", "모바일 할인"], ["dup_code", "판매자코드 겹침"], ["dup_same", "연결 못 함"]];
+  ["price_diff", "엑셀≠손님 가격"], ["name_dup", "상품명 중복"], ["dup_code", "판매자코드 겹침"], ["dup_same", "연결 못 함"]];
 const ymdOf = (ts) => { const d = new Date(ts * 1000); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
 App.page("adopt", {
@@ -18,8 +18,9 @@ App.page("adopt", {
         <ul class="small" style="margin:0;padding-left:18px;line-height:1.7">
           <li>스토어에 있는 상품 → <b>원본</b>(엑셀 내용, 고른 공통 이미지(스토어 상단·하단 배너 등)는 빼고) + 그 스토어의 <b>판매 중 복사본</b>. 내리기·최신화·다른 스토어로 복사가 똑같이 됩니다.</li>
           <li><b>순서</b>: 파일 올리기 → 스토어·뺄 공통 이미지 고르기 → <b>[맞춰 보기]</b>(아무것도 안 바뀜 — 연결될 수·버릴 수·예시 확인) → <b>[이대로 가져오기]</b>. 잘못 가져왔으면 기록의 <b>[가져오기 되돌리기]</b>(이 프로그램에서만 빼기 — 네이버 상품은 그대로).</li>
-          <li><b>원본가 = 그 스토어의 지금 손님 가격</b>(엑셀 판매가가 아님 — 따로 건 할인까지 반영). 복사본은 <b>최신화 때도 손님 가격 그대로</b>(가격 고정 — 최신화 직전에 네이버에서 다시 읽음, 옵션 추가금도), 다른 스토어로 복사할 때는 이 원본가에 받는 스토어 템플릿 적용.</li>
-          <li>원본에는 <b>'가져옴 · 원본 이름 없음'</b> 표시 (올라가 있던 이름이 원본 자리). 대표 사진이 같은 원본이 이미 있으면 <b>그 원본(원본 이름·AI 키워드·상세)은 그대로</b> 두고 원본가만 바꿉니다('가져옴').</li>
+          <li>새로 생기는 원본의 <b>기준 구매가 = 그 스토어의 지금 손님 가격</b>(엑셀 판매가가 아님 — 따로 건 할인까지 반영). 복사본은 <b>최신화 때도 손님 가격 그대로</b>(가격 고정 — 최신화 직전에 네이버에서 다시 읽음, 옵션 추가금도), 다른 스토어로 복사할 때는 기준 구매가 × 받는 스토어 마진율.</li>
+          <li>원본에는 <b>'가져옴 · 원본 이름 없음'</b> 표시 (올라가 있던 이름이 원본 자리). 원본 기준은 원본 엑셀과 같은 <b>상품명(완전히 같음)</b>: 같은 상품명의 원본이 이미 있으면 <b>그 원본에 연결</b>하고 그 원본(원본 이름·AI 키워드·상세·<b>기준 구매가</b>)은 그대로 둡니다('가져옴' 표시만, 고른 공통 이미지는 뺌).</li>
+          <li><b>상품명 중복</b>: 한 스토어에 상품명이 완전히 같은 상품이 둘 이상이면 <b>앞 상품만 연결</b>하고 나머지는 '상품명 중복' 목록으로 알려 드립니다(네이버 상품은 그대로).</li>
           <li><b>판매 이력</b>: 모든 판매 중 상품(가져온 것 포함)은 판매 이력을 확인해야 최신화·내리기를 합니다(팔린 상품을 지우지 않게). 아래 기록의 <b>[판매 이력 확인]</b> — 판매자센터 주문 파일을 넣거나 팔린 것을 직접 잠근 뒤 '판매 이력 확인 완료'. 그 뒤로는 최신화할 때마다 새 기간만 받아 잠급니다.</li>
           <li>브랜드·제조사·모델명·원산지는 '상세페이지 참조'로 바꿔 둡니다 (올릴 때 스토어에 맞게 들어감).</li>
           <li>엑셀에는 있는데 <b>스토어에서 지운 상품은 버립니다</b> — 그 원본이 다른 경로로 이미 들어와 있으면 <b>[원본까지 삭제]</b>로 지웁니다. 스토어에는 있는데 엑셀에 없는 상품은 가져오지 않고 <b>목록으로 알려 드립니다</b>(아래 기록에서 엑셀로 받기).</li>
@@ -117,12 +118,13 @@ App.page("adopt", {
         : `판매자코드가 스토어 상품과 맞는 줄 <b>${pct}%</b> (스토어 상품 ${num(r.store_products)}개)`}</div>
       <div class="ad-tiles">${tile("새로 연결 (원본 + 판매 중 복사본)", r.linked, "ok")}${tile("이미 연결돼 있음", r.already)}${tile("스토어에 없어 뺌", (r.dropped || 0) + (r.no_code || 0), "warn")}
         ${tile("└ 그중 원본에 있음 (가져온 뒤 원본까지 삭제 가능)", r.dropped_src, r.dropped_src ? "warn" : "")}${tile("스토어에만 있음 (안 가져옴)", r.store_only)}
-        ${tile("엑셀≠손님 가격 (손님 가격으로)", r.price_diff)}${tile("모바일 할인", r.mobile_disc)}${r.dup_same ? tile("연결 못 함 (알려 주세요)", r.dup_same, "warn") : ""}</div>
-      <p class="small">공통 이미지 <b>${num(r.img_kinds)}</b>종 → 상품 <b>${num(r.img_items)}</b>개에서 <b>${num(r.img_removed)}</b>장 뺌${r.existing ? ` · 이미 있던 원본 ${num(r.existing)}개는 내용 그대로(원본가만 손님 가격으로)` : ""}
+        ${tile("엑셀≠손님 가격 (손님 가격으로)", r.price_diff)}${tile("상품명 중복 (앞 상품만 연결)", r.name_dup, r.name_dup ? "warn" : "")}${r.dup_same ? tile("연결 못 함 (알려 주세요)", r.dup_same, "warn") : ""}</div>
+      <p class="small">공통 이미지 <b>${num(r.img_kinds)}</b>종 → 상품 <b>${num(r.img_items)}</b>개에서 <b>${num(r.img_removed)}</b>장 뺌${r.existing ? ` · 상품명이 같은 원본이 이미 있어 그 원본에 연결 ${num(r.existing)}개 (내용·기준 구매가 그대로)` : ""}
         ${r.linked ? ` · 연결될 상품 상태: ${Object.entries(r.status || {}).map(([k, v]) => `${stx(k)} ${num(v)}`).join(" · ")}` : ""}</p>
       ${s.linked?.length ? `<p class="small"><b>연결될 상품 예</b> (엑셀 상품명과 스토어 상품명이 같은 상품인지 확인)</p>
         <div class="tbl-wrap"><table class="grid small"><thead><tr><th>판매자코드</th><th>엑셀 상품명</th><th>스토어 상품명</th><th class="num">손님 가격</th><th>상태</th></tr></thead>
         <tbody>${s.linked.map((x) => `<tr><td><code>${esc(x.code)}</code></td><td>${esc(x.xl_name)}</td><td>${esc(x.name)}</td><td class="num">${num(x.final)}</td><td>${esc(stx(x.status))}</td></tr>`).join("")}</tbody></table></div>` : ""}
+      ${s.name_dup?.length ? `<p class="small"><b>상품명 중복 예</b> (연결 안 함 — 네이버 상품은 그대로)</p><ul class="small">${s.name_dup.map((x) => `<li><code>${esc(x.code || "-")}</code> ${esc(x.name)} <span class="muted">— ${esc(x.why)}</span></li>`).join("")}</ul>` : ""}
       ${s.dropped?.length ? `<p class="small"><b>스토어에 없어 뺄 상품 예</b></p><ul class="small">${s.dropped.map((x) => `<li><code>${esc(x.code)}</code> ${esc(x.name)}${x.src ? ' <span class="flag warn">원본에 있음</span>' : ""}</li>`).join("")}</ul>` : ""}
       ${s.price_diff?.length ? `<p class="small"><b>엑셀 판매가 → 스토어 손님 가격 예</b></p><ul class="small">${s.price_diff.map((x) => `<li><code>${esc(x.code)}</code> ${esc(x.name)} — ${num(x.xl)}원 → <b>${num(x.final)}원</b></li>`).join("")}</ul>` : ""}
       ${s.store_only?.length ? `<p class="small"><b>스토어에만 있는 상품 예</b> (가져오지 않음)</p><ul class="small">${s.store_only.map((x) => `<li><code>${esc(x.code || "-")}</code> ${esc(x.name)} · ${esc(stx(x.status))}</li>`).join("")}</ul>` : ""}
@@ -189,7 +191,7 @@ App.page("adopt", {
             : r.status === "undone" ? `<span class="badge">되돌림</span> <span class="small muted">${when(s.undone_at)} · 복사본 ${num(s.undone?.listings || 0)} · 원본 ${num(s.undone?.sources || 0)} 휴지통으로 (네이버 상품은 그대로)</span>`
             : r.status === "done" ? `<button class="btn tiny ghost" data-undo="${r.id}" title="이 가져오기로 연결한 복사본과 새로 생긴 원본을 이 프로그램에서만 뺌 — 네이버 상품은 그대로">가져오기 되돌리기</button>` : ""}
           ${s.linked ? `<div class="small muted">연결된 것: ${esc(st(s))}${s.managed ? ` · 이 프로그램이 올린 상품 ${num(s.managed)}개는 그대로` : ""}</div>` : ""}
-          ${s.existing ? `<div class="small muted">이미 있던 원본 ${num(s.existing)}개는 내용 그대로(원본가만 손님 가격으로)</div>` : ""}
+          ${s.existing ? `<div class="small muted">상품명이 같은 원본 ${num(s.existing)}개에 연결 (내용·기준 구매가 그대로)</div>` : ""}
           ${s.dropped_src ? `<div class="small"><span class="c-warn">스토어에서 지운 상품의 원본 ${num(s.dropped_src)}개</span> <button class="btn tiny danger" data-drop="${r.id}">원본까지 삭제</button></div>` : ""}
           ${r.sales && r.sales.adopted ? (r.sales.need
             ? `<div class="small"><span class="c-warn">판매 이력 확인 전 ${num(r.sales.need)}개 — 최신화·내리기 안 함</span>
@@ -199,6 +201,6 @@ App.page("adopt", {
         ${ADOPT_KINDS.map(([k]) => `<td class="num">${s[k] ? `<a href="/api/adopt/${r.id}/items.csv?kind=${k}" title="엑셀(CSV)로 받기">${num(s[k])} ⬇</a>` : (r.status === "done" ? "0" : "")}</td>`).join("")}
         <td class="num">${s.img_items !== undefined ? `${num(s.img_items)} (${num(s.img_removed || 0)}장)` : s.top_removed !== undefined ? `상단 ${num(s.top_removed || 0)} · 하단 ${num(s.bottom_removed || 0)}` : ""}</td></tr>`; }).join("")}
       </tbody></table>
-      <p class="small muted" style="margin:8px 0 0">숫자를 누르면 그 목록을 엑셀(CSV)로 받습니다. '엑셀≠손님 가격'은 엑셀 판매가와 스토어 손님 가격이 다른 상품(스토어 손님 가격으로 넣음), '모바일 할인'은 모바일에서만 더 싼 상품(최신화하면 모바일 할인이 사라짐). '스토어에만 있음'은 그 스토어에 올라가 있지만 이 파일에 없는 상품(가져오지 않음) 스토어 상품과는 <b>1대1</b>로 연결합니다 — 대표 사진(이미지 주소)이 같아도 판매자코드가 다르면 다른 상품으로 보고 따로 원본을 만듭니다.</p>`;
+      <p class="small muted" style="margin:8px 0 0">숫자를 누르면 그 목록을 엑셀(CSV)로 받습니다. '엑셀≠손님 가격'은 엑셀 판매가와 스토어 손님 가격이 다른 상품(스토어 손님 가격으로 넣음), '상품명 중복'은 상품명이 완전히 같은 상품이 이 스토어에 또 있어 연결하지 않은 상품(앞 상품만 연결). '스토어에만 있음'은 그 스토어에 올라가 있지만 이 파일에 없는 상품(가져오지 않음). 스토어 상품과는 판매자코드로 <b>1대1</b>로 연결하고, 원본 기준은 <b>상품명(완전히 같음)</b>입니다 — 대표 사진(이미지 주소)은 기준이 아닙니다.</p>`;
   },
 });

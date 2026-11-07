@@ -305,7 +305,7 @@ const App = {
   taskMsg(t) {
     const r = t.result || {};
     const msg = {
-      import: () => `원본 불러오기 끝: 새로 ${num(r.added)}개 · 갱신(상품명 같음) ${num(r.updated)}개 · 오류 ${num(r.invalid)}개` + (r.img_skipped ? ` · 대표 이미지 겹쳐서 버림 ${num(r.img_skipped)}개` : ""),
+      import: () => `원본 불러오기 끝: 새로 ${num(r.added)}개 · 오류 ${num(r.invalid)}개` + (r.dup ? ` · 상품명 중복이라 안 넣음 ${num(r.dup)}개 (덮어쓰지 않음)` : "") + (r.img_skipped ? ` · 대표 이미지 겹쳐서 버림 ${num(r.img_skipped)}개` : ""),
       names: () => r.not_found !== undefined
         ? `상품명 가져오기 끝: 새 이름 ${num(r.added)}개 · 다른 이름과 중복 ${num(r.dup)}개 · 원본 못 찾음 ${num(r.not_found)}줄`
           + (r.rejected ? ` · 반복·금지 단어로 버림 ${num(r.rejected)}개 (예: ${r.rejected_examples?.[0] || ""})` : "")
@@ -342,11 +342,11 @@ const App = {
         + (r.capacity ? ` · 스토어 자리 부족 ${num(r.capacity)}` : "") + (r.invalid ? ` · 오류 원본 ${num(r.invalid)}개는 뺌` : "")
         + (r.named ? ` · AI 키워드 이름 바로 붙음 ${num(r.named)}건` : "")
         + (r.created - (r.named || 0) > 0 ? " · 나머지는 복사본 화면 '이름 변경 필요'에서 상품명을 바꾼 뒤 올리세요" : ""),
-      clean_import: () => `엑셀 올리기 끝: ${num(r.total)}개 → 정리함 · 가격 한 칸으로 ${num(r.price)}개 · 상품코드 비움 ${num(r.code)}개` + (r.img_skipped ? ` · 대표 이미지 겹쳐서 버림 ${num(r.img_skipped)}개` : "")
+      clean_import: () => `엑셀 올리기 끝: ${num(r.total)}개 → 정리함 · 가격 한 칸으로 ${num(r.price)}개 · 상품코드 비움 ${num(r.code)}개` + (r.dup ? ` · 상품명 중복이라 안 넣음 ${num(r.dup)}개` : "") + (r.img_skipped ? ` · 대표 이미지 겹쳐서 버림 ${num(r.img_skipped)}개` : "")
         + (r.rule_imgs ? ` · 기억한 공통 이미지 뺌 ${num(r.rule_imgs)}장` : "") + " · 상세 정리 화면에서 이어서",
       clean_chem: () => `생활화학 판정 끝: 인증 대상 카테고리 상품 ${num(r.target)}개 · 물건 ${num(r.tool)} · 화학제품 ${num(r.chemical)} · 애매 ${num(r.unclear)}`
         + (r.chemical + r.unclear ? " (보류 목록에서 검수)" : "") + (r.error ? ` · ${r.error}` : ""),
-      clean_send: () => `원본 상품으로 넣기 끝: 새 원본 ${num(r.added)}개 · 갱신 ${num(r.updated)}개`
+      clean_send: () => `원본 상품으로 넣기 끝: 새 원본 ${num(r.added)}개` + (r.dup ? ` · 상품명 중복이라 안 넣음 ${num(r.dup)}개 (정리함에 남음)` : "")
         + (r.invalid ? ` · 검사 오류 ${num(r.invalid)}개 (원본 상품 화면에서 확인)` : "") + " · 이어서 상품명 변경 → 복사",
       chem: () => `생활화학 판정 끝: 물건 ${num(r.tool)}개(인증 대상 아님으로 올림) · 화학제품 ${num(r.chemical)}개(보류) · 애매 ${num(r.unclear)}개`
         + (r.requeued ? ` · 실패했던 복사본 ${num(r.requeued)}건 다시 등록 대기` : "") + (r.chemical + r.unclear ? " · 원본 상품 '생활화학 보류'에서 검수" : ""),
@@ -398,7 +398,7 @@ const App = {
     let r;
     if (/\/api\/(sources|clean)\/import/.test(url)) this.toast("엑셀 가격 칸(판매가·할인가·원가) 확인 중…");
     try { r = await this.api(url, { method: "POST", body: fd }); } catch (e) { this.toast(e.message, true); return null; }
-    if (r && r.price_warn) return this.priceWarn(url, r, extra);
+    if (r && r.token && (r.price_warn || r.name_dup)) return this.priceWarn(url, r, extra);
     return this.startTask(Promise.resolve(r));
   },
   /* 판매 중 상품(가져온 것·올린 것 모두)의 판매 이력 확인: 판매자센터 주문 파일을 넣거나 팔린 것을 직접 잠근 뒤 '판매 이력 확인 완료'
@@ -514,9 +514,15 @@ const App = {
     }
   },
 
-  /* 원본 엑셀 올리기 전 확인 창: 가격 칸이 이상한 줄 · 대표 이미지 주소가 겹치는 줄(상품명은 다름) → 포함할지 버릴지 고르고 넣기 */
+  /* 원본 엑셀 올리기 전 확인 창: 상품명 중복(넣지 않음) · 가격 칸이 이상한 줄 · 대표 이미지 주소가 겹치는 줄(상품명은 다름) → 포함할지 버릴지 고르고 넣기 */
   priceWarn(url, r, extra) {
-    const w = r.price_warn || { n: 0 }, im = r.img_dup || { n: 0 };
+    const w = r.price_warn || { n: 0 }, im = r.img_dup || { n: 0 }, dp = r.name_dup || { n: 0 };
+    const dupHtml = dp.n ? `<h3 style="margin:0 0 6px">상품명 중복 — ${num(dp.n)}개 <span class="flag">넣지 않음</span></h3>
+        <p>상품명이 <b>완전히 같은</b>(띄어쓰기·순서까지) 원본이 이미 있거나(${num(dp.with_sources)}개) 이 파일 앞줄에 같은 상품명이 또 있는(${num(dp.in_file)}개) 줄입니다.
+          원본은 <b>덮어쓰지 않으므로</b> 이 줄들은 넣지 않습니다. 이미 있는 원본의 가격을 고치려면 원본 상세 창의 <b>기준 구매가 [수정]</b>을 쓰세요.</p>
+        <div class="tbl-wrap"><table class="tbl small"><thead><tr><th>줄</th><th>상품명</th><th>겹치는 곳</th></tr></thead>
+          <tbody>${dp.examples.map((x) => `<tr><td>${x.line}</td><td>${esc(x.name)}</td><td>${esc(x.where)}</td></tr>`).join("")}</tbody></table></div>
+        <p style="margin:6px 0 14px"><button type="button" class="btn small" id="pw-dupcsv">중복 목록 받기 (엑셀 CSV · ${num(dp.rows.length)}줄)</button></p>` : "";
     const why = (k) => esc((w.labels || {})[k] || k);
     const priceHtml = w.n ? `<h3 style="margin:0 0 6px">가격 칸 — 이상한 줄 ${num(w.n)}개 (전체 ${num(w.total)}개)</h3>
         <p>할인가(S열)는 <b>할인 금액</b>이 규칙입니다 — 손님 가격 = 판매가 − 할인가. 다르게 적은 것 같은 줄이 있습니다.</p>
@@ -535,7 +541,17 @@ const App = {
           <label class="check"><input type="radio" name="img-dup" value="drop"><span><b>겹치는 상품은 버리고 저장</b> — 이미 있는 원본(또는 이 파일 앞줄)과 대표 이미지가 같은 줄 ${num(im.n)}개는 넣지 않음</span></label></div>` : "";
     return new Promise((resolve) => this.openModal({
       title: `올리기 전 확인 — ${r.file}`, wide: true,
-      body: priceHtml + imgHtml,
+      body: (b) => {
+        b.innerHTML = dupHtml + priceHtml + imgHtml;
+        $("#pw-dupcsv", b)?.addEventListener("click", () => {
+          const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+          const csv = "\ufeff" + [["줄", "상품명", "겹치는 곳"], ...dp.rows].map((x) => x.map(q).join(",")).join("\r\n");
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+          a.download = `상품명중복_${(r.file || "").replace(/\.[^.]+$/, "")}.csv`;
+          a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+        });
+      },
       buttons: [
         { label: "넣지 않기", noConfirm: true, onClick: () => { this.api("/api/upload/drop", { json: { token: r.token } }).catch(() => {}); resolve(null); } },
         { label: "이대로 넣기", primary: true, onClick: async (b) => {
@@ -894,7 +910,7 @@ const App = {
       body: `<p>원본 <b>${num(pv.sources)}개</b>와 그 원본의 <b>모든 스토어 복사본</b>을 지웁니다.</p><ul>
         <li>네이버에 안 올라간 원본 <b>${num(pv.now)}개</b> → 바로 휴지통</li>
         <li>판매 중인 복사본 <b>${num(pv.drop_listings)}건</b>(원본 ${num(pv.drop_sources)}개) → <b>${now ? "네이버에서 바로 내린 뒤" : "'이 쪽 완료·다음'(또는 닫기) 때 네이버에서 내린 뒤"}</b> 원본도 휴지통</li>
-        ${pv.kept_sold ? `<li>판매 이력·잠금이 있는 원본 <b>${num(pv.kept_sold)}개</b> → 지우지 않고 남김</li>` : ""}</ul>
+        ${pv.kept_sold ? `<li>판매 이력·잠금이 있는 원본 <b>${num(pv.kept_sold)}개</b> → 원본과 잠긴 복사본은 남기고, 잠기지 않은 복사본만 내리거나 휴지통으로</li>` : ""}</ul>
         <p class="small muted">휴지통에서 되살릴 수 있지만, 네이버에서 내린 상품은 다시 올려야 합니다.</p>
         <label class="check del-keep"><input type="checkbox" id="del-keep"><span><b>네이버 상품은 그대로 두고 이 프로그램에서만 빼기</b>
           <span class="muted small" style="display:block">판매 중인 복사본도 네이버에서 내리지 않고, 이 프로그램에서만 휴지통으로 (잘못 가져온 상품을 빼고 다시 가져올 때 등)</span></span></label>`,
@@ -921,7 +937,7 @@ const App = {
       this.toast(`원본 ${num(r.trashed)}개 휴지통으로` + (r.dropping ? (r.queued ? ` · 판매 중 ${num(r.dropping)}건은 내리기 대기 (지금 등록이 도는 중 — 끝난 뒤 시작에서 '내리기')`
         : !now ? ` · 판매 중 ${num(r.dropping)}건은 '이 쪽 완료·다음'(또는 닫기) 때 네이버에서 내림 — 그 전엔 되돌리기로 원래대로`
         : ` · 판매 중 ${num(r.dropping)}건 내리는 중 (다 내리면 원본도 휴지통으로)`) : "")
-        + (r.kept_sold ? ` · 판매 이력·잠금으로 남긴 원본 ${num(r.kept_sold)}개` : "") + (r.busy ? ` · 지금 올리는 중이라 남긴 원본 ${num(r.busy)}개` : "")
+        + (r.kept_sold ? ` · 판매 이력·잠금이 있는 원본 ${num(r.kept_sold)}개는 잠긴 복사본과 원본만 남김` : "") + (r.busy ? ` · 지금 처리 중인 복사본 ${num(r.busy)}건은 끝난 뒤 이어서 내리기` : "")
         + (r.error ? ` · ${r.error}` : ""), !!r.error);
       if (r.started) this.renderSideRun?.();
       this.refreshState();
@@ -947,7 +963,7 @@ const App = {
         <div id="del-all-on"><ul>
           <li>네이버에 안 올라간 원본 <b>${num(pe.now)}개</b> → 바로 휴지통 (복사본·이름 후보·AI 키워드 함께)</li>
           ${pe.drop_listings ? `<li>판매 중인 복사본 <b>${num(pe.drop_listings)}건</b>(원본 ${num(pe.drop_sources)}개, 다른 스토어 포함) → <b>${wait ? "내리기 대기에 넣고" : now ? "네이버에서 바로 내린 뒤" : "'이 쪽 완료·다음'(또는 닫기) 때 네이버에서 내린 뒤"}</b> 원본도 휴지통</li>` : ""}
-          ${pe.kept_sold ? `<li>판매 이력·잠금이 있는 원본 <b>${num(pe.kept_sold)}개</b> → 지우지 않고 남김</li>` : ""}</ul>
+          ${pe.kept_sold ? `<li>판매 이력·잠금이 있는 원본 <b>${num(pe.kept_sold)}개</b> → 원본과 잠긴 복사본은 남기고, 잠기지 않은 복사본만 내리거나 휴지통으로</li>` : ""}</ul>
           ${wait && pe.drop_listings ? '<p class="small c-warn">지금 등록이 도는 중이라 내리기는 대기에 넣습니다. 등록이 끝난 뒤 시작에서 \'내리기\'를 실행하세요.</p>' : ""}
           <p class="small muted">휴지통에서 되살릴 수 있지만, 네이버에서 내린 상품은 다시 올려야 합니다.</p></div>
         <div id="del-all-off" hidden><p>고른 복사본 <b>${num(pc.copies)}건</b>만 휴지통으로 옮깁니다. 붙어 있던 상품명은 원본의 안 쓴 후보로 돌아가고 원본은 남습니다.</p>

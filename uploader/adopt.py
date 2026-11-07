@@ -49,7 +49,8 @@ CREATE INDEX IF NOT EXISTS ix_adopt_item ON adopt_item(run_id, kind);
 KIND_LABEL = {"linked": "연결", "already": "이미 연결돼 있음", "dropped": "스토어에 없어서 뺌", "store_only": "스토어에만 있음 (파일에 없음)",
               "dup_same": "연결 못 함", "dup": "같은 대표 사진이 다른 스토어에도 (예전 기록)",
               "price_diff": "엑셀 판매가와 스토어 손님 가격이 다름 (스토어 손님 가격으로 넣음)",
-              "mobile_disc": "모바일 할인이 따로 있음 (최신화하면 사라짐)", "dup_code": "파일 안 판매자코드 겹침 (첫 줄만 씀)"}
+              "mobile_disc": "모바일 할인 (예전 기록)", "dup_code": "파일 안 판매자코드 겹침 (첫 줄만 씀)",
+              "name_dup": "상품명 중복 — 상품명이 완전히 같은 상품이 이 스토어에 또 있음 (앞 상품만 연결)"}
 NAVER_STATUS = {"SALE": "판매 중", "OUTOFSTOCK": "품절", "SUSPENSION": "판매중지", "WAIT": "판매 대기", "CLOSE": "판매 종료",
                 "PROHIBITION": "판매 금지", "UNADMISSION": "승인 대기", "REJECTION": "승인 거부"}
 
@@ -178,8 +179,8 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
     dry=True면 맞춰 보기만 (아무것도 바꾸지 않고 결과·예시만). products: 맞춰 볼 때 받은 스토어 상품 목록 (다시 받지 않게)."""
     st = {"rows": 0, "linked": 0, "already": 0, "dropped": 0, "store_only": 0, "dup": 0, "dup_same": 0, "no_code": 0,
           "img_items": 0, "img_removed": 0, "img_kinds": len(opts.get("remove_imgs") or []), "store_products": 0, "status": {}, "managed": 0,
-          "price_diff": 0, "mobile_disc": 0, "dropped_src": 0, "existing": 0, "code_changed": 0}
-    samples = {"linked": [], "dropped": [], "store_only": [], "price_diff": []}
+          "price_diff": 0, "name_dup": 0, "dropped_src": 0, "existing": 0, "code_changed": 0}
+    samples = {"linked": [], "dropped": [], "store_only": [], "price_diff": [], "name_dup": []}
 
     def sample(kind, **kw):
         if dry and len(samples[kind]) < 8:
@@ -254,10 +255,6 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
                          note=f"엑셀 {xl:,}원 → 스토어 손님 가격 {final:,}원")
                 sample("price_diff", code=p["code"], name=p["name"], xl=xl, final=final)
             r["판매가"], r["할인가"] = final, None
-        if p.get("mobile") and p["channel_no"] not in managed:
-            st["mobile_disc"] += 1
-            add_item("mobile_disc", code=p["code"], name=p["name"], channel_no=p["channel_no"], status=p["status"], reg_at=p["reg_at"],
-                     note=f"PC {final:,}원 / 모바일 {p['mobile']:,}원")
         keep.append((i, r))
         matched[i] = p
     for p in products:   # 스토어에만 있는 것 (이 프로그램이 이미 관리하는 것은 빼고)
@@ -271,26 +268,24 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
         return _dry_rest(db, store, st, samples, rows, keep, matched, managed, unmatched)
 
     # ④ 원본으로 넣기. 상품명이 완전히 같은 원본이 이미 있으면 덮어쓰지 않는다 (원래 원본 이름·AI 키워드·상세를 지킴):
-    #    예전에 불러온 원본이면 원본가만 이 스토어 손님 가격으로 바꾸고 '가져옴 · 원본 이름 있음'(2), 이미 가져온 원본이면 그대로.
+    #    예전에 불러온 원본이면 기준 구매가·내용은 그대로 '가져옴 · 원본 이름 있음'(2) 표시만 (고른 공통 이미지는 뺌), 이미 가져온 원본이면 그대로.
     #    원본 열쇠는 상품명(완전히 같음) — 대표 이미지는 기준이 아님
     if progress:
         progress(0, len(keep), f"원본으로 넣는 중 {len(keep):,}개")
     tags = ["가져옴", store["name"]]
-    keys = _assign_keys(db, store["id"], keep, matched)   # 1대1: 대표 사진이 같아도 스토어 상품마다 원본 하나
-    for i, r in keep:
-        if keys[i] != inventory.source_key(r):
-            r["_source_key"] = keys[i]
+    keys, why = _assign_keys(db, store["id"], keep, matched, managed)   # 원본 열쇠 = 상품명 (원본 엑셀과 같은 기준)
     first, refs = {}, {}
     for i, r in keep:
-        if matched[i]["channel_no"] in managed:   # 이미 이 프로그램이 관리하는 상품 → 원본을 새로 만들지 않고 '이미 연결'
-            p = matched[i]
+        p = matched[i]
+        if p["channel_no"] in managed:   # 이미 이 프로그램이 관리하는 상품 → 원본을 새로 만들지 않고 '이미 연결'
             st["already"] += 1
             add_item("already", code=p["code"], name=p["name"], channel_no=p["channel_no"], status=p["status"], reg_at=p["reg_at"])
             continue
-        k = keys[i]
-        if k in first:
+        if keys[i] is None:   # 상품명 중복 → 연결 안 함 (네이버 상품은 그대로)
+            st["name_dup"] += 1
+            add_item("name_dup", code=p["code"], name=p["name"], channel_no=p["channel_no"], status=p["status"], reg_at=p["reg_at"], note=why[i])
             continue
-        first[k] = i
+        first[keys[i]] = i
     exist = {}
     ks = list(first)
     for j in range(0, len(ks), 900):
@@ -319,13 +314,14 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
     new_rows = [(i, rows_by_i[i]) for k, i in first.items() if k not in exist]
     if new_rows:
         imp = inventory.import_rows(db, iter(new_rows), f"기존 상품 가져오기 · {store['name']} · {filename}", total_hint=len(new_rows),
-                                    progress=progress, should_stop=should_stop, src_tags=tags, store_tag=False)
+                                    progress=progress, should_stop=should_stop, src_tags=tags, store_tag=False, price_src="adopt")
         refs.update(imp.get("refs") or {})
-    if exist:
-        inventory.reprice_pending(db)   # 원본가가 바뀐 예전 원본의 아직 안 올린 복사본 가격도 다시
-    for i, r in keep:   # 파일 안에서 열쇠가 같은 뒷줄(판매자코드가 같은 줄) → 첫 줄의 원본
-        if i not in refs and matched[i]["channel_no"] not in managed and first.get(keys[i]) in refs:
-            refs[i] = refs[first[keys[i]]]
+        for i, _ in new_rows:   # (드묾) 넣는 사이 같은 상품명 원본이 생겨 못 넣은 줄 → 알림
+            if i not in refs:
+                p = matched[i]
+                st["dup_same"] += 1
+                add_item("dup_same", code=p["code"], name=p["name"], channel_no=p["channel_no"], status=p["status"], reg_at=p["reg_at"],
+                         note="연결 못 함: 상품명이 같은 원본이 있어 새 원본을 만들지 못함 — 다시 [맞춰 보기]")
 
     # ⑤ 그 스토어의 판매 중 복사본으로 연결 (가격 고정, 이름 = 올라가 있는 이름)
     now = time.time()
@@ -422,10 +418,11 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
     return st
 
 
-def _assign_keys(db, store_id, keep, matched):
-    """스토어 상품 하나 = 원본 하나 (판매자코드로 1대1, 대표 이미지는 기준이 아님).
-    원본 열쇠는 상품명(완전히 같음). 같은 상품명의 원본이 없거나 그 원본이 바로 이 스토어 상품이면 상품명 열쇠,
-    아니면 '상품명#판매자코드' 열쇠로 따로 원본을 만든다 (다시 가져와도 같은 열쇠 → 같은 원본)."""
+def _assign_keys(db, store_id, keep, matched, managed):
+    """스토어 상품 하나 = 원본 하나 (판매자코드로 1대1, 대표 이미지는 기준이 아님). 원본 열쇠 = 상품명(완전히 같음) — 원본 엑셀과 같은 기준.
+    상품명이 같은 원본이 이미 있으면 그 원본에 연결한다 (기준 구매가·내용은 그대로, 다른 스토어 복사본과 같은 원본).
+    그 원본이 이 스토어에 이미 다른 상품으로 올라가 있거나, 이 파일에서 같은 상품명이 앞서 나왔으면 → '상품명 중복'
+    (열쇠 None — 연결 안 함: 한 스토어에 상품명이 완전히 같은 상품은 하나만 관리). → ({줄: 열쇠 또는 None}, {줄: 중복 이유})"""
     base = {i: inventory.source_key(r) for i, r in keep}
     bks = sorted(set(base.values()))
     sid_of, live = {}, {}
@@ -436,20 +433,25 @@ def _assign_keys(db, store_id, keep, matched):
     sids = sorted(sid_of.values())
     for j in range(0, len(sids), 900):
         ch = sids[j:j + 900]
-        for x in db.q(f"""SELECT source_id, channel_no FROM listings WHERE store_id=? AND origin_no!='' AND status!='deleted'
-                AND source_id IN ({','.join('?' * len(ch))})""", (int(store_id), *ch)):
-            live.setdefault(x["source_id"], set()).add(x["channel_no"])
-    # 사진 열쇠를 이미 가진 스토어 상품을 먼저 (파일 순서와 상관없이 그 상품이 사진 열쇠를 지킴)
-    order = sorted((i for i, _ in keep), key=lambda i: 0 if matched[i]["channel_no"] in live.get(sid_of.get(base[i]), ()) else 1)
-    used, out = set(), {}
-    for i in order:
+        for x in db.q(f"""SELECT source_id, channel_no FROM listings WHERE store_id=? AND status!='deleted'
+                AND (origin_no!='' OR status IN ('queued','running')) AND source_id IN ({','.join('?' * len(ch))})""", (int(store_id), *ch)):
+            live.setdefault(x["source_id"], []).append(x["channel_no"])
+    used, out, why = {}, {}, {}
+    for i, _ in keep:
         k, p = base[i], matched[i]
+        if p["channel_no"] in managed:   # 이미 이 프로그램이 관리 → '이미 연결' (열쇠는 안 씀)
+            out[i] = k
+            continue
         sid = sid_of.get(k)
-        taken = k in used or bool(sid and live.get(sid) and p["channel_no"] not in live[sid])
-        key = f"{k}#{p['code']}" if taken and p["code"] else k
-        used.add(key)
-        out[i] = key
-    return out
+        others = [c for c in live.get(sid, ()) if c != p["channel_no"]] if sid else []
+        if k in used:
+            out[i], why[i] = None, f"이 파일에서 상품명이 완전히 같은 상품이 앞에 있음 (판매자코드 {used[k] or '-'}) — 앞 상품만 연결"
+        elif others:
+            out[i], why[i] = None, f"이 스토어에 상품명이 완전히 같은 상품이 이미 관리 중 (상품번호 {others[0] or '등록 중'}) — 그 상품만 관리"
+        else:
+            out[i] = k
+            used[k] = p["code"]
+    return out, why
 
 
 def _history_codes(db, store_id):
@@ -473,35 +475,30 @@ def _unmatched_source(db, k, code):
 
 def _dry_rest(db, store, st, samples, rows, keep, matched, managed, unmatched):
     """맞춰 보기: 원본·복사본을 만들지 않고 연결될 수·버릴 수·예시만 센다 (가져오기와 같은 판정)."""
-    keys = _assign_keys(db, store["id"], keep, matched)
-    ks = sorted(set(keys.values()))
+    keys, why = _assign_keys(db, store["id"], keep, matched, managed)
+    ks = sorted({k for k in keys.values() if k})
     exist = {}
     for j in range(0, len(ks), 900):
         ch = ks[j:j + 900]
         for x in db.q(f"SELECT id, source_key, adopted FROM sources WHERE source_key IN ({','.join('?' * len(ch))})", ch):
             exist[x["source_key"]] = x
-    sids = sorted({x["id"] for x in exist.values()})
-    live_here = set()
-    for j in range(0, len(sids), 900):
-        ch = sids[j:j + 900]
-        live_here |= {x["source_id"] for x in db.q(f"""SELECT source_id FROM listings WHERE store_id=? AND origin_no!='' AND status!='deleted'
-            AND source_id IN ({','.join('?' * len(ch))})""", (store["id"], *ch))}
-    seen = set()
     rows_by_i = dict(keep)
     for i, r in keep:
         p, k = matched[i], keys[i]
-        x = exist.get(k)
-        if k not in seen and x:
-            st["existing"] += 1
-        if p["channel_no"] in managed or k in seen:
+        if p["channel_no"] in managed:
             st["already"] += 1
+        elif k is None:
+            st["name_dup"] += 1
+            if len(samples["name_dup"]) < 8:
+                samples["name_dup"].append({"code": p["code"], "name": p["name"][:80], "why": why[i]})
         else:
+            if exist.get(k):
+                st["existing"] += 1
             st["linked"] += 1
             st["status"][p["status"]] = st["status"].get(p["status"], 0) + 1
             if len(samples["linked"]) < 8:
                 samples["linked"].append({"code": p["code"], "xl_name": str(rows_by_i[i].get("상품명") or "")[:80], "name": p["name"][:80],
                                           "final": p["final"] or p["sale"], "status": p["status"]})
-        seen.add(k)
     hist = _history_codes(db, store["id"])
     drop_src = set()
     for code, name, k in unmatched:
