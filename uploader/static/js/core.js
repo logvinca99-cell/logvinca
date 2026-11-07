@@ -400,7 +400,7 @@ const App = {
     if (r && r.price_warn) return this.priceWarn(url, r, extra);
     return this.startTask(Promise.resolve(r));
   },
-  /* 가져온 상품의 판매 이력 확인: 판매자센터 주문 파일을 넣거나 팔린 것을 직접 잠근 뒤 '판매 이력 확인 완료'
+  /* 판매 중 상품(가져온 것·올린 것 모두)의 판매 이력 확인: 판매자센터 주문 파일을 넣거나 팔린 것을 직접 잠근 뒤 '판매 이력 확인 완료'
      → 그 날부터 판매 이력을 아는 것으로 (그 뒤로는 최신화·내리기 때마다 마지막 확인부터만 새로 받아 잠금) */
   async salesConfirm(storeId, after) {
     let s;
@@ -410,13 +410,13 @@ const App = {
     this.openModal({
       title: `판매 이력 확인 — ${s.store}`, wide: true,
       body: `<div class="notice ${s.need ? "warn" : "ok"}">${s.need
-          ? `가져온 상품 <b>${num(s.adopted)}</b>개 중 <b>${num(s.need)}</b>개는 판매 이력 확인 전이라 <b>최신화·내리기를 하지 않습니다</b> (팔린 상품을 지우지 않게).`
-          : `가져온 상품 <b>${num(s.adopted)}</b>개 모두 판매 이력을 확인했습니다 — 최신화·내리기 때마다 마지막 확인 뒤 주문만 새로 받아 잠급니다.`}</div>
+          ? `판매 중 상품 <b>${num(s.adopted)}</b>개 중 <b>${num(s.need)}</b>개는 판매 이력 확인 전이라 <b>최신화·내리기를 하지 않습니다</b> (팔린 상품을 지우지 않게).`
+          : `판매 중 상품 <b>${num(s.adopted)}</b>개 모두 판매 이력을 확인했습니다 — 최신화·내리기 때마다 마지막 확인 뒤 주문만 새로 받아 잠급니다.`}</div>
         <dl class="kv" style="margin-top:10px">
-          <dt>가져온 상품이 처음 올라간 날</dt><dd>${s.reg_min ? d(s.reg_min) : "-"}</dd>
+          <dt>가장 먼저 올라간 상품의 날</dt><dd>${s.reg_min ? d(s.reg_min) : "-"}</dd>
           <dt>판매 이력을 아는 기간</dt><dd>${s.known_from ? `${d(s.known_from)} ~ 오늘` : "아직 없음"}</dd>
           <dt>판매 이력 파일로 넣은 주문</dt><dd>${s.file_orders ? `${num(s.file_orders)}건 (${d(s.file_from)} ~ ${d(s.file_to)}) · 맞춘 복사본 ${num(s.file_listings)}개` : "없음"}</dd>
-          <dt>잠긴 가져온 상품</dt><dd>${num(s.locked)}개${s.manual ? ` (직접 잠금 ${num(s.manual)}개)` : ""}</dd>
+          <dt>잠긴 판매 중 상품</dt><dd>${num(s.locked)}개${s.manual ? ` (직접 잠금 ${num(s.manual)}개)` : ""}</dd>
         </dl>
         <ol class="small" style="line-height:1.8;padding-left:18px;margin:10px 0">
           <li>판매자센터 → 주문(주문통합검색 등)에서 <b>${from} ~ 오늘</b> 주문을 엑셀로 받아 <b>[판매 이력 파일 넣기]</b> — 상품번호로 맞춰 팔린 상품을 자동으로 잠급니다.</li>
@@ -434,10 +434,10 @@ const App = {
         } },
         { label: "판매 이력 확인 완료", primary: true, onClick: async (b) => {
           const f = $("#sc-from", b).value;
-          if (!confirm(`${s.store}: ${f}부터 오늘까지의 판매 이력을 확인했나요?\n(판매자센터 주문 파일을 넣었거나 팔린 상품을 잠금)\n\n확인하면 그 날 뒤에 올라간 가져온 상품은 최신화·내리기를 합니다 — 잠긴 것은 그대로 지우지 않습니다.`)) return false;
+          if (!confirm(`${s.store}: ${f}부터 오늘까지의 판매 이력을 확인했나요?\n(판매자센터 주문 파일을 넣었거나 팔린 상품을 잠금)\n\n확인하면 그 날 뒤에 올라간 상품은 최신화·내리기를 합니다 — 잠긴 것은 그대로 지우지 않습니다.`)) return false;
           try {
             const r = await this.api(`/api/stores/${s.store_id}/sales_confirm`, { json: { from: f } });
-            this.toast(`판매 이력 확인 완료 (${f}부터)` + (r.need ? ` · 아직 그 전에 올라간 가져온 상품 ${num(r.need)}개는 확인 전` : ""));
+            this.toast(`판매 이력 확인 완료 (${f}부터)` + (r.need ? ` · 아직 그 전에 올라간 상품 ${num(r.need)}개는 확인 전` : ""));
             if (after) after(r);
           } catch (e) { this.toast(e.message, true); return false; }
         } },
@@ -632,6 +632,7 @@ const App = {
       const own = lab ? txt(lab).replace(el.tagName === "SELECT" ? txt(el) : "", "").trim() : (el.placeholder || el.name || "");
       if (el.type === "checkbox" || el.type === "radio") { if (el.checked) picks.push(`✔ ${own}`); }
       else if (el.tagName === "SELECT") { const o = el.selectedOptions?.[0]; if (o && o.value !== "") picks.push(`${own}: ${o.textContent.trim()}`); }
+      else if (el.type === "password" || /secret|password|key/i.test(el.id || el.name || "")) { if (String(el.value || "").trim()) picks.push(`${own}: ●●● (입력함)`); }
       else if (String(el.value || "").trim()) picks.push(`${own}: ${String(el.value).trim().slice(0, 120)}`);
     });
     const box = document.createElement("div");

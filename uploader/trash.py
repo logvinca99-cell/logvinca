@@ -28,6 +28,33 @@ CREATE INDEX IF NOT EXISTS trash_kind ON trash(kind, deleted_at);
 def ensure(db):
     with db.tx() as c:
         c.executescript(SCHEMA)
+        c.executescript(KEPT_SCHEMA)
+
+
+KEPT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS kept_live (          -- '이 프로그램에서만 빼기'로 뺀, 네이버에서는 판매 중인 상품
+    store_id INTEGER NOT NULL,
+    channel_no TEXT NOT NULL,
+    origin_no TEXT NOT NULL DEFAULT '',
+    codes TEXT NOT NULL DEFAULT '[]',            -- 지금·예전 판매자코드들 (다시 가져올 때 엑셀 코드로 이 상품을 찾음)
+    manual_lock INTEGER NOT NULL DEFAULT 0,      -- 직접 잠금이었나 (다시 가져오면 되살림)
+    at REAL,
+    PRIMARY KEY (store_id, channel_no)
+);
+"""
+
+
+def remember_live(c, lids):
+    """판매 중 복사본을 이 프로그램에서만 뺄 때: 스토어·상품번호·판매자코드·직접 잠금을 남겨 둔다."""
+    import json as _json
+    for lid in lids:
+        l = c.execute("SELECT id, store_id, channel_no, origin_no, seller_code, manual_lock FROM listings WHERE id=?", (lid,)).fetchone()
+        if not l or not l["channel_no"]:
+            continue
+        codes = [l["seller_code"]] + [x[0] for x in c.execute("SELECT seller_code FROM listing_history WHERE listing_id=? AND seller_code!=''", (lid,))]
+        c.execute("""INSERT OR REPLACE INTO kept_live(store_id, channel_no, origin_no, codes, manual_lock, at) VALUES(?,?,?,?,?,?)""",
+                  (l["store_id"], l["channel_no"], l["origin_no"] or "", _json.dumps([x for x in dict.fromkeys(codes) if x], ensure_ascii=False),
+                   int(l["manual_lock"] or 0), time.time()))
 
 
 def _rows(c, sql, args):
@@ -84,6 +111,8 @@ def trash_sources(db, ids, keep_naver=False):
                     continue
                 lids = [r["id"] for r in c.execute("SELECT id FROM listings WHERE source_id=?", (sid,)).fetchall()]
                 lm = ",".join("?" * len(lids)) or "NULL"
+                if keep_naver:
+                    remember_live(c, [r["id"] for r in c.execute(f"SELECT id FROM listings WHERE id IN ({lm}) AND origin_no!='' AND status!='deleted'", lids)])
                 snap = {"source": src[0],
                         "listings": _rows(c, "SELECT * FROM listings WHERE source_id=?", (sid,)),
                         "names": _rows(c, "SELECT * FROM names WHERE source_id=?", (sid,)),
@@ -122,6 +151,8 @@ def trash_listings(db, ids, keep_naver=False):
         st["skipped_live"] += len(rows) - len(go)
         with db.tx() as c:
             for r in go:
+                if keep_naver and r["origin_no"] and r["status"] != "deleted":
+                    remember_live(c, [r["id"]])
                 snap = {"listing": _rows(c, "SELECT * FROM listings WHERE id=?", (r["id"],))[0],
                         "history": _rows(c, "SELECT * FROM listing_history WHERE listing_id=?", (r["id"],))}
                 snap["source_name"] = r["source_name"]

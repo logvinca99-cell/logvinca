@@ -812,6 +812,8 @@ def create_app(db=None):
     @app.post("/api/adopt/start")
     def adopt_start():
         b = body()
+        if runner.state["running"]:
+            return fail("등록이 진행 중일 때는 가져올 수 없습니다 (처리 중인 복사본과 겹치지 않게). 등록이 끝난 뒤에 다시 시도하세요.")
         try:
             return jsonify({"task": adopt.start(db, tasks, b.get("token"), b.get("store_id"), b)})
         except (ValueError, RuntimeError) as e:

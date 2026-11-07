@@ -38,11 +38,12 @@ def _match(c, o, store_id=None):
                          f"WHERE h.channel_no=? {st}", (o["channel_no"], *sa)).fetchone()
         if r:
             return r[0]
-    if o.get("seller_code"):
-        r = c.execute("SELECT id FROM listings WHERE seller_code=?", (o["seller_code"],)).fetchone() \
-            or c.execute("SELECT listing_id FROM listing_history WHERE seller_code=?", (o["seller_code"],)).fetchone()
-        if r:
-            return r[0]
+    if o.get("seller_code"):   # 같은 셀업 판매자코드를 여러 스토어에서 쓸 수 있음 → 스토어 안에서만, 모르면 하나만 맞을 때만
+        ids = {x[0] for x in c.execute(f"SELECT l.id FROM listings l WHERE l.seller_code=? {st}", (o["seller_code"], *sa))}
+        ids |= {x[0] for x in c.execute(f"SELECT h.listing_id FROM listing_history h JOIN listings l ON l.id=h.listing_id "
+                                        f"WHERE h.seller_code=? {st}", (o["seller_code"], *sa))}
+        if len(ids) == 1:
+            return ids.pop()
     if o.get("origin_no"):
         r = c.execute(f"SELECT l.id FROM listings l WHERE l.origin_no=? {st}", (o["origin_no"], *sa)).fetchone() \
             or c.execute(f"SELECT l.id FROM listing_history h JOIN listings l ON l.id=h.listing_id "
@@ -195,14 +196,14 @@ def known_from(store):
 
 
 def sales_status(db, store_id):
-    """가져온 상품(가격 고정)의 판매 이력 확인 상태 — '판매 이력 확인' 창용."""
+    """그 스토어 판매 중 상품(가져온 것·올린 것 모두)의 판매 이력 확인 상태 — '판매 이력 확인' 창용."""
     st = db.one("SELECT id, name, orders_from, orders_synced_to FROM stores WHERE id=?", (int(store_id),))
     if not st:
         raise ValueError("스토어를 찾지 못했습니다.")
     kf = known_from(st)
     a = db.one("""SELECT COUNT(*) AS n, MIN(registered_at) AS reg_min, SUM(locked=1) AS locked, SUM(manual_lock=1) AS manual,
         SUM(? IS NULL OR registered_at < ?) AS need
-        FROM listings WHERE store_id=? AND price_fixed=1 AND origin_no!='' AND status!='deleted'""",
+        FROM listings WHERE store_id=? AND origin_no!='' AND status!='deleted'""",   # 모든 판매 중 상품 (가져온 것·이 프로그램이 올린 것)
                (kf, (kf or 0) - 3600, st["id"]))
     f = db.one("""SELECT COUNT(*) AS n, MIN(o.ordered_at) AS mn, MAX(o.ordered_at) AS mx, COUNT(DISTINCT o.listing_id) AS lst
         FROM orders o JOIN listings l ON l.id=o.listing_id WHERE l.store_id=? AND o.source='file'""", (st["id"],))

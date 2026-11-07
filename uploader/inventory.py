@@ -732,6 +732,7 @@ def assign_ctx_names(db, sids, only=None, newest=False):
                     pool.sort(key=lambda n: (n["variant"] == "B", n["id"]))
             # 고른 복사본(only)이면 내린 것도 (다시 올리기 전 이름 바꾸기), 아니면 지금 있는 것만
             for l in c.execute(f"""SELECT id, source_id FROM listings WHERE name_id IS NULL AND origin_no=''
+                    AND status NOT IN ('queued','running')
                     AND (status!='deleted' OR ?) AND source_id IN ({marks}) ORDER BY id""", (int(only is not None), *chunk)).fetchall():
                 if only is not None and l["id"] not in only:
                     continue
@@ -1042,7 +1043,8 @@ def rename_shuffle(db, ids, fixed_n=3, extra=(), progress=None, should_stop=None
         chunk = ids[i:i + 900]
         rows += db.q(f"""SELECT l.id, l.source_id, l.name_id, l.origin_no, l.status, s.name AS orig FROM listings l
             JOIN sources s ON s.id=l.source_id WHERE l.id IN ({','.join('?' * len(chunk))})""", chunk)
-    todo = [r for r in rows if not r["origin_no"]]   # 안 올린 것·내린 것(다시 올리기 전 이름 바꾸기)
+    # 안 올린 것·내린 것(다시 올리기 전 이름 바꾸기). 지금 등록 중(queued·running)인 것은 빼기 — 네이버에 예전 이름이 올라가고 이름이 풀리지 않게
+    todo = [r for r in rows if not r["origin_no"] and r["status"] not in ("queued", "running")]
     st = {"listings": len(rows), "live": len(rows) - len(todo), "renamed": 0, "short": 0, "method": "shuffle",
           "dropped_extra": dropped}
     now = time.time()
@@ -1118,7 +1120,8 @@ def rename_ctx(db, ids, fallback=False, progress=None, should_stop=None, redo=Tr
         chunk = ids[i:i + 900]
         rows += db.q(f"""SELECT l.id, l.source_id, l.name_id, l.origin_no, l.status, n.origin FROM listings l
             LEFT JOIN names n ON n.id=l.name_id WHERE l.id IN ({','.join('?' * len(chunk))})""", chunk)
-    todo = [r for r in rows if not r["origin_no"]]   # 안 올린 것·내린 것(다시 올리기 전 이름 바꾸기)
+    # 안 올린 것·내린 것(다시 올리기 전 이름 바꾸기). 지금 등록 중(queued·running)인 것은 빼기 — 네이버에 예전 이름이 올라가고 이름이 풀리지 않게
+    todo = [r for r in rows if not r["origin_no"] and r["status"] not in ("queued", "running")]
     set_ctx_wait(db, [r["id"] for r in todo], 0)
     st = {"listings": len(rows), "live": len(rows) - len(todo), "renamed": 0, "kept": 0, "short": 0, "no_kw": 0,
           "fallback": 0, "method": "ctx"}
@@ -1224,7 +1227,8 @@ def rename_listings(db, ids, method="recombine", progress=None, should_stop=None
             WHERE id IN ({','.join('?' * len(chunk))})""", chunk)
     st = {"renamed": 0, "short": 0, "live": 0, "listings": len(rows), "few_words": 0}
     new_min = int(cfg.get("recombine_new_min") or 0)
-    todo = [r for r in rows if not r["origin_no"]]   # 안 올린 것·내린 것(다시 올리기 전 이름 바꾸기)
+    # 안 올린 것·내린 것(다시 올리기 전 이름 바꾸기). 지금 등록 중(queued·running)인 것은 빼기 — 네이버에 예전 이름이 올라가고 이름이 풀리지 않게
+    todo = [r for r in rows if not r["origin_no"] and r["status"] not in ("queued", "running")]
     st["live"] = len(rows) - len(todo)
     by_src = {}
     for r in todo:
@@ -1304,6 +1308,8 @@ def set_listing_name(db, lid, name):
         raise ValueError("복사본이 없습니다.")
     if l["origin_no"]:
         raise ValueError("이미 올라간 복사본입니다. 최신화로 다시 올릴 때 이름을 바꾸세요.")
+    if l["status"] in ("queued", "running"):
+        raise ValueError("지금 등록 중인 복사본입니다. 등록이 끝난 뒤에 이름을 바꾸세요.")
     from . import ctxname
     src_words = set((db.one("SELECT name FROM sources WHERE id=?", (l["source_id"],)) or {}).get("name", "").split())
     claims = [w for w in str(name or "").split() if w not in src_words and ctxname.claim_word(w)]
@@ -1483,7 +1489,8 @@ def cancel_listings(db, where_sql, args):
     """아직 처리 안 된(대기·실패) 할 일을 취소한다.
     새 등록이면 줄을 지우고 이름을 후보로 돌린다 (다시 살린 줄이면 '내림'으로 되돌림).
     최신화·내리기면 할 일만 지우고 '판매 중'으로 되돌린다."""
-    rows = db.q(f"SELECT id, source_id, op, round, origin_no FROM listings "
+    rows = db.q(f"SELECT id, source_id, op, round, origin_no, registered_at, locked, manual_lock, sold_count, "
+                f"(SELECT COUNT(*) FROM listing_history h WHERE h.listing_id=listings.id) AS hist FROM listings "
                 f"WHERE status IN ('planned','fail') AND ({where_sql})", args)
     if not rows:
         return 0
@@ -1491,6 +1498,10 @@ def cancel_listings(db, where_sql, args):
         for r in rows:
             if r["origin_no"]:
                 c.execute("UPDATE listings SET status='success', op='create', message='' WHERE id=?", (r["id"],))
+            elif r["registered_at"] or r["hist"] or r["locked"] or r["manual_lock"] or r["sold_count"]:
+                # 예전에 네이버에 올렸던 줄(지운 뒤 실패·내린 것 다시 올리기·회차 초기화 등)이나 잠긴 줄은 절대 지우지 않고 '내림'으로
+                c.execute("UPDATE listings SET status='deleted', op='create', round=MAX(1, round-1), message='' WHERE id=?",
+                          (r["id"],))
             elif r["round"] > 1:
                 c.execute("UPDATE listings SET status='deleted', op='create', round=round-1, message='' WHERE id=?",
                           (r["id"],))
@@ -1498,6 +1509,12 @@ def cancel_listings(db, where_sql, args):
                 c.execute("UPDATE names SET listing_id=NULL WHERE listing_id=?", (r["id"],))  # 바꾼 이름은 후보로 돌아감
                 c.execute("DELETE FROM listings WHERE id=?", (r["id"],))
     db.recount_sources({r["source_id"] for r in rows})
+    # 내리기 대기를 취소했으면 '원본까지 삭제' 예약도 풀기 (남은 내리기 대기가 없는 원본만) — 나중 내리기 한 번에 원본이 통째로 지워지지 않게
+    sids = sorted({r["source_id"] for r in rows if r["op"] == "delete"})
+    for i in range(0, len(sids), 900):
+        ch = sids[i:i + 900]
+        db.x(f"""UPDATE sources SET drop_pending=0 WHERE drop_pending=1 AND id IN ({','.join('?' * len(ch))})
+            AND id NOT IN (SELECT source_id FROM listings WHERE op='delete' AND status IN ('planned','queued','running'))""", ch)
     db.x("DELETE FROM plans WHERE id NOT IN (SELECT DISTINCT plan_id FROM listings WHERE plan_id IS NOT NULL)")
     return len(rows)
 
@@ -1746,7 +1763,7 @@ def listing_counts(db, store_id=None, plan_id=None):
         SUM(nv_status='GONE') AS nv_gone
         FROM listings WHERE origin_no!='' AND status!='deleted'{nvw}""", a)
     need = db.one(f"""SELECT COUNT(*) AS n FROM listings l JOIN stores t ON t.id=l.store_id
-        WHERE l.price_fixed=1 AND l.origin_no!='' AND l.status!='deleted'
+        WHERE l.origin_no!='' AND l.status!='deleted'
         AND (t.orders_from IS NULL OR t.orders_synced_to IS NULL OR l.registered_at < t.orders_from - 3600){''.join(' AND l.' + x for x in w)}""", a)
     out = {**out, "need_sales": need["n"] or 0}
     return {**out, "eye_done": e["eye_done"] or 0, "eye_todo": e["eye_todo"] or 0,

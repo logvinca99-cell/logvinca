@@ -34,6 +34,7 @@ function nvFlag(l) {
 
 App.page("listings", {
   async mount(el, params) {
+    this._live = false;   // 다른 화면에 다녀오면 진행 창 틀을 다시 그림 ([중단]·[일시정지] 버튼이 사라지지 않게)
     this.el = el;
     if (!params.store_id) return this.renderStores(el);
     this.f = { status: "all", store_id: params.store_id, q: "", age_days: "", ...params };
@@ -159,7 +160,7 @@ App.page("listings", {
     this.counts = res.counts || {};
     this.rows = res.rows;
     this.total = res.total;
-    $("#l-sales").innerHTML = this.counts.need_sales ? `<div class="notice warn" style="margin-bottom:10px">가져온 상품 <b>${num(this.counts.need_sales)}</b>개는
+    $("#l-sales").innerHTML = this.counts.need_sales ? `<div class="notice warn" style="margin-bottom:10px">판매 중 상품 <b>${num(this.counts.need_sales)}</b>개는
       <b>판매 이력 확인 전</b>이라 최신화·내리기를 하지 않습니다 (팔린 상품을 지우지 않게). <button class="btn tiny primary" id="l-sales-go">판매 이력 확인</button></div>` : "";
     $("#l-sales-go")?.addEventListener("click", () => App.salesConfirm(+this.f.store_id, () => this.load()));
     const active = this.f.eye ? `eye_${this.f.eye}` : this.f.nv === "bad" ? "nv_bad" : this.f.status;

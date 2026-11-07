@@ -49,7 +49,7 @@ CREATE INDEX IF NOT EXISTS ix_adopt_item ON adopt_item(run_id, kind);
 KIND_LABEL = {"linked": "연결", "already": "이미 연결돼 있음", "dropped": "스토어에 없어서 뺌", "store_only": "스토어에만 있음 (파일에 없음)",
               "dup_same": "연결 못 함", "dup": "같은 대표 사진이 다른 스토어에도 (예전 기록)",
               "price_diff": "엑셀 판매가와 스토어 손님 가격이 다름 (스토어 손님 가격으로 넣음)",
-              "mobile_disc": "모바일 할인이 따로 있음 (최신화하면 사라짐)"}
+              "mobile_disc": "모바일 할인이 따로 있음 (최신화하면 사라짐)", "dup_code": "파일 안 판매자코드 겹침 (첫 줄만 씀)"}
 NAVER_STATUS = {"SALE": "판매 중", "OUTOFSTOCK": "품절", "SUSPENSION": "판매중지", "WAIT": "판매 대기", "CLOSE": "판매 종료",
                 "PROHIBITION": "판매 금지", "UNADMISSION": "승인 대기", "REJECTION": "승인 거부"}
 
@@ -57,6 +57,8 @@ NAVER_STATUS = {"SALE": "판매 중", "OUTOFSTOCK": "품절", "SUSPENSION": "판
 def ensure(db):
     with db.tx() as c:
         c.executescript(SCHEMA)
+        # 프로그램이 가져오는 도중 꺼졌으면 그 기록은 '오류'로 (영원히 '가져오는 중'으로 남지 않게)
+        c.execute("UPDATE adopt_run SET status='error', finished_at=COALESCE(finished_at, created_at) WHERE status='running'")
 
 
 def upload_dir():
@@ -200,6 +202,14 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
         if p["code"] and p["code"] not in by_code:
             by_code[p["code"]] = p
     managed = {r["channel_no"] for r in db.q("SELECT channel_no FROM listings WHERE store_id=? AND channel_no!=''", (store["id"],))}
+    # '이 프로그램에서만 빼기'로 뺐던 판매 중 상품: 예전 판매자코드 → 그 상품 (최신화로 코드가 바뀌었어도 1대1로 다시 찾게)
+    by_channel = {p["channel_no"]: p for p in products if p["channel_no"]}
+    kept = {r["channel_no"]: r for r in db.q("SELECT * FROM kept_live WHERE store_id=?", (store["id"],))}
+    for ch, k in kept.items():
+        for oc in json.loads(k["codes"] or "[]"):
+            if oc not in by_code and ch in by_channel:
+                by_code[oc] = by_channel[ch]
+    used_channels = set()
 
     # ② 파일 읽기
     if progress:
@@ -213,9 +223,15 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
     keep, matched, file_codes, unmatched = [], {}, set(), []
     for i, r in enumerate(rows):
         code = str(r.get("판매자코드") or "").strip()
+        if code and code in file_codes:   # 같은 판매자코드가 파일에 또 나옴 → 연결 못 함 (첫 줄만 씀)
+            st["dup_code"] = st.get("dup_code", 0) + 1
+            add_item("dup_code", code=code, name=str(r.get("상품명") or ""), note="파일 안에서 판매자코드가 겹침 — 첫 줄만 씀")
+            continue
         if code:
             file_codes.add(code)
         p = by_code.get(code) if code else None
+        if p:
+            used_channels.add(p["channel_no"])
         if not p:
             if not code:
                 st["no_code"] += 1
@@ -247,7 +263,7 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
     for p in products:   # 스토어에만 있는 것 (이 프로그램이 이미 관리하는 것은 빼고)
         if p["channel_no"] in managed:
             st["managed"] += 1
-        elif not p["code"] or p["code"] not in file_codes:
+        elif p["channel_no"] not in used_channels and (not p["code"] or p["code"] not in file_codes):
             st["store_only"] += 1
             add_item("store_only", code=p["code"], name=p["name"], channel_no=p["channel_no"], status=p["status"], reg_at=p["reg_at"])
             sample("store_only", code=p["code"], name=p["name"], status=p["status"], final=p["final"])
@@ -328,8 +344,13 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
                 st["already"] += 1
                 add_item("already", code=p["code"], name=p["name"], channel_no=p["channel_no"], status=p["status"], reg_at=p["reg_at"], source_id=sid)
                 continue
-            cur = c.execute("""SELECT id, name_id, origin_no, channel_no FROM listings WHERE source_id=? AND store_id=? AND status!='deleted'""",
+            cur = c.execute("""SELECT id, name_id, origin_no, channel_no, status FROM listings WHERE source_id=? AND store_id=?""",
                             (sid, store["id"])).fetchone()
+            if cur and cur["status"] in ("queued", "running"):   # 지금 등록 중인 줄은 건드리지 않음
+                st["dup_same"] += 1
+                add_item("dup_same", code=p["code"], name=p["name"], channel_no=p["channel_no"], status=p["status"], reg_at=p["reg_at"],
+                         source_id=sid, note="연결 못 함: 이 원본의 복사본이 지금 등록 중 — 등록이 끝난 뒤 다시 가져오세요")
+                continue
             if cur and cur["origin_no"]:   # (생기면 안 됨 — 1대1 열쇠라서) 이 원본이 이미 다른 상품번호로 연결돼 있음 → 건드리지 않고 알림
                 st["dup_same"] += 1
                 add_item("dup_same", code=p["code"], name=p["name"], channel_no=p["channel_no"], status=p["status"], reg_at=p["reg_at"],
@@ -338,7 +359,7 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
             vals = dict(name=p["name"], price=p["final"] or p["sale"], status="success", op="create", round=1, seller_code=p["code"],
                         origin_no=p["origin_no"], channel_no=p["channel_no"], registered_at=p["reg_at"] or now, sale_shown=p["sale"] or None,
                         price_fixed=1, message="", stage="", updated_at=now, nv_status=p["status"], nv_disp=p["disp"], nv_at=now)
-            if cur:   # 이 스토어에 아직 안 올린 복사본이 있었으면 그 줄을 올라가 있는 상품으로
+            if cur:   # 이 스토어에 아직 안 올린(또는 내린) 복사본이 있었으면 그 줄을 올라가 있는 상품으로
                 if cur["name_id"]:
                     c.execute("UPDATE names SET listing_id=NULL WHERE id=?", (cur["name_id"],))
                 c.execute(f"UPDATE listings SET {', '.join(k + '=?' for k in vals)}, name_id=NULL WHERE id=?", (*vals.values(), cur["id"]))
@@ -364,6 +385,11 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
                 if name_id:
                     c.execute("UPDATE listings SET name_id=? WHERE id=?", (name_id, lid))
             managed.add(p["channel_no"])
+            k = kept.get(p["channel_no"])
+            if k:   # 예전에 직접 잠근 상품이면 다시 잠금
+                if k["manual_lock"]:
+                    c.execute("UPDATE listings SET manual_lock=1, locked=1, lock_note='직접 잠금' WHERE id=?", (lid,))
+                c.execute("DELETE FROM kept_live WHERE store_id=? AND channel_no=?", (store["id"], p["channel_no"]))
             st["linked"] += 1
             st["status"][p["status"]] = st["status"].get(p["status"], 0) + 1
             add_item("linked", code=p["code"], name=p["name"], channel_no=p["channel_no"], status=p["status"], reg_at=p["reg_at"], source_id=sid)
@@ -511,8 +537,9 @@ def drop_source_ids(db, run_id):
     live = set()
     for j in range(0, len(ids), 900):
         ch = ids[j:j + 900]
-        live |= {x["source_id"] for x in db.q(f"""SELECT source_id FROM listings WHERE store_id=? AND origin_no!='' AND status!='deleted'
-            AND source_id IN ({','.join('?' * len(ch))})""", (run["store_id"], *ch))}
+        # 어느 스토어든 판매 중이거나 처리 중인 복사본이 있으면 빼기 (상품명이 같은 다른 상품이 판매 중일 수 있음 — 네이버에서 내리지 않게)
+        live |= {x["source_id"] for x in db.q(f"""SELECT source_id FROM listings WHERE status!='deleted'
+            AND (origin_no!='' OR status IN ('queued','running')) AND source_id IN ({','.join('?' * len(ch))})""", ch)}
     return [i for i in ids if i not in live]
 
 
@@ -539,7 +566,7 @@ def check(db, tasks, token, store_id, opts):
         now = time.time()
         with open(_snap_path(token), "w", encoding="utf-8") as f:
             json.dump({"store_id": store["id"], "at": now, "products": products}, f, ensure_ascii=False)
-        _save_meta(token, {**_token_meta(token), "checked": {"store_id": store["id"], "at": now, "result": out}})
+        _save_meta(token, {**_token_meta(token), "checked": {"store_id": store["id"], "at": now, "opts": opts, "result": out}})
         return {**out, "store": store["name"], "store_id": store["id"], "file": meta["file"], "token": token}
     return tasks.start("adopt_check", f"가져오기 맞춰 보기 · {store['name']} · {meta['file']}", job)
 
@@ -554,10 +581,13 @@ def start(db, tasks, token, store_id, opts):
     if ck.get("store_id") != store["id"] or time.time() - float(ck.get("at") or 0) > CHECK_VALID_SEC:
         raise ValueError("먼저 [맞춰 보기]로 이 스토어와 맞춰 본 결과를 확인하세요.")
     opts = _opts_of(opts)
-    rid = db.x("INSERT INTO adopt_run(created_at, store_id, store_name, file_name) VALUES(?,?,?,?)",
-               (time.time(), store["id"], store["name"], meta["file"]))
+    if ck.get("opts") is not None and ck["opts"] != opts:
+        raise ValueError("맞춰 볼 때와 설정(뺄 이미지·검수 표시)이 다릅니다. 다시 [맞춰 보기]를 누르세요.")
+    box = {}
 
     def job(progress=None, should_stop=None):
+        rid = box["rid"] = db.x("INSERT INTO adopt_run(created_at, store_id, store_name, file_name) VALUES(?,?,?,?)",
+                                (time.time(), store["id"], store["name"], meta["file"]))
         try:
             products = None
             try:

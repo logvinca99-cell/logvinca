@@ -296,7 +296,7 @@ class Runner:
             # 최신화가 있으면 네이버 상태(판매중지·판매금지·스토어에서 지움)를 먼저 확인한다 — 그런 상품은 다시 올리지 않게.
             # 가져온 복사본(가격 고정)은 이때 지금 손님 가격도 맞춘다 (판매자센터에서 바꾼 가격 그대로)
             nv_ok = True
-            if any(t["op"] == "refresh" and t["origin_no"] for t in by_store[sid]):
+            if any(t["op"] in ("refresh", "reupload") and t["origin_no"] for t in by_store[sid]):
                 with self.lock:
                     self.state["stores"][sid]["status"] = "네이버 상태 확인 중"
                 try:
@@ -304,7 +304,7 @@ class Runner:
                     self._log("info", "네이버 상태 · " + nvstate.summary(res), store["name"])
                 except Exception as e:  # noqa: BLE001
                     nv_ok = False
-                    self._log("err", f"네이버 상태를 확인하지 못해 이 스토어의 최신화는 하지 않습니다: {e}", store["name"])
+                    self._log("err", f"네이버 상태를 확인하지 못해 이 스토어의 최신화·다시 올리기는 하지 않습니다: {e}", store["name"])
             store = {**store, "_sales_ok": sales_ok, "_nv_ok": nv_ok}
             with self.lock:
                 self.state["stores"][sid]["status"] = "처리 중"
@@ -342,7 +342,8 @@ class Runner:
             self.state["current"][lid] = {"name": label, "stage": stage}
 
     def _one(self, cfg, store, client, categories, pool, cache, t):
-        """한 건 처리. op: create(새로 등록) / refresh(지우고 다시 등록) / delete(내리기)."""
+        """한 건 처리. op: create(새로 등록) / refresh(지우고 다시 등록) / reupload(다시 올리기) / delete(내리기).
+        지우고 다시 올리는 일은 올릴 내용(이미지·템플릿·옵션 그림·등록 내용)을 모두 준비한 뒤에 지우고, 지운 뒤에는 등록만 한다."""
         lid, sid, op = t["id"], store["id"], t["op"]
         label = f"[{store['name']}] {t['name']}"
         t0 = time.time()
@@ -350,9 +351,15 @@ class Runner:
         self._stage(lid, label, "준비")
         on_wait = lambda m: self._stage(lid, label, m)  # noqa: E731
         notes = []
+        deleted_now = False
         try:
-            if op in ("create", "reupload") and not t.get("name_id"):
-                raise naver.ApiError("이름 변경 필요 · 원본 상품명 그대로는 올리지 않습니다 (복사본 화면에서 상품명 바꾸기)")
+            # 지금 DB 값으로 (실행을 시작한 뒤 이름 바꾸기 등이 끼어들었을 수 있음)
+            cur = self.db.one("SELECT name, name_id FROM listings WHERE id=?", (lid,)) or {}
+            t = {**t, "name": cur.get("name") or t["name"], "name_id": cur.get("name_id")}
+            live = op in ("refresh", "delete", "reupload") and bool(t["origin_no"])
+            if op != "delete" and not t.get("name_id"):
+                raise naver.ApiError("이름 변경 필요 · 원본 상품명 그대로는 올리지 않습니다 (복사본 화면에서 상품명 바꾸기)"
+                                     + (" — 올라가 있는 상품은 지우지 않았습니다" if live else ""))
             if op in ("create", "reupload"):
                 from . import lexicon
                 rw = lexicon.repeated_word(str(t["name"] or "").split(), lexicon.get(self.db), int(cfg.get("max_word_repeat") or 2))
@@ -362,10 +369,11 @@ class Runner:
                 why = chem_block(self.db, t["source_id"], categories, cfg)
                 if why:
                     raise naver.ApiError(why)
-            if op in ("refresh", "delete", "reupload") and t["origin_no"]:
-                # 판매된 상품은 지우지 않는다 (예약 뒤에 팔렸을 수 있으니 실행 직전에 다시 확인).
+            if live:
+                # 판매된 상품은 지우지 않는다: 지우기 직전에 주문을 다시 받고(5분 넘게 지났으면) 잠금을 다시 확인
                 if not store.get("_sales_ok", True):
                     raise naver.ApiError("주문(판매 이력)을 확인하지 못해 지우지 않았습니다. 다시 시도하세요.")
+                self._sales_recheck(sid, client)
                 lk = self.db.one("SELECT locked, lock_note, price, nv_status FROM listings WHERE id=?", (lid,))
                 if lk["locked"]:
                     self.db.set_listing(lid, "success", op="create", stage="",
@@ -375,30 +383,26 @@ class Runner:
                     self._log("info", f"건너뜀 · {t['name'][:40]} · 잠금 ({lk['lock_note']})", store["name"])
                     self._count(sid, lid, None)
                     return
-                if t.get("price_fixed"):   # 가져온 복사본: 그 상품이 올라간 날부터 주문을 받아 둬야 판매 이력을 앎
-                    self._need_sales_history(sid, t)
-                if op == "refresh":
+                # 모든 상품: 그 상품이 올라간 날부터 판매 이력을 알아야 지운다
+                self._need_sales_history(sid, t)
+                if op in ("refresh", "reupload"):
                     if not store.get("_nv_ok", True):
-                        raise naver.ApiError("네이버 상태(판매중지·판매금지)를 확인하지 못해 최신화하지 않았습니다. 다시 시도하세요.")
+                        raise naver.ApiError("네이버 상태(판매중지·판매금지)를 확인하지 못해 지우지 않았습니다. 다시 시도하세요.")
                     nv = lk["nv_status"]
                     if nv and nv not in nvstate.REFRESH_OK:
-                        msg = f"네이버 '{nvstate.label(nv)}' 상태라 최신화하지 않음"
+                        msg = f"네이버 '{nvstate.label(nv)}' 상태라 {'최신화' if op == 'refresh' else '다시 올리기'}하지 않음"
                         self.db.set_listing(lid, "success", op="create", stage="", message=msg)
                         self._log("info", f"건너뜀 · {t['name'][:40]} · {msg}", store["name"])
                         self._count(sid, lid, None)
                         return
                     if t.get("price_fixed"):
                         t = {**t, "price": lk["price"]}   # 방금 네이버에서 확인한 손님 가격
-                    # 지우기 전에 다시 올릴 수 있는지 먼저 확인 (카테고리·필수 값·옵션 손님 가격) — 지우고 나서 막히지 않게
-                    self._stage(lid, label, "올릴 내용 먼저 확인")
-                    if t.get("price_fixed"):
                         self._save_live_options(client, t, on_wait)
-                    self._prepare(cfg, store, categories, t)
-                self._stage(lid, label, "네이버에서 지우는 중")
-                removed = client.delete_product(t["origin_no"], on_wait=on_wait)
-                # 이미 스토어에서 지운 상품이면 지난 연결 확인 수에 이미 빠져 있을 수 있어, 남은 자리 계산에 '지움'으로 세지 않는다
-                self._archive(t, op, counted=removed is not False)
-                if op == "delete":
+            if op == "delete":
+                if live:
+                    self._stage(lid, label, "네이버에서 지우는 중")
+                    removed = client.delete_product(t["origin_no"], on_wait=on_wait)
+                    self._archive(t, op, counted=removed is not False)
                     self.db.set_listing(lid, "deleted", op="create", stage="", message="", origin_no="",
                                         channel_no="", deleted_at=time.time(), seconds=time.time() - t0,
                                         nv_status="", nv_disp="")
@@ -407,21 +411,16 @@ class Runner:
                     from . import chem
                     if chem.after_drop(self.db, t["source_id"]):   # '원본·복사본 모두 삭제'로 내린 것 → 다 내려가면 원본도 휴지통으로
                         self._log("info", f"원본 휴지통으로 (다 내림) · #{t['source_id']}", store["name"])
-                    return
-                # 지웠으니 이제부터는 다음 회차 '새 등록'. 여기서 실패해도 다시 시도하면 등록만 한다.
-                # 회차 초기화한 건은 +1 하지 않고 1회차로
-                t = {**t, "round": 1 if t.get("round_reset") else t["round"] + 1, "origin_no": ""}
-                self.db.set_listing(lid, None, op="create", round=t["round"], origin_no="", channel_no="",
-                                    deleted_at=time.time(), round_reset=0, nv_status="", nv_disp="")
-                if op == "refresh" and cfg.get("refresh_new_name"):   # 다시 올리기는 늘 같은 이름
-                    t["name"] = self._new_name(cfg, t) or t["name"]
-            elif op == "delete":
-                self.db.set_listing(lid, "deleted", op="create", stage="", deleted_at=time.time())
-                self._count(sid, lid, True)
+                else:
+                    self.db.set_listing(lid, "deleted", op="create", stage="", deleted_at=time.time())
+                    self._count(sid, lid, True)
                 return
 
-            row, cat_id, kw = self._prepare(cfg, store, categories, t)   # 이미지 올리기 전에 빠진 값부터 확인
-            t = {**t, "price": kw["price"]}
+            # 새 회차 (지우고 다시 올리면 다음 회차, 회차 초기화한 건은 1회차)
+            tn = {**t, "round": (1 if t.get("round_reset") else t["round"] + 1), "origin_no": ""} if live else t
+            self._stage(lid, label, "올릴 내용 준비")
+            row, cat_id, kw = self._prepare(cfg, store, categories, tn)   # 이미지 올리기 전에 빠진 값부터 확인
+            tn = {**tn, "price": kw["price"]}
             code = kw["seller_code"]
             # 스토어 템플릿 상단·하단 (이미지는 이 스토어 이름으로 한 번만 올리고 이번 실행 동안 같이 씀)
             tpl = self.__dict__.setdefault("_tpl_cache", {})
@@ -445,13 +444,35 @@ class Runner:
             boxes = convert.option_boxes(row, cfg, store)
             if boxes:
                 kw["opt_urls"] = self._option_images(client, cache, boxes, convert.option_look(cfg, store), lid, label, on_wait)
-
-            self._stage(lid, label, "상품 등록 중")
             body = convert.build_body(row, cfg, cat_id, url_map, **kw)
             iss = convert.mobile_issues(body["originProduct"]["detailContent"])
             if iss:   # 스토어 상단·하단 HTML 등에 남은 것
                 notes.append("모바일에서 흐린 캡처로 보일 수 있음: " + ", ".join(iss))
-            res = client.create_product(body, on_wait=on_wait)
+
+            if live:   # 여기까지 모두 준비됨 → 이제 지우고, 지운 뒤에는 등록만
+                self._stage(lid, label, "네이버에서 지우는 중")
+                removed = client.delete_product(t["origin_no"], on_wait=on_wait)
+                # 이미 스토어에서 지운 상품이면 지난 연결 확인 수에 이미 빠져 있을 수 있어, 남은 자리 계산에 '지움'으로 세지 않는다
+                self._archive(t, op, counted=removed is not False)
+                deleted_now = True
+                self.db.set_listing(lid, None, op="create", round=tn["round"], origin_no="", channel_no="",
+                                    deleted_at=time.time(), round_reset=0, nv_status="", nv_disp="")
+                if op == "refresh" and cfg.get("refresh_new_name"):   # 다시 올리기는 늘 같은 이름
+                    nm = self._new_name(cfg, tn)
+                    if nm:
+                        tn["name"] = nm
+                        body["originProduct"]["name"] = nm[:100]
+            self._stage(lid, label, "상품 등록 중")
+            res, tries = None, (3 if deleted_now else 1)
+            for k in range(tries):   # 지운 뒤라면 등록을 몇 번 다시 시도 (상품이 비어 있지 않게)
+                try:
+                    res = client.create_product(body, on_wait=on_wait)
+                    break
+                except Exception:  # noqa: BLE001
+                    if k == tries - 1:
+                        raise
+                    self._stage(lid, label, f"등록 다시 시도 {k + 2}/{tries}")
+                    time.sleep(3)
             if ((body["originProduct"].get("detailAttribute") or {}).get("unitCapacity") or {}).get("unitPriceYn") is False:
                 notes.append("가격표시제 대상 카테고리 → 단위가격 '사용 안 함'으로 등록")
             shown = int(body["originProduct"]["salePrice"])
@@ -462,12 +483,32 @@ class Runner:
                                 origin_no=str(res.get("originProductNo", "")),
                                 channel_no=str(res.get("smartstoreChannelProductNo", "")))
             what = {"refresh": "최신화", "reupload": "다시 올리기"}.get(op, "등록")
-            self._log("ok", f"{what} 완료 · {t['name'][:40]} ({sec:.1f}초, 새 이미지 {n1 + n2}장)", store["name"])
+            self._log("ok", f"{what} 완료 · {tn['name'][:40]} ({sec:.1f}초, 새 이미지 {n1 + n2}장)", store["name"])
             self._count(sid, lid, True)
         except Exception as e:  # noqa: BLE001 - 한 건의 실패는 기록하고 다음으로
-            self.db.set_listing(lid, "fail", stage="", message=str(e)[:1000], seconds=time.time() - t0)
-            self._log("err", f"실패 · {t['name'][:40]} · {e}", store["name"])
+            msg = str(e)[:900]
+            if deleted_now:   # 네이버에서는 이미 지워짐 → 눈에 띄게
+                msg = "네이버에서 지워짐 — 다시 등록 필요 (실패 재시도로 다시 올리세요): " + msg
+            self.db.set_listing(lid, "fail", stage="", message=msg, seconds=time.time() - t0)
+            self._log("err", f"실패 · {t['name'][:40]} · {msg}", store["name"])
             self._count(sid, lid, False)
+
+    def _sales_recheck(self, sid, client):
+        """지우기 직전: 그 스토어 주문을 마지막으로 받은 지 5분이 넘었으면 다시 받는다 (실행 중에 팔린 상품도 잠기게)."""
+        st = self.db.one("SELECT orders_synced_to FROM stores WHERE id=?", (sid,)) or {}
+        if st.get("orders_synced_to") and time.time() - float(st["orders_synced_to"]) < 300:
+            return
+        locks = self.__dict__.setdefault("_sync_locks", {})
+        with self.lock:
+            lk = locks.setdefault(sid, threading.Lock())
+        with lk:
+            st = self.db.one("SELECT orders_synced_to FROM stores WHERE id=?", (sid,)) or {}
+            if st.get("orders_synced_to") and time.time() - float(st["orders_synced_to"]) < 300:
+                return
+            try:
+                orders.sync_store(self.db, self.db.store(sid), client, days=7)
+            except Exception as e:  # noqa: BLE001
+                raise naver.ApiError(f"지우기 전에 주문을 다시 확인하지 못해 지우지 않았습니다: {e}") from None
 
     def _prepare(self, cfg, store, categories, t):
         """올릴 내용 준비·확인 (row, 카테고리 번호, build_body 인자). 막히는 게 있으면 여기서 예외 — 최신화는 지우기 전에 부른다.
@@ -508,7 +549,8 @@ class Runner:
             return {}
 
     def _need_sales_history(self, sid, t):
-        """가져온 상품은 이 프로그램이 판매 이력을 모르는 채로 들어옴 → 그 상품이 올라간 날부터 주문을 받아 둔 뒤에만 지운다."""
+        """모든 상품: 그 상품이 올라간 날부터 그 스토어 판매 이력(주문)을 빈틈없이 알고 있을 때만 지운다
+        (처음 주문을 받는 스토어는 최근 며칠치뿐이라 그 전에 팔린 상품을 모르고 지울 수 있음)."""
         st = self.db.one("SELECT orders_from, orders_synced_to FROM stores WHERE id=?", (sid,)) or {}
         kf = orders.known_from(st)
         reg = t.get("registered_at") or 0
@@ -547,6 +589,8 @@ class Runner:
             nm = inventory.refresh_name(c, src, t["store_id"], cfg, now)
             if not nm:
                 return None
+            # 예전 이름은 '다 쓴 이름'으로 (다른 복사본이 다시 쓰지 않게, 한 복사본에 이름이 둘 붙지 않게)
+            c.execute("UPDATE names SET listing_id=-1 WHERE listing_id=? AND id!=?", (t["id"], nm["id"]))
             c.execute("UPDATE names SET listing_id=? WHERE id=?", (t["id"], nm["id"]))
             c.execute("UPDATE listings SET name_id=?, name=? WHERE id=?", (nm["id"], nm["name"], t["id"]))
         return nm["name"]
