@@ -242,6 +242,8 @@ class DB:
         from . import activity, adopt, aiwords, baseprice, clean, ctxkw, eye, keywords, kipris, lexicon, mail, trash
         clean.ensure(self)
         baseprice.ensure(self)
+        from . import srcedit
+        srcedit.ensure(self)
         adopt.ensure(self)
         eye.ensure(self)
         lexicon.ensure(self)

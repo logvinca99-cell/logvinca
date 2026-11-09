@@ -144,6 +144,8 @@ ACTIONS = {
     "sources_delete": ("원본", lambda b, r: ("원본 삭제 (휴지통으로)" + (" · 네이버는 그대로, 이 프로그램에서만" if b.get("keep_naver") else ""),
                                           _count_of(r, "count", "moved", "trashed", "ids"),
                                           f"판매 중 복사본이 있어 뺀 원본 {r['skipped_live']}개" if r.get("skipped_live") else "")),
+    "source_content_save": ("원본", lambda b, r: (f"원본 {r.get('what') or '상세·옵션'} 고침" + (f" · {b.get('memo')}" if b.get("memo") else "") if r.get("changed") else "원본 상세·옵션 (바뀐 것 없음)", 1 if r.get("changed") else 0, "")),
+    "source_content_undo": ("원본", lambda b, r: (f"원본 상세·옵션 마지막 수정 되돌림 #{r.get('undone', '')}", 1, "")),
     "baseprice_apply": ("원본", lambda b, r: ("기준 구매가 수정" + (f" · {b.get('how')}" if b.get("how") else ""), r.get("sources"),
                                             f"안 올린 복사본 {r.get('pending', 0)}건 다시 계산 · 판매 중 {r.get('live', 0)}건 네이버 가격 바꾸기")),
     "adopt_undo": ("원본", lambda b, r: ("기존 상품 가져오기 되돌리기 (이 프로그램에서만 — 네이버 상품은 그대로)", r.get("listings"),

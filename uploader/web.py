@@ -11,7 +11,7 @@ import uuid
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import VERSION, activity, adopt, aiwords, baseprice, chem, chrome, clean, eye, excel, mail, nvstate, srctags, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
+from . import VERSION, activity, adopt, aiwords, baseprice, srcedit, chem, chrome, clean, eye, excel, mail, nvstate, srctags, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
 from .db import DB
 from .tasks import Tasks
 
@@ -907,6 +907,30 @@ def create_app(db=None):
             except RuntimeError as e:
                 out["error"] = f"네이버 가격 바꾸기를 시작하지 못함 ({e}) — 다음 최신화 때 새 가격으로 올라갑니다"
         return jsonify(out)
+
+    # ── 원본 상세·옵션 고치기 (원본 상세 창)
+
+    @app.get("/api/sources/<int:sid>/content")
+    def source_content(sid):
+        try:
+            return jsonify(srcedit.content(db, sid))
+        except ValueError as e:
+            return fail(str(e), 404)
+
+    @app.post("/api/sources/<int:sid>/content")
+    def source_content_save(sid):
+        b = body()
+        try:
+            return jsonify(srcedit.save(db, sid, detail=b.get("detail"), options=b.get("options"), memo=b.get("memo") or ""))
+        except ValueError as e:
+            return fail(str(e))
+
+    @app.post("/api/sources/<int:sid>/content_undo")
+    def source_content_undo(sid):
+        try:
+            return jsonify(srcedit.undo_last(db, sid))
+        except ValueError as e:
+            return fail(str(e))
 
     @app.get("/api/sources/<int:sid>/price_log")
     def source_price_log(sid):

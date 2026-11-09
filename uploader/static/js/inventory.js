@@ -457,7 +457,8 @@ App.page("inventory", {
       ["눈검수", `${eyeFlag(d)} <button class="btn sm" id="s-eye">${d.eye_at ? "검수 완료 풀기" : "검수 완료로 표시"}</button>`],
       ["생활화학", `${d.chem_judge ? `<b>${esc(CHEM_LABEL[d.chem_judge] || d.chem_judge)}</b> <span class="muted small">${esc(d.chem_reason || "")}</span>` : '<span class="muted">판정 안 함</span>'}
         ${d.drop_pending ? ' <span class="flag warn">판매 중 내리고 지우는 중</span>' : ""} <button class="btn sm" id="s-chem">판정 바꾸기</button>`], ...Object.entries(d.fields).map(([k, v]) => [esc(k), esc(v)]),
-      ["이미지", `대표·추가 ${Math.min(10, d.thumbnails.length)}장 · 상세 ${d.detail_images.length}장`]];
+      ["이미지", `대표·추가 ${Math.min(10, d.thumbnails.length)}장 · 상세 ${d.detail_images.length}장`],
+      ["상세·옵션", `<button class="btn sm" id="s-edit">상세·옵션 고치기</button> <span class="muted small">원본 엑셀을 다시 올려도 덮어쓰지 않으므로 여기서 고칩니다</span>`]];
     b.innerHTML = notes.join("") +
       (d.thumbnails.length ? `<div class="gallery">${d.thumbnails.map((u, i) => img(u, i === 0 ? "g-main" : "")).join("")}</div>` : "") +
       `<dl class="kv">${kv.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>` +
@@ -468,6 +469,7 @@ App.page("inventory", {
         </table></div>` : "") +
       (d.tags_list.length ? `<div><h3 class="sec-title">엑셀 태그</h3><div class="tags">${d.tags_list.map((t) => `<span>${esc(t)}</span>`).join("")}</div></div>` : "");
     $("#s-chem", b)?.addEventListener("click", () => App.chemSet({ ids: [d.id] }, `원본 #${d.id}`, () => { this.openSource(d.id); if ($("#i-rows")) this.load(); }));
+    $("#s-edit", b)?.addEventListener("click", () => App.editContent(d.id, () => { this.openSource(d.id); if ($("#i-rows")) this.load(); }));
     $("#s-bp", b)?.addEventListener("click", () => App.basePrice({ sourceId: d.id, current: d, after: () => { if ($("#i-rows")) this.load(); } }));
     $("#s-eye", b)?.addEventListener("click", () => App.eyeSet({ ids: [d.id] }, !d.eye_at, `원본 #${d.id}`, () => { this.openSource(d.id); if ($("#i-rows")) this.load(); }));
     const tagDo = async (add, remove) => {
@@ -597,3 +599,79 @@ App.page("inventory", {
     });
   },
 });
+
+
+/* 원본 상세·옵션 고치기 (원본 상세 창). 상품명·기준 구매가는 여기서 안 바꿈. 아직 안 올린 복사본은 올릴 때,
+   판매 중 복사본은 다음 최신화·다시 올리기 때 반영 (네이버에 바로 보내지 않음). 마지막 수정은 되돌릴 수 있음. */
+App.editContent = async function (sid, after) {
+  let d;
+  try { d = await this.api(`/api/sources/${sid}/content`); } catch (e) { return this.toast(e.message, true); }
+  const o = d.options;
+  const optRow = (r = {}) => `<tr class="se-opt">
+      <td><input class="se-n1" value="${esc(r.n1 || "")}" placeholder="값 1"></td><td><input class="se-n2" value="${esc(r.n2 || "")}" placeholder="(없으면 비움)"></td>
+      <td><input class="se-n3" value="${esc(r.n3 || "")}" placeholder="(없으면 비움)"></td>
+      <td><input class="se-price" type="number" step="100" value="${r.price || 0}" style="width:96px"></td>
+      <td class="c"><input type="checkbox" class="se-use" ${r.usable === false ? "" : "checked"} title="판매(사용)"></td>
+      <td><button type="button" class="btn tiny ghost se-del" title="이 옵션 빼기">✕</button></td></tr>`;
+  const when = (t) => new Date(t * 1000).toLocaleString();
+  const canUndo = d.log.some((x) => !/되돌림/.test(x.what));
+  this.openModal({
+    title: `상세·옵션 고치기 — 원본 #${d.id}`, wide: true,
+    body: (b) => {
+      b.innerHTML = `<div class="notice info">원본 <b>${esc(d.name)}</b>의 상세페이지와 옵션을 고칩니다. 상품명·기준 구매가는 여기서 바꾸지 않습니다
+          (기준 구매가는 [기준 구매가 수정]). 아직 안 올린 복사본은 올릴 때 새 내용으로 올라가고,
+          ${d.n_live ? `<b>판매 중 복사본 ${num(d.n_live)}건은 지금 네이버에 보내지 않고 다음 최신화·다시 올리기 때</b> 반영됩니다.` : "판매 중 복사본은 없습니다."}
+          고치기 전 내용은 남겨 두어 <b>[마지막 수정 되돌리기]</b>로 돌릴 수 있습니다.</div>
+        <div class="se-tabs"><button type="button" class="on" data-se="detail">상세페이지</button><button type="button" data-se="opt">옵션 (${num(o.rows.length)}개)</button></div>
+        <div data-sec="detail">
+          <label class="field">상세페이지 HTML <span class="muted small">(이미지 주소·글자를 고치거나 필요 없는 부분을 지우세요)</span>
+            <textarea id="se-html" rows="16" spellcheck="false" style="font-family:ui-monospace,Consolas,monospace;font-size:12px">${esc(d.detail)}</textarea></label>
+          <div class="cl-row"><button type="button" class="btn sm" id="se-prev">미리보기 새로 그리기</button><span class="muted small">아래는 고친 HTML 그대로 (스토어 상단·하단은 올릴 때 붙음)</span></div>
+          <iframe id="se-frame" sandbox="allow-same-origin" title="상세 미리보기" style="width:100%;height:360px;border:1px solid var(--line);border-radius:8px;margin-top:6px;background:#fff"></iframe></div>
+        <div data-sec="opt" hidden>
+          ${o.editable ? `<p class="small muted" style="margin:0 0 6px">조합형 옵션입니다. 옵션 이름(예: 색상·사이즈)과 값, 추가금(기준 구매가에 더하는 금액, 0이면 같은 가격)을 고치세요.
+              값 1만 쓰면 1단 옵션, 값 2·3까지 쓰면 2·3단. 모든 옵션을 빼면 옵션 없는 상품이 됩니다. 재고는 올릴 때 설정의 '등록 재고'로 들어갑니다.</p>
+            <div class="cl-row"><label class="field" style="margin:0">옵션 이름 1<input id="se-g1" value="${esc(o.groups[0])}" placeholder="예) 색상"></label>
+              <label class="field" style="margin:0">옵션 이름 2<input id="se-g2" value="${esc(o.groups[1])}" placeholder="(없으면 비움)"></label>
+              <label class="field" style="margin:0">옵션 이름 3<input id="se-g3" value="${esc(o.groups[2])}" placeholder="(없으면 비움)"></label></div>
+            <div class="tbl-wrap" style="max-height:340px;margin-top:8px"><table class="grid small se-table"><thead><tr><th>값 1</th><th>값 2</th><th>값 3</th><th>추가금(원)</th><th>판매</th><th></th></tr></thead>
+              <tbody id="se-rows">${o.rows.map(optRow).join("")}</tbody></table></div>
+            <button type="button" class="btn sm" id="se-add" style="margin-top:6px">+ 옵션 더하기</button>`
+          : `<div class="notice warn">${esc(o.note || "고칠 수 없는 옵션입니다.")}</div>`}</div>
+        <label class="field" style="margin-top:10px">메모 <span class="muted small">(왜 고쳤는지 — 기록에 남음)</span><input id="se-memo" placeholder="예) 품절 색상 빼기"></label>
+        ${d.log.length ? `<details class="small" style="margin-top:6px"><summary>고친 기록 ${num(d.log.length)}건</summary><ul>${d.log.map((x) =>
+          `<li>${when(x.at)} · ${esc(x.what)}${x.memo ? ` · ${esc(x.memo)}` : ""}</li>`).join("")}</ul></details>` : ""}`;
+      const draw = () => { $("#se-frame", b).srcdoc = `<meta name="referrer" content="no-referrer"><style>body{margin:0}img{max-width:100%}</style>` + $("#se-html", b).value; };
+      draw();
+      $("#se-prev", b).addEventListener("click", draw);
+      $$(".se-tabs button", b).forEach((t) => t.addEventListener("click", () => {
+        $$(".se-tabs button", b).forEach((x) => x.classList.toggle("on", x === t));
+        $$("[data-sec]", b).forEach((x) => { x.hidden = x.dataset.sec !== t.dataset.se; });
+      }));
+      $("#se-add", b)?.addEventListener("click", () => { $("#se-rows", b).insertAdjacentHTML("beforeend", optRow({ usable: true })); $("#se-rows tr:last-child .se-n1", b).focus(); });
+      $("#se-rows", b)?.addEventListener("click", (e) => { const x = e.target.closest(".se-del"); if (x) x.closest("tr").remove(); });
+    },
+    buttons: [
+      { label: "닫기" },
+      ...(canUndo ? [{ label: "마지막 수정 되돌리기", danger: true, confirm: "마지막으로 고친 상세·옵션을 그 전 내용으로 되돌립니다.", onClick: async () => {
+        await this.api(`/api/sources/${sid}/content_undo`, { json: {} });
+        this.toast("마지막 수정을 되돌렸습니다");
+        if (after) after();
+      } }] : []),
+      { label: "저장", primary: true,
+        confirm: d.n_live ? `판매 중 복사본 ${num(d.n_live)}건은 지금 바뀌지 않고, 다음 최신화·다시 올리기 때 새 상세·옵션으로 올라갑니다.` : "아직 안 올린 복사본은 올릴 때 새 상세·옵션으로 올라갑니다.",
+        validate: (b) => (!$("#se-html", b).value.trim() ? "상세페이지가 비었습니다." : ""),
+        onClick: async (b) => {
+          const body = { detail: $("#se-html", b).value, memo: $("#se-memo", b).value };
+          if (o.editable) {
+            body.options = { groups: [1, 2, 3].map((i) => $(`#se-g${i}`, b).value),
+              rows: $$(".se-opt", b).map((tr) => ({ n1: $(".se-n1", tr).value, n2: $(".se-n2", tr).value, n3: $(".se-n3", tr).value,
+                price: +$(".se-price", tr).value || 0, usable: $(".se-use", tr).checked })) };
+          }
+          const r = await this.api(`/api/sources/${sid}/content`, { json: body });
+          this.toast(r.changed ? `${r.what} 고쳤습니다` + (r.warnings?.length ? ` · ${r.warnings.join(" · ")}` : "") : "바뀐 것이 없습니다", !!r.warnings?.length);
+          if (r.changed && after) after();
+        } },
+    ],
+  });
+};

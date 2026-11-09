@@ -914,3 +914,8 @@ body.eye-open .tasks { display: none; }
 @media (max-width: 700px) { .help-dl { grid-template-columns: 1fr; } .help-dl dd { margin-bottom: 8px; } }
 
 .tbl-wrap { overflow-x: auto; max-width: 100%; }
+/* 원본 상세·옵션 고치기 창 */
+.se-tabs { display: flex; gap: 6px; margin: 12px 0 10px; }
+.se-tabs button { padding: 7px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text-2); font-weight: 600; cursor: pointer; }
+.se-tabs button.on { background: var(--accent-soft); color: var(--accent-strong); border-color: var(--accent); }
+.se-table input:not([type=checkbox]) { width: 100%; min-width: 90px; }
