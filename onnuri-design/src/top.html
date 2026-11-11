@@ -2,67 +2,32 @@
 <html lang="ko"><head><meta charset="utf-8"><title>온누리하우스 상단</title>
 <link rel="stylesheet" href="style.css">
 <style>
-  .top { position: relative; overflow: hidden; padding: 60px 56px 0; background: var(--cream); }
-  /* 은은한 햇살 원 장식 */
-  .top::before { content: ""; position: absolute; right: -150px; top: -170px; width: 440px; height: 440px; border-radius: 50%; border: 56px solid var(--sun-soft); }
-  .top .brand { position: relative; justify-content: center; }
-  .headline { position: relative; text-align: center; margin-top: 44px; }
-  .headline h1 { font-size: 58px; line-height: 1.24; font-weight: 900; letter-spacing: -0.05em; color: var(--ink); }
-  .headline h1 em { font-style: normal; color: var(--green); }
-  .headline p { margin-top: 18px; font-size: 27px; font-weight: 600; color: var(--muted); }
-
-  .badges { position: relative; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 40px; }
-  .badge { background: #fff; border-radius: 26px; padding: 28px 10px 26px; text-align: center; box-shadow: 0 6px 0 var(--line); }
-  .badge .circle { width: 84px; height: 84px; margin: 0 auto; border-radius: 50%; background: var(--green-soft); color: var(--green); display: grid; place-items: center; font-size: 44px; }
-  .badge b { display: block; margin-top: 16px; font-size: 29px; font-weight: 800; color: var(--ink); }
-  .badge span { display: block; margin-top: 6px; font-size: 21px; font-weight: 600; color: var(--muted); }
-
-  .check { margin: 44px -56px 0; background: var(--green); color: #fff; padding: 40px 56px 44px; }
-  .check h2 { display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 26px; font-weight: 700; color: var(--sun); letter-spacing: 0; }
-  .check ul { list-style: none; margin-top: 22px; display: grid; gap: 14px; }
-  .check li { display: flex; align-items: center; gap: 18px; background: rgba(255,255,255,.08); border-radius: 20px; padding: 22px 26px; font-size: 29px; font-weight: 600; line-height: 1.35; }
-  .check li .n { flex: none; width: 46px; height: 46px; border-radius: 50%; background: var(--sun); color: var(--green); display: grid; place-items: center; font-size: 24px; font-weight: 900; }
-  .check li b { color: var(--sun); }
-  .check li small { display: block; font-size: 21px; font-weight: 500; color: rgba(255,255,255,.72); margin-top: 4px; }
-
-  .cue { background: var(--green); padding: 0 56px 46px; text-align: center; }
-  .cue div { display: inline-flex; align-items: center; gap: 14px; background: var(--sun); color: var(--green); border-radius: 999px; padding: 18px 40px; font-size: 30px; font-weight: 800; }
-  .cue svg { font-size: 30px; stroke-width: 2.6; }
+  .head { padding: 56px 40px 44px; text-align: center; }
+  .head .m { color: var(--gray); margin-bottom: 18px; }
+  .trust { margin-top: 36px; display: flex; justify-content: center; gap: 0; background: var(--main-soft); border-radius: 999px; padding: 18px 10px; }
+  .trust div { flex: 1; display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--main); font-size: var(--s); font-weight: 800; }
+  .trust div + div { border-left: 2px solid var(--line); }
+  .trust svg { font-size: var(--m); stroke-width: 2.2; }
+  .opt { background: var(--main); color: #fff; text-align: center; padding: 40px 40px 36px; }
+  .opt .s { color: rgba(255,255,255,.85); font-weight: 700; }
+  .opt .l { margin-top: 8px; }
+  .opt .l span { background: #fff; color: var(--main); border-radius: 10px; padding: 0 10px; }
+  .opt .down { margin-top: 22px; display: inline-flex; align-items: center; gap: 8px; color: var(--point); font-size: var(--s); font-weight: 800; }
+  .opt .down svg { stroke-width: 2.6; }
 </style></head>
 <body>
-<section class="top">
-  <div class="brand">
-    <img src="logo.svg" width="76" height="76" alt="">
-    <div><div class="name">온누리하우스</div><div class="eng">ONNURI HOUSE</div></div>
+<div class="head">
+  <div class="m">해외 좋은 물건, 우리 집 앞까지</div>
+  <div class="brand"><img src="logo.svg" width="84" height="84" alt=""><div class="name">온누리하우스</div></div>
+  <div class="trust">
+    <div><svg class="ic" viewBox="0 0 24 24"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>현지 정식 구매</div>
+    <div><svg class="ic" viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/></svg>꼼꼼한 검수</div>
+    <div><svg class="ic" viewBox="0 0 24 24"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg>안전한 포장</div>
   </div>
-
-  <div class="headline">
-    <h1>세계의 좋은 물건,<br><em class="hl">우리 집 앞까지</em></h1>
-    <p>현지에서 직접 구매하고, 꼼꼼히 확인해서 보내드립니다</p>
-  </div>
-
-  <div class="badges">
-    <div class="badge">
-      <div class="circle"><svg class="ic" viewBox="0 0 24 24"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg></div>
-      <b>현지 정식 구매</b><span>현지 판매처에서 직접</span>
-    </div>
-    <div class="badge">
-      <div class="circle"><svg class="ic" viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/></svg></div>
-      <b>꼼꼼한 검수</b><span>발송 전 상태 확인</span>
-    </div>
-    <div class="badge">
-      <div class="circle"><svg class="ic" viewBox="0 0 24 24"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg></div>
-      <b>안전한 포장</b><span>파손 없이 안전하게</span>
-    </div>
-  </div>
-
-  <div class="check">
-    <h2><svg class="ic" viewBox="0 0 24 24" style="font-size:30px;stroke-width:2.2"><circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 5-6"/></svg>주문 전 딱 두 가지만 확인해 주세요</h2>
-    <ul>
-      <li><span class="n">1</span><div>대표 사진이 아닌 <b>옵션명·옵션 사진</b>으로<br>상품을 선택해 주세요</div></li>
-      <li><span class="n">2</span><div>주문 시 <b>개인통관고유부호</b>를 입력해 주세요<small>발급 방법은 상세페이지 맨 아래에 안내되어 있어요</small></div></li>
-    </ul>
-  </div>
-</section>
-<div class="cue"><div>아래 옵션표에서 상품을 확인하세요<svg class="ic" viewBox="0 0 24 24"><path d="M12 4v15"/><path d="m6 13 6 6 6-6"/></svg></div></div>
+</div>
+<div class="opt">
+  <div class="s">옵션 선택, 헷갈리셨죠?</div>
+  <div class="l">대표 사진이 아닌<br><span>옵션명·옵션 이미지</span>를 꼭 확인해 주세요</div>
+  <div class="down">아래 옵션표를 확인하세요<svg class="ic" viewBox="0 0 24 24"><path d="M12 4v15"/><path d="m6 13 6 6 6-6"/></svg></div>
+</div>
 </body></html>

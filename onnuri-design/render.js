@@ -14,7 +14,7 @@ const only = process.argv.slice(2);
   for (const p of pages) {
     if (only.length && !only.some(o => p.file.startsWith(o))) continue;
     for (const scale of [1, 2]) {
-      const page = await browser.newPage({ viewport: { width: p.width, height: p.height || 800 }, deviceScaleFactor: scale });
+      const page = await browser.newPage({ viewport: { width: p.width, height: p.height || 100 }, deviceScaleFactor: scale });
       await page.goto('file://' + path.join(__dirname, 'src', p.file));
       await page.evaluate(() => document.fonts.ready);
       const suffix = scale === 1 ? '' : '@2x';
