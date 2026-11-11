@@ -5,7 +5,7 @@ App.page("home", {
   async mount(el) {
     el.innerHTML = `<div class="page">
       <header class="page-head"><h1>한눈에 보기</h1>
-        <div class="head-actions"><button class="btn" id="h-phone" title="스토어에 올라간 상품을 폰에서 보기">폰으로 보기</button><a class="btn" href="#inventory">원본 상품</a><a class="btn primary" href="#listings">등록하러 가기</a></div></header>
+        <div class="head-actions"><a class="btn" href="#inventory">원본 상품</a><a class="btn primary" href="#listings">등록하러 가기</a></div></header>
       <section class="card pad h-memo"><div class="sec-head"><h2>업무 메모</h2><span class="muted small" id="h-memo-st">오늘 할 일·하고 있는 일 · 적는 대로 저장</span></div>
         <textarea id="h-memo" placeholder="예)
 □ 오늘: 뉴시즌8 눈검수 30쪽까지
@@ -19,7 +19,6 @@ App.page("home", {
       </section>
     </div>`;
     this.el = el;
-    $("#h-phone", el).addEventListener("click", () => App.phoneView());
     App.api("/api/home/memo").then((m) => {
       const ta = $("#h-memo");
       if (!ta) return;

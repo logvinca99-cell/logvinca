@@ -166,8 +166,6 @@ DEFAULTS = {
     "option_table_color": "#1F2937",
     # 내려받은 이미지를 디스크에 보관해 여러 스토어에 올릴 때 다시 받지 않음 (GB)
     "image_cache_gb": 5,
-    # 폰으로 보기 (같은 와이파이): 켜면 업스타를 다시 켤 때 이 PC 내부 주소로도 열고, 열쇠가 든 /m 화면만 폰에서 허용
-    "phone_view": False, "phone_key": "",
 
     # ── 속도
     "workers_per_store": 2,
@@ -177,7 +175,7 @@ DEFAULTS = {
     "extra": {},
 }
 
-SECRET_KEYS = ("anthropic_api_key", "opendict_key", "kipris_key", "searchad_secret", "gmail_app_password", "phone_key")
+SECRET_KEYS = ("anthropic_api_key", "opendict_key", "kipris_key", "searchad_secret", "gmail_app_password")
 _lock = threading.Lock()
 
 
@@ -203,7 +201,7 @@ def migrate_legacy_data():
     return LEGACY_DATA_DIR
 
 
-REMOVED_KEYS = ("price_jitter_pct", "price_jitter_min", "price_jitter_max", "use_original_name", "bait_enabled", "bait_pct",
+REMOVED_KEYS = ("phone_view", "phone_key", "price_jitter_pct", "price_jitter_min", "price_jitter_max", "use_original_name", "bait_enabled", "bait_pct",
                 "bait_price_pct", "bait_ratio")
 
 

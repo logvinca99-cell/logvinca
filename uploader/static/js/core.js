@@ -991,66 +991,6 @@ const App = {
     if (keep) return this._forget({ ...target }, after);
     return this._deleteEverywhere(target, after, now);
   },
-  /* 폰으로 보기: ① 폰용 파일 받기(받은 때 기준) ② 같은 와이파이에서 실시간 (설정에서 켬, 열쇠 주소) */
-  async phoneView(storeId) {
-    const store = storeId ? this.stores.find((s) => s.id === +storeId) : null;
-    this.openModal({
-      title: "폰으로 보기",
-      body: `<div class="form ph">
-        <section class="ph-sec"><h3>① 폰용 파일 받기 <span class="flag">어디서나</span></h3>
-          <p class="small muted">스토어에 올린 복사본을 업스타 순서 그대로 담은 파일 하나를 받습니다. 폰에서 열고 상품을 누르면 네이버 스토어 상품이 바로 열립니다. <b>받은 때 기준</b>이라 바뀌면 다시 받으세요.</p>
-          ${store ? `<div class="cl-row"><label class="check"><input type="radio" name="ph-which" value="${store.id}" checked><span>${esc(store.name)}만</span></label>
-            <label class="check"><input type="radio" name="ph-which" value=""><span>모든 스토어</span></label></div>` : ""}
-          <ol class="small ph-steps"><li>[파일 받기]를 누릅니다</li><li>받은 파일을 카카오톡 <b>나와의 채팅</b>(또는 구글 드라이브)으로 보냅니다</li>
-            <li>폰에서 그 파일을 눌러 <b>브라우저(크롬·삼성 인터넷·사파리)로 열기</b></li></ol>
-          <button class="btn primary" id="ph-file">파일 받기</button></section>
-        <section class="ph-sec"><h3>② 같은 와이파이에서 실시간 <span class="flag">집·사무실</span></h3><div id="ph-live" class="small"><span class="spin"></span></div></section>
-      </div>`,
-      buttons: [{ label: "닫기", noConfirm: true }],
-    });
-    $("#ph-file").addEventListener("click", () => {
-      const v = $("input[name=ph-which]:checked")?.value ?? "";
-      window.location.href = `/api/phone/file.html${v ? `?store_id=${v}` : ""}`;
-    });
-    const paint = async () => {
-      const box = $("#ph-live");
-      if (!box) return;
-      let i;
-      try { i = await this.api("/api/phone/info"); } catch (e) { box.textContent = e.message; return; }
-      if (!i.enabled) {
-        box.innerHTML = `<p class="muted">PC와 폰이 같은 와이파이일 때 폰에서 지금 상태를 바로 봅니다 (읽기만, 폰에서 바꾸는 기능 없음). 켜면 업스타를 <b>한 번 껐다 다시 켜야</b> 합니다.</p>
-          <button class="btn" id="ph-on">켜기</button>`;
-        $("#ph-on").addEventListener("click", async () => {
-          try { await this.api("/api/phone/setup", { json: { on: true } }); } catch (e) { return this.toast(e.message, true); }
-          paint();
-        });
-        return;
-      }
-      box.innerHTML = `${i.bound ? "" : `<p class="c-err"><b>업스타를 껐다 다시 켜야 폰에서 열립니다</b> (켠 뒤 처음 한 번).</p>`}
-        <p>폰 브라우저 주소창에 이 주소를 넣으세요 (홈 화면에 추가해 두면 편함):</p>
-        ${i.urls.map((u) => `<div class="ph-url"><code>${esc(u)}</code><button class="btn sm" data-copy="${esc(u)}">복사</button></div>`).join("")}
-        <p class="muted">Windows 방화벽 허용 창이 뜨면 <b>개인 네트워크</b>만 허용하세요. 열쇠가 든 이 주소의 폰 화면만 열리고, 나머지 업스타 화면은 이 PC에서만 열립니다. 주소가 새어 나갔으면 [열쇠 다시 만들기].</p>
-        <div class="cl-row"><button class="btn sm" id="ph-key">열쇠 다시 만들기</button><button class="btn sm ghost" id="ph-off">끄기</button>
-          <a class="btn sm ghost" href="/m" target="_blank" rel="noopener">이 PC에서 미리 보기 ↗</a></div>`;
-      $$("[data-copy]", box).forEach((b) => b.addEventListener("click", async () => {
-        try { await navigator.clipboard.writeText(b.dataset.copy); this.toast("주소를 복사했습니다 — 카톡 나와의 채팅에 붙여 넣어 폰에서 누르면 됩니다"); }
-        catch (e) { this.toast("복사하지 못했습니다 — 주소를 직접 옮겨 적으세요", true); }
-      }));
-      $("#ph-key").addEventListener("click", async () => {
-        const b = $("#ph-key");
-        if (!b.dataset.sure) { b.dataset.sure = "1"; b.classList.add("danger"); b.textContent = "한 번 더 누르면 새 열쇠 (지금 주소는 더 이상 안 열림)"; return; }
-        try { await this.api("/api/phone/key", { json: {} }); } catch (e) { return this.toast(e.message, true); }
-        paint();
-      });
-      $("#ph-off").addEventListener("click", async () => {
-        try { await this.api("/api/phone/setup", { json: { on: false } }); } catch (e) { return this.toast(e.message, true); }
-        this.toast("껐습니다 — 폰에서 더 이상 열리지 않습니다");
-        paint();
-      });
-    };
-    paint();
-  },
-
   /* 이 프로그램에서만 빼기 (원본·복사본 모두 휴지통, 네이버 상품은 그대로 — 내리지 않음) */
   async _forget(body, after) {
     try {

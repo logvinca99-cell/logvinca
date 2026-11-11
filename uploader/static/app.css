@@ -935,10 +935,3 @@ body.eye-open .tasks { display: none; }
 @media (max-width: 700px) { .btn { white-space: normal; text-align: center; } }
 @media (max-width: 700px) { .tiles { grid-template-columns: repeat(auto-fill, minmax(min(150px, 45%), 1fr)) !important; } .tile { min-width: 0; } }
 @media (max-width: 700px) { #l-tiles { flex-wrap: wrap; } #l-tiles .tile { flex: 1 1 30%; } }
-
-/* 폰으로 보기 창 */
-.ph-sec { border: 1px solid var(--line, #e2e8e4); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
-.ph-sec h3 { margin: 0 0 6px; font-size: 15px; }
-.ph-steps { margin: 6px 0 10px; padding-left: 20px; }
-.ph-url { display: flex; gap: 8px; align-items: center; margin: 6px 0; min-width: 0; }
-.ph-url code { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; word-break: break-all; padding: 8px 10px; border-radius: 8px; background: rgba(31,143,78,.08); }

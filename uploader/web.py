@@ -11,7 +11,7 @@ import uuid
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import VERSION, activity, adopt, aiwords, baseprice, bulkedit, srcedit, chem, chrome, clean, eye, excel, mail, nvstate, srctags, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, phone, watermark
+from . import VERSION, activity, adopt, aiwords, baseprice, bulkedit, srcedit, chem, chrome, clean, eye, excel, mail, nvstate, srctags, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
 from .db import DB
 from .tasks import Tasks
 
@@ -118,16 +118,6 @@ def create_app(db=None):
         names = [r["name"] for r in db.q(f"""SELECT DISTINCT t.name FROM listings l JOIN stores t ON t.id=l.store_id
             WHERE l.id IN ({','.join('?' * len(lids))}) LIMIT 4""", lids)]
         return ", ".join(names[:3]) + (" 외" if len(names) > 3 else "")
-
-    @app.before_request
-    def outside_guard():
-        """이 PC 밖(같은 와이파이의 폰 등)에서 온 요청은 '폰으로 보기'를 켰고 열쇠가 맞는 /m 화면·자료만. 나머지는 모두 막음."""
-        if phone.is_local(request.remote_addr):
-            return None
-        if request.path in ("/m", "/m/data") and phone.key_ok(request.args.get("key")):
-            return None
-        return Response("업스타: 이 주소는 업스타를 켠 PC에서만 열 수 있습니다. (폰은 [폰으로 보기]의 열쇠 주소로)", 403,
-                        mimetype="text/plain; charset=utf-8")
 
     @app.after_request
     def log_action(resp):
@@ -239,52 +229,6 @@ def create_app(db=None):
     @app.get("/static/<path:name>")
     def static_file(name):
         return send_from_directory(STATIC, name, max_age=0)
-
-    # ── 폰으로 보기 (읽기만)
-
-    @app.get("/m")
-    def phone_page():
-        return Response(phone.page(), mimetype="text/html", headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
-
-    @app.get("/m/data")
-    def phone_data():
-        return jsonify(phone.data(db, live=True))
-
-    @app.get("/api/phone/file.html")
-    def phone_file():
-        """폰용 파일 (한 개짜리 HTML, 받은 때 기준). store_id가 있으면 그 스토어만."""
-        from urllib.parse import quote
-        sid = int(request.args.get("store_id") or 0) or None
-        html = phone.file_html(db, sid)
-        st = (db.store(sid) or {}).get("name", "") if sid else ""
-        activity.add(db, "복사본", "action", "폰용 파일 받기", None, store=st or "모든 스토어")
-        name = f"업스타_폰_{st or '전체'}_{time.strftime('%m%d_%H%M')}.html"
-        return Response(html, mimetype="text/html", headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
-
-    @app.get("/api/phone/info")
-    def phone_info():
-        cfg = config.load()
-        on = bool(cfg.get("phone_view"))
-        key = phone.ensure_key(cfg) if on else ""
-        port = request.host.rsplit(":", 1)[1] if ":" in request.host else "80"
-        return jsonify({"enabled": on, "bound": phone.bound_all(), "port": port,
-                        "urls": [f"http://{ip}:{port}/m?key={key}" for ip in phone.lan_ips()] if on else []})
-
-    @app.post("/api/phone/setup")
-    def phone_setup():
-        """같은 와이파이 실시간 보기 켜기·끄기 (켜면 업스타를 다시 켜야 폰에서 열림)."""
-        on = bool(body().get("on"))
-        before = config.load()
-        config.save({"phone_view": on})
-        if on:
-            phone.ensure_key()
-        return jsonify({"ok": True, "enabled": on, "restart": on != phone.bound_all(), "changed": bool(before.get("phone_view")) != on})
-
-    @app.post("/api/phone/key")
-    def phone_key_new():
-        """열쇠 다시 만들기 — 예전 주소는 더 이상 안 열림."""
-        phone.new_key()
-        return jsonify({"ok": True})
 
     # ── 전체 상태
 
