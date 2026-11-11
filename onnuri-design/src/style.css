@@ -1,6 +1,6 @@
 /* ============================================================
    온누리하우스 브랜드 시스템
-   - 컬러: 온누리 블루(메인) + 흰 배경 + 옐로(강조 한 곳에만)
+   - 컬러: 흰 배경 + 차콜(진한 띠) + 골드(테두리·포인트만)
    - 글씨 크기는 아래 4단계만 사용 (임의 크기 금지)
    ============================================================ */
 @font-face { font-family: "Pretendard"; font-weight: 500; src: url("../fonts/Pretendard-Medium.otf"); }
@@ -10,15 +10,15 @@
 @font-face { font-family: "Pretendard"; font-weight: 900; src: url("../fonts/Pretendard-Black.otf"); }
 
 :root {
-  --main: #1F4FE0;       /* 온누리 블루 */
-  --main-dark: #12308F;
-  --main-soft: #EAF0FF;
-  --point: #FFD233;      /* 옐로: 핵심 숫자·강조에만 */
-  --ink: #111827;
-  --gray: #5B6475;
-  --line: #D5DEF5;
+  --gold: #EBAE1F;       /* 온누리 골드: 테두리·포인트·숫자 (넓게 칠하지 않음) */
+  --gold-deep: #A87300;  /* 흰 바탕 위 강조 글자 */
+  --gold-soft: #FCF3D9;  /* 아주 옅은 보조면 */
+  --dark: #2B2620;       /* 차콜: 진한 띠·블록 */
+  --ink: #1F1B16;
+  --gray: #6B645A;
+  --line: #ECE3CF;
   --bg: #FFFFFF;
-  --bg-2: #F4F7FD;
+  --bg-2: #F7F5F0;
 
   /* 글씨 크기 4단계 */
   --xl: 64px;   /* 핵심 숫자·대표 문구 */
@@ -35,17 +35,17 @@ b { font-weight: 800; }
 .l  { font-size: var(--l);  font-weight: 800; line-height: 1.3; }
 .m  { font-size: var(--m);  font-weight: 600; }
 .s  { font-size: var(--s);  font-weight: 500; color: var(--gray); }
-.c-main { color: var(--main); }
-.c-point { color: var(--point); }
+.c-main { color: var(--gold-deep); }
+.c-point { color: var(--gold); }
 .ic { width: 1em; height: 1em; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 
 /* 로고 */
 .brand { display: flex; align-items: center; justify-content: center; gap: 18px; }
-.brand .name { font-size: var(--xl); font-weight: 900; color: var(--main); letter-spacing: -0.05em; line-height: 1; }
+.brand .name { font-size: var(--xl); font-weight: 900; color: var(--ink); letter-spacing: -0.05em; line-height: 1; }
 
 /* 레퍼런스 구조: 테두리 박스 + 위에 걸친 알약 제목 */
-.box { position: relative; margin: 0 40px; border: 4px solid var(--main); border-radius: 32px; background: #fff; overflow: visible; }
-.box > .pill { position: absolute; top: 0; left: 50%; transform: translate(-50%, -50%); background: #fff; border: 4px solid var(--main); border-radius: 999px; padding: 6px 36px; font-size: var(--m); font-weight: 800; white-space: nowrap; }
+.box { position: relative; margin: 0 40px; border: 4px solid var(--gold); border-radius: 32px; background: #fff; overflow: visible; }
+.box > .pill { position: absolute; top: 0; left: 50%; transform: translate(-50%, -50%); background: #fff; border: 4px solid var(--gold); border-radius: 999px; padding: 6px 36px; font-size: var(--m); font-weight: 800; white-space: nowrap; }
 .box-in { padding: 64px 36px 40px; }
-.box-foot { background: var(--main); color: #fff; margin: 0 -4px -4px; border-radius: 0 0 32px 32px; padding: 32px 30px; text-align: center; }
+.box-foot { background: var(--dark); color: #fff; margin: 0 -4px -4px; border-radius: 0 0 32px 32px; padding: 32px 30px; text-align: center; }
 .gap { height: 96px; }
