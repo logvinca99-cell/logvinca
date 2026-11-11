@@ -210,7 +210,7 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 pre.json { margin: 0; background: var(--panel-2); border-radius: 10px; padding: 14px; font-size: 12px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
 
 /* ── 설정 */
-.settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 14px; align-items: start; }
+.settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr)); gap: 14px; align-items: start; }
 .set { padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
 .set h2 { font-size: 15px; margin: 0; }
 .set p { margin: 0; font-size: 13px; }
@@ -926,3 +926,12 @@ body.eye-open .tasks { display: none; }
 .modal-body { min-width: 0; overflow-x: auto; }
 .modal-foot { flex-wrap: wrap; }
 @media (max-width: 700px) { .cl-head, .cl-row { flex-wrap: wrap; } .modal-body input, .modal-body select, .modal-body textarea { max-width: 100%; } }
+@media (max-width: 900px) {
+  .table-card { overflow-x: auto; }
+  .card { min-width: 0; max-width: 100%; }
+  .card.set, .card.set * { min-width: 0; max-width: 100%; }
+  .sec-head, .cl-head, .head-actions, .cl-row { flex-wrap: wrap; }
+}
+@media (max-width: 700px) { .btn { white-space: normal; text-align: center; } }
+@media (max-width: 700px) { .tiles { grid-template-columns: repeat(auto-fill, minmax(min(150px, 45%), 1fr)) !important; } .tile { min-width: 0; } }
+@media (max-width: 700px) { #l-tiles { flex-wrap: wrap; } #l-tiles .tile { flex: 1 1 30%; } }

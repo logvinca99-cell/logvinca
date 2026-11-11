@@ -1,6 +1,6 @@
 """기록 저장소 (data/inventory.db, SQLite).
 
-sources   원본 상품 (인벤토리). 상품명(완전히 같음)으로 구분하고(source_key), 다시 불러오면 내용을 갱신한다.
+sources   원본 상품 (인벤토리). 상품명(완전히 같음)으로 구분하고(source_key), 같은 상품명은 다시 넣지 않는다(덮어쓰지 않음).
           엑셀의 판매자코드는 seller_code에 참고로만 둔다 (스토어마다 바뀌므로 구분에 쓰지 않음).
           엑셀 한 줄 전체는 압축해서 data에 둔다 (상품 하나 약 2~3KB).
 names     상품명 후보. norm(정규화한 이름)이 표 전체에서 UNIQUE → 모든 스토어에서 이름이 겹치지 않음.
@@ -154,11 +154,6 @@ CREATE TABLE IF NOT EXISTS listings (
     manual_lock INTEGER NOT NULL DEFAULT 0, -- 직접 잠금
     locked INTEGER NOT NULL DEFAULT 0,      -- 지금 잠김 (직접 잠금 또는 판매 이력으로 자동 잠금) → 지우지 않음
     lock_note TEXT NOT NULL DEFAULT '',
-    bait_want INTEGER NOT NULL DEFAULT 1,   -- (예전 기능, 안 씀)
-    bait INTEGER NOT NULL DEFAULT 0,        -- (예전 기능, 안 씀)
-    bait_state TEXT NOT NULL DEFAULT '',    -- (예전 기능, 안 씀)
-    bait_note TEXT NOT NULL DEFAULT '',
-    bait_restored_at REAL,
     seconds REAL,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
@@ -257,6 +252,7 @@ class DB:
         mail.ensure(self)
         trash.ensure(self)
         self._rename_price_terms()
+        self._drop_removed()
         self._busy_name_guard()
         self._orders_from_init()
         self._name_keys()
@@ -286,8 +282,6 @@ class DB:
                     ("adopted", "INTEGER NOT NULL DEFAULT 0"),
                     # 대표 이미지 주소 열쇠 (원본 엑셀 올릴 때 겹침 확인용 — 원본 구분에는 안 씀)
                     ("img_key", "TEXT NOT NULL DEFAULT ''"),
-                    # 스토어 가격 흔들기 기준 (원본 열쇠를 상품명으로 바꿔도 손님 가격이 그대로이게 예전 열쇠를 씀)
-                    ("price_seed", "TEXT NOT NULL DEFAULT ''"),
                     # 기준 가격(기준 가격)가 어디서 왔나: file 처음 원본 파일 / adopt 기존 상품 가져오기(그 스토어 손님 가격) / manual 직접 수정
                     ("price_src", "TEXT NOT NULL DEFAULT ''"), ("price_at", "REAL")],
         "stores": [("code", "TEXT NOT NULL DEFAULT ''"), ("orders_synced_to", "REAL"),
@@ -300,8 +294,6 @@ class DB:
                    ("tpl_customs", "TEXT NOT NULL DEFAULT ''"), ("tpl_price_pct", "REAL"), ("tpl_discount_pct", "REAL"),
                    # 출고지·반품지 (네이버 판매자센터 주소록 번호, 비우면 판매자센터 기본 주소)
                    ("tpl_ship_addr", "INTEGER"), ("tpl_return_addr", "INTEGER"),
-                   # 가격 흔들기 범위 % (비우면 설정 기본 -3~+3), 흔들면 기준 가격과 같은 가격은 안 나옴
-                   ("tpl_jitter_min", "REAL"), ("tpl_jitter_max", "REAL"),
                    # 상세 옵션표 모양(strong·basic·original)·강조색 — 비우면 설정 공통값
                    ("tpl_opt_style", "TEXT NOT NULL DEFAULT ''"), ("tpl_opt_color", "TEXT NOT NULL DEFAULT ''"),
                    # 사업자 묶음과 순서 (사업자 하나에 스토어 최대 3개)
@@ -326,9 +318,6 @@ class DB:
                      ("cancel_count", "INTEGER NOT NULL DEFAULT 0"), ("manual_lock", "INTEGER NOT NULL DEFAULT 0"),
                      ("locked", "INTEGER NOT NULL DEFAULT 0"), ("lock_note", "TEXT NOT NULL DEFAULT ''"),("op", "TEXT NOT NULL DEFAULT 'create'"), ("round", "INTEGER NOT NULL DEFAULT 1"),
                      ("seller_code", "TEXT NOT NULL DEFAULT ''"), ("registered_at", "REAL"), ("deleted_at", "REAL"),
-                     ("bait_want", "INTEGER NOT NULL DEFAULT 1"),
-                     ("bait", "INTEGER NOT NULL DEFAULT 0"), ("bait_state", "TEXT NOT NULL DEFAULT ''"),
-                     ("bait_note", "TEXT NOT NULL DEFAULT ''"), ("bait_restored_at", "REAL"),
                      # 회차 초기화: 판매 중·내린 건을 다음에 다시 올릴 때 회차를 +1 하지 않고 1회차로
                      ("round_reset", "INTEGER NOT NULL DEFAULT 0"),
                      # 상품명 바꾸기(AI 키워드)를 눌렀는데 키워드가 아직 오는 중 → 오면 이 복사본 이름을 바꿈
@@ -340,6 +329,25 @@ class DB:
                      # 네이버 상품명 바꾸기 대기: 바꿀 이름(names.id) (성공하면 이 이름으로 바뀌고 비움)
                      ("name_push", "INTEGER")],
     }
+
+    # 없앤 기능이 남긴 칸·기록 (가격 도둑방지 bait_*, 가격 흔들기 tpl_jitter_*·price_seed, 모바일 할인 목록)
+    REMOVED_COLUMNS = {"listings": ("bait_want", "bait", "bait_state", "bait_note", "bait_restored_at"),
+                       "sources": ("price_seed",), "stores": ("tpl_jitter_min", "tpl_jitter_max")}
+
+    def _drop_removed(self):
+        for t, cols in self.REMOVED_COLUMNS.items():
+            have = {r[1] for r in self.c.execute(f"PRAGMA table_info({t})")}
+            for col in cols:
+                if col in have:
+                    try:
+                        self.c.execute(f"ALTER TABLE {t} DROP COLUMN {col}")
+                    except sqlite3.Error:
+                        pass   # 오래된 SQLite면 칸만 남음 (쓰지 않음)
+        try:
+            self.c.execute("DELETE FROM adopt_item WHERE kind='mobile_disc'")
+        except sqlite3.Error:
+            pass
+        self.c.commit()
 
     def _busy_name_guard(self):
         busy = "(SELECT id FROM listings WHERE status IN ('queued','running'))"
@@ -383,7 +391,6 @@ class DB:
 
     def _name_keys(self):
         """원본 구분을 대표 이미지 주소 → 상품명(완전히 같음)으로. 아직 안 바꾼 원본만 (열쇠가 'n:'으로 시작 안 함).
-        가격 흔들기 기준(price_seed)은 예전 열쇠로 남겨 손님 가격이 바뀌지 않게 한다.
         상품명이 같은 원본이 이미 여럿이면 합치지 않고 '#번호'를 붙여 따로 둔다 (가져온 원본은 '#판매자코드')."""
         rows = self.c.execute("SELECT id, source_key, name, data, adopted FROM sources WHERE source_key NOT LIKE 'n:%' ORDER BY id").fetchall()
         if not rows:
@@ -408,8 +415,7 @@ class DB:
                 img = source_fingerprint(unpack(r["data"]))
             except Exception:  # noqa: BLE001
                 img = ""
-            self.c.execute("UPDATE sources SET source_key=?, img_key=?, price_seed=CASE WHEN price_seed='' THEN ? ELSE price_seed END WHERE id=?",
-                           (key, img, r["source_key"], r["id"]))
+            self.c.execute("UPDATE sources SET source_key=?, img_key=? WHERE id=?", (key, img, r["id"]))
         self.c.commit()
         self.name_key_dups = dup   # 상품명이 같은 원본이 여럿이라 따로 둔 수 (안내용)
 

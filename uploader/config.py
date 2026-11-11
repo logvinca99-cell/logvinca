@@ -59,12 +59,7 @@ DEFAULTS = {
     # 취소·반품만 있는 복사본도 잠글지 (끄면 실제 판매가 1건이라도 있어야 잠금)
     "lock_canceled_too": False,
 
-    # ── 가격: 손님 가격 = 기준 가격 × (1 + 스토어 가격 차이 %), price_round(100원) 단위 올림. (흔들기 설정은 예전 것, 안 씀)
-    #    같은 상품·같은 스토어는 언제 계획해도 같은 가격이 나온다.
-    "price_jitter_pct": 0.0,   # (예전 설정, 안 씀) 흔들기는 스토어 템플릿 범위로
-    # 스토어마다 가격 흔들기 기본 범위 % (스토어 템플릿에서 바꿈). 흔들면 기준 가격과 똑같은 가격은 나오지 않음
-    "price_jitter_min": -3.0,
-    "price_jitter_max": 3.0,
+    # ── 가격: 손님 가격 = 기준 가격 × (1 + 스토어 가격 차이 %), price_round(100원) 단위 올림.
     # 표시 할인율 기본 % (스토어 템플릿에서 바꿈, 0이면 할인 없음). 손님 가격은 그대로 두고 이 %에 가깝게 금액으로 걺
     "display_discount_pct": 30.0,
     # 등록 재고: 상품·옵션 모두 늘 이 수 (0이면 엑셀 재고수 그대로)
@@ -206,6 +201,10 @@ def migrate_legacy_data():
     return LEGACY_DATA_DIR
 
 
+REMOVED_KEYS = ("price_jitter_pct", "price_jitter_min", "price_jitter_max", "use_original_name", "bait_enabled", "bait_pct",
+                "bait_price_pct", "bait_ratio")
+
+
 def load():
     cfg = json.loads(json.dumps(DEFAULTS))
     if os.path.exists(CONFIG_PATH):
@@ -215,12 +214,12 @@ def load():
             saved["max_copies"] = 2   # 맥락 키워드 방식부터 원본당 최대 2곳 (예전 기본 3을 쓰던 설정도 바꿈)
         if "kipris_block_pending" not in saved:
             saved.pop("use_category_words", None)  # 이 버전부터 상품명에 카테고리를 쓰지 않음 (예전 설정도 끔)
-        if "price_exact_v1" not in saved:
-            saved["price_jitter_pct"] = 0.0   # 가격은 판매가 - 할인가 그대로 (예전 기본 ±3% 흔들기 끔)
         if "ctx_mode_v2" not in saved:
             saved["ctx_mode"] = "instant"   # 키워드 받기 기본을 즉시로 (예전 기본 일괄은 결과가 늦게 와 헷갈림) — 설정에서 바꿈
         if "orders_auto_off_v1" not in saved:
             saved["orders_auto_sync_minutes"] = 0   # 주문은 다른 프로그램으로 봄 → 자동 가져오기 끔 (최신화·내리기 전에만 가져옴)
+        for k in REMOVED_KEYS:   # 없앤 기능의 예전 설정
+            saved.pop(k, None)
         cfg.update(saved)
     cfg["customs_tax_type"] = customs_code(cfg.get("customs_tax_type"))
     if cfg.get("option_table_style") not in ("strong", "basic"):

@@ -26,7 +26,6 @@ def product(it):
     ch = next((c for c in chs if c.get("channelServiceType") in (None, "STOREFARM")), chs[0])
     sale = int(ch.get("salePrice") or 0)
     final = int(ch.get("discountedPrice") or sale or 0)
-    mobile = int(ch.get("mobileDiscountedPrice") or 0)
     return {"origin_no": str(it.get("originProductNo") or ch.get("originProductNo") or ""),
             "channel_no": str(ch.get("channelProductNo") or ""),
             "code": str(ch.get("sellerManagementCode") or it.get("sellerManagementCode") or "").strip(),
@@ -34,8 +33,7 @@ def product(it):
             "status": str(ch.get("statusType") or (it.get("originProduct") or {}).get("statusType") or ""),
             "disp": str(ch.get("channelProductDisplayStatusType") or ch.get("displayStatusType") or ""),
             "reg_at": naver.parse_time(ch.get("regDate")),
-            "sale": sale, "final": final,
-            "mobile": mobile if 0 < mobile < final else 0}   # 모바일에서만 더 싼 값 (최신화하면 사라짐)
+            "sale": sale, "final": final}
 
 
 def check_store(db, store_id, client, on_wait=None, progress=None, should_stop=None):

@@ -532,7 +532,7 @@ def create_app(db=None):
         v = body()
         ints = ("recombine_fixed_prefix", "recombine_new_min", "recombine_new_max", "max_word_repeat", "opendict_daily_limit", "kipris_limit", "kw_daily_limit", "kw_min_volume", "kw_related_max", "kw_refresh_days", "kw_max_words", "core_scan_words", "orders_auto_sync_minutes", "orders_initial_days", "mail_days", "mail_auto_minutes", "max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
                 "name_max_len", "ai_names_per_product", "ai_products_per_call", "ai_workers")
-        floats = ("wm_size_pct", "wm_opacity", "wm_margin_pct", "recombine_replace_ratio", "delay_sec", "price_jitter_pct", "price_jitter_min", "price_jitter_max", "display_discount_pct", "recombine_max_overlap", "image_cache_gb")
+        floats = ("wm_size_pct", "wm_opacity", "wm_margin_pct", "recombine_replace_ratio", "delay_sec", "display_discount_pct", "recombine_max_overlap", "image_cache_gb")
         for k in ints:
             if k in v:
                 v[k] = convert.to_int(v[k], config.DEFAULTS[k])
@@ -540,15 +540,13 @@ def create_app(db=None):
             if k in v:
                 try:
                     f = float(v[k])
-                    v[k] = max(-30.0, min(30.0, f)) if k in ("price_jitter_min", "price_jitter_max") else max(0.0, f)   # 흔들기는 음수 허용
+                    v[k] = max(0.0, f)
                 except (TypeError, ValueError):
                     v[k] = config.DEFAULTS[k]
         if "stock_fixed" in v:
             v["stock_fixed"] = max(0, convert.to_int(v["stock_fixed"], 1000))
         if "display_discount_pct" in v and not 0 <= v["display_discount_pct"] < 90:
             return fail("표시 할인율은 0~89% 사이로 넣어 주세요.")
-        if v.get("price_jitter_min", 0) > v.get("price_jitter_max", 0) and "price_jitter_min" in v and "price_jitter_max" in v:
-            return fail("흔들기 최소 %가 최대 %보다 클 수 없습니다.")
         before = config.load()
         cfg = config.save(v)
         activity.settings_changed(db, before, cfg)
@@ -559,7 +557,7 @@ def create_app(db=None):
                 tasks.start("revalidate", "원산지 설정이 바뀌어 전체 다시 검사", lambda **kw: inventory.revalidate(db, **kw))
             except RuntimeError:
                 pass
-        if any(before.get(k) != cfg.get(k) for k in ("price_jitter_min", "price_jitter_max", "price_round")):
+        if before.get("price_round") != cfg.get("price_round"):
             inventory.reprice_pending(db)   # 가격 기본값이 바뀌면 아직 안 올린 복사본 가격도 바로 (템플릿을 바꿀 때와 같게)
         if before.get("kipris_block_pending") != cfg.get("kipris_block_pending"):
             with db.tx() as c:
@@ -572,7 +570,7 @@ def create_app(db=None):
         what = body().get("what")
         cfg = config.load()
         if what == "prices":
-            rows = db.q("""SELECT l.id, l.store_id, s.price, COALESCE(NULLIF(s.price_seed,''), s.source_key) AS source_key, st.tpl_price_pct, st.tpl_jitter_min, st.tpl_jitter_max FROM listings l
+            rows = db.q("""SELECT l.id, l.store_id, s.price, st.tpl_price_pct FROM listings l
                 JOIN sources s ON s.id=l.source_id JOIN stores st ON st.id=l.store_id
                 WHERE l.origin_no='' AND l.status IN ('planned','fail') AND l.price_fixed=0""")
             with db.tx() as c:
@@ -2139,13 +2137,11 @@ def create_app(db=None):
                 raise ValueError(f"숫자를 넣어 주세요: {v}") from None
         try:
             price_pct, disc = num_or_none(b.get("price_pct")), num_or_none(b.get("discount_pct"))
-            jlo, jhi = num_or_none(b.get("jitter_min")), num_or_none(b.get("jitter_max"))
         except ValueError as e:
             return fail(str(e))
-        if (jlo is None) != (jhi is None):
-            return fail("가격 흔들기는 최소·최대를 둘 다 넣거나 둘 다 비워 주세요.")
-        if jlo is not None and (jlo > jhi or abs(jlo) > 30 or abs(jhi) > 30):
-            return fail("가격 흔들기는 -30~+30% 사이, 최소 ≤ 최대로 넣어 주세요.")
+        import math
+        if price_pct is not None and (not math.isfinite(price_pct) or not -50 <= price_pct <= 300):
+            return fail("스토어 가격 차이 %는 -50 ~ +300 사이로 넣어 주세요 (보통 0).")
         if disc is not None and not 0 <= disc < 90:
             return fail("표시 할인율은 0~89% 사이로 넣어 주세요.")
         try:
@@ -2162,9 +2158,9 @@ def create_app(db=None):
         if opt_color and not (len(opt_color) == 7 and opt_color[0] == "#" and all(ch in "0123456789abcdefABCDEF" for ch in opt_color[1:])):
             return fail("옵션표 색은 #1F2937처럼 # 뒤에 6자리로 넣어 주세요.")
         db.x("UPDATE stores SET tpl_opt_style=?, tpl_opt_color=? WHERE id=?", (opt_style, opt_color.upper(), sid))
-        repriced = (old.get("tpl_price_pct"), old.get("tpl_jitter_min"), old.get("tpl_jitter_max")) != (price_pct, jlo, jhi)
-        db.x("""UPDATE stores SET tpl_jitter_min=?, tpl_jitter_max=?, wm_text=? WHERE id=?""",
-             (jlo, jhi, str((b.get("wm_text") if "wm_text" in b else old.get("wm_text")) or "").strip(), sid))
+        repriced = old.get("tpl_price_pct") != price_pct
+        db.x("""UPDATE stores SET wm_text=? WHERE id=?""",
+             (str((b.get("wm_text") if "wm_text" in b else old.get("wm_text")) or "").strip(), sid))
         db.x("""UPDATE stores SET tpl_top_html=?, tpl_bottom_html=?, tpl_customs=?, tpl_price_pct=?, tpl_discount_pct=?,
             tpl_ship_addr=?, tpl_return_addr=? WHERE id=?""",
              (str(b.get("top_html") or ""), str(b.get("bottom_html") or ""), config.customs_code(b.get("customs")),
@@ -2535,7 +2531,7 @@ def create_app(db=None):
         db.recount_sources()   # 내림도 원본당 최대 수에 세도록 바뀜 → 복사 수 다시 세기 (한 번만)
         db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('copies_dead_v1', '1')")
     if not db.one("SELECT 1 FROM meta WHERE k='price_store_v2'"):
-        inventory.reprice_net(db)   # 가격 흔들기를 스토어 템플릿 범위로 옮김 → 아직 안 올린 복사본 가격 다시 (한 번만)
+        inventory.reprice_net(db)   # 아직 안 올린 복사본 가격을 지금 규칙으로 한 번 다시 계산 (한 번만)
         db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('price_store_v2', '1')")
         db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('price_net_v1', '1')")
     if not db.one("SELECT 1 FROM meta WHERE k='price_net_v1'"):

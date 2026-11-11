@@ -49,7 +49,7 @@ CREATE INDEX IF NOT EXISTS ix_adopt_item ON adopt_item(run_id, kind);
 KIND_LABEL = {"linked": "연결", "already": "이미 연결돼 있음", "dropped": "스토어에 없어서 뺌", "store_only": "스토어에만 있음 (파일에 없음)",
               "dup_same": "연결 못 함", "dup": "같은 대표 사진이 다른 스토어에도 (예전 기록)",
               "price_diff": "엑셀 판매가와 스토어 손님 가격이 다름 (스토어 손님 가격으로 넣음)",
-              "mobile_disc": "모바일 할인 (예전 기록)", "dup_code": "파일 안 판매자코드 겹침 (첫 줄만 씀)",
+              "dup_code": "파일 안 판매자코드 겹침 (첫 줄만 씀)",
               "name_dup": "상품명 중복 — 상품명이 완전히 같은 상품이 이 스토어에 또 있음 (앞 상품만 연결)"}
 NAVER_STATUS = {"SALE": "판매 중", "OUTOFSTOCK": "품절", "SUSPENSION": "판매중지", "WAIT": "판매 대기", "CLOSE": "판매 종료",
                 "PROHIBITION": "판매 금지", "UNADMISSION": "승인 대기", "REJECTION": "승인 거부"}
@@ -153,7 +153,7 @@ def prepare(db, path, filename):
 
 # ───────────────────────── 2. 가져오기
 
-_product = nvstate.product   # 커머스API 상품 목록 한 개 → 필요한 값만 (판매·전시 상태, 손님 가격, 모바일 할인)
+_product = nvstate.product   # 커머스API 상품 목록 한 개 → 필요한 값만 (판매·전시 상태, 손님 가격)
 
 
 def fetch_products(db, store_id, progress=None, should_stop=None):

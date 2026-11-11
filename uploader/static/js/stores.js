@@ -310,7 +310,7 @@ App.page("stores", {
       buttons: [{ label: "닫기" }, { label: "저장", primary: true, onClick: async (b) => {
         try {
           const r = await App.api(`/api/stores/${s.id}/template`, { json: { top_html: $("#t-top", b).value, bottom_html: $("#t-bottom", b).value,
-            customs: $("#t-customs", b).value, jitter_min: "", jitter_max: "", wm_text: $("#t-wm", b).value, ship_addr: $("#t-ship", b).value, return_addr: $("#t-ret", b).value, price_pct: $("#t-price", b).value, discount_pct: $("#t-disc", b).value,
+            customs: $("#t-customs", b).value, wm_text: $("#t-wm", b).value, ship_addr: $("#t-ship", b).value, return_addr: $("#t-ret", b).value, price_pct: $("#t-price", b).value, discount_pct: $("#t-disc", b).value,
             opt_style: $("#t-optstyle", b).value, opt_color: optColor } });
           App.toast(`${s.name} 템플릿을 저장했습니다` + (r.repriced ? ` · 아직 안 올린 복사본 ${num(r.repriced)}건 가격을 다시 정했습니다` : ""));
         } catch (e) { App.toast(e.message, true); return false; }

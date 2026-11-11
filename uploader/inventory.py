@@ -1,7 +1,7 @@
 """인벤토리: 원본 상품 불러오기, 상품명 후보, 등록 계획.
 
 흐름
-    1. 엑셀 불러오기 → sources (판매자코드가 같으면 갱신)
+    1. 엑셀 불러오기 → sources (상품명이 완전히 같으면 '상품명 중복'으로 넣지 않음)
     2. 상품명 후보 만들기 → names (재조합 / AI / 외부 파일 가져오기)
     3. 계획 만들기 → listings (원본 × 스토어마다 안 쓴 이름 하나, 스토어별 가격)
     4. 등록 실행 (engine)
@@ -207,8 +207,8 @@ def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=No
                 # 기준 가격 = 이 파일의 손님 가격 (판매가 - 할인가), 처음 넣을 때 고정
                 sid = c.execute("""INSERT INTO sources(name, price, category, thumb, option_count, image_count,
                     has_video, tags, data, errors, warnings, valid, seller_code, import_id, updated_at, source_key,
-                    created_at, price_seed, price_src, price_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (*vals, key, now, key, price_src, now)).lastrowid
+                    created_at, price_src, price_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (*vals, key, now, price_src, now)).lastrowid
                 stats["added"] += 1
                 c.execute("UPDATE sources SET img_key=? WHERE id=?", (s["img_key"], sid))
                 tg = srctags.for_row(row, src_tags, store_tag)
@@ -1009,7 +1009,7 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
             break
         chunk = ids[i:i + CHUNK]
         marks = ",".join("?" * len(chunk))
-        srcs = db.q(f"SELECT id, COALESCE(NULLIF(price_seed,''), source_key) AS source_key, name, price, tags, category, valid FROM sources WHERE id IN ({marks})", chunk)
+        srcs = db.q(f"SELECT id, name, price, tags, category, valid FROM sources WHERE id IN ({marks})", chunk)
         active, dead = {}, {}
         for r in db.q(f"SELECT id, source_id, store_id, status, name_id, round FROM listings WHERE source_id IN ({marks})",
                       chunk):
@@ -1431,7 +1431,7 @@ def relist(db, f):
     """내린(내림) 복사본을 다시 올릴 대기로 되돌린다: 다음 회차·같은 이름, 가격은 지금 스토어 기준으로 다시. 스토어 남은 자리만큼만."""
     cfg = config.load()
     where, args = listing_where({**f, "status": "deleted"})
-    rows = db.q(f"""SELECT l.id, l.store_id, l.price AS cur, l.price_fixed, s.price, COALESCE(NULLIF(s.price_seed,''), s.source_key) AS source_key FROM listings l JOIN sources s ON s.id=l.source_id{where}
+    rows = db.q(f"""SELECT l.id, l.store_id, l.price AS cur, l.price_fixed, s.price FROM listings l JOIN sources s ON s.id=l.source_id{where}
         ORDER BY l.id""", args)
     if not rows:
         return []
@@ -1499,7 +1499,7 @@ def move_listings(db, ids, to_store):
         ch = ids[i:i + 900]
         rows += db.q(f"""SELECT l.id, l.store_id, l.source_id, l.name, l.name_id, l.status, l.origin_no, l.locked, l.registered_at, l.sold_count,
             EXISTS(SELECT 1 FROM listing_history h WHERE h.listing_id=l.id) AS has_hist,
-            s.price AS src_price, COALESCE(NULLIF(s.price_seed,''), s.source_key) AS source_key
+            s.price AS src_price
             FROM listings l JOIN sources s ON s.id=l.source_id WHERE l.id IN ({','.join('?' * len(ch))}) ORDER BY l.id""", ch)
     old_trash, touched = [], set()
     now = time.time()
@@ -1613,7 +1613,7 @@ def reprice_net(db):
     with db.tx() as c:
         for r in c.execute("SELECT id, data FROM sources").fetchall():
             c.execute("UPDATE sources SET price=? WHERE id=?", (convert.net_price(unpack(r["data"])), r["id"]))
-        for r in c.execute("""SELECT l.id, l.store_id, s.price, COALESCE(NULLIF(s.price_seed,''), s.source_key) AS source_key, st.tpl_price_pct, st.tpl_jitter_min, st.tpl_jitter_max FROM listings l
+        for r in c.execute("""SELECT l.id, l.store_id, s.price, st.tpl_price_pct FROM listings l
                 JOIN sources s ON s.id=l.source_id JOIN stores st ON st.id=l.store_id
                 WHERE l.origin_no='' AND l.status IN ('planned','fail')""").fetchall():
             c.execute("UPDATE listings SET price=? WHERE id=?",
@@ -1623,7 +1623,7 @@ def reprice_net(db):
 def reprice_pending(db, store_id=None):
     """아직 안 올린(대기·실패) 복사본 가격을 지금 스토어 템플릿 기준으로 다시 정한다. 바꾼 수."""
     cfg = config.load()
-    rows = db.q("""SELECT l.id, l.store_id, l.price AS cur, s.price, COALESCE(NULLIF(s.price_seed,''), s.source_key) AS source_key, st.tpl_price_pct, st.tpl_jitter_min, st.tpl_jitter_max
+    rows = db.q("""SELECT l.id, l.store_id, l.price AS cur, s.price, st.tpl_price_pct
         FROM listings l JOIN sources s ON s.id=l.source_id JOIN stores st ON st.id=l.store_id
         WHERE l.origin_no='' AND l.status IN ('planned','fail') AND l.price_fixed=0""" + (" AND l.store_id=?" if store_id else ""),
                 (int(store_id),) if store_id else ())
