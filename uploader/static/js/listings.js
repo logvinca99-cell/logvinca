@@ -51,6 +51,7 @@ App.page("listings", {
           <a class="btn ghost sm" href="#listings">스토어 목록</a>${store ? storeLinks(store) : ""}</div>
         <div class="head-actions">
           <button class="btn primary" id="l-eye" title="썸네일만 그리드로 보며 이상한 상품을 골라 지우기">눈검수</button>
+          <button class="btn" id="l-phone" title="스토어에 올라간 상품을 폰에서 보기 (누르면 네이버 스토어 상품이 바로 열림)">폰으로 보기</button>
           <button class="btn" id="l-bulk" title="이 스토어 복사본의 손님 가격·상품명을 엑셀로 한꺼번에 고치기 (판매 중이면 지우지 않고 네이버 값만 바꿈)">일괄 수정 (엑셀)</button>
           <button class="btn" id="l-nv" title="네이버 상품 목록을 받아 판매 중 복사본마다 판매 중·품절·판매중지·판매금지·스토어에 없음을 표시 (최신화 직전에도 자동으로 확인)">네이버 상태 확인</button>
           <label class="btn" title="아바닛 등 주문 수집 웹에서 내려받은 주문 파일"><input type="file" id="l-sales-file" accept=".xlsx,.xlsm,.csv" hidden>판매 이력 파일 가져오기</label>
@@ -79,6 +80,7 @@ App.page("listings", {
       after: (r) => { if (r.deleted) this.clearSel(); this.estKey = ""; this.load(); } }));
     $("#l-nv").addEventListener("click", () => App.startTask(App.api("/api/listings/nvcheck", { json: { store_id: +this.f.store_id } })));
     $("#l-bulk").addEventListener("click", () => this.bulkEdit(store));
+    $("#l-phone").addEventListener("click", () => App.phoneView(store?.id));
     if (!store) App.toast("스토어를 찾지 못했습니다.", true);
     $("#l-age").value = this.f.age_days || "";
     this.bind();

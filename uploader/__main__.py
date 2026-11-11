@@ -47,12 +47,18 @@ def main():
     from .web import create_app
     app = create_app()
     url = f"http://127.0.0.1:{a.port}"
+    host = "0.0.0.0" if config.load().get("phone_view") else "127.0.0.1"   # 폰으로 보기(같은 와이파이)를 켰을 때만 내부 주소로도 엶
+    os.environ["UPLOADER_BIND"] = host
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
     print(f"업스타: {url}")
+    if host == "0.0.0.0":
+        from . import phone
+        print(f"폰으로 보기(같은 와이파이): http://{phone.lan_ips()[0]}:{a.port}/m?key=… (주소는 업스타의 [폰으로 보기] 창에서)")
+        print("  Windows 방화벽 허용 창이 뜨면 '개인 네트워크'만 허용하세요.")
     print("이 창을 닫으면 업스타가 꺼집니다.")
     if not a.no_browser:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
-    app.run(host="127.0.0.1", port=a.port, threaded=True, use_reloader=False)
+    app.run(host=host, port=a.port, threaded=True, use_reloader=False)
 
 
 if __name__ == "__main__":
