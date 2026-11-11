@@ -5,10 +5,25 @@
   /* 헤더 */
   .hero { padding: 72px 40px 80px; text-align: center; }
   .hero .m { color: var(--gray); margin-bottom: 18px; }
-  .hero .notice { margin-top: 32px; display: inline-block; background: var(--main-soft); border-radius: 14px; padding: 8px 24px; }
+  .hero .notice { margin-top: 32px; display: inline-block; background: var(--main-soft); border-radius: 14px; padding: 8px 24px; color: var(--ink); }
 
-  /* 배송 6단계 (한 줄) */
-  .steps { display: grid; grid-template-columns: repeat(6, 1fr); padding: 64px 8px 36px; }
+  /* 공통 글머리 목록 */
+  .bul { list-style: none; margin-top: 36px; }
+  .bul li { position: relative; padding-left: 26px; }
+  .bul li + li { margin-top: 22px; }
+  .bul li::before { content: ""; position: absolute; left: 2px; top: 18px; width: 10px; height: 10px; border-radius: 50%; background: var(--main); }
+  .bul li b { color: var(--main); }
+  .bul li .s { display: block; margin-top: 4px; }
+  .sub { margin-top: 44px; padding-top: 36px; border-top: 2px dashed var(--line); }
+  .sub-t { color: var(--main); font-weight: 800; }
+
+  /* 파란 강조 블록 */
+  .callout { margin-top: 28px; background: var(--main); color: #fff; border-radius: 24px; padding: 28px 24px; text-align: center; }
+  .callout .xl { color: var(--point); }
+  .callout .xl small { font-size: var(--s); color: #fff; font-weight: 600; }
+
+  /* 배송 6단계 */
+  .steps { display: grid; grid-template-columns: repeat(6, 1fr); margin: 0 -28px; }
   .step { text-align: center; position: relative; }
   .step:not(:last-child)::after { content: ""; position: absolute; top: 46px; right: -10px; width: 20px; border-top: 3px dotted var(--line); }
   .step .ico { position: relative; width: 92px; height: 92px; margin: 0 auto; border-radius: 50%; background: var(--main-soft); color: var(--main); display: grid; place-items: center; font-size: 46px; }
@@ -16,11 +31,8 @@
   .step .no { position: absolute; top: -6px; left: -6px; width: 34px; height: 34px; border-radius: 50%; background: var(--main); color: #fff; font-size: var(--s); font-weight: 800; display: grid; place-items: center; line-height: 1; }
   .step.last .no { background: var(--ink); }
   .step .s { margin-top: 12px; color: var(--ink); font-weight: 700; }
-  .box-foot .xl { color: var(--point); }
-  .box-foot .xl small { font-size: var(--s); color: #fff; font-weight: 600; }
-  .under { margin: 22px 40px 0; text-align: center; }
 
-  /* 띠 헤더 (레퍼런스 개인통관 섹션 구조) */
+  /* 띠 헤더 (개인통관고유부호) */
   .band { background: var(--main); padding: 36px 40px; text-align: center; }
   .band span { display: inline-block; background: #fff; border-radius: 20px; padding: 10px 40px; }
   .band-end { height: 24px; background: var(--main); }
@@ -35,59 +47,64 @@
   .search svg { color: var(--main); stroke-width: 2.6; }
   .choose { margin-top: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   .choose > div { border: 3px solid var(--ink); border-radius: 20px; padding: 18px; text-align: center; }
-  .choose > div .l { color: var(--ink); }
-  .choose div.on .l { color: var(--main); }
+  .choose > div.on .l { color: var(--main); }
   .form { margin-top: 20px; border: 2px solid var(--line); border-radius: 16px; overflow: hidden; }
   .form div { display: grid; grid-template-columns: 200px 1fr; border-top: 2px solid var(--line); }
   .form div:first-child { border-top: 0; }
   .form b { background: var(--bg-2); color: var(--main); padding: 14px 20px; font-size: var(--s); }
   .form i { font-style: normal; padding: 14px 20px; font-size: var(--s); color: var(--gray); }
-  .warn { margin-top: 32px; background: var(--bg-2); border-radius: 20px; padding: 24px 28px; text-align: center; }
-  .warn .m b { color: var(--main); }
 
   /* 관부가세 */
   .tax { display: grid; grid-template-columns: 1fr 1fr; }
-  .tax > div { text-align: center; padding: 8px 0; }
+  .tax > div { text-align: center; }
   .tax > div + div { border-left: 2px solid var(--line); }
   .tax .xl { color: var(--main); }
   .tax .xl small { font-size: var(--m); color: var(--ink); font-weight: 700; }
+  /* 착불 4조건 */
+  .cod { margin-top: 24px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .cod > div { background: var(--bg-2); border-radius: 20px; padding: 22px 8px; text-align: center; }
+  .cod .lab { color: var(--main); font-size: var(--m); font-weight: 900; white-space: nowrap; }
+  .cod .s { margin-top: 4px; line-height: 1.35; }
 
-  /* 체크 리스트 */
-  .list li { list-style: none; display: flex; gap: 16px; padding: 22px 0; }
-  .list li:first-child { padding-top: 0; }
-  .list li:last-child { padding-bottom: 0; }
-  .list li + li { border-top: 2px dashed var(--line); }
-  .list li svg { flex: none; font-size: var(--m); color: var(--main); stroke-width: 3; margin-top: 6px; }
-  .list .m b { color: var(--main); }
-  .list .s { display: block; margin-top: 2px; }
+  /* 주문 취소 3단계 */
+  .flow { display: grid; grid-template-columns: 1fr 28px 1fr 28px 1fr; align-items: center; }
+  .flow > div:not(.ar) { border-radius: 20px; padding: 22px 8px; text-align: center; }
+  .flow .ar { text-align: center; color: var(--gray); font-size: var(--m); font-weight: 800; }
+  .flow .f1 { background: var(--main); color: #fff; }
+  .flow .f1 .s { color: rgba(255,255,255,.85); }
+  .flow .f1 .m { color: var(--point); }
+  .flow .f2, .flow .f3 { background: var(--bg-2); }
+  .flow .m { font-weight: 800; margin-top: 4px; }
 
-  /* 주문 취소 */
-  .cancel { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .cancel > div { border-radius: 24px; padding: 30px 24px; text-align: center; }
-  .cancel .ok { background: var(--main); color: #fff; }
-  .cancel .ok .s { color: rgba(255,255,255,.85); }
-  .cancel .no { background: var(--bg-2); }
-  .cancel .l { margin: 6px 0 10px; }
-  .cancel .ok .l { color: var(--point); }
-
-  /* 교환·반품 표 */
-  .rt { border: 2px solid var(--line); border-radius: 20px; overflow: hidden; }
-  .rt .row { display: grid; grid-template-columns: 190px 1fr; }
-  .rt .row + .row { border-top: 2px solid var(--line); }
-  .rt .k { background: var(--bg-2); color: var(--main); font-size: var(--m); font-weight: 800; padding: 24px 22px; display: flex; align-items: center; }
-  .rt .v { padding: 24px 24px; }
-  .rt .v .s { display: block; margin-top: 4px; }
-  .tag2 { display: inline-block; border-radius: 8px; padding: 0 10px; margin-right: 8px; font-size: var(--s); font-weight: 800; vertical-align: 3px; }
+  /* 교환·반품 2카드 */
+  .rcard { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .rcard > div { border-radius: 24px; padding: 26px 24px; }
+  .rcard .free { border: 3px solid var(--main); }
+  .rcard .paid { background: var(--bg-2); }
+  .tag2 { display: inline-block; border-radius: 8px; padding: 0 12px; font-size: var(--s); font-weight: 800; }
   .tag2.me { background: var(--main); color: #fff; }
   .tag2.you { background: var(--point); color: var(--ink); }
+  .rcard .m { font-weight: 800; margin-top: 12px; }
+  .rcard .s { margin-top: 8px; line-height: 1.45; }
 
-  /* 고객센터 (레퍼런스 맨 아래 구조) */
+  /* 개인정보 표 */
+  .pt { margin-top: 32px; border-top: 3px solid var(--ink); }
+  .pt > div { display: grid; grid-template-columns: 200px 1fr; border-bottom: 2px solid var(--line); }
+  .pt b { background: var(--bg-2); padding: 18px 18px; font-size: var(--s); }
+  .pt span { padding: 18px 20px; font-size: var(--s); color: var(--ink); font-weight: 500; line-height: 1.5; }
+
+  /* 고객센터 */
   .cs { background: var(--main); color: #fff; text-align: center; padding: 72px 40px 80px; }
   .cs .m { color: rgba(255,255,255,.9); }
   .cs .l { margin-top: 10px; }
   .cs .l .c-point { font-size: var(--xl); font-weight: 900; vertical-align: -6px; }
   .cs .time { margin-top: 28px; display: inline-block; border: 2px solid rgba(255,255,255,.5); border-radius: 999px; padding: 10px 32px; }
   .cs .s { margin-top: 20px; color: rgba(255,255,255,.85); }
+
+  /* 법적 고지 */
+  .legal { padding: 56px 40px 64px; text-align: center; background: var(--bg-2); }
+  .legal p + p { margin-top: 20px; }
+  .legal .lic { color: var(--ink); font-weight: 700; }
 </style></head>
 <body>
 
@@ -98,27 +115,36 @@
   <div class="notice m">본 상품은 <b class="c-main">해외에서 배송</b>되는 상품입니다</div>
 </div>
 
-<!-- 배송 진행 순서 -->
+<!-- 01 배송 안내 -->
 <div class="box">
-  <div class="pill">배송 진행 순서</div>
-  <div class="steps">
-    <div class="step"><div class="ico"><span class="no">1</span><svg class="ic" viewBox="0 0 24 24"><circle cx="9" cy="20" r="1.4"/><circle cx="19" cy="20" r="1.4"/><path d="M2 3h3l2.7 12.4a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 7H6"/></svg></div><div class="s">주문·결제</div></div>
-    <div class="step"><div class="ico"><span class="no">2</span><svg class="ic" viewBox="0 0 24 24"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg></div><div class="s">현지 구매</div></div>
-    <div class="step"><div class="ico"><span class="no">3</span><svg class="ic" viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/></svg></div><div class="s">현지 검수</div></div>
-    <div class="step"><div class="ico"><span class="no">4</span><svg class="ic" viewBox="0 0 24 24"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg></div><div class="s">국제 배송</div></div>
-    <div class="step"><div class="ico"><span class="no">5</span><svg class="ic" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg></div><div class="s">세관 통관</div></div>
-    <div class="step last"><div class="ico"><span class="no">6</span><svg class="ic" viewBox="0 0 24 24"><path d="M1 4h14v12H1z"/><path d="M15 8h4l4 4v4h-8z"/><circle cx="5.5" cy="18.5" r="2"/><circle cx="18.5" cy="18.5" r="2"/></svg></div><div class="s">국내 배송</div></div>
-  </div>
-  <div class="box-foot">
-    <div class="m">결제 후 받아보시기까지 평균</div>
-    <div class="xl">7~15일 <small>(영업일 기준)</small></div>
+  <div class="pill">배송 안내</div>
+  <div class="box-in">
+    <div class="steps">
+      <div class="step"><div class="ico"><span class="no">1</span><svg class="ic" viewBox="0 0 24 24"><circle cx="9" cy="20" r="1.4"/><circle cx="19" cy="20" r="1.4"/><path d="M2 3h3l2.7 12.4a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 7H6"/></svg></div><div class="s">주문·결제</div></div>
+      <div class="step"><div class="ico"><span class="no">2</span><svg class="ic" viewBox="0 0 24 24"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg></div><div class="s">현지 발주</div></div>
+      <div class="step"><div class="ico"><span class="no">3</span><svg class="ic" viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/></svg></div><div class="s">현지 검수</div></div>
+      <div class="step"><div class="ico"><span class="no">4</span><svg class="ic" viewBox="0 0 24 24"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg></div><div class="s">국제 배송</div></div>
+      <div class="step"><div class="ico"><span class="no">5</span><svg class="ic" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg></div><div class="s">세관 통관</div></div>
+      <div class="step last"><div class="ico"><span class="no">6</span><svg class="ic" viewBox="0 0 24 24"><path d="M1 4h14v12H1z"/><path d="M15 8h4l4 4v4h-8z"/><circle cx="5.5" cy="18.5" r="2"/><circle cx="18.5" cy="18.5" r="2"/></svg></div><div class="s">국내 배송</div></div>
+    </div>
+    <div class="callout">
+      <div class="m">결제 후 받아보시기까지 평균</div>
+      <div class="xl">7~15일 <small>(영업일 기준)</small></div>
+    </div>
+    <ul class="bul m">
+      <li>주문 후 현지에서 발주되는 <b>해외 배송 상품</b>으로, 국내 배송 상품과 배송 기간·취소·반품 조건이 다릅니다.</li>
+      <li>현지 센터에서 <b>검수를 마친 뒤 발송</b>합니다.</li>
+      <li>운송장 배송 조회는 <b>국내 배송이 시작된 이후부터</b> 가능합니다.</li>
+      <li>통관 검사를 위해 오리지널 박스가 개봉될 수 있으며, 반품 사유에 해당하지 않습니다.</li>
+      <li>세관 통관·현지 입고 지연·명절·기상 상황 등으로 배송이 늦어질 수 있습니다.</li>
+      <li>여러 상품을 함께 주문하시면 따로 도착할 수 있습니다.</li>
+    </ul>
   </div>
 </div>
-<div class="under s">세관 통관 · 현지 입고 지연 · 명절 · 기상 상황 등으로 늦어질 수 있습니다.<br>여러 상품을 주문하시면 따로 도착할 수 있습니다.</div>
 
 <div class="gap"></div>
 
-<!-- 개인통관고유부호 -->
+<!-- 02 개인통관고유부호 -->
 <div class="band"><span class="l">개인통관고유부호 발급 안내</span></div>
 <div class="pc">
   <div class="pstep">
@@ -141,67 +167,122 @@
       <div><b>휴대전화</b><i>010-0000-0000</i></div>
     </div>
   </div>
-  <div class="warn"><div class="m"><b>수령인 이름·휴대폰 번호</b>가 통관부호 정보와<br>같아야 통관이 진행됩니다</div></div>
+  <ul class="bul m" style="margin-top:48px">
+    <li>통관을 위해 주문 시 <b>개인통관고유부호를 반드시 기재</b>해 주세요.</li>
+    <li><b>수취인명·연락처·배송지 우편번호</b>가 통관부호 등록 정보와 일치해야 합니다.<span class="s">일치하지 않으면 통관이 보류되거나 지연될 수 있습니다.</span></li>
+    <li>받는 주소는 유니패스에서 최대 20개까지 미리 등록할 수 있습니다.</li>
+    <li>미기재·오기재로 통관이 지연되거나 반송되는 경우 발생 비용은 구매자 부담입니다.</li>
+  </ul>
 </div>
 <div class="band-end"></div>
 
 <div class="gap"></div>
 
-<!-- 관부가세 -->
+<!-- 03 배송비와 관부가세 -->
 <div class="box">
-  <div class="pill">관부가세 안내</div>
+  <div class="pill">배송비와 관·부가세</div>
   <div class="box-in">
     <div class="tax">
       <div><div class="m">미국 발송</div><div class="xl">$200<small> 이하</small></div></div>
       <div><div class="m">그 외 국가 발송</div><div class="xl">$150<small> 이하</small></div></div>
     </div>
+    <div class="callout"><div class="m">위 금액 이하로 구매하시면 <b class="c-point">관부가세가 없습니다</b></div></div>
+    <ul class="bul m">
+      <li>면세 한도를 초과하면 <b>구매자가 관부가세를 별도로 납부</b>합니다.<span class="s">통관 시 관세청에서 알림톡 또는 문자로 납부 안내가 발송됩니다.</span></li>
+      <li>같은 날 입항하는 여러 건의 주문은 합산 과세될 수 있습니다.</li>
+    </ul>
+    <div class="sub">
+      <div class="m sub-t">착불 배송비 안내</div>
+      <div class="m" style="margin-top:6px">아래에 해당하면 <b>착불 배송비가 발생하며 구매자 부담</b>입니다.</div>
+      <div class="cod">
+        <div><div class="lab">1m ↑</div><div class="s">박스 한 변이<br>1m 이상</div></div>
+        <div><div class="lab">150cm ↑</div><div class="s">박스 세 변<br>합이 150cm 이상</div></div>
+        <div><div class="lab">20kg ↑</div><div class="s">상품 무게가<br>20kg 초과</div></div>
+        <div><div class="lab">이형</div><div class="s">상품 모양이<br>이형인 경우</div></div>
+      </div>
+      <ul class="bul m"><li>착불 배송비는 담당 기사님이 실제로 측정해 결정하므로 미리 안내드리기 어렵습니다.</li></ul>
+    </div>
   </div>
-  <div class="box-foot"><div class="m">위 금액 이하로 구매하시면 <b class="c-point">관부가세가 없습니다</b></div></div>
 </div>
-<div class="under s">면세 한도 초과 시 관부가세는 수입자(고객님) 부담입니다.<br>같은 날 같은 나라에서 들어온 물품은 합산 과세될 수 있습니다.</div>
 
 <div class="gap"></div>
 
-<!-- 주문 필독 사항 -->
+<!-- 04 상품 안내 -->
 <div class="box">
-  <div class="pill">주문 필독 사항</div>
+  <div class="pill">상품 안내</div>
   <div class="box-in">
-    <ul class="list">
-      <li><svg class="ic" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><div class="m"><b>옵션명·옵션 이미지</b> 기준으로 발송됩니다<span class="s">대표 사진은 연출 이미지로 구성이 다를 수 있습니다</span></div></li>
-      <li><svg class="ic" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><div class="m">사이즈는 <b>1~3cm 오차</b>가 있을 수 있습니다</div></li>
-      <li><svg class="ic" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><div class="m">화면에 따라 <b>실제 색상과 차이</b>가 있을 수 있습니다</div></li>
-      <li><svg class="ic" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><div class="m">전자제품은 <b>전압(110V/220V)·플러그</b>를 확인해 주세요</div></li>
-      <li><svg class="ic" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><div class="m"><b>박스 눌림·외부 포장 흠집</b>은 교환·반품 사유가 아닙니다</div></li>
-      <li><svg class="ic" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><div class="m">해외 구매대행 상품으로 <b>국내 A/S가 어려울 수 있습니다</b></div></li>
+    <ul class="bul m" style="margin-top:0">
+      <li>상품은 <b>옵션명·옵션 이미지 기준</b>으로 발송됩니다.<span class="s">대표 사진은 연출 이미지로 구성이 다를 수 있습니다.</span></li>
+      <li>현지 제조 공정 변화 등으로 <b>디자인·사이즈에 차이</b>가 있을 수 있으며, 리뉴얼 상품으로 발송될 수 있습니다.</li>
+      <li>상품 색상은 모니터·휴대폰 화면에 따라 다르게 보일 수 있습니다.</li>
+      <li>실측 사이즈는 측정 방식에 따라 <b>약 1~3cm 오차</b>가 있을 수 있으며, 불량에 해당하지 않습니다.</li>
+      <li>전자·전기제품은 <b>전압(110V/220V)과 플러그 규격</b>을 확인해 주세요.<span class="s">변압기·어댑터가 필요할 수 있으며, 한글 설명서가 제공되지 않을 수 있습니다.</span></li>
+      <li>의류·잡화는 <b>해외 사이즈 기준</b>이므로 상세 사이즈표를 확인해 주세요.<span class="s">착용·세탁 후에는 반품이 불가합니다.</span></li>
     </ul>
   </div>
 </div>
 
 <div class="gap"></div>
 
-<!-- 주문 취소 -->
+<!-- 05 교환·반품 -->
 <div class="box">
-  <div class="pill">주문 취소 안내</div>
+  <div class="pill">교환·반품 안내</div>
   <div class="box-in">
-    <div class="cancel">
-      <div class="ok"><div class="s">현지 구매 전</div><div class="l">즉시 취소 가능</div><div class="s">결제 금액 전액 환불</div></div>
-      <div class="no"><div class="s">현지 구매 후</div><div class="l">취소 비용 발생</div><div class="s">현지 반품 비용 등 차감<br>출고 후에는 반품으로 진행</div></div>
+    <div class="rcard">
+      <div class="free"><span class="tag2 me">무상</span><div class="m">파손·오배송·제품 결함</div><div class="s">무상 교환·환불해 드립니다.<br>수령 후 7일 이내 사진 또는 동영상과 함께 접수해 주세요.</div></div>
+      <div class="paid"><span class="tag2 you">구매자 부담</span><div class="m">단순 변심</div><div class="s">왕복 배송비를 구매자가 부담합니다. 해외 왕복 운송이 포함되어 부피·중량에 따라 금액이 다르며, 접수 시 안내해 드립니다.</div></div>
     </div>
+    <ul class="bul m">
+      <li>교환·반품은 <b>상품 수령 후 7일 이내</b>에 톡톡으로 먼저 접수해 주세요.</li>
+      <li>반품 회수는 당사에서 진행합니다. <b>사전 연락 없이 보내신 상품은 수취 거부</b>되며, 이후 발생하는 비용과 문제는 책임지지 않습니다.</li>
+      <li>배송 중 생길 수 있는 미세한 스크래치, 찌그러짐, 마감·접착 흔적, 박스 눌림·손상은 무상 교환·환불 대상이 아닙니다.</li>
+      <li>사용·세탁하셨거나 택·본품 박스가 훼손된 경우, 위생 상품을 개봉한 경우, 기능상 문제가 없는 경미한 하자는 반품이 어렵습니다.</li>
+      <li>해외 제품을 대신 구매해 드리는 서비스로 <b>A/S는 제공되지 않습니다.</b></li>
+    </ul>
   </div>
 </div>
 
 <div class="gap"></div>
 
-<!-- 교환·반품 -->
+<!-- 06 주문 취소 -->
 <div class="box">
-  <div class="pill">교환·반품 안내</div>
+  <div class="pill">주문 취소 안내</div>
   <div class="box-in">
-    <div class="rt">
-      <div class="row"><div class="k">신청 기간</div><div class="v"><div class="m">상품 <b>수령 후 7일 이내</b></div><span class="s">사진·영상을 함께 보내주시면 빠르게 처리됩니다</span></div></div>
-      <div class="row"><div class="k">비용 부담</div><div class="v"><div class="m"><span class="tag2 me">판매자</span>불량 · 오배송 · 파손</div><div class="m" style="margin-top:8px"><span class="tag2 you">고객님</span>단순 변심 · 교환</div><span class="s">단순 변심 시 상품 페이지에 안내된 반품 배송비가 적용됩니다</span></div></div>
-      <div class="row"><div class="k">불가 사유</div><div class="v"><div class="m">사용·세탁·택 제거, 포장 훼손,<br>수령 후 7일 경과, 위생 상품 개봉</div></div></div>
+    <div class="flow">
+      <div class="f1"><div class="s">현지 발주 전</div><div class="m">전액 취소 가능</div></div>
+      <div class="ar">›</div>
+      <div class="f2"><div class="s">발주 완료 후</div><div class="m">취소 불가</div></div>
+      <div class="ar">›</div>
+      <div class="f3"><div class="s">국내 출고 후</div><div class="m">반품으로 진행</div></div>
     </div>
-    <div class="warn"><div class="m">반송 전 <b>반드시 톡톡으로 먼저</b> 문의해 주세요</div><div class="s">임의로 보내시면 처리가 늦어질 수 있습니다</div></div>
+    <ul class="bul m">
+      <li>현지 발주 전까지는 <b>전액 취소</b>가 가능합니다.</li>
+      <li>발주가 완료되면 이미 해외에서 배송이 시작된 상태라 <b>취소가 불가</b>합니다. 국내 출고 후에는 반품으로 진행됩니다.</li>
+      <li>현지 품절 시에는 바로 안내드리고 <b>전액 환불</b>해 드립니다.</li>
+      <li>현지 상품의 리뉴얼·단종, 공장 사정, 과도한 배송 지연 등으로 주문하신 사양 그대로 발송이 어려운 경우, 안내 후 주문을 취소하고 결제 금액 전액을 환불해 드립니다.<span class="s">이 경우 결제 금액 외의 별도 보상은 어려운 점 양해 부탁드립니다.</span></li>
+      <li>리뉴얼된 상품은 사양과 현지 원가가 달라 기존 판매가와 가격이 다를 수 있으며, 별도 상품으로 등록됩니다.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="gap"></div>
+
+<!-- 07 개인정보 제3자 제공 동의 -->
+<div class="box">
+  <div class="pill">개인정보 제3자 제공 동의</div>
+  <div class="box-in">
+    <ul class="bul m" style="margin-top:0">
+      <li>해외구매대행 상품은 현지 발주부터 수입 통관, 국내 배송까지 여러 업체를 거치며, 이 과정에서 수취인 정보를 제공해야 배송이 가능합니다. <b>주문 시 아래 내용에 동의하신 것으로 봅니다.</b></li>
+    </ul>
+    <div class="pt">
+      <div><b>제공받는 자</b><span>해외 현지 물류대행사, 국제 운송사, 통관 대행사(관세사), 국내 택배사</span></div>
+      <div><b>제공 목적</b><span>해외구매대행 상품의 현지 발주, 국제 운송, 수입 통관, 국내 배송</span></div>
+      <div><b>제공 항목</b><span>수취인 성명, 연락처, 배송지 주소, 개인통관고유부호</span></div>
+      <div><b>보유·이용 기간</b><span>제공 목적 달성 시까지 (관계 법령에 보존 기간이 정해진 경우 해당 기간까지)</span></div>
+    </div>
+    <ul class="bul m">
+      <li>동의를 거부하실 수 있으나, 통관과 배송에 필요한 최소한의 항목이므로 거부 시 주문 진행이 제한됩니다.</li>
+    </ul>
   </div>
 </div>
 
@@ -213,5 +294,14 @@
   <div class="l"><span class="c-point">네이버 톡톡</span>으로 문의해 주세요</div>
   <div class="time m">평일 10:00 ~ 18:00 (점심 12:00 ~ 13:00)</div>
   <div class="s">주말·공휴일 문의는 다음 영업일에 순서대로 답변드립니다</div>
+</div>
+
+<!-- 법적 고지 -->
+<div class="legal s">
+  <p>이 제품은 구매대행을 통하여 유통되는 제품입니다.<br>이 제품은 전기용품 및 생활용품 안전관리법에 따른 안전관리대상 제품입니다.</p>
+  <p>본 상품페이지는 현지 업체의 이미지를 사용하여 제작되었습니다.<br>권리침해 등의 문제가 있는 경우 연락 주시면 즉시 시정하겠습니다.</p>
+  <!-- 수입식품(식품·건강식품 등)을 판매하는 경우 아래 줄의 주석을 풀고 번호를 넣으세요
+  <p class="lic">수입식품안전관리 특별법에 의한 영업등록 제 0000000000 호</p>
+  -->
 </div>
 </body></html>
