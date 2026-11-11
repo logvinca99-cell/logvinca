@@ -1,0 +1,14 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>온누리하우스 워터마크</title>
+<link rel="stylesheet" href="style.css">
+<style>
+ html,body{background:transparent}
+ body{width:250px}
+ /* 어떤 사진 위에서도 보이도록 흰 외곽선 */
+ #wm{display:inline-flex;align-items:center;gap:8px;padding:6px}
+ #wm img{width:52px;height:52px;filter:drop-shadow(0 0 1.5px #fff) drop-shadow(0 0 1.5px #fff)}
+ #wm span{font-size:36px;font-weight:900;color:var(--main);letter-spacing:-.05em;line-height:1;-webkit-text-stroke:5px #fff;paint-order:stroke fill}
+ #wm.white img{filter:drop-shadow(0 0 1.5px rgba(0,0,0,.35))}
+ #wm.white span{color:#fff;-webkit-text-stroke:4px rgba(0,0,0,.18)}
+</style></head><body>
+<div id="wm" class="__VARIANT__"><img src="__LOGO__" alt=""><span>온누리하우스</span></div>
+</body></html>
