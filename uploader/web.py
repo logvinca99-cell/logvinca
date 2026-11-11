@@ -460,7 +460,9 @@ def create_app(db=None):
         ids = _ctx_sources(b)
         if not ids:
             return fail("고른 원본이 없습니다.")
+        t0 = _trash_top()
         out = chem.delete_sources_everywhere(db, ids)
+        out.update(trash_from=t0, trash_to=_trash_top())
         drop = out.pop("drop_scheduled")
         out.update(dropping=len(drop), started=False, queued=bool(drop) and runner.state["running"], drop_ids=drop)
         if drop and b.get("now", True) and not runner.state["running"]:
@@ -1478,7 +1480,12 @@ def create_app(db=None):
         ids = _ctx_sources(b) if "listing_filter" in b else inventory.source_ids(db, _filter_from(b))
         if not ids:
             return fail("고른 원본이 없습니다.")
-        return jsonify(trash.trash_sources(db, ids, keep_naver=bool(b.get("keep_naver"))))
+        t0 = _trash_top()
+        out = trash.trash_sources(db, ids, keep_naver=bool(b.get("keep_naver")))
+        return jsonify({**out, "trash_from": t0, "trash_to": _trash_top()})
+
+    def _trash_top():
+        return db.one("SELECT COALESCE(MAX(id), 0) AS n FROM trash")["n"]
 
     @app.post("/api/listings/delete")
     def listings_delete():
@@ -1491,10 +1498,12 @@ def create_app(db=None):
             return fail("고른 복사본이 없습니다.")
         sids = _source_ids_of(ids)
         keep = bool(b.get("keep_naver"))   # 판매 중인 것도 이 프로그램에서만 뺌 (네이버 상품은 그대로)
+        t0 = _trash_top()
         out = trash.trash_listings(db, ids, keep_naver=keep)
         if b.get("with_source"):   # 원본도 휴지통으로 (그 원본의 다른 스토어 복사본도 함께 — 네이버에 올라가 있는 원본은 뺌)
             s = trash.trash_sources(db, sids, keep_naver=keep)
             out.update(sources_moved=s["moved"], sources_skipped_live=s["skipped_live"])
+        out.update(trash_from=t0, trash_to=_trash_top())
         return jsonify(out)
 
     def _source_ids_of(ids):
@@ -1559,11 +1568,11 @@ def create_app(db=None):
             r = got.get(i)
             if r is None:   # 지워져 없어진 것 → '삭제됨' 칸
                 r = {"id": i, "source_id": t["source_id"], "name": t["name"], "thumb": t["thumb"], "eye_at": None, "status": "", "op": ""}
-                r["dead"] = {"label": "삭제됨", "cls": "gone", "at": t["at"]}
+                r["dead"] = {"label": "삭제됨", "cls": "gone", "at": t["at"], "ticket": t["ticket"]}
             elif t:
                 going = r.get("drop_pending") if kind == "source" else (r.get("op") == "delete" and r.get("status") in ("planned", "queued", "running"))
                 if going:
-                    r["dead"] = {"label": "삭제됨", "sub": "네이버에서 내릴 예정", "cls": "gone", "at": t["at"]}
+                    r["dead"] = {"label": "삭제됨", "sub": "네이버에서 내릴 예정", "cls": "gone", "at": t["at"], "ticket": t["ticket"]}
                 else:
                     stale.append(i)   # 휴지통에서 되살린 것 등 → 다시 보통 칸으로
             rows.append(r)
@@ -1581,8 +1590,12 @@ def create_app(db=None):
     def eye_dead_add():
         """눈검수에서 지운 것을 기록 → 눈검수 쪽에 '삭제됨'으로 계속 남김."""
         b = body()
-        eye.add_dead(db, "source" if b.get("kind") == "source" else "listing", int(b.get("store_id") or 0), b.get("rows") or [])
-        return jsonify({"ok": True})
+        rows = b.get("rows") or []
+        sid = int(b.get("store_id") or 0)
+        ticket = eye.make_ticket(db, sid, [r.get("source_id") or r.get("id") for r in rows], b.get("trash_from"), b.get("trash_to"),
+                                 b.get("drop_ids") or [])
+        eye.add_dead(db, "source" if b.get("kind") == "source" else "listing", sid, rows, ticket)
+        return jsonify({"ok": True, "ticket": ticket})
 
     def _eye_words(name, lex):
         """상품명 앞 키워드 4개와 표시: blocked(금지어) / mark(상표). 붙여 쓴 두 단어 상표도 둘 다 표시."""
@@ -1622,7 +1635,7 @@ def create_app(db=None):
     def eye_undo():
         b = body()
         sid = int(b.get("store_id") or 0)
-        out = eye.undo(db, sid, b.get("source_ids") or [], b.get("since") or time.time(), int(b.get("n") or 0))
+        out = eye.undo(db, sid, b.get("ticket"), b.get("source_ids") or None, int(b.get("n") or 0))
         return jsonify({**out, **eye.stats(db, sid)})
 
     @app.post("/api/eye/commit")

@@ -278,7 +278,22 @@ def _restore_source(c, d, max_copies):
     return sid, None, skipped
 
 
-def restore(db, trash_ids):
+def _restore_one_listing(c, d, max_copies):
+    """복사본 한 줄만 되살리기 (눈검수 되돌리기에서만) → None(됨) 또는 이유."""
+    l = dict(d["listing"])
+    n = c.execute("SELECT COUNT(*) FROM listings WHERE source_id=?", (l["source_id"],)).fetchone()[0]
+    if n >= max_copies:
+        return f"원본당 최대 복사 수({max_copies})를 넘음 — 그새 다른 스토어로 복사됨"
+    if l.get("channel_no") and l.get("status") != "deleted" and c.execute(
+            "SELECT 1 FROM listings WHERE store_id=? AND channel_no=? AND status!='deleted'", (l["store_id"], l["channel_no"])).fetchone():
+        return "이 상품번호는 그 스토어의 다른 복사본에 이미 연결됨"
+    why = _restore_listing(c, l, d.get("history") or [])
+    if not why and l.get("channel_no"):
+        c.execute("DELETE FROM kept_live WHERE store_id=? AND channel_no=?", (l["store_id"], l["channel_no"]))
+    return why
+
+
+def restore(db, trash_ids, allow_listing=False):
     """휴지통 되살리기 — 원본만 (그 원본의 복사본도 함께 검사해서). 복사본만 따로 되살리기는 없앴다
     (원본당 최대 복사 수를 넘거나, 같은 상품번호가 둘 붙거나, 다른 원본 밑으로 붙는 일이 생겨서):
     안 올린 복사본은 원본에서 다시 복사, 판매 중이던 것은 기존 상품 가져오기로 다시 연결."""
@@ -289,7 +304,24 @@ def restore(db, trash_ids):
     items = []
     for chunk in _chunks(trash_ids):
         items += db.q(f"SELECT id, kind, data FROM trash WHERE id IN ({','.join('?' * len(chunk))})", chunk)
-    for t in sorted(items, key=lambda x: x["id"]):
+    # 원본 먼저 (그 밑에 붙을 복사본이 있으면 원본이 있어야 함)
+    for t in sorted(items, key=lambda x: (x["kind"] != "source", x["id"])):
+        if t["kind"] != "source" and allow_listing:
+            d = unpack(t["data"])
+            try:
+                with db.tx() as c:
+                    why = _restore_one_listing(c, d, max_copies)
+                    if why:
+                        st["skipped"] += 1
+                        st["reasons"].append(f"복사본 '{str(d['listing'].get('name') or '')[:20]}': {why} — 되살리지 않음")
+                        continue
+                    c.execute("DELETE FROM trash WHERE id=?", (t["id"],))
+                    touched.add(d["listing"]["source_id"])
+                    st["restored"] += 1
+            except Exception as e:  # noqa: BLE001 - 이 항목만 건너뜀
+                st["skipped"] += 1
+                st["reasons"].append(f"#{t['id']}: 되살리다 오류 — {e}")
+            continue
         if t["kind"] != "source":
             st["skipped"] += 1
             st["reasons"].append("복사본만 되살리기는 하지 않습니다 — 원본에서 다시 복사하거나, 판매 중이던 것은 기존 상품 가져오기로 다시 연결하세요")

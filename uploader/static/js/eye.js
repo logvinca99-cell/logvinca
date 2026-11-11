@@ -405,10 +405,16 @@ const Eye = {
     const gone = ids.filter((id) => this.dead.get(id)?.cls === "gone");
     // 눈검수 쪽에 '삭제됨'으로 계속 남기기 (다시 열어도·이전 쪽으로 가도 그 자리)
     const goneRows = picked.filter((l) => this.dead.get(l.id)?.cls === "gone").map((l) => ({ id: l.id, source_id: l.source_id, name: l.name, thumb: l.thumb }));
-    if (goneRows.length) { try { await App.api("/api/eye/dead", { json: { kind: this.kind, store_id: this.storeId, rows: goneRows } }); } catch (e) { /* 표시만 */ } }
+    let ticket = null;   // 이번에 지운 것 표 — 되돌리기는 이것만
+    if (goneRows.length) {
+      try {
+        ticket = (await App.api("/api/eye/dead", { json: { kind: this.kind, store_id: this.storeId, rows: goneRows,
+          trash_from: r.trash_from, trash_to: r.trash_to, drop_ids: r.drop_ids || [] } })).ticket;
+      } catch (e) { /* 표시만 */ }
+    }
     (r.drop_ids || []).forEach((id) => this.dropsCur.add(id));
     const goneSet = new Set(gone);
-    if (gone.length) this.undos.push({ sids: [...new Set(picked.filter((l) => goneSet.has(l.id)).map((l) => l.source_id))], lids: gone, since, n: gone.length, gone: gone.length });
+    if (gone.length && ticket) this.undos.push({ ticket, sids: [...new Set(picked.filter((l) => goneSet.has(l.id)).map((l) => l.source_id || l.id))], lids: gone, since, n: gone.length, gone: gone.length });
     this.deleted += gone.length;
     this.sel.clear();
     this.rows = this.rows.map((l) => (now[l.id] ? { ...l, ...now[l.id] } : l));
@@ -516,20 +522,24 @@ const Eye = {
   /* 지운 칸 하나 되살리기 (그 칸을 다시 누름) */
   async restoreOne(l) {
     const u = this.undos.find((x) => x.lids.includes(l.id));
-    const since = u ? u.since : l.dead?.at;
-    if (!since) return App.toast("이 상품은 여기서 되살릴 수 없습니다 (휴지통에서 되살리세요).", true);
+    const ticket = u ? u.ticket : l.dead?.ticket;
+    if (!ticket) return App.toast("이 상품은 여기서 되살릴 수 없습니다 (예전 버전에서 지운 것 — 휴지통에서 원본을 되살리세요).", true);
+    const sid = l.source_id || l.id;
     let r;
-    try { r = await App.api("/api/eye/undo", { json: { store_id: this.storeId, source_ids: [l.source_id], since, n: 1 } }); }
+    try { r = await App.api("/api/eye/undo", { json: { store_id: this.storeId, ticket, source_ids: [sid], n: 1 } }); }
     catch (e) { return App.toast(e.message, true); }
     if (u) {
       u.lids = u.lids.filter((id) => id !== l.id);
-      u.sids = u.sids.filter((x) => x !== l.source_id);
+      u.sids = u.sids.filter((x) => x !== sid);
       u.n -= 1; u.gone -= 1;
       if (!u.lids.length) this.undos = this.undos.filter((x) => x !== u);
       this.deleted -= 1;
     }
     this.dead.delete(l.id);
-    if (!r.restored && !r.cancelled) return App.toast("휴지통에 없어 되살리지 못했습니다 (이미 비웠거나 다시 불러온 원본).", true);
+    if (!r.restored && !r.cancelled) {
+      App.toast((r.reasons || [])[0] || "휴지통에 없어 되살리지 못했습니다 (이미 비웠거나 다시 불러온 원본).", true);
+      return this.load({ from_id: this.rows[0]?.id || 0 });
+    }
     Object.assign(this.state, { today_seen: r.today_seen, today_deleted: r.today_deleted, sec_per_item: r.sec_per_item });
     App.toast(r.dropped ? "원본은 되살렸지만 이미 네이버에서 내려가 '내림'으로 남았습니다 (복사본 화면에서 다시 올리기)" : "되살렸습니다", !!r.dropped);
     App.refreshState();
@@ -542,14 +552,14 @@ const Eye = {
     if (!u) return;
     let r;
     try {
-      r = await App.api("/api/eye/undo", { json: { store_id: this.storeId, source_ids: u.sids, since: u.since, n: u.gone } });
+      r = await App.api("/api/eye/undo", { json: { store_id: this.storeId, ticket: u.ticket, n: u.gone } });
     } catch (e) { this.undos.push(u); return App.toast(e.message, true); }
     u.lids.forEach((id) => this.dead.delete(id));
     this.deleted -= u.gone;
     Object.assign(this.state, { today_seen: r.today_seen, today_deleted: r.today_deleted, sec_per_item: r.sec_per_item });
     App.toast(`되돌렸습니다: 휴지통에서 ${num(r.restored)}개 되살림` + (r.cancelled ? ` · 네이버 내리기 ${num(r.cancelled)}건 취소 (판매 중 그대로)` : "")
       + (r.dropped ? ` · 이미 네이버에서 내려간 ${num(r.dropped)}건은 '내림'으로 남음 (복사본 화면에서 다시 올리기)` : "")
-      + (r.busy ? ` · 지금 내리는 중인 ${num(r.busy)}건은 못 멈춤` : "") + (r.skipped ? ` · 못 되살린 ${num(r.skipped)}개 (휴지통에서 확인)` : ""), !!(r.dropped || r.busy || r.skipped));
+      + (r.busy ? ` · 지금 내리는 중인 ${num(r.busy)}건은 못 멈춤` : "") + (r.skipped ? ` · 못 되살린 ${num(r.skipped)}개 — ${(r.reasons || [])[0] || "휴지통에서 확인"}` : ""), !!(r.dropped || r.busy || r.skipped));
     App.refreshState();
     await this.load({ from_id: this.rows[0]?.id || 0 });
   },
