@@ -28,7 +28,7 @@ def _setup_log():
 
 
 def main():
-    p = argparse.ArgumentParser(description="스마트스토어 상품 등록기")
+    p = argparse.ArgumentParser(description="업스타 — 여러 스마트스토어 상품 등록기")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--no-browser", action="store_true", help="브라우저를 자동으로 열지 않음")
     p.add_argument("--fake-api", action="store_true", help="네이버에 접속하지 않고 등록을 흉내 냄 (시연·개발용)")
@@ -41,15 +41,15 @@ def main():
     if moved:
         print(f"예전 기록을 옮겨 왔습니다: {moved} → {config.DATA_DIR}")
     from . import VERSION
-    print(f"상품 등록기 버전 {VERSION} · 프로그램 폴더: {config.ROOT}")
+    print(f"업스타 버전 {VERSION} · 프로그램 폴더: {config.ROOT}")
     print(f"기록·설정 폴더: {config.DATA_DIR}")
 
     from .web import create_app
     app = create_app()
     url = f"http://127.0.0.1:{a.port}"
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
-    print(f"상품 등록기: {url}")
-    print("이 창을 닫으면 등록기가 꺼집니다.")
+    print(f"업스타: {url}")
+    print("이 창을 닫으면 업스타가 꺼집니다.")
     if not a.no_browser:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     app.run(host="127.0.0.1", port=a.port, threaded=True, use_reloader=False)

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="업스타">
+  <defs>
+    <linearGradient id="us-bg" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#028a3f"/>
+      <stop offset="1" stop-color="#16cf78"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#us-bg)"/>
+  <!-- 위로 올리는 화살표 (등록) -->
+  <path d="M30 14.5 L46 32 H37 V49 H23 V32 H14 Z" fill="#fff" stroke="#fff" stroke-width="3" stroke-linejoin="round"/>
+  <!-- 반짝이는 별 (스타) -->
+  <path d="M49 6.5 C50 12.5 51.5 14 57.5 15 C51.5 16 50 17.5 49 23.5 C48 17.5 46.5 16 40.5 15 C46.5 14 48 12.5 49 6.5 Z" fill="#ffe14d"/>
+  <circle cx="54.5" cy="25.5" r="2" fill="#ffe14d"/>
+</svg>

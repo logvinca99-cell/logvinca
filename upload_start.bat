@@ -1,5 +1,6 @@
 @echo off
 chcp 65001 > nul
+title 업스타
 set PYTHONUTF8=1
 set PYTHONIOENCODING=utf-8
 cd /d "%~dp0"
@@ -20,5 +21,5 @@ if errorlevel 1 (
 
 python -m uploader %*
 echo.
-echo 등록기가 꺼졌습니다. 위의 메시지(또는 data\uploader.log)를 복사해 보내 주세요.
+echo 업스타가 꺼졌습니다. 위의 메시지(또는 data\uploader.log)를 복사해 보내 주세요.
 pause
