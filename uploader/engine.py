@@ -125,7 +125,12 @@ class Runner:
 
     # ── 조작
 
+    busy_check = None   # web이 정함: 지금 등록을 시작하면 안 되는 이유 (예: 기존 상품 가져오기 진행 중) 또는 None
+
     def start(self, f):
+        why = self.busy_check() if self.busy_check else None
+        if why:
+            raise RuntimeError(why)
         with self.lock:
             if self.state["running"]:
                 raise RuntimeError("이미 등록 중입니다.")
@@ -405,7 +410,7 @@ class Runner:
                 if not store.get("_sales_ok", True):
                     raise naver.ApiError("주문(판매 이력)을 확인하지 못해 지우지 않았습니다. 다시 시도하세요.")
                 self._sales_recheck(sid, client)
-                lk = self.db.one("SELECT locked, lock_note, price, nv_status FROM listings WHERE id=?", (lid,))
+                lk = self.db.one("SELECT locked, lock_note, price, nv_status, del_mark FROM listings WHERE id=?", (lid,))
                 if lk["locked"]:
                     self.db.set_listing(lid, "success", op="create", stage="",
                                         message=f"잠금이라 지우지 않음 ({lk['lock_note']})")
@@ -419,7 +424,16 @@ class Runner:
                     if not store.get("_nv_ok", True):
                         raise naver.ApiError("네이버 상태(판매중지·판매금지)를 확인하지 못해 지우지 않았습니다. 다시 시도하세요.")
                     nv = lk["nv_status"]
-                    if nv and nv not in nvstate.REFRESH_OK:
+                    if nv == "GONE" and lk["del_mark"]:
+                        pass   # 지난번에 지우기를 시작한 뒤 끊김 → 이미 지워진 것: 지우기(없으면 넘어감) 뒤 등록만 이어서
+                    elif nv == "GONE":   # 네이버 스토어에 없음 → 판매 중으로 두지 않고 '내림'으로 (다시 올리기로 올릴 수 있음)
+                        self._archive(t, op, counted=False)
+                        self.db.set_listing(lid, "deleted", op="create", stage="", origin_no="", channel_no="", deleted_at=time.time(),
+                                            nv_status="", nv_disp="", message="네이버 스토어에 없는 상품 — '내림'으로 바꿈 (다시 올리기로 올릴 수 있음)")
+                        self._log("info", f"내림으로 바꿈 · {t['name'][:40]} · 네이버 스토어에 없음", store["name"])
+                        self._count(sid, lid, None)
+                        return
+                    elif nv and nv not in nvstate.REFRESH_OK:
                         msg = f"네이버 '{nvstate.label(nv)}' 상태라 {'최신화' if op == 'refresh' else '다시 올리기'}하지 않음"
                         self.db.set_listing(lid, "success", op="create", stage="", message=msg)
                         self._log("info", f"건너뜀 · {t['name'][:40]} · {msg}", store["name"])
@@ -480,13 +494,22 @@ class Runner:
                 notes.append("모바일에서 흐린 캡처로 보일 수 있음: " + ", ".join(iss))
 
             if live:   # 여기까지 모두 준비됨 → 이제 지우고, 지운 뒤에는 등록만
+                # 준비하는 동안 팔렸을 수 있음 → 지우기 바로 앞에서 주문·잠금을 한 번 더 확인
+                self._sales_recheck(sid, client)
+                lk2 = self.db.one("SELECT locked, lock_note FROM listings WHERE id=?", (lid,))
+                if lk2 and lk2["locked"]:
+                    self.db.set_listing(lid, "success", op="create", stage="", message=f"잠금이라 지우지 않음 ({lk2['lock_note']})")
+                    self._log("info", f"건너뜀 · {t['name'][:40]} · 잠금 ({lk2['lock_note']})", store["name"])
+                    self._count(sid, lid, None)
+                    return
                 self._stage(lid, label, "네이버에서 지우는 중")
+                self.db.set_listing(lid, None, del_mark=time.time())
                 removed = client.delete_product(t["origin_no"], on_wait=on_wait)
                 # 이미 스토어에서 지운 상품이면 지난 연결 확인 수에 이미 빠져 있을 수 있어, 남은 자리 계산에 '지움'으로 세지 않는다
                 self._archive(t, op, counted=removed is not False)
                 deleted_now = True
                 self.db.set_listing(lid, None, op="create", round=tn["round"], origin_no="", channel_no="",
-                                    deleted_at=time.time(), round_reset=0, nv_status="", nv_disp="")
+                                    deleted_at=time.time(), round_reset=0, nv_status="", nv_disp="", del_mark=None)
                 if op == "refresh" and cfg.get("refresh_new_name"):   # 다시 올리기는 늘 같은 이름
                     nm = self._new_name(cfg, tn)
                     if nm:
@@ -616,13 +639,17 @@ class Runner:
         src = self.db.one("SELECT id, name FROM sources WHERE id=?", (t["source_id"],))
         now = time.time()
         with self.db.tx() as c:
-            nm = inventory.refresh_name(c, src, t["store_id"], cfg, now)
-            if not nm:
-                return None
-            # 예전 이름은 '다 쓴 이름'으로 (다른 복사본이 다시 쓰지 않게, 한 복사본에 이름이 둘 붙지 않게)
-            c.execute("UPDATE names SET listing_id=-1 WHERE listing_id=? AND id!=?", (t["id"], nm["id"]))
-            c.execute("UPDATE names SET listing_id=? WHERE id=?", (t["id"], nm["id"]))
-            c.execute("UPDATE listings SET name_id=?, name=? WHERE id=?", (nm["id"], nm["name"], t["id"]))
+            c.execute("INSERT INTO name_unlock VALUES(1)")   # 처리 중인 이 복사본 이름을 엔진이 직접 바꿈
+            try:
+                nm = inventory.refresh_name(c, src, t["store_id"], cfg, now)
+                if not nm:
+                    return None
+                # 예전 이름은 '다 쓴 이름'으로 (다른 복사본이 다시 쓰지 않게, 한 복사본에 이름이 둘 붙지 않게)
+                c.execute("UPDATE names SET listing_id=-1 WHERE listing_id=? AND id!=?", (t["id"], nm["id"]))
+                c.execute("UPDATE names SET listing_id=? WHERE id=?", (t["id"], nm["id"]))
+                c.execute("UPDATE listings SET name_id=?, name=? WHERE id=?", (nm["id"], nm["name"], t["id"]))
+            finally:
+                c.execute("DELETE FROM name_unlock")
         return nm["name"]
 
     def _option_images(self, client, cache, boxes, look, lid, label, on_wait):

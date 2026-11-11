@@ -63,6 +63,10 @@ def create_app(db=None):
     _clean_old_uploads()
     db = db or DB()
     runner = engine.Runner(db)
+
+    def _adopt_running():
+        return any(t.get("kind") in ("adopt",) and t.get("status") == "running" for t in tasks.list())
+    runner.busy_check = lambda: ("기존 상품 가져오기가 진행 중입니다. 가져오기가 끝난 뒤에 등록을 시작하세요." if _adopt_running() else None)
     if getattr(db, "_v3", False):
         orders.recount_sold(db)
         db.x("PRAGMA user_version=3")
@@ -849,8 +853,8 @@ def create_app(db=None):
     @app.post("/api/adopt/<int:rid>/undo")
     def adopt_undo(rid):
         """가져오기 되돌리기: 이 프로그램에서만 뺌 (네이버 상품은 그대로)."""
-        if runner.state["running"]:
-            return fail("등록이 진행 중일 때는 되돌릴 수 없습니다. 끝난 뒤에 다시 시도하세요.")
+        if runner.state["running"] or _adopt_running():
+            return fail("등록이나 기존 상품 가져오기가 진행 중일 때는 되돌릴 수 없습니다. 끝난 뒤에 다시 시도하세요.")
         try:
             return jsonify(adopt.undo_run(db, rid))
         except ValueError as e:
@@ -1649,8 +1653,8 @@ def create_app(db=None):
 
     @app.post("/api/trash/restore")
     def trash_restore():
-        if runner.state["running"]:
-            return fail("등록이 진행 중일 때는 되살릴 수 없습니다.")
+        if runner.state["running"] or _adopt_running():
+            return fail("등록이나 기존 상품 가져오기가 진행 중일 때는 되살릴 수 없습니다.")
         ids = _trash_ids(body())
         if not ids:
             return fail("고른 항목이 없습니다.")

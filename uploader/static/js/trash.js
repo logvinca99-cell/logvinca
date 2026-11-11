@@ -12,7 +12,9 @@ App.page("trash", {
     el.innerHTML = `<div class="page">
       <header class="page-head"><h1>휴지통</h1>
         <div class="head-actions"><button class="btn danger" id="t-empty">휴지통 비우기</button></div></header>
-      <p class="muted" style="margin:0">지운 원본·복사본이 여기 모입니다. <b>되살리기</b>를 누르면 원래 자리로 돌아가고, <b>완전히 삭제</b>하면 되돌릴 수 없습니다.</p>
+      <p class="muted" style="margin:0">지운 원본·복사본이 여기 모입니다. <b>원본</b>은 되살릴 수 있고(그 원본의 복사본도 함께 — 원본당 최대 복사 수·같은 상품번호를 확인해서),
+        <b>복사본</b>은 기록만 남습니다(복사본만 되살리면 중복이 생길 수 있어 막음 — 원본에서 다시 복사하거나, 판매 중이던 것은 기존 상품 가져오기로 다시 연결).
+        <b>완전히 삭제</b>하면 되돌릴 수 없습니다.</p>
       <div class="tiles" id="t-tiles"></div>
       <div class="filters-row"><div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
         <input id="t-q" placeholder="상품명·스토어·번호 검색"></div></div>
@@ -101,23 +103,28 @@ App.page("trash", {
     App.listBar($("#t-bar"), {
       ...opts, count: n, selAll: this.selAll, what: "항목",
       pageChecked: this.rows.length > 0 && this.rows.every((x) => this.sel.has(x.id)),
-      actions: [{ id: "restore", label: "되살리기", primary: true }, "|", { id: "purge", label: "완전히 삭제", danger: true }],
+      actions: [...(this.kind === "source" ? [{ id: "restore", label: "되살리기", primary: true }, "|"] : []), { id: "purge", label: "완전히 삭제", danger: true }],
       onPageCheck: (on) => { this.selAll = false; this.rows.forEach((x) => (on ? this.sel.add(x.id) : this.sel.delete(x.id))); this.load(); },
       onAll: () => { this.selAll = true; this.sel.clear(); this.load(); },
       onClear: () => { this.clear(); this.load(); },
       onAction: async (id) => {
         if (id === "restore") {
+          if (!n) return App.toast("고른 원본이 없습니다.", true);
+          if (!await App.yes("원본 되살리기", `고른 원본 ${num(n)}개를 원래 자리로 되살립니다 (그 원본의 복사본도 함께).\n상품명이 완전히 같은 원본이 그새 들어왔으면 그 원본은 되살리지 않고, 복사본은 원본당 최대 복사 수 안에서·같은 상품번호가 이미 연결돼 있지 않은 것만 되살립니다.`, { label: "되살리기" })) return;
           try {
             const r = await App.api("/api/trash/restore", { json: this.target() });
-            App.toast(`${num(r.restored)}개를 되살렸습니다` + (r.skipped ? ` · 되살리지 못한 ${num(r.skipped)}개 (${r.reasons[0] || ""})` : ""));
+            App.toast(`원본 ${num(r.restored)}개를 되살렸습니다` + (r.skipped ? ` · 되살리지 못한 원본 ${num(r.skipped)}개` : "")
+              + (r.copy_skipped ? ` · 빼고 되살린 복사본 ${num(r.copy_skipped)}개` : "") + (r.reasons?.length ? ` (${r.reasons[0]})` : ""), !!(r.skipped || r.copy_skipped));
           } catch (e) { return App.toast(e.message, true); }
         }
         if (id === "purge") {
           const ok = await App.confirmDanger({ title: `${num(n)}${unit} 완전히 삭제`,
             body: `<p>고른 <b>${num(n)}${unit}</b>를 <b>완전히 삭제</b>합니다. 되돌릴 수 없습니다.</p>` });
           if (!ok) return;
-          const r = await App.api("/api/trash/purge", { json: this.target() });
-          App.toast(`${num(r.purged)}개를 완전히 삭제했습니다`);
+          try {
+            const r = await App.api("/api/trash/purge", { json: this.target() });
+            App.toast(`${num(r.purged)}${unit}를 완전히 삭제했습니다`);
+          } catch (e) { return App.toast(e.message, true); }
         }
         this.clear(); this.load(); App.refreshState();
       },

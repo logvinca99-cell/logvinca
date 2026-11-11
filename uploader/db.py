@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS imports (
     note TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS sources (
-    id INTEGER PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     source_key TEXT NOT NULL UNIQUE,
     seller_code TEXT NOT NULL DEFAULT '',
     name TEXT NOT NULL,
@@ -81,8 +81,10 @@ CREATE TABLE IF NOT EXISTS sources (
 CREATE INDEX IF NOT EXISTS sources_cat ON sources(category);
 CREATE INDEX IF NOT EXISTS sources_listings ON sources(n_listings);
 CREATE INDEX IF NOT EXISTS sources_price ON sources(price);
+CREATE INDEX IF NOT EXISTS sources_name ON sources(name);
+CREATE INDEX IF NOT EXISTS sources_seller ON sources(seller_code);
 CREATE TABLE IF NOT EXISTS names (
-    id INTEGER PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     norm TEXT NOT NULL UNIQUE,
@@ -129,7 +131,7 @@ CREATE TABLE IF NOT EXISTS plans (
     note TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS listings (
-    id INTEGER PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     store_id INTEGER NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
     source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
     plan_id INTEGER REFERENCES plans(id) ON DELETE SET NULL,
@@ -255,6 +257,7 @@ class DB:
         mail.ensure(self)
         trash.ensure(self)
         self._rename_price_terms()
+        self._busy_name_guard()
         self._orders_from_init()
         self._name_keys()
         # 프로그램이 등록 도중 꺼졌으면 남은 상태를 되돌린다.
@@ -329,8 +332,30 @@ class DB:
                      # 회차 초기화: 판매 중·내린 건을 다음에 다시 올릴 때 회차를 +1 하지 않고 1회차로
                      ("round_reset", "INTEGER NOT NULL DEFAULT 0"),
                      # 상품명 바꾸기(AI 키워드)를 눌렀는데 키워드가 아직 오는 중 → 오면 이 복사본 이름을 바꿈
-                     ("ctx_wait", "INTEGER NOT NULL DEFAULT 0")],
+                     ("ctx_wait", "INTEGER NOT NULL DEFAULT 0"),
+                     # 최신화·다시 올리기에서 네이버 지우기를 시작한 때 (지운 뒤 끊겨도 다시 시도 때 '이미 지움'으로 이어감)
+                     ("del_mark", "REAL"),
+                     # 네이버 가격 바꾸기 대기: 바꿀 손님 가격 (성공하면 비움 · 실패·미시작이면 남아 다시 시도)
+                     ("price_push", "INTEGER")],
     }
+
+    def _busy_name_guard(self):
+        busy = "(SELECT id FROM listings WHERE status IN ('queued','running'))"
+        with self.tx() as c:
+            c.executescript(f"""
+            CREATE INDEX IF NOT EXISTS sources_img ON sources(img_key);
+            CREATE TABLE IF NOT EXISTS name_unlock (x INTEGER);
+            DELETE FROM name_unlock;
+            CREATE TRIGGER IF NOT EXISTS listing_name_busy BEFORE UPDATE OF name, name_id ON listings
+              WHEN OLD.status IN ('queued','running') AND NOT EXISTS (SELECT 1 FROM name_unlock)
+              BEGIN SELECT RAISE(IGNORE); END;
+            CREATE TRIGGER IF NOT EXISTS names_busy_upd BEFORE UPDATE OF listing_id ON names
+              WHEN (OLD.listing_id IN {busy} OR NEW.listing_id IN {busy}) AND NOT EXISTS (SELECT 1 FROM name_unlock)
+              BEGIN SELECT RAISE(IGNORE); END;
+            CREATE TRIGGER IF NOT EXISTS names_busy_del BEFORE DELETE ON names
+              WHEN OLD.listing_id IN {busy} AND NOT EXISTS (SELECT 1 FROM name_unlock)
+              BEGIN SELECT RAISE(IGNORE); END;
+            """)
 
     def _rename_price_terms(self):
         """가격 용어 통일 (기준 가격 · 스토어 가격 차이 % · 손님 가격): 지난 기록에 남은 예전 말을 한 번 바꿈."""
@@ -425,6 +450,73 @@ class DB:
             self._v3 = True  # 잠금 열이 새로 생김 → 웹 시작 때 판매 수·잠금을 다시 계산
         self.c.commit()
         self._listing_name_nullable()
+        self._autoinc()
+
+    # 지운 원본·복사본·이름 번호를 새 줄이 다시 받지 않게 (번호가 같으면 휴지통 되살리기·수정 기록·주문이 엉뚱한 상품에 붙음)
+    AUTOINC = ("sources", "listings", "names")
+
+    def _autoinc(self):
+        todo = []
+        for t in self.AUTOINC:
+            r = self.c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (t,)).fetchone()
+            if r and "AUTOINCREMENT" not in r[0].upper():
+                todo.append((t, r[0]))
+        if not todo:
+            return
+        floors = self._id_floors()
+        self.c.commit()
+        self.c.execute("PRAGMA foreign_keys=OFF")
+        try:
+            self.c.execute("BEGIN")
+            for t, sql in todo:
+                new = re.sub(r"\bid\s+INTEGER\s+PRIMARY\s+KEY\b", "id INTEGER PRIMARY KEY AUTOINCREMENT", sql, count=1, flags=re.I)
+                new = re.sub(r'CREATE TABLE\s+(IF NOT EXISTS\s+)?"?%s"?' % t, f"CREATE TABLE {t}_new", new, count=1)
+                cols = ", ".join(f'"{r[1]}"' for r in self.c.execute(f"PRAGMA table_info({t})"))
+                self.c.execute(new)
+                self.c.execute(f"INSERT INTO {t}_new({cols}) SELECT {cols} FROM {t}")
+                self.c.execute(f"DROP TABLE {t}")
+                self.c.execute(f"ALTER TABLE {t}_new RENAME TO {t}")
+            for t, _ in todo:
+                top = max(floors.get(t, 0), self.c.execute(f"SELECT COALESCE(MAX(id), 0) FROM {t}").fetchone()[0])
+                self.c.execute("DELETE FROM sqlite_sequence WHERE name=?", (t,))
+                self.c.execute("INSERT INTO sqlite_sequence(name, seq) VALUES(?, ?)", (t, top))
+            self.c.commit()
+        except Exception:
+            self.c.rollback()
+            raise
+        finally:
+            self.c.execute("PRAGMA foreign_keys=ON")
+        self.c.executescript(SCHEMA)  # 색인 다시
+
+    def _id_floors(self):
+        """이미 지운 줄들이 쓰던 가장 큰 번호 (휴지통·기록·주문에 남은 번호까지) — 새 번호는 그보다 크게."""
+        out = {}
+        def mx(t, sql):
+            try:
+                v = self.c.execute(sql).fetchone()[0] or 0
+            except sqlite3.Error:
+                v = 0
+            out[t] = max(out.get(t, 0), int(v))
+        mx("sources", "SELECT MAX(ref_id) FROM trash WHERE kind='source'")
+        for tb in ("source_edit_log", "base_price_log", "adopt_item"):
+            mx("sources", f"SELECT MAX(source_id) FROM {tb}")
+        mx("listings", "SELECT MAX(ref_id) FROM trash WHERE kind='listing'")
+        for tb in ("listing_history", "orders"):
+            mx("listings", f"SELECT MAX(listing_id) FROM {tb}")
+        mx("names", "SELECT MAX(listing_id) FROM names WHERE 0")
+        try:   # 휴지통에 든 원본 묶음 안의 복사본·이름 번호
+            for (d,) in self.c.execute("SELECT data FROM trash WHERE kind='source'"):
+                snap = unpack(d)
+                for l in snap.get("listings") or []:
+                    out["listings"] = max(out.get("listings", 0), int(l.get("id") or 0))
+                for n in snap.get("names") or []:
+                    out["names"] = max(out.get("names", 0), int(n.get("id") or 0))
+            for (d,) in self.c.execute("SELECT data FROM trash WHERE kind='listing'"):
+                l = (unpack(d) or {}).get("listing") or {}
+                out["listings"] = max(out.get("listings", 0), int(l.get("id") or 0))
+        except sqlite3.Error:
+            pass
+        return out
 
     def _listing_name_nullable(self):
         """복사본은 원본 상품명 그대로 만들고 나중에 이름을 바꾸므로 name_id가 비어 있을 수 있게 표를 바꾼다."""

@@ -876,6 +876,23 @@ def _fill_names(c, s, need, cfg, now):
     return pool
 
 
+def release_name(c, lid, name_id=None, drop_origins=None):
+    """복사본에서 이름을 뗄 때: 네이버에 올라갔던(올린 적 있는) 복사본이면 그 이름은 '다 쓴 이름'(-1)으로 남겨
+    다른 복사본이 다시 쓰지 않게 하고, 한 번도 안 올린 복사본이면 지금처럼 후보로 돌린다(drop_origins 출처면 지움)."""
+    ids = [name_id] if name_id else [r[0] for r in c.execute("SELECT id FROM names WHERE listing_id=?", (lid,)).fetchall()]
+    if not ids:
+        return
+    used = c.execute("""SELECT 1 FROM listings WHERE id=? AND (registered_at IS NOT NULL OR origin_no!='')
+        UNION SELECT 1 FROM listing_history WHERE listing_id=?""", (lid, lid)).fetchone()
+    for nid in ids:
+        if used:
+            c.execute("UPDATE names SET listing_id=-1 WHERE id=?", (nid,))
+            continue
+        if drop_origins:
+            c.execute(f"DELETE FROM names WHERE id=? AND origin NOT IN ({','.join('?' * len(drop_origins))})", (nid, *drop_origins))
+        c.execute("UPDATE names SET listing_id=NULL WHERE id=?", (nid,))
+
+
 def _pair(a, b):
     return (a, b) if a < b else (b, a)
 
@@ -1035,8 +1052,7 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
                     if old:
                         # 전에 내렸던 스토어: 같은 줄을 다음 회차로 (이름 그대로, 설정하면 원본 상품명으로 돌려 다시 바꾸게)
                         if cfg.get("refresh_new_name"):
-                            c.execute("DELETE FROM names WHERE listing_id=? AND origin NOT IN ('original','adopt')", (old["id"],))
-                            c.execute("UPDATE names SET listing_id=NULL WHERE listing_id=?", (old["id"],))
+                            release_name(c, old["id"], drop_origins=("original", "adopt"))
                             c.execute("UPDATE listings SET name_id=NULL, name=? WHERE id=?", (s["name"], old["id"]))
                         c.execute("""UPDATE listings SET status='planned', op='create',
                             round=CASE WHEN round_reset=1 THEN 1 ELSE round+1 END, round_reset=0, plan_id=?,
@@ -1095,8 +1111,7 @@ def rename_shuffle(db, ids, fixed_n=3, extra=(), progress=None, should_stop=None
             reject = ctxkw.make_rejecter(c, cfg, lex)
             for r in part:
                 if r["name_id"]:
-                    c.execute("DELETE FROM names WHERE id=? AND origin NOT IN ('original','manual','import','adopt')", (r["name_id"],))
-                    c.execute("UPDATE names SET listing_id=NULL WHERE id=?", (r["name_id"],))
+                    release_name(c, r["id"], r["name_id"], ("original", "manual", "import", "adopt"))
                 name = shuffle.make(r["orig"], fixed_n, extra, forb, seed=f"{r['id']}:{now}", reject=reject, max_chars=max_chars,
                                     rep=ctxkw.repeat_check(cfg, lex))
                 if not name:
@@ -1302,8 +1317,7 @@ def rename_listings(db, ids, method="recombine", progress=None, should_stop=None
                 for l in ls:
                     if l["name_id"]:
                         old[l["id"]] = _new_words(s["name"], l["name"])
-                        c.execute("DELETE FROM names WHERE id=? AND origin NOT IN ('original','adopt')", (l["name_id"],))
-                        c.execute("UPDATE names SET listing_id=NULL WHERE id=?", (l["name_id"],))
+                        release_name(c, l["id"], l["name_id"], ("original", "adopt"))
                 if method != "pool" and len(namegen.new_word_candidates(
                         s["name"], cfg, cfg["_lex"], s.get("category") or "", **_kw_args(s))) < new_min:
                     st["few_words"] += 1
@@ -1365,8 +1379,7 @@ def set_listing_name(db, lid, name):
         nid = c.execute("SELECT id, name FROM names WHERE source_id=? AND norm=?",
                         (l["source_id"], namegen.normalize(namegen.clean(name, 100)))).fetchone()
         if l["name_id"]:
-            c.execute("DELETE FROM names WHERE id=? AND origin NOT IN ('original','adopt')", (l["name_id"],))
-            c.execute("UPDATE names SET listing_id=NULL WHERE id=?", (l["name_id"],))
+            release_name(c, lid, l["name_id"], ("original", "adopt"))
         # 직접 고친 이름은 AI 키워드가 와도 덮어쓰지 않음 (ctx_wait=0)
         c.execute("UPDATE listings SET name_id=?, name=?, updated_at=?, ctx_wait=0 WHERE id=?", (nid["id"], nid["name"], now, lid))
         c.execute("UPDATE names SET listing_id=? WHERE id=?", (lid, nid["id"]))

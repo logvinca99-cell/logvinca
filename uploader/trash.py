@@ -95,15 +95,17 @@ def trash_sources(db, ids, keep_naver=False):
     """원본을 휴지통으로 (그 원본의 복사본·이름 후보·지난 회차·AI 키워드도 함께).
     네이버에 올라가 있거나 처리 중인 복사본이 있는 원본은 빼고 그 수를 돌려준다.
     keep_naver=True: 네이버에 올라가 있는 복사본이 있어도 이 프로그램에서만 뺀다 (네이버 상품은 그대로 — 내리지 않음). 처리 중인 것은 뺌."""
-    st = {"moved": 0, "skipped_live": 0}
+    st = {"moved": 0, "skipped_live": 0, "skipped_locked": 0}
     now = time.time()
     live_cond = "status IN ('queued','running')" if keep_naver else "(origin_no!='' OR status IN ('queued','running'))"
     for chunk in _chunks(ids):
         m = ",".join("?" * len(chunk))
+        locked = {r["source_id"] for r in db.q(f"SELECT DISTINCT source_id FROM listings WHERE source_id IN ({m}) AND locked=1", chunk)}
         busy = {r["source_id"] for r in db.q(f"""SELECT DISTINCT source_id FROM listings WHERE source_id IN ({m})
-            AND status!='deleted' AND {live_cond}""", chunk)}
-        go = [i for i in chunk if i not in busy]
+            AND status!='deleted' AND {live_cond}""", chunk)} - locked
+        go = [i for i in chunk if i not in busy and i not in locked]
         st["skipped_live"] += len(busy)
+        st["skipped_locked"] += len(locked)   # 판매 이력·직접 잠금이 있는 원본은 지우지 않음 (리뷰·판매 기록 보호)
         with db.tx() as c:
             for sid in go:
                 src = _rows(c, "SELECT * FROM sources WHERE id=?", (sid,))
@@ -117,7 +119,9 @@ def trash_sources(db, ids, keep_naver=False):
                         "listings": _rows(c, "SELECT * FROM listings WHERE source_id=?", (sid,)),
                         "names": _rows(c, "SELECT * FROM names WHERE source_id=?", (sid,)),
                         "history": _rows(c, f"SELECT * FROM listing_history WHERE listing_id IN ({lm})", lids),
-                        "ctx_kw": _rows(c, "SELECT * FROM ctx_kw WHERE source_id=?", (sid,))}
+                        "ctx_kw": _rows(c, "SELECT * FROM ctx_kw WHERE source_id=?", (sid,)),
+                        "edit_log": _rows(c, "SELECT * FROM source_edit_log WHERE source_id=?", (sid,)),
+                        "price_log": _rows(c, "SELECT * FROM base_price_log WHERE source_id=?", (sid,))}
                 stores = [r["name"] for r in c.execute(f"""SELECT t.name FROM listings l JOIN stores t ON t.id=l.store_id
                     WHERE l.id IN ({lm})""", lids).fetchall()]
                 extra = f"기준 가격 {src[0]['price']:,}원 · 복사본 {len(lids)}개 함께" + (f" ({', '.join(stores)})" if stores else "")
@@ -126,9 +130,9 @@ def trash_sources(db, ids, keep_naver=False):
                     extra += f" · 판매 중 {n_live}건은 네이버에 그대로 (이 프로그램에서만 뺌)"
                 c.execute("INSERT INTO trash(kind, ref_id, title, extra, deleted_at, data) VALUES('source',?,?,?,?,?)",
                           (sid, src[0]["name"], extra, now, pack(snap)))
-                c.execute(f"UPDATE orders SET listing_id=NULL WHERE listing_id IN ({lm})", lids)
+                # 주문 연결(orders.listing_id)은 그대로 둔다 — 번호를 다시 쓰지 않으므로 되살리면 같은 번호로 다시 이어짐
                 c.execute(f"DELETE FROM listing_history WHERE listing_id IN ({lm})", lids)
-                for t in ("listings", "names", "ctx_kw", "ai_words", "ai_asked", "source_kw"):
+                for t in ("listings", "names", "ctx_kw", "ai_words", "ai_asked", "source_kw", "source_edit_log", "base_price_log"):
                     c.execute(f"DELETE FROM {t} WHERE source_id=?", (sid,))
                 c.execute("DELETE FROM sources WHERE id=?", (sid,))
                 st["moved"] += 1
@@ -139,14 +143,17 @@ def trash_sources(db, ids, keep_naver=False):
 def trash_listings(db, ids, keep_naver=False):
     """복사본을 휴지통으로 (아직 안 올린 것·내린 것만). 붙어 있던 이름은 원본의 안 쓴 후보로 돌아간다.
     keep_naver=True: 네이버에 올라가 있는 것도 이 프로그램에서만 뺀다 (네이버 상품은 그대로 — 내리지 않음). 처리 중인 것은 뺌."""
-    st = {"moved": 0, "skipped_live": 0}
+    from .inventory import release_name
+    st = {"moved": 0, "skipped_live": 0, "skipped_locked": 0}
     now = time.time()
     touched = set()
     for chunk in _chunks(ids):
         m = ",".join("?" * len(chunk))
-        rows = db.q(f"""SELECT l.id, l.source_id, l.origin_no, l.status, l.name, l.price, l.round, l.seller_code,
-            l.registered_at, l.deleted_at, t.name AS store, s.name AS source_name
+        rows = db.q(f"""SELECT l.id, l.source_id, l.origin_no, l.status, l.name, l.name_id, l.price, l.round, l.seller_code,
+            l.registered_at, l.deleted_at, l.locked, t.name AS store, s.name AS source_name
             FROM listings l JOIN stores t ON t.id=l.store_id JOIN sources s ON s.id=l.source_id WHERE l.id IN ({m})""", chunk)
+        st["skipped_locked"] += sum(1 for r in rows if r["locked"])   # 판매 이력·직접 잠금은 지우지 않음
+        rows = [r for r in rows if not r["locked"]]
         go = [r for r in rows if not (r["status"] in ("queued", "running") if keep_naver else _busy_listing(r))]
         st["skipped_live"] += len(rows) - len(go)
         with db.tx() as c:
@@ -166,8 +173,7 @@ def trash_listings(db, ids, keep_naver=False):
                     f"지난 회차 {len(snap['history'])}개" if snap["history"] else "") if x)
                 c.execute("INSERT INTO trash(kind, ref_id, title, store, extra, deleted_at, data) VALUES('listing',?,?,?,?,?,?)",
                           (r["id"], r["name"], r["store"], extra, now, pack(snap)))
-                c.execute("UPDATE names SET listing_id=NULL WHERE listing_id=?", (r["id"],))
-                c.execute("UPDATE orders SET listing_id=NULL WHERE listing_id=?", (r["id"],))
+                release_name(c, r["id"])   # 네이버에 올렸던 이름은 다시 쓰지 않게, 안 올린 이름은 후보로
                 c.execute("DELETE FROM listing_history WHERE listing_id=?", (r["id"],))
                 c.execute("DELETE FROM listings WHERE id=?", (r["id"],))
                 st["moved"] += 1
@@ -224,9 +230,10 @@ def _restore_listing(c, l, history):
     return None
 
 
-def _restore_source(c, d):
-    """원본(과 그 복사본·이름 후보·AI 키워드) 되살리기 → (새 원본 번호, None) 또는 (None, 이유).
-    원본 기준은 상품명(완전히 같음): 그새 같은 상품명의 원본이 들어왔으면 되살리지 않는다 (중복이 생기지 않게)."""
+def _restore_source(c, d, max_copies):
+    """원본(과 그 복사본·이름 후보·AI 키워드·수정 기록) 되살리기 → (원본 번호, None, [못 되살린 복사본 이유]) 또는 (None, 이유, []).
+    원본 기준은 상품명(완전히 같음): 그새 같은 상품명의 원본이 들어왔으면 원본째 되살리지 않는다.
+    복사본은 원본당 최대 복사 수 안에서만, 그 스토어에 같은 상품번호가 이미 다른 복사본에 연결돼 있으면 빼고 되살린다."""
     from . import convert
     s = dict(d["source"])
     name = str(s.get("name") or "").strip()
@@ -234,56 +241,83 @@ def _restore_source(c, d):
     if not key.startswith("n:"):   # 예전 버전의 대표 이미지 열쇠 → 지금 기준(상품명)
         s["source_key"] = key = convert.name_key(name)
     if c.execute("SELECT 1 FROM sources WHERE source_key=? OR name=?", (key, name)).fetchone():
-        return None, "상품명이 완전히 같은 원본이 이미 있음 (그새 다시 불러옴)"
+        return None, "상품명이 완전히 같은 원본이 이미 있음 (그새 다시 불러옴)", []
+    s["drop_pending"] = 0   # '원본·복사본 모두 삭제'로 왔어도 되살리면 보통 원본
     sid = _insert_new(c, "sources", s, ignore=False)
     name_map = {}
     for n in d["names"]:
         old = n.get("id")
-        nid = _insert_new(c, "names", {**n, "listing_id": None, "source_id": sid})   # 같은 이름을 그새 다른 곳에서 쓰면 건너뜀
+        nid = _insert_new(c, "names", {**n, "listing_id": None if (n.get("listing_id") or 0) > 0 else n.get("listing_id"), "source_id": sid})
         if nid:
             name_map[old] = nid
     hist = {}
     for h in d["history"]:
         hist.setdefault(h["listing_id"], []).append(h)
-    for l in d["listings"]:
-        _restore_listing(c, {**l, "source_id": sid, "name_id": name_map.get(l.get("name_id"))}, hist.get(l["id"], []))
+    skipped, n_ok = [], 0
+    for l in sorted(d["listings"], key=lambda x: (not x.get("locked"), not x.get("origin_no"), x["id"])):   # 잠긴·판매 중인 것부터
+        if n_ok >= max_copies:
+            skipped.append(f"{str(l.get('name') or '')[:20]}: 원본당 최대 복사 수({max_copies})를 넘음")
+            continue
+        if l.get("channel_no") and c.execute("SELECT 1 FROM listings WHERE store_id=? AND channel_no=? AND status!='deleted'",
+                                             (l["store_id"], l["channel_no"])).fetchone():
+            skipped.append(f"{str(l.get('name') or '')[:20]}: 이 상품번호는 그 스토어의 다른 복사본에 이미 연결됨")
+            continue
+        why = _restore_listing(c, {**l, "source_id": sid, "name_id": name_map.get(l.get("name_id"))}, hist.get(l["id"], []))
+        if why:
+            skipped.append(f"{str(l.get('name') or '')[:20]}: {why}")
+            continue
+        n_ok += 1
+        if l.get("channel_no"):   # '이 프로그램에서만 빼기'로 기억해 둔 것은 다시 관리하므로 지움
+            c.execute("DELETE FROM kept_live WHERE store_id=? AND channel_no=?", (l["store_id"], l["channel_no"]))
     for k in d.get("ctx_kw", []):
         _insert_new(c, "ctx_kw", {**k, "source_id": sid})
-    return sid, None
+    for row in d.get("edit_log", []):
+        _insert_new(c, "source_edit_log", {**row, "source_id": sid})
+    for row in d.get("price_log", []):
+        _insert_new(c, "base_price_log", {**row, "source_id": sid})
+    return sid, None, skipped
 
 
 def restore(db, trash_ids):
-    st = {"restored": 0, "skipped": 0, "reasons": []}
+    """휴지통 되살리기 — 원본만 (그 원본의 복사본도 함께 검사해서). 복사본만 따로 되살리기는 없앴다
+    (원본당 최대 복사 수를 넘거나, 같은 상품번호가 둘 붙거나, 다른 원본 밑으로 붙는 일이 생겨서):
+    안 올린 복사본은 원본에서 다시 복사, 판매 중이던 것은 기존 상품 가져오기로 다시 연결."""
+    from . import config, orders
+    max_copies = max(1, int(config.load().get("max_copies") or 2))
+    st = {"restored": 0, "skipped": 0, "reasons": [], "copy_skipped": 0}
     touched = set()
+    items = []
     for chunk in _chunks(trash_ids):
-        m = ",".join("?" * len(chunk))
-        items = db.q(f"SELECT id, kind, data FROM trash WHERE id IN ({m}) ORDER BY kind DESC, id", chunk)  # 원본 먼저
-        for t in items:
-            d = unpack(t["data"])
-            try:
-                with db.tx() as c:   # 한 항목씩 (하나가 막혀도 나머지는 되살림)
-                    if t["kind"] == "source":
-                        sid, why = _restore_source(c, d)
-                        if why:
-                            st["skipped"] += 1
-                            st["reasons"].append(f"원본 '{str(d['source'].get('name') or '')[:30]}': {why} — 되살리지 않음")
-                            continue
-                        touched.add(sid)
-                    else:
-                        l = d["listing"]
-                        why = _restore_listing(c, l, d.get("history", []))
-                        if why:
-                            st["skipped"] += 1
-                            st["reasons"].append(f"복사본 '{str(l.get('name') or '')[:30]}': {why}")
-                            continue
-                        touched.add(l["source_id"])
-                    c.execute("DELETE FROM trash WHERE id=?", (t["id"],))
-                    st["restored"] += 1
-            except Exception as e:  # noqa: BLE001 - 이 항목만 건너뜀
-                st["skipped"] += 1
-                st["reasons"].append(f"#{t['id']}: 되살리다 오류 — {e}")
+        items += db.q(f"SELECT id, kind, data FROM trash WHERE id IN ({','.join('?' * len(chunk))})", chunk)
+    for t in sorted(items, key=lambda x: x["id"]):
+        if t["kind"] != "source":
+            st["skipped"] += 1
+            st["reasons"].append("복사본만 되살리기는 하지 않습니다 — 원본에서 다시 복사하거나, 판매 중이던 것은 기존 상품 가져오기로 다시 연결하세요")
+            continue
+        d = unpack(t["data"])
+        try:
+            with db.tx() as c:   # 한 항목씩 (하나가 막혀도 나머지는 되살림)
+                sid, why, skipped = _restore_source(c, d, max_copies)
+                if why:
+                    st["skipped"] += 1
+                    st["reasons"].append(f"원본 '{str(d['source'].get('name') or '')[:30]}': {why} — 되살리지 않음")
+                    continue
+                touched.add(sid)
+                if skipped:
+                    st["copy_skipped"] += len(skipped)
+                    st["reasons"] += [f"원본 '{str(d['source'].get('name') or '')[:20]}'의 복사본 {x}" for x in skipped]
+                c.execute("DELETE FROM trash WHERE id=?", (t["id"],))
+                st["restored"] += 1
+        except Exception as e:  # noqa: BLE001 - 이 항목만 건너뜀
+            st["skipped"] += 1
+            st["reasons"].append(f"#{t['id']}: 되살리다 오류 — {e}")
     db.recount_sources(touched)
-    st["reasons"] = st["reasons"][:5]
+    if touched:   # 되살린 복사본의 주문(판매 이력)을 다시 맞추고 판매 수·잠금을 다시 셈
+        orders.rematch(db)
+        lids = [r["id"] for r in db.q(f"SELECT id FROM listings WHERE source_id IN ({','.join('?' * len(touched))})", sorted(touched))]
+        if lids:
+            orders.recount_sold(db, lids)
+    st["reasons"] = st["reasons"][:6]
     return st
 
 
