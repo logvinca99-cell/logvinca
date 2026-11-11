@@ -590,13 +590,18 @@ App.page("listings", {
             <div><span class="muted">남은 시간</span><b id="r-eta">-</b></div>
             <div><span class="muted">새로 올린 이미지</span><b id="r-img">0</b></div>
           </div>
-          <div class="run-ctl"><button class="btn" id="r-pause">일시정지</button><button class="btn danger" id="r-stop">중단</button></div>
+          <div class="run-ctl"><button class="btn primary" id="r-join" hidden title="다른 스토어가 등록 중이어도 이 스토어를 같은 실행에 더해 함께 올림 (스토어마다 계정이 따로라 서로 겹치지 않음)">이 스토어도 함께 시작</button>
+            <button class="btn" id="r-pause">일시정지</button><button class="btn danger" id="r-stop">중단</button></div>
         </div>
         <div class="bar"><div class="bar-ok" id="r-bar-ok"></div><div class="bar-err" id="r-bar-err"></div></div>
         <div class="run-state" id="r-state"></div>
         <div class="store-chips" id="r-stores"></div>
         <ul class="current" id="r-current"></ul>
         <details class="log" open><summary>작업 기록 <span class="muted" id="r-logn"></span></summary><ol id="r-log"></ol></details>`;
+      $("#r-join").addEventListener("click", async () => {
+        try { this.est = await App.api("/api/run/estimate", { json: this.runScope() }); } catch (e) { /* 아래 확인 창에서 0건으로 */ }
+        this.start();
+      });
       $("#r-pause").addEventListener("click", async () => {
         App.run = await App.api(`/api/run/${App.run?.paused ? "resume" : "pause"}`, { method: "POST" }); this.renderRun(App.run);
       });
@@ -607,6 +612,8 @@ App.page("listings", {
       clearInterval(this.timer);
       this.timer = setInterval(() => { if (App.run?.running) this.load(); }, 4000);
     }
+    const mine = (r.stores || []).find((s) => s.id === +this.f.store_id);
+    $("#r-join").hidden = !!(mine && !["끝", "중단"].includes(mine.status));   // 이 스토어가 지금 실행에 없으면 함께 시작 가능
     $("#r-done").textContent = num(r.done);
     $("#r-total").textContent = num(r.total);
     $("#r-ok").textContent = num(r.ok);

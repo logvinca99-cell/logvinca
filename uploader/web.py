@@ -44,6 +44,39 @@ def _save_upload(f):
     return path
 
 
+def _img_advice(data, filename, kind):
+    """올린 이미지가 권장 크기가 아니면 알림 글 (그대로 올라감 — 알리기만).
+    상단·하단: 가로 1000px, 장당 세로 2000px 이하·500KB 이하 / 로고: 가로 500px 안팎, 배경 투명 PNG, 100KB 이하."""
+    from PIL import Image
+    try:
+        im = Image.open(io.BytesIO(data))
+        w, h = im.size
+    except Exception:  # noqa: BLE001
+        return []
+    kb = len(data) / 1024
+    out = []
+    if kind == "tpl":
+        if w < 860:
+            out.append(f"가로 {w}px — 860px보다 좁아 PC·휴대폰에서 흐리게 보일 수 있음 (권장 1000px)")
+        elif w > 1600:
+            out.append(f"가로 {w}px — 너무 넓어 용량만 큼 (권장 1000px, 줄여도 선명함 같음)")
+        if h > 2500:
+            out.append(f"세로 {h}px — 너무 길어 휴대폰에서 늦게 뜸 (장당 2000px 이하로 나눠 여러 장 올리기 권장)")
+        if kb > 800:
+            out.append(f"용량 {kb:,.0f}KB — 무거움 (장당 300~500KB 권장: 사진은 JPG 80~85%)")
+    else:
+        if w < 300:
+            out.append(f"가로 {w}px — 작아서 대표 이미지 위에서 흐릴 수 있음 (권장 500px)")
+        elif w > 1500:
+            out.append(f"가로 {w}px — 필요보다 큼 (권장 500px, 더 크게 해도 선명함 같음)")
+        if im.mode not in ("RGBA", "LA", "P") or (im.mode == "P" and "transparency" not in im.info) or \
+                (im.mode in ("RGBA", "LA") and im.getchannel("A").getextrema()[0] == 255):
+            out.append("배경이 투명하지 않음 — 상품 사진 위에 네모 배경이 생김 (배경 투명 PNG 권장)")
+        if kb > 300:
+            out.append(f"용량 {kb:,.0f}KB — 필요보다 큼 (100KB 이하 권장)")
+    return out
+
+
 def _clean_old_uploads(hours=6):
     """예전에 올리다 남은 임시 파일(경고 창을 닫았거나 프로그램을 껐을 때) 정리."""
     import glob
@@ -2135,11 +2168,12 @@ def create_app(db=None):
         part = request.form.get("part") or "top"
         if not f:
             return fail("이미지를 골라 주세요.")
+        data = f.read()
         try:
-            templates.save_image(sid, part, f.filename, f.read())
+            templates.save_image(sid, part, f.filename, data)
         except ValueError as e:
             return fail(str(e))
-        return jsonify(templates.summary(db.store(sid)))
+        return jsonify({**templates.summary(db.store(sid)), "advice": _img_advice(data, f.filename, "tpl")})
 
     @app.delete("/api/stores/<int:sid>/template/image/<name>")
     def store_template_image_del(sid, name):
@@ -2161,11 +2195,12 @@ def create_app(db=None):
             return fail("로고 이미지(PNG 권장, 투명 배경)를 골라 주세요.")
         from PIL import Image
         os.makedirs(watermark.WM_DIR, exist_ok=True)
+        data = f.read()
         try:
-            Image.open(f.stream).convert("RGBA").save(watermark.logo_path(sid), "PNG")
+            Image.open(io.BytesIO(data)).convert("RGBA").save(watermark.logo_path(sid), "PNG")
         except Exception as e:  # noqa: BLE001
             return fail(f"이미지를 읽지 못했습니다: {e}")
-        return jsonify({"ok": True})
+        return jsonify({"ok": True, "advice": _img_advice(data, f.filename, "logo")})
 
     @app.delete("/api/stores/<int:sid>/watermark")
     def store_watermark_del(sid):

@@ -133,7 +133,7 @@ class Runner:
             raise RuntimeError(why)
         with self.lock:
             if self.state["running"]:
-                raise RuntimeError("이미 등록 중입니다.")
+                return self._add(f)   # 다른 스토어면 지금 실행에 더해 함께 돌림 (스토어마다 계정·API 키가 따로)
             self._name_ctx = {}   # 최신화 새 이름용 스토어 정보 (실행마다 새로 읽음)
             self._tpl_cache = {}  # 스토어 템플릿 상단·하단 HTML (실행마다 새로 만듦)
             cfg = config.load()
@@ -158,13 +158,12 @@ class Runner:
                 if not phone:
                     raise RuntimeError(f"'{s['name']}' 스토어의 A/S 전화번호가 없습니다. 스토어나 설정에서 넣어 주세요.")
                 stores[sid] = (s, naver.make_client(s))
-            ids = [t["id"] for t in targets]
-            with self.db.tx() as c:
-                for i in range(0, len(ids), 900):
-                    chunk = ids[i:i + 900]
-                    c.execute(f"UPDATE listings SET status='queued', stage='', message='' "
-                              f"WHERE id IN ({','.join('?' * len(chunk))})", chunk)
+            targets, by_store = self._queue(targets, by_store)
+            if not targets:
+                raise RuntimeError("처리할 건이 없습니다. (그새 다른 작업이 바꿈)")
             self._reset(len(targets))
+            self._closing = False
+            self._orig_fail = {t["id"] for t in targets if t["status"] == "fail"}
             self.state.update(running=True, started_at=time.time())
             self.state["stores"] = {sid: {"name": stores[sid][0]["name"], "total": len(v), "done": 0, "ok": 0,
                                           "fail": 0, "skipped": 0, "status": "대기"} for sid, v in by_store.items()}
@@ -172,6 +171,68 @@ class Runner:
             self.stop_ev.clear()
             self.log.clear()
             threading.Thread(target=self._main, args=(cfg, stores, by_store), daemon=True).start()
+
+    def _queue(self, targets, by_store):
+        """대기·실패 건만 '처리 중 대기'로 (그새 다른 작업이 바꾼 줄은 빼고), 실패 안내 글은 남김. → 실제로 넣은 것만."""
+        ids = [t["id"] for t in targets]
+        got = set()
+        with self.db.tx() as c:
+            for i in range(0, len(ids), 900):
+                chunk = ids[i:i + 900]
+                m = ",".join("?" * len(chunk))
+                c.execute(f"UPDATE listings SET status='queued', stage='' WHERE id IN ({m}) AND status IN ('planned','fail')", chunk)
+                got |= {r[0] for r in c.execute(f"SELECT id FROM listings WHERE id IN ({m}) AND status='queued'", chunk).fetchall()}
+        targets = [t for t in targets if t["id"] in got]
+        nb = collections.defaultdict(list)
+        for t in targets:
+            nb[t["store_id"]].append(t)
+        return targets, {k: v for k, v in nb.items() if k in by_store}
+
+    def _add(self, f):
+        """실행 중 [시작]: 지금 처리하고 있지 않은 스토어의 건을 같은 실행에 더한다 (self.lock 안에서 부름)."""
+        ctx = getattr(self, "_ctx", None)
+        if not ctx or getattr(self, "_closing", False) or self.state.get("stopping"):
+            raise RuntimeError("등록이 끝나는 중입니다. 잠시 뒤 다시 시작하세요.")
+        cfg = ctx["cfg"]
+        targets = listing_targets(self.db, f)
+        if f.get("limit"):
+            targets = targets[:int(f["limit"])]
+        busy = {sid for sid, s in self.state["stores"].items() if s.get("status") not in ("끝", "중단")}
+        mine = [t for t in targets if t["store_id"] in busy]
+        targets = [t for t in targets if t["store_id"] not in busy]
+        if not targets:
+            if mine:
+                raise RuntimeError("이 스토어는 지금 등록 중입니다. 끝난 뒤에 다시 시작하세요.")
+            raise RuntimeError("처리할 건이 없습니다. (고른 범위·종류 안의 대기·실패 건만 처리합니다)")
+        by_store = collections.defaultdict(list)
+        for t in targets:
+            by_store[t["store_id"]].append(t)
+        new_stores = {}
+        for sid in by_store:
+            s = self.db.store(sid, with_secret=True)
+            phone = (s.get("as_phone") or cfg.get("as_phone") or "").strip()
+            if not phone:
+                raise RuntimeError(f"'{s['name']}' 스토어의 A/S 전화번호가 없습니다. 스토어나 설정에서 넣어 주세요.")
+            new_stores[sid] = (s, naver.make_client(s))
+        targets, by_store = self._queue(targets, by_store)
+        if not targets:
+            raise RuntimeError("처리할 건이 없습니다. (그새 다른 작업이 바꿈)")
+        self._orig_fail |= {t["id"] for t in targets if t["status"] == "fail"}
+        for sid, v in by_store.items():
+            ctx["stores"][sid] = new_stores[sid]
+            ctx["by_store"][sid] = v
+            self.state["stores"][sid] = {"name": new_stores[sid][0]["name"], "total": len(v), "done": 0, "ok": 0,
+                                         "fail": 0, "skipped": 0, "status": "대기"}
+            ctx["store_q"].put(sid)
+        self.state["total"] += len(targets)
+        self._log("info", f"{len(targets):,}건 더함 · " + ", ".join(new_stores[s][0]["name"] for s in by_store) + " (함께 등록)")
+        alive = sum(1 for t in ctx["lanes"] if t.is_alive())
+        for _ in range(max(0, min(ctx["parallel"] - alive, len(by_store)))):
+            ctx["spawn"]()
+        return self.snapshot_unlocked()
+
+    def snapshot_unlocked(self):
+        return {"running": True, "total": self.state["total"], "added": True}
 
     def pause(self):
         with self.lock:
@@ -236,18 +297,39 @@ class Runner:
             for sid in sorted(by_store, key=lambda k: -len(by_store[k])):
                 store_q.put(sid)
             with ThreadPoolExecutor(IMAGE_DOWNLOAD_THREADS) as pool:
-                lanes = [threading.Thread(target=self._lane, daemon=True,
-                                          args=(cfg, stores, by_store, store_q, categories, pool, cache))
-                         for _ in range(min(parallel, len(by_store)))]
-                for t in lanes:
+                lanes = []
+
+                def spawn():
+                    t = threading.Thread(target=self._lane, daemon=True, args=(cfg, stores, by_store, store_q, categories, pool, cache))
+                    lanes.append(t)
                     t.start()
-                for t in lanes:
-                    t.join()
+                with self.lock:   # 실행 중 [시작]으로 스토어를 더할 수 있게 (같은 줄·같은 이미지 묶음 공유)
+                    self._ctx = {"cfg": cfg, "stores": stores, "by_store": by_store, "store_q": store_q,
+                                 "lanes": lanes, "spawn": spawn, "parallel": parallel}
+                    for _ in range(min(parallel, len(by_store))):
+                        spawn()
+                while True:   # 모든 줄(스토어 차례)이 끝날 때까지 — 도중에 더한 스토어도
+                    with self.lock:
+                        alive = [t for t in lanes if t.is_alive()]
+                        if not alive:
+                            if not store_q.empty() and not self.stop_ev.is_set():
+                                spawn()
+                                continue
+                            self._closing = True   # 이제 더하지 않음
+                            break
+                    alive[0].join(timeout=0.5)
         except Exception as e:  # noqa: BLE001
             self.state["error"] = str(e)
             self._log("err", f"등록을 시작하지 못했습니다: {e}")
         finally:
-            # 중단·오류로 남은 건은 원래 상태로
+            # 중단·오류로 남은 건은 원래 상태로 (실패였던 건은 실패로 — 안내 글 그대로)
+            with self.lock:
+                self._closing = True
+                self._ctx = None
+            of = sorted(getattr(self, "_orig_fail", set()))
+            for i in range(0, len(of), 900):
+                ch = of[i:i + 900]
+                self.db.x(f"UPDATE listings SET status='fail' WHERE status='queued' AND id IN ({','.join('?' * len(ch))})", ch)
             self.db.x("UPDATE listings SET status='planned' WHERE status='queued'")
             touched = {t["source_id"] for v in by_store.values() for t in v}
             self.db.recount_sources(touched)

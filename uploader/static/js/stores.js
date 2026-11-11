@@ -247,7 +247,8 @@ App.page("stores", {
     const cfg = App.state.settings;
     const imgs = (part) => `<div class="tpl-imgs">${t[part].map((f) => `<figure><img src="/api/stores/${s.id}/template/image/${encodeURIComponent(f)}" alt="">
         <button type="button" data-del="${esc(f)}" title="지우기">✕</button></figure>`).join("") || '<span class="muted small">이미지 없음</span>'}</div>
-      <label class="btn sm"><input type="file" data-up="${part}" accept=".jpg,.jpeg,.png,.gif,.webp" multiple hidden>이미지 추가</label>`;
+      <label class="btn sm"><input type="file" data-up="${part}" accept=".jpg,.jpeg,.png,.gif,.webp" multiple hidden>이미지 추가</label>
+      <p class="muted small" style="margin:4px 0 0">권장: <b>가로 1000px</b>, 장당 <b>세로 2000px 이하</b>·<b>300~500KB</b> (사진은 JPG 80~85%, 글자 위주는 PNG). 긴 배너는 여러 장으로 나누면 휴대폰에서 위부터 빨리 뜹니다. 상단+하단 합쳐 1~2MB 안쪽 — 모든 상품 상세에 붙습니다.</p>`;
     App.openModal({
       title: `${s.name} · 스토어 템플릿`,
       wide: true,
@@ -278,7 +279,7 @@ App.page("stores", {
         <h3 class="sec-title">워터마크</h3>
         <div class="two">
           <label class="field">워터마크 글자 <span class="muted">(비우면 스토어 이름 · 아래 로고를 올리면 로고를 씀)</span><input id="t-wm" value="${esc(t.wm_text || "")}" placeholder="${esc(s.name)}"></label>
-          <div class="field">워터마크 로고 <span class="muted">(PNG 투명 배경 권장)</span>
+          <div class="field">워터마크 로고 <span class="muted">(권장: 가로 500px 안팎 · 배경 투명 PNG · 100KB 이하 — 대표 이미지 짧은 변의 '워터마크 크기'%로 줄여 넣음)</span>
             <div class="wm-store"><img id="wm-prev" src="/api/watermark/preview?store_id=${s.id}&w=1000&h=1000&_=${Date.now()}" alt="워터마크 미리보기">
               <div><label class="btn"><input type="file" id="wm-file" accept=".png,.jpg,.jpeg,.webp" hidden>로고 올리기</label>
               <button type="button" class="btn ghost" id="wm-del">로고 지우기</button></div></div></div>
@@ -321,7 +322,10 @@ App.page("stores", {
       const f = e.target.files[0];
       if (!f) return;
       const fd = new FormData(); fd.append("file", f);
-      try { await App.api(`/api/stores/${s.id}/watermark`, { method: "POST", body: fd }); prev(); App.toast("로고를 올렸습니다"); }
+      try {
+        const r = await App.api(`/api/stores/${s.id}/watermark`, { method: "POST", body: fd }); prev();
+        App.toast("로고를 올렸습니다" + (r.advice?.length ? ` · 확인해 보세요: ${r.advice.join(" · ")}` : ""), !!r.advice?.length);
+      }
       catch (err) { App.toast(err.message, true); }
       e.target.value = "";
     });
@@ -385,11 +389,15 @@ App.page("stores", {
       const inp = e.target.closest("[data-up]");
       if (!inp) return;
       const keep = this._tplSnap(body);
+      const advice = [];
       for (const f of inp.files) {
         const fd = new FormData(); fd.append("file", f); fd.append("part", inp.dataset.up);
-        try { await App.api(`/api/stores/${s.id}/template/image`, { method: "POST", body: fd }); }
-        catch (err) { App.toast(err.message, true); }
+        try {
+          const r = await App.api(`/api/stores/${s.id}/template/image`, { method: "POST", body: fd });
+          (r.advice || []).forEach((a) => advice.push(`${f.name}: ${a}`));
+        } catch (err) { App.toast(err.message, true); }
       }
+      if (advice.length) App.toast("올렸습니다 — 확인해 보세요: " + advice.slice(0, 3).join(" · ") + (advice.length > 3 ? " …" : ""), true);
       await this.template(s);
       this._tplRestore(keep);
     });
