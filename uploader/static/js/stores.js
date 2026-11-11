@@ -240,7 +240,7 @@ App.page("stores", {
     });
   },
 
-  /* 스토어 템플릿: 상세 상단·하단(이미지 + HTML), 관부가세 코드, 가격 조정 %, 표시 할인율 % */
+  /* 스토어 템플릿: 상세 상단·하단(이미지 + HTML), 관부가세 코드, 스토어 가격 차이 %, 표시 할인율 % */
   async template(s) {
     let t;
     try { t = await App.api(`/api/stores/${s.id}/template`); } catch (e) { return App.toast(e.message, true); }
@@ -266,10 +266,10 @@ App.page("stores", {
           <label class="field">수입사·A/S 전화 <span class="muted">스토어 '수정'에서 정합니다</span></label>
         </div>
         <h3 class="sec-title">가격</h3>
-        <p class="muted small" style="margin:0">손님 가격 = 기준 구매가 × (1 + 마진율(가격 조정 %)), 100원 올림. 스토어마다 마진율을 다르게 넣으면 가격이 달라집니다.
+        <p class="muted small" style="margin:0">손님 가격 = 기준 가격 × (1 + 스토어 가격 차이 %), 100원 올림. 스토어 가격 차이 %는 마진이 아니라 이 스토어만 기준 가격에서 더하거나 빼는 값입니다(0이면 기준 가격 = 손님 가격).
           표시 할인율은 <b>손님 가격을 그대로 두고</b> 네이버 판매가를 100원 단위로 정해 그 %에 가깝게 금액으로 겁니다. 칸을 비우면 설정의 기본값입니다.</p>
         <div class="four">
-          <label class="field">가격 조정 % <span class="muted">(마진, 예: 10)</span>
+          <label class="field">스토어 가격 차이 % <span class="muted">(스토어끼리 가격 차이를 줄 때만, 예: 5 · 보통 0)</span>
             <input id="t-price" type="number" step="0.5" value="${t.price_pct ?? ""}" placeholder="0"></label>
           <label class="field">표시 할인율 % <span class="muted">(0 = 할인 없음)</span>
             <input id="t-disc" type="number" min="0" max="89" step="1" value="${t.discount_pct ?? ""}" placeholder="기본 ${cfg.display_discount_pct ?? 30}"></label>
@@ -304,7 +304,7 @@ App.page("stores", {
         </div>
         <button type="button" class="btn sm" id="t-addr-load" style="align-self:flex-start">네이버 주소록 불러오기</button>
         <div id="t-addr" class="addr-list"></div>
-        <p class="muted small">가격 조정은 새로 복사하는 것부터, 이미 만든 대기 복사본은 설정 → '대기 중인 복사본 가격 다시 계산'. 상단·하단·관부가세·표시 할인율·옵션표는 다음 등록(최신화·다시 올리기 포함)부터.</p>
+        <p class="muted small">스토어 가격 차이 %를 바꾸면 아직 안 올린 복사본 가격은 저장할 때 바로 다시 계산되고, 판매 중 상품은 다음 최신화 때 새 값으로 올라갑니다. 상단·하단·관부가세·표시 할인율·옵션표는 다음 등록(최신화·다시 올리기 포함)부터.</p>
       </div>`,
       buttons: [{ label: "닫기" }, { label: "저장", primary: true, onClick: async (b) => {
         try {
@@ -328,7 +328,7 @@ App.page("stores", {
     $("#wm-del")?.addEventListener("click", async () => {
       try { await App.api(`/api/stores/${s.id}/watermark`, { method: "DELETE" }); prev(); } catch (err) { App.toast(err.message, true); }
     });
-    // 가격 예시 (기준 구매가 50,000원 기준)
+    // 가격 예시 (기준 가격 50,000원 기준)
     const ex = () => {
       const pct = (id, d) => { const v = $(id).value; return v === "" ? +d : +v; };
       const m = pct("#t-price", 0), dp = pct("#t-disc", cfg.display_discount_pct ?? 30);
@@ -336,7 +336,7 @@ App.page("stores", {
       const a = r100(50000 * (1 + m / 100));
       let shown = "";
       if (dp > 0 && dp < 90) { const sh = Math.ceil(a / (1 - dp / 100) / 100) * 100; shown = ` · 네이버 판매가 ${num(sh)}원 − 할인 ${num(sh - a)}원 = 손님 ${num(a)}원`; }
-      $("#t-price-ex").textContent = `예) 기준 구매가 50,000원 → 손님 가격 ${num(a)}원${shown}`;
+      $("#t-price-ex").textContent = `예) 기준 가격 50,000원 → 손님 가격 ${num(a)}원${shown}`;
     };
     ["#t-price", "#t-disc"].forEach((id) => $(id).addEventListener("input", ex));
     ex();

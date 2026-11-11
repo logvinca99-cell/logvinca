@@ -542,7 +542,7 @@ class Runner:
 
     def _prepare(self, cfg, store, categories, t):
         """올릴 내용 준비·확인 (row, 카테고리 번호, build_body 인자). 막히는 게 있으면 여기서 예외 — 최신화는 지우기 전에 부른다.
-        가격은 올리는 이 순간의 기준으로 다시 정한다 (원본가·스토어 가격 조정·흔들기). 등록·최신화·다시 올리기 모두 같게.
+        가격은 올리는 이 순간의 기준으로 다시 정한다 (기준 가격·스토어 가격 차이·흔들기). 등록·최신화·다시 올리기 모두 같게.
         가져온 복사본(가격 고정)은 지금 손님 가격 그대로, 옵션도 올라가 있던 옵션 손님 가격 그대로."""
         sid, lid = store["id"], t["id"]
         row = self.db.source_row(t["source_id"])
@@ -550,7 +550,7 @@ class Runner:
         if not cat_id:
             raise convert.ConvertError(f"카테고리 '{row.get('카테고리')}'를 스마트스토어에서 찾지 못했습니다.")
         base = (self.db.one("SELECT price FROM sources WHERE id=?", (t["source_id"],)) or {}).get("price") or convert.net_price(row)
-        price = t["price"] if t.get("price_fixed") else convert.store_price(base, "", cfg, store)   # 기준 구매가 × 그 스토어 마진율
+        price = t["price"] if t.get("price_fixed") else convert.store_price(base, "", cfg, store)   # 기준 가격 × 그 스토어 가격 차이 %
         if price != t["price"]:
             self.db.set_listing(lid, None, price=price)
         kw = dict(name=t["name"], price=price, importer=convert.importer_for(store, cfg),

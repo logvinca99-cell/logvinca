@@ -7,7 +7,7 @@ const SETTING_TABS = [
 ];
 
 const SETTING_SECTIONS = [
-  { tab: "product", title: "상품 기본값", note: "모든 스토어에 공통입니다. 스토어마다 다르게 할 것(상세 상단·하단, 관부가세, 가격 조정, 표시 할인율, 수입사)은 스토어 → 템플릿에서 정합니다.", fields: [
+  { tab: "product", title: "상품 기본값", note: "모든 스토어에 공통입니다. 스토어마다 다르게 할 것(상세 상단·하단, 관부가세, 스토어 가격 차이 %, 표시 할인율, 수입사)은 스토어 → 템플릿에서 정합니다.", fields: [
     ["as_phone", "A/S 전화번호", "text", { req: true, hint: "스토어에 A/S 전화가 없으면 이 값" }],
     ["as_guide", "A/S 안내"],
     ["origin_force", "원산지를 엑셀과 상관없이 일괄 지정 (아래 나라로)", "check"],
@@ -27,7 +27,7 @@ const SETTING_SECTIONS = [
     ["seller_code_format", "판매자 관리코드 형식", "text", { hint: "{store}=스토어 코드, {source:07d}=원본 번호, {round}=회차" }],
     ["refresh_new_name", "최신화 때 상품명을 새로 (안 쓴 AI 키워드 후보 → 없으면 셔플)", "check"],
   ] },
-  { tab: "price", title: "가격 (기본값)", note: "손님 가격 = 원본의 기준 구매가 × (1 + 스토어 마진율(가격 조정 %)), 100원 단위 올림. 기준 구매가는 처음 원본 파일의 구매가격(판매가 − 할인가)이고, 원본 상품의 '기준 구매가 수정'으로만 바뀝니다. 표시 할인율은 손님 가격을 1원도 바꾸지 않고, 네이버 판매가를 100원 단위로 정해 할인율이 그 %에 아주 가깝게 되도록 금액으로 겁니다. 아래는 기본값이고, 스토어 → 템플릿에서 스토어마다 바꿉니다.", fields: [
+  { tab: "price", title: "가격 (기본값)", note: "손님 가격 = 원본의 기준 가격 × (1 + 스토어 가격 차이 %), 100원 단위 올림. 기준 가격은 처음 원본 파일의 손님 가격(판매가 − 할인가)이고, 원본 상품의 '기준 가격 수정'으로만 바뀝니다. 표시 할인율은 손님 가격을 1원도 바꾸지 않고, 네이버 판매가를 100원 단위로 정해 할인율이 그 %에 아주 가깝게 되도록 금액으로 겁니다. 아래는 기본값이고, 스토어 → 템플릿에서 스토어마다 바꿉니다.", fields: [
     ["display_discount_pct", "표시 할인율 % (0이면 할인 없음)", "number", { step: 1 }],
     ["price_round", "단위 (원, 올림)", "number", { step: 10 }],
     ["stock_fixed", "등록 재고 (상품·옵션 모두 늘 이 수, 0이면 엑셀 재고수)", "number", { step: 100 }],
@@ -175,7 +175,7 @@ App.page("settings", {
         <button class="btn" data-reapply="names" title="아직 아무 복사본에도 안 쓴 AI·셔플 이름 후보를 지움 → 새 설정으로 다시 만들 수 있음">안 쓴 이름 후보 지우기</button></div></div>`);
     $$("[data-reapply]", el).forEach((b) => b.addEventListener("click", async () => {
       const what = b.dataset.reapply;
-      if (what === "prices" && !await App.yes("대기 중인 복사본 가격 다시 계산", "아직 안 올린(대기·실패) 복사본 가격을 지금 기준(기준 구매가 × 그 스토어 마진율, 100원 올림)으로 다시 계산합니다. 판매 중 상품은 그대로입니다.", { label: "다시 계산" })) return;
+      if (what === "prices" && !await App.yes("대기 중인 복사본 가격 다시 계산", "아직 안 올린(대기·실패) 복사본 가격을 지금 기준(기준 가격 × 그 스토어 가격 차이 %, 100원 올림)으로 다시 계산합니다. 판매 중 상품은 그대로입니다.", { label: "다시 계산" })) return;
       if (what === "names" && !await App.yes("안 쓴 이름 후보 지우기", "아직 안 쓴 AI·셔플 이름 후보를 모두 지울까요? (복사본에 쓴 이름·직접 넣은 이름은 그대로)", { label: "지우기", danger: true })) return;
       try {
         const r = await App.api("/api/settings/reapply", { json: { what } });

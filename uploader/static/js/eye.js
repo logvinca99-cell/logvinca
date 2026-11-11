@@ -477,7 +477,7 @@ const Eye = {
       ${this.kind === "listing" && !named && !dead ? '<div class="small c-err">상품명 변경 전 (원본 이름 그대로)</div>' : ""}
       ${flagged.length ? `<div class="small eye-card-flags">${flagged.map(([w, why]) => `<em class="${EYE_KW[why][0]}">${esc(w)}</em> ${EYE_KW[why][1]}`).join(" · ")}</div>` : ""}
       <div class="small" style="margin-top:6px">${dead ? `<b class="c-err">${esc(dead.label)}</b> ` : ""}${this.kind === "source"
-        ? `원본 #${l.id} · 기준 구매가 ${num(l.price)}원 · 복사 ${num(l.n_listings || 0)}곳 ${l.eye_at ? '<span class="flag eye-ok">검수 완료</span>' : ""}<div class="muted">${esc(l.category || "")}</div>`
+        ? `원본 #${l.id} · 기준 가격 ${num(l.price)}원 · 복사 ${num(l.n_listings || 0)}곳 ${l.eye_at ? '<span class="flag eye-ok">검수 완료</span>' : ""}<div class="muted">${esc(l.category || "")}</div>`
         : `${dead ? "" : statusBadge(l.status, l.op)} ${esc(l.seller_code || "")} · 원본 #${l.source_id} · ${num(l.final ?? l.price)}원`}</div>
       <div class="cl-row" style="margin-top:8px">
         ${dead?.cls === "gone" ? '<button class="btn sm primary" data-card-back>되살리기</button>'

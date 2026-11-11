@@ -146,7 +146,7 @@ ACTIONS = {
                                           f"판매 중 복사본이 있어 뺀 원본 {r['skipped_live']}개" if r.get("skipped_live") else "")),
     "source_content_save": ("원본", lambda b, r: (f"원본 {r.get('what') or '상세·옵션'} 고침" + (f" · {b.get('memo')}" if b.get("memo") else "") if r.get("changed") else "원본 상세·옵션 (바뀐 것 없음)", 1 if r.get("changed") else 0, "")),
     "source_content_undo": ("원본", lambda b, r: (f"원본 상세·옵션 마지막 수정 되돌림 #{r.get('undone', '')}", 1, "")),
-    "baseprice_apply": ("원본", lambda b, r: ("기준 구매가 수정" + (f" · {b.get('how')}" if b.get("how") else ""), r.get("sources"),
+    "baseprice_apply": ("원본", lambda b, r: ("기준 가격 수정" + (f" · {b.get('how')}" if b.get("how") else ""), r.get("sources"),
                                             f"안 올린 복사본 {r.get('pending', 0)}건 다시 계산 · 판매 중 {r.get('live', 0)}건 네이버 가격 바꾸기")),
     "adopt_undo": ("원본", lambda b, r: ("기존 상품 가져오기 되돌리기 (이 프로그램에서만 — 네이버 상품은 그대로)", r.get("listings"),
                                       f"원본 {r.get('sources', 0)}개 휴지통 · 예전부터 있던 원본 {r.get('kept_sources', 0)}개는 남김")),
@@ -276,7 +276,7 @@ def settings_changed(db, before, after):
         add(db, "설정", "settings", f"설정 변경 {len(ch)}개", count=len(ch), detail=ch)
 
 
-TEMPLATE_KEYS = {"tpl_price_pct": "가격 조정 %", "tpl_discount_pct": "표시 할인율 %", "tpl_jitter_min": "가격 흔들기 최소 %",
+TEMPLATE_KEYS = {"tpl_price_pct": "스토어 가격 차이 %", "tpl_discount_pct": "표시 할인율 %", "tpl_jitter_min": "가격 흔들기 최소 %",
                  "tpl_jitter_max": "가격 흔들기 최대 %", "tpl_customs": "관부가세", "tpl_ship_addr": "출고지 번호",
                  "tpl_return_addr": "반품지 번호", "wm_text": "워터마크 글자", "tpl_top_html": "상단", "tpl_bottom_html": "하단",
                  "tpl_opt_style": "옵션표 모양", "tpl_opt_color": "옵션표 색"}

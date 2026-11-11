@@ -30,7 +30,7 @@ def source_key(row):
 
 class DupChecker:
     """상품명 중복 판정 (원본 기준 = 상품명이 '완전히' 같음): 이미 있는 원본(휴지통 제외)이나 이 파일 앞줄과 상품명이 같으면 중복.
-    중복 줄은 원본으로 넣지 않는다 (덮어쓰지 않음 — 고칠 것은 원본 상세 창·기준 구매가 수정으로)."""
+    중복 줄은 원본으로 넣지 않는다 (덮어쓰지 않음 — 고칠 것은 원본 상세 창·기준 가격 수정으로)."""
 
     def __init__(self, db):
         self.known = {}
@@ -203,7 +203,7 @@ def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=No
                 vals = (s["name"], s["price"], s["category"], s["thumb"], s["option_count"], s["image_count"],
                         int(s["has_video"]), tags, pack(row), json.dumps(errors, ensure_ascii=False),
                         json.dumps(warnings, ensure_ascii=False), int(not errors), s["seller_code"], iid, now)
-                # 기준 구매가 = 이 파일의 손님 가격 (판매가 - 할인가), 처음 넣을 때 고정
+                # 기준 가격 = 이 파일의 손님 가격 (판매가 - 할인가), 처음 넣을 때 고정
                 sid = c.execute("""INSERT INTO sources(name, price, category, thumb, option_count, image_count,
                     has_video, tags, data, errors, warnings, valid, seller_code, import_id, updated_at, source_key,
                     created_at, price_seed, price_src, price_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
@@ -1590,7 +1590,7 @@ def bulk_edit_sources(db, ids, clear_seller_code=False, stock=None):
 
 
 def reprice_net(db):
-    """원본가를 '판매가 - 할인가'로 다시 계산하고, 아직 안 올린 복사본 가격도 다시 정한다 (한 번만)."""
+    """기준 가격을 '판매가 - 할인가'로 다시 계산하고, 아직 안 올린 복사본 가격도 다시 정한다 (한 번만)."""
     cfg = config.load()
     with db.tx() as c:
         for r in c.execute("SELECT id, data FROM sources").fetchall():

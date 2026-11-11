@@ -34,7 +34,7 @@ App.page("inventory", {
       <header class="page-head"><h1>원본 상품</h1>
         <div class="head-actions">
           <a class="btn" href="#adopt" title="다른 방법으로 이미 올린 상품: 업로드했던 엑셀 + 스토어 상품 목록 → 원본 + 판매 중 복사본">기존 상품 가져오기</a>
-          <button class="btn" id="i-bp" title="역마진 등으로 기준 구매가(모든 스토어 손님 가격의 기준)를 엑셀로 고치기 — 판매 중 상품은 네이버 가격만 바로 바꿈">기준 구매가 수정</button>
+          <button class="btn" id="i-bp" title="역마진 등으로 기준 가격(모든 스토어 손님 가격의 기준)를 엑셀로 고치기 — 판매 중 상품은 네이버 가격만 바로 바꿈">기준 가격 수정</button>
           <button class="btn primary" id="i-eye" title="원본 대표 사진만 그리드로 보며 이상한 상품을 골라 지우기 · 본 쪽은 검수 완료">눈검수</button>
           <button class="btn" id="i-tagman" title="출처 태그(어디서·언제 가져왔는지) 모아 보기·이름 바꾸기·예전 원본에 채우기">출처 태그</button>
           <button class="btn" id="i-catmap" title="엑셀 카테고리를 스마트스토어 카테고리에 맞추기">카테고리 맞추기</button>
@@ -46,7 +46,7 @@ App.page("inventory", {
       <div class="filters-row">
         <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
           <input id="i-q" placeholder="상품명·판매자코드·카테고리·태그 검색"></div>
-        <span class="price-range" title="기준 구매가 구간">기준 구매가 <input id="i-pmin" type="number" min="0" step="1000" placeholder="최소">원 ~
+        <span class="price-range" title="기준 가격 구간">기준 가격 <input id="i-pmin" type="number" min="0" step="1000" placeholder="최소">원 ~
           <input id="i-pmax" type="number" min="0" step="1000" placeholder="최대">원</span>
         <select id="i-missing" class="sel"><option value="">스토어 조건 없음</option></select>
         <select id="i-ai" class="sel" title="AI 키워드·AI 이름 후보(A·B)">
@@ -63,7 +63,7 @@ App.page("inventory", {
         <table class="grid"><thead><tr>
           <th class="w-check"></th>
           <th class="w-thumb"></th><th>원본 상품</th><th class="w-links">바로 가기</th><th class="w-cat">카테고리</th>
-          <th class="w-num">기준 구매가</th>
+          <th class="w-num">기준 가격</th>
           <th class="w-copies" title="이 원본을 복사한 스토어 (원본당 최대 ${App.state.settings.max_copies}곳). 복사본은 원본 바로 아래 줄에 보입니다">복사</th>
         </tr></thead><tbody id="i-rows"></tbody></table>
         <div class="pg-foot"><div class="pg" id="i-pager"></div></div>
@@ -179,7 +179,7 @@ App.page("inventory", {
       p.has_video ? `<span class="flag video" title="상세설명에 동영상 있음 (경고 아님)">동영상</span>` : "",
       chemFlag(p), eyeFlag(p),
       p.adopted === 1 ? '<span class="flag adopted" title="기존 상품 가져오기로 들어옴 — 원본 이름이 없어 올라가 있던 이름이 원본 자리에 (원본 엑셀을 불러오면 원본 이름만 채워짐)">가져옴 · 원본 이름 없음</span>'
-        : p.adopted ? '<span class="flag adopted" title="기존 상품 가져오기로 스토어 상품과 연결됨 — 기준 구매가는 그 스토어 손님 가격, 다른 엑셀로 덮어쓰지 않음">가져옴</span>' : "",
+        : p.adopted ? '<span class="flag adopted" title="기존 상품 가져오기로 스토어 상품과 연결됨 — 기준 가격은 그 스토어 손님 가격, 다른 엑셀로 덮어쓰지 않음">가져옴</span>' : "",
     ].join("");
     const on = this.selAll || this.sel.has(p.id);
     return `<tr data-id="${p.id}" class="${on ? "sel" : ""}">
@@ -392,7 +392,7 @@ App.page("inventory", {
         <label class="check"><input type="checkbox" id="p-eye" checked><span><b>검수 완료한 원본만 복사</b> <span class="muted small" id="p-eye-n"></span></span></label>
         <div class="plan-sum" id="p-sum"></div>
         <p class="muted small">상품명: AI 키워드로 만들어 둔 이름 후보가 있으면 바로 붙고, 없으면 복사본 화면에서 '이름 변경 필요'로 보입니다.
-          손님 가격 = 기준 구매가 × (1 + 받는 스토어 템플릿 마진율), 100원 단위 올림.</p></div>`,
+          손님 가격 = 기준 가격 × (1 + 받는 스토어 가격 차이 %), 100원 단위 올림.</p></div>`,
       buttons: [{ label: "취소" }, {
         label: "복사하기", primary: true, validate: (b) => ($$(".store-pick input:checked", b).length ? "" : "스토어를 하나 이상 고르세요."), onClick: async (b) => {
           const store_ids = $$(".store-pick input:checked", b).map((x) => +x.value);
@@ -428,7 +428,7 @@ App.page("inventory", {
     try { d = await App.api(`/api/sources/${id}`); } catch (e) { return App.toast(e.message, true); }
     const self = this;
     App.openDrawer({
-      title: d.name, sub: `원본 #${d.id}${d.seller_code ? " · " + d.seller_code : ""} · 기준 구매가 ${num(d.price)}원`, tab,
+      title: d.name, sub: `원본 #${d.id}${d.seller_code ? " · " + d.seller_code : ""} · 기준 가격 ${num(d.price)}원`, tab,
       foot: d.source_url ? `<a class="btn" href="${esc(d.source_url)}" target="_blank" rel="noopener noreferrer">원본 상품 페이지 ↗</a>` : "",
       tabs: [
         { key: "info", label: "정보", render: (b) => self.renderInfo(b, d) },
@@ -447,7 +447,7 @@ App.page("inventory", {
     const notes = [];
     if (d.errors.length) notes.push(`<div class="notice err"><b>고쳐야 등록할 수 있어요</b><ul>${d.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>`);
     if (d.warnings.length) notes.push(`<div class="notice warn"><b>확인해 보세요</b><ul>${d.warnings.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>`);
-    const kv = [["기준 구매가", `<b>${num(d.price)}원</b> <span class="muted small">${d.price_src === "manual" ? "직접 수정" : d.price_src === "adopt" ? "기존 상품 가져오기 (그 스토어 손님 가격)" : "처음 원본 파일"} · 모든 스토어 손님 가격 = 기준 구매가 × (1 + 스토어 마진율)</span>
+    const kv = [["기준 가격", `<b>${num(d.price)}원</b> <span class="muted small">${d.price_src === "manual" ? "직접 수정" : d.price_src === "adopt" ? "기존 상품 가져오기 (그 스토어 손님 가격)" : "처음 원본 파일"} · 모든 스토어 손님 가격 = 기준 가격 × (1 + 스토어 가격 차이 %)</span>
         <button class="btn sm" id="s-bp">수정</button>`], ["출처 태그", `<span id="s-tags">${srcTagChips(d.src_tags, true) || '<span class="muted">없음</span>'}</span>
         <span class="s-tag-add"><input id="s-tag-in" placeholder="태그 더하기 (쉼표로 여러 개)" size="18"> <button class="btn sm" id="s-tag-go">달기</button></span>`],
       ["카테고리", (d.category_fix ? `${esc(d.category_fix)} <span class="flag">직접 정함</span> <span class="muted small">(엑셀: ${esc(d.category)})</span>` : esc(d.category))
@@ -601,7 +601,7 @@ App.page("inventory", {
 });
 
 
-/* 원본 상세·옵션 고치기 (원본 상세 창). 상품명·기준 구매가는 여기서 안 바꿈. 아직 안 올린 복사본은 올릴 때,
+/* 원본 상세·옵션 고치기 (원본 상세 창). 상품명·기준 가격은 여기서 안 바꿈. 아직 안 올린 복사본은 올릴 때,
    판매 중 복사본은 다음 최신화·다시 올리기 때 반영 (네이버에 바로 보내지 않음). 마지막 수정은 되돌릴 수 있음. */
 App.editContent = async function (sid, after) {
   let d;
@@ -618,8 +618,8 @@ App.editContent = async function (sid, after) {
   this.openModal({
     title: `상세·옵션 고치기 — 원본 #${d.id}`, wide: true,
     body: (b) => {
-      b.innerHTML = `<div class="notice info">원본 <b>${esc(d.name)}</b>의 상세페이지와 옵션을 고칩니다. 상품명·기준 구매가는 여기서 바꾸지 않습니다
-          (기준 구매가는 [기준 구매가 수정]). 아직 안 올린 복사본은 올릴 때 새 내용으로 올라가고,
+      b.innerHTML = `<div class="notice info">원본 <b>${esc(d.name)}</b>의 상세페이지와 옵션을 고칩니다. 상품명·기준 가격은 여기서 바꾸지 않습니다
+          (기준 가격은 [기준 가격 수정]). 아직 안 올린 복사본은 올릴 때 새 내용으로 올라가고,
           ${d.n_live ? `<b>판매 중 복사본 ${num(d.n_live)}건은 지금 네이버에 보내지 않고 다음 최신화·다시 올리기 때</b> 반영됩니다.` : "판매 중 복사본은 없습니다."}
           고치기 전 내용은 남겨 두어 <b>[마지막 수정 되돌리기]</b>로 돌릴 수 있습니다.</div>
         <div class="se-tabs"><button type="button" class="on" data-se="detail">상세페이지</button><button type="button" data-se="opt">옵션 (${num(o.rows.length)}개)</button></div>
@@ -629,7 +629,7 @@ App.editContent = async function (sid, after) {
           <div class="cl-row"><button type="button" class="btn sm" id="se-prev">미리보기 새로 그리기</button><span class="muted small">아래는 고친 HTML 그대로 (스토어 상단·하단은 올릴 때 붙음)</span></div>
           <iframe id="se-frame" sandbox="allow-same-origin" title="상세 미리보기" style="width:100%;height:360px;border:1px solid var(--line);border-radius:8px;margin-top:6px;background:#fff"></iframe></div>
         <div data-sec="opt" hidden>
-          ${o.editable ? `<p class="small muted" style="margin:0 0 6px">조합형 옵션입니다. 옵션 이름(예: 색상·사이즈)과 값, 추가금(기준 구매가에 더하는 금액, 0이면 같은 가격)을 고치세요.
+          ${o.editable ? `<p class="small muted" style="margin:0 0 6px">조합형 옵션입니다. 옵션 이름(예: 색상·사이즈)과 값, 추가금(기준 가격에 더하는 금액, 0이면 같은 가격)을 고치세요.
               값 1만 쓰면 1단 옵션, 값 2·3까지 쓰면 2·3단. 모든 옵션을 빼면 옵션 없는 상품이 됩니다. 재고는 올릴 때 설정의 '등록 재고'로 들어갑니다.</p>
             <div class="cl-row"><label class="field" style="margin:0">옵션 이름 1<input id="se-g1" value="${esc(o.groups[0])}" placeholder="예) 색상"></label>
               <label class="field" style="margin:0">옵션 이름 2<input id="se-g2" value="${esc(o.groups[1])}" placeholder="(없으면 비움)"></label>

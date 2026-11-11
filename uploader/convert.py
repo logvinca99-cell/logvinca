@@ -201,8 +201,8 @@ def images_to_upload(row, cfg):
 
 
 def net_price(row):
-    """원본가 = 엑셀 판매가(R열) - 할인가(S열). 할인가는 '할인 금액'이다 (할인된 가격이 아님).
-    할인가가 없거나 판매가보다 크면 판매가 그대로. 프로그램은 이 금액만 원본가로 쓴다."""
+    """기준 가격 = 엑셀 판매가(R열) - 할인가(S열). 할인가는 '할인 금액'이다 (할인된 가격이 아님).
+    할인가가 없거나 판매가보다 크면 판매가 그대로. 프로그램은 이 금액만 기준 가격으로 쓴다."""
     price, off = to_int(row.get("판매가")), to_int(row.get("할인가"))
     return price - off if 0 < off < price else price
 
@@ -669,9 +669,9 @@ def round_up(price, unit=100):
 
 def adjusted_price(price, key, cfg, store_pct=0, jitter=None):
     """스토어에 올릴 최종 가격 (할인 뒤 손님이 내는 값). 100원 단위 올림.
-    1) 원본가(판매가 - 할인가) × (1 + 스토어 가격 조정 %)
+    1) 기준 가격(판매가 - 할인가) × (1 + 스토어 가격 차이 %)
     2) 스토어 템플릿의 흔들기 범위(jitter=(최소%, 최대%), 예: (-3, 3)) 안에서 상품마다 다르게. key(상품+스토어)가 같으면 늘 같은 값.
-       흔들기를 넣은 스토어는 원본가와 똑같은 가격이 나오지 않게 한 단위(100원) 비킨다."""
+       흔들기를 넣은 스토어는 기준 가격과 똑같은 가격이 나오지 않게 한 단위(100원) 비킨다."""
     unit = max(1, to_int(cfg.get("price_round"), 100))
     if price <= 0:
         return price
@@ -725,8 +725,8 @@ def display_prices_exact(final, pct, unit=100):
 
 
 def store_price(net, key, cfg, store):
-    """기준 구매가(원본가) → 이 스토어 손님 가격 = 기준 구매가 × (1 + 스토어 템플릿 마진율(가격 조정 %)), 100원 올림.
-    (예전 '흔들기'는 없앰 — 스토어마다 다르게 하려면 템플릿 마진율을 다르게. key는 쓰지 않음)"""
+    """기준 가격(기준 가격) → 이 스토어 손님 가격 = 기준 가격 × (1 + 스토어 가격 차이 %), 100원 올림.
+    (예전 '흔들기'는 없앰 — 스토어마다 다르게 하려면 스토어 가격 차이 %를 다르게. key는 쓰지 않음)"""
     return adjusted_price(net, key, cfg, (store or {}).get("tpl_price_pct"), None)
 
 
@@ -749,7 +749,7 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
     if errors:
         raise ConvertError(" / ".join(errors))
 
-    base_price = net_price(row)   # 판매가 - 할인가 (엑셀 할인가는 이미 빼서 원본가로 씀)
+    base_price = net_price(row)   # 판매가 - 할인가 (엑셀 할인가는 이미 빼서 기준 가격으로 씀)
     name = str(name or row["상품명"]).strip()
     unit = to_int(cfg.get("price_round"), 100) or 100
     # 손님 가격 (할인·옵션 계산 기준). 정해 준 가격(스토어 가격·가격 고정)은 그대로(10원 단위만 맞춤)
@@ -841,7 +841,7 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
     if images[1:]:
         origin["images"]["optionalImages"] = [{"url": u} for u in images[1:]]
 
-    # 엑셀 할인가는 원본가(net_price)에 이미 빼서 반영했으므로 엑셀 할인가로는 즉시할인을 걸지 않는다.
+    # 엑셀 할인가는 기준 가격(net_price)에 이미 빼서 반영했으므로 엑셀 할인가로는 즉시할인을 걸지 않는다.
     # 표시 할인율(기본 30%, 스토어 템플릿에서 바꿈): 할인율이 정확히 그 %가 되도록 판매가를 올리고 그만큼 '금액으로' 즉시할인.
     shown, off, _ = display_prices(sale_price, store_discount_pct(store, cfg), unit)
     if off > 0:

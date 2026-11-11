@@ -860,13 +860,13 @@ def create_app(db=None):
     def adopt_runs():
         return jsonify(adopt.runs(db))
 
-    # ── 기준 구매가 수정 (역마진 등) — 원본 상세 창·엑셀
+    # ── 기준 가격 수정 (역마진 등) — 원본 상세 창·엑셀
 
     @app.get("/api/baseprice/template.xlsx")
     def baseprice_template():
         from urllib.parse import quote
         return Response(baseprice.template_xlsx(), mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('기준구매가_수정양식.xlsx')}"})
+                        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('기준가격_수정양식.xlsx')}"})
 
     @app.post("/api/baseprice/preview")
     def baseprice_preview():
@@ -886,14 +886,14 @@ def create_app(db=None):
         b = body()
         new = convert.to_int(b.get("price"))
         if new <= 0 or not db.one("SELECT 1 FROM sources WHERE id=?", (int(b.get("source_id") or 0),)):
-            return fail("새 기준 구매가를 넣어 주세요.")
+            return fail("새 기준 가격을 넣어 주세요.")
         it = {"line": 0, "key": "", "how": "원본 상세", "new": new, "memo": str(b.get("memo") or ""), "status": "ok",
               **baseprice.effect(db, int(b["source_id"]), new)}
         return jsonify({"items": [it], "ok": 1, "bad": 0, "live": it["n_live"], "pending": it["n_pending"], "file": ""})
 
     @app.post("/api/baseprice/apply")
     def baseprice_apply():
-        """기준 구매가 바꾸기 → 안 올린 복사본은 바로, 판매 중 복사본은 네이버 가격만 바로 바꾸는 작업."""
+        """기준 가격 바꾸기 → 안 올린 복사본은 바로, 판매 중 복사본은 네이버 가격만 바로 바꾸는 작업."""
         b = body()
         items = [x for x in (b.get("items") or []) if x.get("source_id") and convert.to_int(x.get("price")) > 0]
         if not items:
@@ -1986,7 +1986,7 @@ def create_app(db=None):
             lexicon._bump(c)
         return jsonify({"ok": True})
 
-    # ── 스토어 템플릿: 상세 상단·하단(이미지 + HTML), 관부가세 코드, 가격 조정 %, 표시 할인율 %
+    # ── 스토어 템플릿: 상세 상단·하단(이미지 + HTML), 관부가세 코드, 스토어 가격 차이 %, 표시 할인율 %
 
     @app.get("/api/stores/<int:sid>/template")
     def store_template(sid):
@@ -2050,7 +2050,7 @@ def create_app(db=None):
              (str(b.get("top_html") or ""), str(b.get("bottom_html") or ""), config.customs_code(b.get("customs")),
               price_pct, disc, ship, ret, sid))
         activity.template_changed(db, old, old, db.store(sid) or {})
-        n = inventory.reprice_pending(db, sid) if repriced else 0   # 가격 조정·흔들기를 바꾸면 아직 안 올린 복사본 가격도 다시
+        n = inventory.reprice_pending(db, sid) if repriced else 0   # 스토어 가격 차이 %를 바꾸면 아직 안 올린 복사본 가격도 다시
         return jsonify({**templates.summary(db.store(sid)), "repriced": n})
 
     @app.post("/api/stores/<int:sid>/template/image")
@@ -2252,7 +2252,7 @@ def create_app(db=None):
         buf = io.StringIO()
         w = csv.writer(buf)
         w.writerow(["스토어", "판매자 관리코드", "회차", "등록 상품명", "원본 번호", "원본 판매자코드", "원본 상품명",
-                    "판매가", "기준 구매가", "상태", "할 일", "올린 날", "원상품번호", "채널상품번호", "메시지"])
+                    "판매가", "기준 가격", "상태", "할 일", "올린 날", "원상품번호", "채널상품번호", "메시지"])
         page = 0
         while True:
             res = inventory.query_listings(db, f, page, 500)
@@ -2411,7 +2411,7 @@ def create_app(db=None):
         db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('price_store_v2', '1')")
         db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('price_net_v1', '1')")
     if not db.one("SELECT 1 FROM meta WHERE k='price_net_v1'"):
-        inventory.reprice_net(db)   # 이번 버전부터 원본가 = 판매가 - 할인가 (예전 원본·대기 복사본 가격을 한 번 다시 계산)
+        inventory.reprice_net(db)   # 이번 버전부터 기준 가격 = 판매가 - 할인가 (예전 원본·대기 복사본 가격을 한 번 다시 계산)
         db.x("INSERT OR REPLACE INTO meta(k, v) VALUES('price_net_v1', '1')")
 
     if not app.config.get("TESTING"):

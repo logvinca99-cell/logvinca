@@ -109,8 +109,8 @@ CREATE TABLE IF NOT EXISTS stores (
     tpl_top_html TEXT NOT NULL DEFAULT '',  -- 상세페이지 상단 (HTML)
     tpl_bottom_html TEXT NOT NULL DEFAULT '',
     tpl_customs TEXT NOT NULL DEFAULT '',   -- 관부가세 코드 (비우면 설정값)
-    tpl_price_pct REAL,                     -- 가격 조정 % (원본가 대비, 비우면 0)
-    tpl_discount_pct REAL,                  -- 표시 할인율 % (비우면 할인 없이 원본가 그대로)
+    tpl_price_pct REAL,                     -- 스토어 가격 차이 % (기준 가격 대비, 비우면 0)
+    tpl_discount_pct REAL,                  -- 표시 할인율 % (비우면 할인 없이 기준 가격 그대로)
     wm_text TEXT NOT NULL DEFAULT '',       -- 워터마크 글자 (비우면 스토어 이름, 로고 PNG가 있으면 로고)
     created_at REAL NOT NULL
 );
@@ -254,6 +254,7 @@ class DB:
         activity.ensure(self)
         mail.ensure(self)
         trash.ensure(self)
+        self._rename_price_terms()
         self._orders_from_init()
         self._name_keys()
         # 프로그램이 등록 도중 꺼졌으면 남은 상태를 되돌린다.
@@ -284,19 +285,19 @@ class DB:
                     ("img_key", "TEXT NOT NULL DEFAULT ''"),
                     # 스토어 가격 흔들기 기준 (원본 열쇠를 상품명으로 바꿔도 손님 가격이 그대로이게 예전 열쇠를 씀)
                     ("price_seed", "TEXT NOT NULL DEFAULT ''"),
-                    # 기준 구매가(원본가)가 어디서 왔나: file 처음 원본 파일 / adopt 기존 상품 가져오기(그 스토어 손님 가격) / manual 직접 수정
+                    # 기준 가격(기준 가격)가 어디서 왔나: file 처음 원본 파일 / adopt 기존 상품 가져오기(그 스토어 손님 가격) / manual 직접 수정
                     ("price_src", "TEXT NOT NULL DEFAULT ''"), ("price_at", "REAL")],
         "stores": [("code", "TEXT NOT NULL DEFAULT ''"), ("orders_synced_to", "REAL"),
                    # 네이버 주문을 빈틈없이 받아 둔 처음 시각 (여기부터 orders_synced_to까지는 판매 이력을 다 앎)
                    ("orders_from", "REAL"),
                    ("memo_at", "REAL"),   # 스토어 메모를 고친 때 (스토어 화면 카드에서 바로 적음)
                    ("wm_text", "TEXT NOT NULL DEFAULT ''"), ("importer", "TEXT NOT NULL DEFAULT ''"),
-                   # 스토어 템플릿: 상세 상단·하단(HTML), 관부가세 코드, 가격 조정 %, 표시 할인율 % (비우면 설정 공통값)
+                   # 스토어 템플릿: 상세 상단·하단(HTML), 관부가세 코드, 스토어 가격 차이 %, 표시 할인율 % (비우면 설정 공통값)
                    ("tpl_top_html", "TEXT NOT NULL DEFAULT ''"), ("tpl_bottom_html", "TEXT NOT NULL DEFAULT ''"),
                    ("tpl_customs", "TEXT NOT NULL DEFAULT ''"), ("tpl_price_pct", "REAL"), ("tpl_discount_pct", "REAL"),
                    # 출고지·반품지 (네이버 판매자센터 주소록 번호, 비우면 판매자센터 기본 주소)
                    ("tpl_ship_addr", "INTEGER"), ("tpl_return_addr", "INTEGER"),
-                   # 가격 흔들기 범위 % (비우면 설정 기본 -3~+3), 흔들면 원본가와 같은 가격은 안 나옴
+                   # 가격 흔들기 범위 % (비우면 설정 기본 -3~+3), 흔들면 기준 가격과 같은 가격은 안 나옴
                    ("tpl_jitter_min", "REAL"), ("tpl_jitter_max", "REAL"),
                    # 상세 옵션표 모양(strong·basic·original)·강조색 — 비우면 설정 공통값
                    ("tpl_opt_style", "TEXT NOT NULL DEFAULT ''"), ("tpl_opt_color", "TEXT NOT NULL DEFAULT ''"),
@@ -330,6 +331,16 @@ class DB:
                      # 상품명 바꾸기(AI 키워드)를 눌렀는데 키워드가 아직 오는 중 → 오면 이 복사본 이름을 바꿈
                      ("ctx_wait", "INTEGER NOT NULL DEFAULT 0")],
     }
+
+    def _rename_price_terms(self):
+        """가격 용어 통일 (기준 가격 · 스토어 가격 차이 % · 손님 가격): 지난 기록에 남은 예전 말을 한 번 바꿈."""
+        pairs = [("기준 구매가", "기준 가격"), ("원본가", "기준 가격"), ("가격 조정 %", "스토어 가격 차이 %"), ("마진율", "스토어 가격 차이 %")]
+        with self.tx() as c:
+            for old, new in pairs:
+                c.execute("UPDATE trash SET extra=REPLACE(extra, ?, ?) WHERE extra LIKE ?", (old, new, f"%{old}%"))
+                for col in ("title", "result", "detail"):
+                    c.execute(f"UPDATE activity SET {col}=REPLACE({col}, ?, ?) WHERE {col} LIKE ?", (old, new, f"%{old}%"))
+                c.execute("UPDATE listings SET message=REPLACE(message, ?, ?) WHERE message LIKE ?", (old, new, f"%{old}%"))
 
     def _remove_dropped(self, data_dir):
         """뺀 기능이 남긴 것 정리.

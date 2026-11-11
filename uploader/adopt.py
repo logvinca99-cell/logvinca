@@ -220,7 +220,7 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
     strip = image_remover(opts.get("remove_imgs"))
 
     # ③ 판매자코드로 맞추기: 스토어에 있는 것만 원본으로 (정리: 상하단 빼기, 브랜드·제조사·모델명·원산지 '상세페이지 참조')
-    #    원본가 = 그 스토어의 지금 손님 가격 (엑셀 판매가가 아님 — 셀업·판매자센터에서 따로 건 할인까지 반영된 값)
+    #    기준 가격 = 그 스토어의 지금 손님 가격 (엑셀 판매가가 아님 — 셀업·판매자센터에서 따로 건 할인까지 반영된 값)
     keep, matched, file_codes, unmatched = [], {}, set(), []
     for i, r in enumerate(rows):
         code = str(r.get("판매자코드") or "").strip()
@@ -268,7 +268,7 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
         return _dry_rest(db, store, st, samples, rows, keep, matched, managed, unmatched)
 
     # ④ 원본으로 넣기. 상품명이 완전히 같은 원본이 이미 있으면 덮어쓰지 않는다 (원래 원본 이름·AI 키워드·상세를 지킴):
-    #    예전에 불러온 원본이면 기준 구매가·내용은 그대로 '가져옴 · 원본 이름 있음'(2) 표시만 (고른 공통 이미지는 뺌), 이미 가져온 원본이면 그대로.
+    #    예전에 불러온 원본이면 기준 가격·내용은 그대로 '가져옴 · 원본 이름 있음'(2) 표시만 (고른 공통 이미지는 뺌), 이미 가져온 원본이면 그대로.
     #    원본 열쇠는 상품명(완전히 같음) — 대표 이미지는 기준이 아님
     if progress:
         progress(0, len(keep), f"원본으로 넣는 중 {len(keep):,}개")
@@ -305,7 +305,7 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
             html, k = strip(d.get("상세설명"))   # 고른 공통 이미지(스토어 배너)는 이미 있던 원본 상세에서도 뺀다 (나머지 내용은 그대로)
             if k:
                 d["상세설명"] = html
-            if not x["adopted"]:   # 예전에 불러온 원본 → 기준 구매가는 그대로 (다른 스토어 손님 가격이 바뀌지 않게), '가져옴' 표시만
+            if not x["adopted"]:   # 예전에 불러온 원본 → 기준 가격은 그대로 (다른 스토어 손님 가격이 바뀌지 않게), '가져옴' 표시만
                 c.execute("UPDATE sources SET adopted=2, data=?, src_tags=?, updated_at=? WHERE id=?",
                           (pack(d), new_tags, now, x["id"]))
             elif k or new_tags != x["src_tags"]:
@@ -420,7 +420,7 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
 
 def _assign_keys(db, store_id, keep, matched, managed):
     """스토어 상품 하나 = 원본 하나 (판매자코드로 1대1, 대표 이미지는 기준이 아님). 원본 열쇠 = 상품명(완전히 같음) — 원본 엑셀과 같은 기준.
-    상품명이 같은 원본이 이미 있으면 그 원본에 연결한다 (기준 구매가·내용은 그대로, 다른 스토어 복사본과 같은 원본).
+    상품명이 같은 원본이 이미 있으면 그 원본에 연결한다 (기준 가격·내용은 그대로, 다른 스토어 복사본과 같은 원본).
     그 원본이 이 스토어에 이미 다른 상품으로 올라가 있거나, 이 파일에서 같은 상품명이 앞서 나왔으면 → '상품명 중복'
     (열쇠 None — 연결 안 함: 한 스토어에 상품명이 완전히 같은 상품은 하나만 관리). → ({줄: 열쇠 또는 None}, {줄: 중복 이유})"""
     base = {i: inventory.source_key(r) for i, r in keep}

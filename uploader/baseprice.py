@@ -1,11 +1,11 @@
-"""기준 구매가 (원본가) 고정·수정.
+"""기준 가격 (기준 가격) 고정·수정.
 
-원칙: 모든 스토어 손님 가격 = 원본의 기준 구매가 × (1 + 그 스토어 템플릿 마진율(가격 조정 %)), 100원 올림.
-기준 구매가는 처음 원본을 넣을 때(원본 파일의 판매가 − 할인가, 기존 상품 가져오기는 그 스토어 손님 가격) 정해지고,
+원칙: 모든 스토어 손님 가격 = 원본의 기준 가격 × (1 + 그 스토어 가격 차이 %), 100원 올림.
+기준 가격은 처음 원본을 넣을 때(원본 파일의 판매가 − 할인가, 기존 상품 가져오기는 그 스토어 손님 가격) 정해지고,
 여기 수정 기능(원본 상세 창·엑셀)으로만 바뀐다 — 역마진이라 가격을 고친 경우 등. 수정하면:
   - 아직 안 올린 복사본: 가격을 바로 다시 계산
   - 판매 중 복사본: 새 손님 가격을 계산해 네이버 가격만 바로 바꿈 (상품은 지우지 않음 → 리뷰·판매 기록 그대로)
-  - 가격 고정 복사본(기존 상품 가져오기): 손님 가격 = 새 기준 구매가
+  - 가격 고정 복사본(기존 상품 가져오기): 손님 가격 = 새 기준 가격
 바꾼 기록은 base_price_log에 남는다.
 """
 import io
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS base_price_log (
 CREATE INDEX IF NOT EXISTS ix_bpl_src ON base_price_log(source_id);
 """
 
-COLS = ["원본 상품명", "복사본 상품명", "판매자 관리코드", "상품번호", "새 기준 구매가", "메모"]
+COLS = ["원본 상품명", "복사본 상품명", "판매자 관리코드", "상품번호", "새 기준 가격", "메모"]
 
 
 def ensure(db):
@@ -40,9 +40,9 @@ def template_xlsx():
     from openpyxl import Workbook
     wb = Workbook()
     ws = wb.active
-    ws.title = "기준 구매가 수정"
+    ws.title = "기준 가격 수정"
     ws.append(COLS)
-    ws.append(["(예) 원본 상품명을 그대로", "", "", "", 12000, "역마진 — 구매가 올라감"])
+    ws.append(["(예) 원본 상품명을 그대로", "", "", "", 12000, "역마진 — 가격 올림"])
     ws.append(["", "(예) 스토어에 올라간 복사본 상품명", "", "", 15500, ""])
     ws.append(["", "", "(예) S01-123-2", "", 9900, ""])
     for col, w in zip("ABCDEF", (40, 40, 20, 16, 14, 30)):
@@ -77,17 +77,17 @@ def _match(db, row):
 
 
 def preview(db, path, filename):
-    """올린 수정 엑셀 → 줄마다 찾은 원본·예전→새 기준 구매가·영향 받는 복사본 (아무것도 안 바꿈)."""
+    """올린 수정 엑셀 → 줄마다 찾은 원본·예전→새 기준 가격·영향 받는 복사본 (아무것도 안 바꿈)."""
     out = []
     for i, row in enumerate(excel.iter_rows(path, filename, parse=False), 2):
         if not any(str(v or "").strip() for v in row.values()):
             continue
-        new = convert.to_int(row.get("새 기준 구매가"))
+        new = convert.to_int(row.get("새 기준 가격") if row.get("새 기준 가격") not in (None, "") else row.get("새 기준 " + "구매가"))   # 예전 양식 머리글도
         ids, how = _match(db, row)
         key = next((str(row.get(k) or "").strip() for k in COLS[:4] if str(row.get(k) or "").strip()), "")
         item = {"line": i, "key": key[:80], "how": how, "new": new, "memo": str(row.get("메모") or "")[:200]}
         if new <= 0:
-            item["status"], item["why"] = "bad", "새 기준 구매가가 비었거나 0"
+            item["status"], item["why"] = "bad", "새 기준 가격이 비었거나 0"
         elif not ids:
             item["status"], item["why"] = "notfound", "못 찾음" if how else "찾을 칸(상품명·코드·상품번호)이 비었음"
         elif len(ids) > 1:
@@ -102,7 +102,7 @@ def preview(db, path, filename):
 
 
 def effect(db, sid, new):
-    """원본 하나의 기준 구매가를 new로 바꾸면 어떻게 되나 (스토어별 새 손님 가격)."""
+    """원본 하나의 기준 가격을 new로 바꾸면 어떻게 되나 (스토어별 새 손님 가격)."""
     cfg = config.load()
     s = db.one("SELECT id, name, price, price_src FROM sources WHERE id=?", (sid,))
     stores = {x["id"]: x for x in db.stores()}
@@ -117,7 +117,7 @@ def effect(db, sid, new):
 
 
 def apply(db, items, how=""):
-    """기준 구매가 바꾸기: [{source_id, price, memo}] → 원본가·안 올린 복사본 가격 바꿈, 판매 중 복사본(네이버 가격 바꿀 것) 목록을 돌려줌."""
+    """기준 가격 바꾸기: [{source_id, price, memo}] → 기준 가격·안 올린 복사본 가격 바꿈, 판매 중 복사본(네이버 가격 바꿀 것) 목록을 돌려줌."""
     cfg = config.load()
     stores = {x["id"]: x for x in db.stores()}
     now = time.time()
@@ -147,7 +147,7 @@ def apply(db, items, how=""):
 
 
 def push_live(db, lids, progress=None, should_stop=None):
-    """판매 중 복사본의 네이버 가격만 바로 바꾸기 (상품은 지우지 않음). 새 손님 가격 = 기준 구매가 × 그 스토어 마진율 (가격 고정이면 기준 구매가)."""
+    """판매 중 복사본의 네이버 가격만 바로 바꾸기 (상품은 지우지 않음). 새 손님 가격 = 기준 가격 × 그 스토어 가격 차이 % (가격 고정이면 기준 가격)."""
     cfg = config.load()
     unit = max(1, convert.to_int(cfg.get("price_round"), 100))
     rows = []
@@ -167,7 +167,7 @@ def push_live(db, lids, progress=None, should_stop=None):
         pct = convert.store_discount_pct(store, cfg)
         try:
             shown = clients[r["store_id"]].update_price(r["origin_no"], final, pct, unit)
-            db.set_listing(r["id"], None, price=final, sale_shown=shown, message=f"기준 구매가 수정 → 네이버 가격 바꿈 ({final:,}원)")
+            db.set_listing(r["id"], None, price=final, sale_shown=shown, message=f"기준 가격 수정 → 네이버 가격 바꿈 ({final:,}원)")
             out["ok"] += 1
         except Exception as e:  # noqa: BLE001
             db.set_listing(r["id"], None, price=final, message=f"네이버 가격 바꾸기 실패 — 다음 최신화 때 새 가격으로 올라감: {e}"[:600])
