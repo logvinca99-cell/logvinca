@@ -336,7 +336,9 @@ class DB:
                      # 최신화·다시 올리기에서 네이버 지우기를 시작한 때 (지운 뒤 끊겨도 다시 시도 때 '이미 지움'으로 이어감)
                      ("del_mark", "REAL"),
                      # 네이버 가격 바꾸기 대기: 바꿀 손님 가격 (성공하면 비움 · 실패·미시작이면 남아 다시 시도)
-                     ("price_push", "INTEGER")],
+                     ("price_push", "INTEGER"),
+                     # 네이버 상품명 바꾸기 대기: 바꿀 이름(names.id) (성공하면 이 이름으로 바뀌고 비움)
+                     ("name_push", "INTEGER")],
     }
 
     def _busy_name_guard(self):

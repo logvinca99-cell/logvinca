@@ -50,7 +50,7 @@ def check_store(db, store_id, client, on_wait=None, progress=None, should_stop=N
         if should_stop and should_stop():
             raise RuntimeError("중단했습니다.")
     fake = getattr(client, "fake", False)
-    rows = db.q("SELECT id, channel_no, price, price_fixed FROM listings WHERE store_id=? AND origin_no!='' AND channel_no!=''",
+    rows = db.q("SELECT id, channel_no, price, price_fixed, price_push FROM listings WHERE store_id=? AND origin_no!='' AND channel_no!=''",
                 (int(store_id),))
     now = time.time()
     out = {"checked": len(rows), "by": {}, "gone": 0, "repriced": 0, "store_products": n}
@@ -64,7 +64,7 @@ def check_store(db, store_id, client, on_wait=None, progress=None, should_stop=N
             c.execute("UPDATE listings SET nv_status=?, nv_disp=?, nv_at=? WHERE id=?", (st, disp, now, r["id"]))
             out["by"][st] = out["by"].get(st, 0) + 1
             out["gone"] += st == "GONE"
-            if r["price_fixed"] and p and p["final"] > 0 and p["final"] != r["price"]:
+            if r["price_fixed"] and not r["price_push"] and p and p["final"] > 0 and p["final"] != r["price"]:
                 c.execute("UPDATE listings SET price=? WHERE id=?", (p["final"], r["id"]))   # 판매자센터에서 바꾼 손님 가격
                 out["repriced"] += 1
     return out

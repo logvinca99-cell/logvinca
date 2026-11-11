@@ -410,6 +410,13 @@ class Client:
         from . import convert
         body = self._get_origin(origin_no, on_wait=on_wait)
         o = body.get("originProduct") or {}
+        cb0 = ((o.get("customerBenefit") or {}).get("immediateDiscountPolicy") or {}).get("discountMethod") or {}
+        if str(cb0.get("unitType") or "") == "PERCENT":   # % 할인이면 옵션 추가금에서도 %가 빠지고 있었음 → 금액 할인으로 바꾸며 손님 옵션 가격 그대로
+            live = convert.live_prices(body)["opts"]
+            for c in (((o.get("detailAttribute") or {}).get("optionInfo") or {}).get("optionCombinations") or []):
+                k = convert.option_key(c)
+                if k in live:
+                    c["price"] = live[k]
         shown, off, _ = convert.display_prices(final, pct, unit)
         o["salePrice"] = shown
         cb = o.setdefault("customerBenefit", {})
@@ -421,6 +428,16 @@ class Client:
         if r.status_code != 200:
             raise ApiError(f"가격 바꾸기 실패: {explain_error(r)}")
         return shown
+
+    def update_name(self, origin_no, name, on_wait=None):
+        """판매 중 상품의 상품명만 바꾸기 (지우지 않음 → 리뷰·판매 기록 그대로)."""
+        body = self._get_origin(origin_no, on_wait=on_wait)
+        o = body.get("originProduct") or {}
+        o["name"] = str(name)[:100]
+        r = self._put(origin_no, body, on_wait)
+        if r.status_code != 200:
+            raise ApiError(f"상품명 바꾸기 실패: {explain_error(r)}")
+        return True
 
     def _put_origin(self, origin_no, body, on_wait=None):
         r = self._put(origin_no, body, on_wait)
@@ -610,6 +627,13 @@ class FakeClient:
         if random.random() < 0.03:
             raise ApiError("가격 바꾸기 실패: 500 시연용 실패")
         return convert.display_prices(final, pct, unit)[0]
+
+    def update_name(self, origin_no, name, on_wait=None):
+        """시연: 상품명만 바꾸기 (가끔 실패)."""
+        time.sleep(random.uniform(0.05, 0.2))
+        if random.random() < 0.03:
+            raise ApiError("상품명 바꾸기 실패: 500 시연용 실패")
+        return True
 
     def _get_origin(self, origin_no, on_wait=None):
         """시연: fake_store_products.json 상품의 '_origin'(네이버 원상품 모양), 없으면 이번에 올린 내용, 없으면 목록 값으로 만든 것."""

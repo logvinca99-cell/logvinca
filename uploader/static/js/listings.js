@@ -51,12 +51,14 @@ App.page("listings", {
           <a class="btn ghost sm" href="#listings">스토어 목록</a>${store ? storeLinks(store) : ""}</div>
         <div class="head-actions">
           <button class="btn primary" id="l-eye" title="썸네일만 그리드로 보며 이상한 상품을 골라 지우기">눈검수</button>
+          <button class="btn" id="l-bulk" title="이 스토어 복사본의 손님 가격·상품명을 엑셀로 한꺼번에 고치기 (판매 중이면 지우지 않고 네이버 값만 바꿈)">일괄 수정 (엑셀)</button>
           <button class="btn" id="l-nv" title="네이버 상품 목록을 받아 판매 중 복사본마다 판매 중·품절·판매중지·판매금지·스토어에 없음을 표시 (최신화 직전에도 자동으로 확인)">네이버 상태 확인</button>
           <label class="btn" title="아바닛 등 주문 수집 웹에서 내려받은 주문 파일"><input type="file" id="l-sales-file" accept=".xlsx,.xlsm,.csv" hidden>판매 이력 파일 가져오기</label>
           <a class="btn" href="#orders" title="판매자센터 주문을 가져오고 기간·스토어별로 보기">판매 현황</a>
         </div></header>
       <div class="card run" id="l-run"></div>
       <div id="l-sales"></div>
+      <div id="l-push"></div>
       <div class="tiles" id="l-tiles"></div>
       <div class="filters-row">
         <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
@@ -68,7 +70,7 @@ App.page("listings", {
       <div class="card table-card">
         <table class="grid"><thead><tr><th class="w-check"></th>
           <th class="w-thumb"></th><th>등록 상품명 <span class="muted small" style="font-weight:400">(원본과 비교)</span>${ND_LEGEND}</th>
-          <th class="w-links">바로 가기</th><th class="w-round">관리코드 · 올린 날</th><th class="w-num">판매가</th><th class="w-status">상태</th></tr></thead><tbody id="l-rows"></tbody></table>
+          <th class="w-links">바로 가기</th><th class="w-round">관리코드 · 올린 날</th><th class="w-num">손님 가격</th><th class="w-status">상태</th></tr></thead><tbody id="l-rows"></tbody></table>
         <div class="pg-foot"><div class="pg" id="l-pager"></div></div>
       </div>
     </div>`;
@@ -76,6 +78,7 @@ App.page("listings", {
     $("#l-eye").addEventListener("click", () => Eye.open({ storeId: +this.f.store_id, storeName: store?.name || "", filter: this.query(),
       after: (r) => { if (r.deleted) this.clearSel(); this.estKey = ""; this.load(); } }));
     $("#l-nv").addEventListener("click", () => App.startTask(App.api("/api/listings/nvcheck", { json: { store_id: +this.f.store_id } })));
+    $("#l-bulk").addEventListener("click", () => this.bulkEdit(store));
     if (!store) App.toast("스토어를 찾지 못했습니다.", true);
     $("#l-age").value = this.f.age_days || "";
     this.bind();
@@ -163,6 +166,17 @@ App.page("listings", {
     $("#l-sales").innerHTML = this.counts.need_sales ? `<div class="notice warn" style="margin-bottom:10px">판매 중 상품 <b>${num(this.counts.need_sales)}</b>개는
       <b>판매 이력 확인 전</b>이라 최신화·내리기를 하지 않습니다 (팔린 상품을 지우지 않게). <button class="btn tiny primary" id="l-sales-go">판매 이력 확인</button></div>` : "";
     $("#l-sales-go")?.addEventListener("click", () => App.salesConfirm(+this.f.store_id, () => this.load()));
+    App.api(`/api/listings/push_pending?store_id=${this.f.store_id}`).then((p) => {   // 네이버 반영 대기 (가격·상품명 바꾸기를 못 보낸 것)
+      const box = $("#l-push");
+      if (!box) return;
+      const n = (p.price || 0) + (p.name || 0);
+      box.innerHTML = n ? `<div class="notice warn" style="margin-bottom:10px">네이버 반영 대기 <b>${num(n)}</b>건 (가격 ${num(p.price)} · 상품명 ${num(p.name)}) —
+        실패했거나 아직 못 보낸 가격·상품명 바꾸기입니다. <button class="btn tiny primary" id="l-push-go">네이버 반영 다시 시도</button></div>` : "";
+      $("#l-push-go")?.addEventListener("click", async () => {
+        if (!await App.yes("네이버 반영 다시 시도", `대기 중인 ${num(n)}건의 네이버 가격·상품명을 다시 보냅니다 (상품은 지우지 않음).`, { label: "다시 보내기" })) return;
+        App.startTask(App.api("/api/listings/push_retry", { json: { store_id: +this.f.store_id } }));
+      });
+    }).catch(() => {});
     const active = this.f.eye ? `eye_${this.f.eye}` : this.f.nv === "bad" ? "nv_bad" : this.f.status;
     $("#l-tiles").innerHTML = tilesHtml(LST_TILES.filter((t) => !t.only || this.counts[t.key] || active === t.key), { ...this.counts, all: this.counts.all_ }, active);
     $("#l-rows").innerHTML = res.rows.length ? res.rows.map((l) => this.rowHtml(l)).join("")
@@ -492,6 +506,56 @@ App.page("listings", {
       this.est = e;
       if (!App.run?.running && $("#l-run")) this.renderIdle();
     }).catch(() => {});
+  },
+
+  /* 복사본 일괄 수정: 이 스토어 양식(엑셀)에 '새 손님 가격'·'새 상품명'을 적어 올림 → 미리보기 → 2차 확인 → 적용 */
+  bulkEdit(store) {
+    const sid = +this.f.store_id;
+    let pv = null;
+    const ST = { ok: '<span class="c-ok">바꿈</span>', same: '<span class="muted">그대로</span>' };
+    const render = (d) => {
+      const rows = d.items.filter((x) => x.status !== "same");
+      $("#be-out").innerHTML = `<div class="notice ${d.ok ? "info" : "warn"}" style="margin:10px 0">바꿀 복사본 <b>${num(d.ok)}</b>개
+          (손님 가격 ${num(d.n_price)} · 상품명 ${num(d.n_name)})${d.bad ? ` · 못 바꾸는 줄 <b>${num(d.bad)}</b>개(아래 빨간 글씨)` : ""}${d.same ? ` · 바뀐 게 없는 줄 ${num(d.same)}개` : ""}<br>
+          ${d.n_price ? `손님 가격을 고친 원본은 <b>기준 가격이 바뀌어 다른 스토어 복사본 ${num(d.others)}건도 같이</b> 바뀝니다. ` : ""}
+          ${d.n_live ? `판매 중 ${num(d.n_live)}건${d.n_locked ? `(잠긴 ${num(d.n_locked)}건 포함)` : ""}은 <b>지우지 않고 네이버 값만</b> 바꿉니다 (리뷰·판매 기록 그대로).` : ""}</div>
+        ${rows.length ? `<div class="tbl-wrap" style="max-height:360px"><table class="tbl small"><thead><tr><th>줄</th><th>복사본</th><th>상품명 (지금 → 새)</th><th class="r">손님 가격 (지금 → 새)</th><th>결과</th></tr></thead><tbody>
+          ${rows.map((x) => `<tr><td>${x.line}</td><td>#${x.listing_id}${x.live ? " · 판매 중" : ""}${x.locked ? " 🔒" : ""}</td>
+            <td>${x.name_new ? `${esc((x.name_old || "").slice(0, 40))}<br>→ <b>${esc(x.name_new)}</b>` : '<span class="muted">그대로</span>'}</td>
+            <td class="r nowrap">${x.target ? `${num(x.price_old || 0)} → <b>${num(x.price_new || x.target)}</b>${x.others ? `<div class="muted small">다른 스토어 ${num(x.others)}건도</div>` : ""}` : '<span class="muted">그대로</span>'}</td>
+            <td class="small">${ST[x.status] || `<span class="c-err">${esc((x.why || []).join(" · "))}</span>`}</td></tr>`).join("")}</tbody></table></div>` : ""}`;
+    };
+    App.openModal({
+      title: `일괄 수정 (엑셀) — ${store?.name || ""}`, wide: true,
+      body: `<ol class="small" style="margin:0 0 8px;padding-left:18px;line-height:1.7">
+          <li><a href="/api/listings/bulk_template.xlsx?store_id=${sid}">⬇ 이 스토어 양식 받기</a> — 복사본마다 번호·상품번호·지금 상품명·지금 손님 가격이 들어 있습니다.</li>
+          <li>바꿀 줄에만 <b>새 상품명</b>·<b>새 손님 가격</b>(손님이 실제로 내는 금액)을 적습니다. 빈 칸은 그대로. 네이버 판매가·할인은 표시 할인율로 알아서 계산합니다.</li>
+          <li>올리면 미리보기가 나오고, 확인하면 바꿉니다. <b>손님 가격을 고치면 원본의 기준 가격이 바뀌어 다른 스토어 복사본도 같이</b> 바뀝니다(역마진 수정).</li></ol>
+        <p class="small muted" style="margin:0 0 8px">판매 중 상품(잠긴 것 포함)은 지우지 않고 네이버의 가격·상품명만 바꿉니다. 상품명은 직접 고치기와 같은 검사(금지 단어·상표·반복·모든 스토어 통틀어 같은 이름 금지)를 거칩니다. 다른 스토어 양식은 받지 않습니다.</p>
+        <label class="btn"><input type="file" id="be-file" accept=".xlsx,.xlsm" hidden>고친 양식 올리기 (미리보기)</label><div id="be-out"></div>`,
+      buttons: [{ label: "닫기" }, { label: "바꾸기", primary: true,
+        get confirm() { return pv ? `복사본 ${num(pv.ok)}개를 바꿉니다 (손님 가격 ${num(pv.n_price)} · 상품명 ${num(pv.n_name)})${pv.others ? ` — 손님 가격을 고친 원본의 다른 스토어 복사본 ${num(pv.others)}건도 같이 바뀜` : ""}. 판매 중 ${num(pv.n_live)}건은 지우지 않고 네이버 값만 바꿉니다.` : ""; },
+        validate: () => (!pv ? "먼저 고친 양식을 올려 미리보기를 확인하세요." : !pv.ok ? "바꿀 줄이 없습니다." : ""),
+        onClick: async () => {
+          const r = await App.api("/api/listings/bulk_apply", { json: { token: pv.token } });
+          App.toast(`일괄 수정: 가격 바꾼 원본 ${num(r.prices)} · 상품명 ${num(r.names)}` + (r.price_live || r.name_live ? ` · 네이버 반영 ${r.queued ? "대기" : "중"} (가격 ${num(r.price_live)} · 상품명 ${num(r.name_live)})` : "")
+            + (r.name_skip?.length ? ` · 못 바꾼 상품명 ${num(r.name_skip.length)} (${r.name_skip[0]})` : ""), !!r.name_skip?.length);
+          if (r.task) { App.taskSeen[r.task] = "running"; App.refreshState(); }
+          this.load();
+        } }],
+    });
+    $("#be-file").addEventListener("change", async (e) => {
+      const f = e.target.files[0];
+      e.target.value = "";
+      if (!f) return;
+      const fd = new FormData();
+      fd.append("file", f);
+      fd.append("store_id", sid);
+      pv = null;
+      $("#be-out").innerHTML = '<p class="muted"><span class="spin"></span> 읽는 중…</p>';
+      try { pv = await App.api("/api/listings/bulk_preview", { method: "POST", body: fd }); render(pv); }
+      catch (err) { $("#be-out").innerHTML = `<div class="notice err" style="margin-top:8px">${esc(err.message)}</div>`; }
+    });
   },
 
   async start(limit) {

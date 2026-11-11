@@ -667,24 +667,28 @@ def round_up(price, unit=100):
     return -((-int(price)) // unit) * unit
 
 
-def adjusted_price(price, key, cfg, store_pct=0, jitter=None):
-    """스토어에 올릴 최종 가격 (할인 뒤 손님이 내는 값). 100원 단위 올림.
-    1) 기준 가격(판매가 - 할인가) × (1 + 스토어 가격 차이 %)
-    2) 스토어 템플릿의 흔들기 범위(jitter=(최소%, 최대%), 예: (-3, 3)) 안에서 상품마다 다르게. key(상품+스토어)가 같으면 늘 같은 값.
-       흔들기를 넣은 스토어는 기준 가격과 똑같은 가격이 나오지 않게 한 단위(100원) 비킨다."""
+def adjusted_price(price, cfg, store_pct=0):
+    """손님 가격 = 기준 가격 × (1 + 스토어 가격 차이 %), 100원 단위 올림."""
     unit = max(1, to_int(cfg.get("price_round"), 100))
     if price <= 0:
         return price
-    lo, hi = (jitter or (0, 0))
-    lo, hi = float(lo or 0), float(hi or 0)
-    if lo > hi:
-        lo, hi = hi, lo
-    h = int(hashlib.sha1(str(key).encode()).hexdigest()[:8], 16) / 0xFFFFFFFF  # 0~1
-    p = price * (1 + float(store_pct or 0) / 100) * (1 + (lo + (hi - lo) * h) / 100)
-    out = max(unit, round_up(math.ceil(p), unit))
-    if (lo or hi) and out == round_up(price, unit):
-        out = out - unit if hi <= 0 and out - unit > 0 else out + unit
-    return out
+    p = price * (1 + float(store_pct or 0) / 100)
+    return max(unit, round_up(math.ceil(p - 1e-9), unit))
+
+
+def base_for(target, cfg, store):
+    """그 스토어 손님 가격을 target으로 받고 싶을 때의 기준 가격 (스토어 가격 차이 %로 거꾸로 계산).
+    가격 차이 0%면 기준 가격 = 손님 가격. 결과로 그 스토어 손님 가격이 정확히 target(100원 단위 올림)이 되는 값."""
+    unit = max(1, to_int(cfg.get("price_round"), 100))
+    target = round_up(int(target or 0), unit)
+    pct = float((store or {}).get("tpl_price_pct") or 0)
+    if target <= 0 or not pct:
+        return target
+    base = int(target / (1 + pct / 100))
+    for b in (base, base + 1, base - 1, base + 2):   # 반올림 차이 보정
+        if b > 0 and adjusted_price(b, cfg, pct) == target:
+            return b
+    return max(1, base)
 
 
 def stock_qty(row, cfg):
@@ -699,9 +703,11 @@ def display_prices(final, pct, unit=100):
     final이 10원 단위가 아니면 10원 단위로 올린다(네이버 판매가 규칙)."""
     p = float(pct or 0) / 100
     final = int(final or 0)
-    if final <= 0 or not 0 < p < 1:
+    if final <= 0:
         return final, 0, final
     final = round_up(final, 10)
+    if not 0 < p < 1:
+        return final, 0, final
     shown = round_up(math.ceil(final / (1 - p) - 1e-9), unit)
     if shown <= final:
         return final, 0, final
@@ -724,10 +730,9 @@ def display_prices_exact(final, pct, unit=100):
     return shown, off, shown - off
 
 
-def store_price(net, key, cfg, store):
-    """기준 가격(기준 가격) → 이 스토어 손님 가격 = 기준 가격 × (1 + 스토어 가격 차이 %), 100원 올림.
-    (예전 '흔들기'는 없앰 — 스토어마다 다르게 하려면 스토어 가격 차이 %를 다르게. key는 쓰지 않음)"""
-    return adjusted_price(net, key, cfg, (store or {}).get("tpl_price_pct"), None)
+def store_price(base, cfg, store):
+    """기준 가격 → 이 스토어 손님 가격 = 기준 가격 × (1 + 스토어 가격 차이 %), 100원 올림."""
+    return adjusted_price(base, cfg, (store or {}).get("tpl_price_pct"))
 
 
 def store_discount_pct(store, cfg):

@@ -254,7 +254,7 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
                 add_item("price_diff", code=p["code"], name=p["name"], channel_no=p["channel_no"], status=p["status"], reg_at=p["reg_at"],
                          note=f"엑셀 {xl:,}원 → 스토어 손님 가격 {final:,}원")
                 sample("price_diff", code=p["code"], name=p["name"], xl=xl, final=final)
-            r["판매가"], r["할인가"] = final, None
+            r["판매가"], r["할인가"] = convert.base_for(final, config.load(), store), None   # 기준 가격 (가격 차이 0%면 = 손님 가격)
         keep.append((i, r))
         matched[i] = p
     for p in products:   # 스토어에만 있는 것 (이 프로그램이 이미 관리하는 것은 빼고)

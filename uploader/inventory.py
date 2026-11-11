@@ -1048,7 +1048,7 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
                         st["capacity"] += 1
                         continue
                     old = dead.get(s["id"], {}).get(sid)
-                    price = convert.store_price(s["price"], f"{s['source_key']}|{sid}", cfg, stores[sid])
+                    price = convert.store_price(s["price"], cfg, stores[sid])
                     if old:
                         # 전에 내렸던 스토어: 같은 줄을 다음 회차로 (이름 그대로, 설정하면 원본 상품명으로 돌려 다시 바꾸게)
                         if cfg.get("refresh_new_name"):
@@ -1442,7 +1442,7 @@ def relist(db, f):
             if not st or free.get(r["store_id"], 0) <= 0:
                 continue
             free[r["store_id"]] -= 1
-            price = r["cur"] if r["price_fixed"] else convert.store_price(r["price"], f"{r['source_key']}|{r['store_id']}", cfg, st)
+            price = r["cur"] if r["price_fixed"] else convert.store_price(r["price"], cfg, st)
             c.execute("""UPDATE listings SET status='planned', op='reupload', round=CASE WHEN round_reset=1 THEN 1 ELSE round+1 END,
                 round_reset=0, price=?, message='', stage='',
                 sale_shown=NULL, updated_at=? WHERE id=?""", (price, now, r["id"]))
@@ -1516,7 +1516,7 @@ def move_listings(db, ids, to_store):
             if free <= 0:
                 st["full"] += 1
                 continue
-            price = convert.store_price(r["src_price"], f"{r['source_key']}|{to['id']}", cfg, to)
+            price = convert.store_price(r["src_price"], cfg, to)
             if r["status"] == "deleted" or r["registered_at"] or r["sold_count"] or r["has_hist"]:   # 예전 스토어 기록은 그 줄에 남겨 휴지통으로
                 new = c.execute("""INSERT INTO listings(store_id, source_id, plan_id, name, price, status, op, round, created_at, updated_at)
                     VALUES(?,?,NULL,?,?,'planned','create',1,?,?)""", (to["id"], r["source_id"], r["name"], price, now, now)).lastrowid
@@ -1612,7 +1612,7 @@ def reprice_net(db):
                 JOIN sources s ON s.id=l.source_id JOIN stores st ON st.id=l.store_id
                 WHERE l.origin_no='' AND l.status IN ('planned','fail')""").fetchall():
             c.execute("UPDATE listings SET price=? WHERE id=?",
-                      (convert.store_price(r["price"], f"{r['source_key']}|{r['store_id']}", cfg, dict(r)), r["id"]))
+                      (convert.store_price(r["price"], cfg, dict(r)), r["id"]))
 
 
 def reprice_pending(db, store_id=None):
@@ -1625,7 +1625,7 @@ def reprice_pending(db, store_id=None):
     n = 0
     with db.tx() as c:
         for r in rows:
-            p = convert.store_price(r["price"], f"{r['source_key']}|{r['store_id']}", cfg, r)
+            p = convert.store_price(r["price"], cfg, r)
             if p != r["cur"]:
                 c.execute("UPDATE listings SET price=? WHERE id=?", (p, r["id"]))
                 n += 1

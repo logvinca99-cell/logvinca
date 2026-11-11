@@ -462,30 +462,37 @@ const App = {
         <th class="r">기준 가격</th><th>복사본 (스토어: 지금 → 새 손님 가격)</th><th>상태</th></tr></thead><tbody>${d.items.map((x) => `<tr>
         <td>${x.line || ""}</td><td class="small">${esc(x.how || "")}${x.key ? `<div class="muted">${esc(x.key)}</div>` : ""}</td>
         <td>${x.source_name ? esc(x.source_name.slice(0, 40)) : ""}</td>
-        <td class="r nowrap">${x.status === "ok" ? `${num(x.old)} → <b>${num(x.new)}</b>` : num(x.new || 0)}</td>
-        <td class="small">${(x.copies || []).map((c) => `${esc(c.store)}${c.live ? " (판매 중)" : ""}: ${num(c.old)} → <b>${num(c.new)}</b>${c.busy ? " · 처리 중이라 다음에" : ""}`).join("<br>")}</td>
+        <td class="r nowrap">${x.status === "ok" ? `${num(x.old)} → <b>${num(x.new)}</b>${x.store ? `<div class="muted small">${esc(x.store)} 손님 가격 ${num(x.target)}원 기준</div>` : ""}` : num(x.target || 0)}</td>
+        <td class="small">${(x.copies || []).map((c) => `${esc(c.store)}${c.live ? " (판매 중)" : c.deleted ? " (내림)" : ""}${c.locked ? " 🔒" : ""}: ${num(c.old)} → <b>${num(c.new)}</b>${c.busy ? " · 처리 중 — 올릴 때 새 가격" : ""}`).join("<br>")}</td>
         <td class="small">${x.status === "ok" ? '<span class="c-ok">바꿈</span>' : `<span class="c-err">${esc(x.why || "")}</span>`}</td></tr>`).join("")}</tbody></table></div>
       <div class="notice ${d.ok ? "info" : "warn"}" style="margin-top:8px">바꿀 원본 <b>${num(d.ok)}</b>개${d.bad ? ` · 못 바꾸는 줄 ${num(d.bad)}개(위 빨간 글씨)` : ""} —
-        아직 안 올린 복사본 ${num(d.pending)}건은 가격을 바로 다시 계산하고, <b>판매 중 ${num(d.live)}건은 네이버 가격만 바로 바꿉니다</b>(상품은 지우지 않음 — 리뷰·판매 기록 그대로).
-        이 원본을 앞으로 복사하거나 스토어 가격 차이 %를 바꿔도 새 기준 가격에서 계산합니다.</div>`;
+        안 올린·내린 복사본 ${num(d.pending)}건은 가격을 바로 다시 계산하고, <b>판매 중 ${num(d.live)}건(잠긴 것 포함)은 네이버 가격만 바로 바꿉니다</b>(상품은 지우지 않음 — 리뷰·판매 기록 그대로).
+        못 보낸 것은 '네이버 반영 대기'로 남아 복사본 화면에서 다시 보낼 수 있습니다. 이 원본을 앞으로 복사하거나 스토어 가격 차이 %를 바꿔도 새 기준 가격에서 계산합니다.</div>`;
     const body = sourceId
-      ? `<p>기준 가격은 모든 스토어 손님 가격의 기준입니다 (손님 가격 = 기준 가격 × (1 + 그 스토어 가격 차이 %)). 역마진 등으로 고칠 때만 바꾸세요.</p>
+      ? `<p>기준 가격은 모든 스토어 손님 가격의 출발점입니다 (손님 가격 = 기준 가격 × (1 + 그 스토어 가격 차이 %)). 역마진 등으로 고칠 때만 바꾸세요.
+          가격 차이 0%인 스토어에서는 <b>기준 가격 = 손님 가격</b>입니다. 특정 스토어 손님 가격으로 고치려면 복사본 화면의 [일괄 수정]이 편합니다.</p>
         <dl class="kv"><dt>지금 기준 가격</dt><dd>${num(current?.price || 0)}원 <span class="muted small">(${esc(SRC[current?.price_src] || SRC.file)})</span></dd></dl>
-        <div class="cl-row"><label class="field" style="margin:0">새 기준 가격 (원)<input id="bp-new" type="number" min="1" step="10" autofocus></label>
+        <div class="cl-row"><label class="field" style="margin:0">새 기준 가격 (원) <span class="muted small">= 가격 차이 0% 스토어의 손님 가격</span><input id="bp-new" type="number" min="1" step="100" autofocus></label>
           <label class="field" style="margin:0;flex:1">메모 <span class="muted small">(예: 역마진 — 가격 올림)</span><input id="bp-memo"></label>
           <button class="btn" id="bp-pv">미리보기</button></div><div id="bp-out"></div><div id="bp-log"></div>`
-      : `<p>여러 원본의 기준 가격을 엑셀로 한꺼번에 고칩니다. <a href="/api/baseprice/template.xlsx">⬇ 양식 받기</a> — 찾는 칸(<b>원본 상품명 / 복사본 상품명(AI로 만든 이름) / 판매자 관리코드 / 상품번호</b>)은 넷 중 하나만 채우고 <b>새 기준 가격</b>를 넣으세요. 상품명은 완전히 같을 때만 찾습니다.</p>
+      : `<p>여러 원본의 가격을 엑셀로 한꺼번에 고칩니다. <a href="/api/baseprice/template.xlsx">⬇ 양식 받기</a> — 찾는 칸(<b>원본 상품명 / 복사본 상품명(AI로 만든 이름) / 판매자 관리코드 / 상품번호</b>)은 넷 중 하나만 채우고 <b>새 손님 가격</b>을 넣으세요.
+          복사본(상품명·관리코드·상품번호)으로 찾은 줄은 <b>그 스토어 손님 가격</b>으로 보고 기준 가격을 거꾸로 계산하고, 원본 상품명으로 찾은 줄은 그 값이 기준 가격입니다. 상품명은 완전히 같을 때만 찾습니다. '(예)'로 시작하는 줄은 읽지 않습니다.</p>
         <label class="btn"><input type="file" id="bp-file" accept=".xlsx,.xlsm,.csv" hidden>수정 엑셀 올리기 (미리보기)</label><div id="bp-out"></div>`;
     this.openModal({
       title: sourceId ? "기준 가격 수정" : "기준 가격 수정 (엑셀)", wide: true, body,
       buttons: [{ label: "닫기" }, { label: "바꾸기", primary: true,
-        confirm: "기준 가격을 바꿉니다. 판매 중 복사본은 네이버 가격을 바로 바꿉니다(상품은 지우지 않음).",
+        get confirm() {
+          if (!pv) return "";
+          const ok = pv.items.filter((x) => x.status === "ok");
+          return `원본 ${num(pv.ok)}개의 기준 가격을 바꿉니다: ` + ok.slice(0, 5).map((x) => `${esc((x.source_name || "").slice(0, 20))} ${num(x.old)} → <b>${num(x.new)}</b>원`).join(" · ")
+            + (ok.length > 5 ? " …" : "") + `<br>안 올린·내린 복사본 ${num(pv.pending)}건은 바로 다시 계산, 판매 중 ${num(pv.live)}건은 네이버 가격만 바꿈(지우지 않음).`;
+        },
+        validate: () => (!pv || !pv.ok ? "먼저 [미리보기]로 바꿀 원본을 확인하세요 (값을 바꿨으면 다시 미리보기)." : ""),
         onClick: async () => {
-          if (!pv || !pv.ok) { this.toast("먼저 미리보기에서 바꿀 원본을 확인하세요.", true); return false; }
           const items = pv.items.filter((x) => x.status === "ok").map((x) => ({ source_id: x.source_id, price: x.new, memo: x.memo || "" }));
           try {
             const r = await this.api("/api/baseprice/apply", { json: { items, how: sourceId ? "원본 상세" : pv.file } });
-            this.toast(`기준 가격 ${num(r.sources)}개 바꿈 · 안 올린 복사본 ${num(r.pending)}건 다시 계산` + (r.live ? ` · 판매 중 ${num(r.live)}건 네이버 가격 바꾸는 중` : "") + (r.error ? ` · ${r.error}` : ""), !!r.error);
+            this.toast(`기준 가격 ${num(r.sources)}개 바꿈 · 안 올린·내린 복사본 ${num(r.pending)}건 다시 계산` + (r.live ? ` · 판매 중 ${num(r.live)}건 네이버 가격 ${r.queued ? "바꾸기 대기 (지금 도는 가격 바꾸기에 이어서)" : "바꾸는 중"}` : ""));
             if (r.task) { this.taskSeen[r.task] = "running"; this.refreshState(); }
             if (after) after(r);
           } catch (e) { this.toast(e.message, true); return false; }
@@ -493,6 +500,9 @@ const App = {
     });
     const show = (d) => { pv = d; $("#bp-out").innerHTML = table(d); };
     if (sourceId) {
+      ["#bp-new", "#bp-memo"].forEach((s) => $(s).addEventListener("input", () => {   // 값을 바꾸면 미리보기를 다시 해야 바꿈
+        if (pv) { pv = null; $("#bp-out").innerHTML = '<p class="small c-warn">값이 바뀌었습니다 — 다시 [미리보기]를 누르세요.</p>'; }
+      }));
       $("#bp-pv").addEventListener("click", async () => {
         try { show(await this.api("/api/baseprice/preview", { json: { source_id: sourceId, price: +$("#bp-new").value, memo: $("#bp-memo").value } })); }
         catch (e) { this.toast(e.message, true); }

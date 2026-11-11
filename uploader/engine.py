@@ -410,7 +410,7 @@ class Runner:
                 if not store.get("_sales_ok", True):
                     raise naver.ApiError("주문(판매 이력)을 확인하지 못해 지우지 않았습니다. 다시 시도하세요.")
                 self._sales_recheck(sid, client)
-                lk = self.db.one("SELECT locked, lock_note, price, nv_status, del_mark FROM listings WHERE id=?", (lid,))
+                lk = self.db.one("SELECT locked, lock_note, price, price_push, nv_status, del_mark FROM listings WHERE id=?", (lid,))
                 if lk["locked"]:
                     self.db.set_listing(lid, "success", op="create", stage="",
                                         message=f"잠금이라 지우지 않음 ({lk['lock_note']})")
@@ -440,7 +440,7 @@ class Runner:
                         self._count(sid, lid, None)
                         return
                     if t.get("price_fixed"):
-                        t = {**t, "price": lk["price"]}   # 방금 네이버에서 확인한 손님 가격
+                        t = {**t, "price": lk["price_push"] or lk["price"]}   # 바꾸기 대기 가격, 없으면 방금 네이버에서 확인한 손님 가격
                         self._save_live_options(client, t, on_wait)
             if op == "delete":
                 if live:
@@ -532,7 +532,7 @@ class Runner:
             sec = time.time() - t0
             self.db.set_listing(lid, "success", op="create", stage="", message=" / ".join(notes), seconds=sec,
                                 seller_code=code, registered_at=time.time(),
-                                sale_shown=shown, nv_status="SALE", nv_disp="ON", nv_at=time.time(),
+                                sale_shown=shown, nv_status="SALE", nv_disp="ON", nv_at=time.time(), price=tn["price"], price_push=None,
                                 origin_no=str(res.get("originProductNo", "")),
                                 channel_no=str(res.get("smartstoreChannelProductNo", "")))
             what = {"refresh": "최신화", "reupload": "다시 올리기"}.get(op, "등록")
@@ -573,7 +573,7 @@ class Runner:
         if not cat_id:
             raise convert.ConvertError(f"카테고리 '{row.get('카테고리')}'를 스마트스토어에서 찾지 못했습니다.")
         base = (self.db.one("SELECT price FROM sources WHERE id=?", (t["source_id"],)) or {}).get("price") or convert.net_price(row)
-        price = t["price"] if t.get("price_fixed") else convert.store_price(base, "", cfg, store)   # 기준 가격 × 그 스토어 가격 차이 %
+        price = t["price"] if t.get("price_fixed") else convert.store_price(base, cfg, store)   # 기준 가격 × 그 스토어 가격 차이 %
         if price != t["price"]:
             self.db.set_listing(lid, None, price=price)
         kw = dict(name=t["name"], price=price, importer=convert.importer_for(store, cfg),

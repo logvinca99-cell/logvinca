@@ -11,7 +11,7 @@ import uuid
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import VERSION, activity, adopt, aiwords, baseprice, srcedit, chem, chrome, clean, eye, excel, mail, nvstate, srctags, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
+from . import VERSION, activity, adopt, aiwords, baseprice, bulkedit, srcedit, chem, chrome, clean, eye, excel, mail, nvstate, srctags, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
 from .db import DB
 from .tasks import Tasks
 
@@ -538,7 +538,7 @@ def create_app(db=None):
             with db.tx() as c:
                 for r in rows:
                     c.execute("UPDATE listings SET price=? WHERE id=?",
-                              (convert.store_price(r["price"], f"{r['source_key']}|{r['store_id']}", cfg, r),
+                              (convert.store_price(r["price"], cfg, r),
                                r["id"]))
             return jsonify({"count": len(rows)})
         if what == "names":
@@ -891,7 +891,7 @@ def create_app(db=None):
         new = convert.to_int(b.get("price"))
         if new <= 0 or not db.one("SELECT 1 FROM sources WHERE id=?", (int(b.get("source_id") or 0),)):
             return fail("새 기준 가격을 넣어 주세요.")
-        it = {"line": 0, "key": "", "how": "원본 상세", "new": new, "memo": str(b.get("memo") or ""), "status": "ok",
+        it = {"line": 0, "key": "", "how": "원본 상세", "new": new, "target": new, "memo": str(b.get("memo") or ""), "status": "ok",
               **baseprice.effect(db, int(b["source_id"]), new)}
         return jsonify({"items": [it], "ok": 1, "bad": 0, "live": it["n_live"], "pending": it["n_pending"], "file": ""})
 
@@ -908,9 +908,81 @@ def create_app(db=None):
             try:
                 out["task"] = tasks.start("baseprice", f"네이버 가격 바꾸기 · {len(st['live']):,}건",
                                           lambda **kw: baseprice.push_live(db, st["live"], **kw))
-            except RuntimeError as e:
-                out["error"] = f"네이버 가격 바꾸기를 시작하지 못함 ({e}) — 다음 최신화 때 새 가격으로 올라갑니다"
+            except RuntimeError:
+                out["queued"] = True   # 지금 도는 가격 바꾸기가 끝나면서 이어서 보냄 (못 보낸 것은 대기에 남아 [다시 시도])
         return jsonify(out)
+
+    # ── 복사본 일괄 수정 (한 스토어: 새 손님 가격·새 상품명) · 네이버 반영 대기 다시 보내기
+
+    bulk_hold = {}   # 미리보기 토큰 → (결과, 때)
+
+    @app.get("/api/listings/bulk_template.xlsx")
+    def listings_bulk_template():
+        from urllib.parse import quote
+        try:
+            data, name = bulkedit.template_xlsx(db, int(request.args.get("store_id") or 0))
+        except ValueError as e:
+            return fail(str(e))
+        fn = f"일괄수정_{name}_{time.strftime('%Y%m%d')}.xlsx"
+        return Response(data, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fn)}"})
+
+    @app.post("/api/listings/bulk_preview")
+    def listings_bulk_preview():
+        f = request.files.get("file")
+        if not f or not f.filename:
+            return fail("파일을 골라 주세요.")
+        path = _save_upload(f)
+        try:
+            pv = bulkedit.preview(db, path, f.filename, int(request.form.get("store_id") or 0))
+        except ValueError as e:
+            return fail(str(e))
+        except Exception as e:  # noqa: BLE001
+            return fail(f"파일을 읽지 못했습니다: {e}")
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        now = time.time()
+        for k, v in list(bulk_hold.items()):
+            if now - v[1] > 3600:
+                bulk_hold.pop(k, None)
+        tok = uuid.uuid4().hex
+        bulk_hold[tok] = (pv, now)
+        return jsonify({**pv, "token": tok})
+
+    @app.post("/api/listings/bulk_apply")
+    def listings_bulk_apply():
+        b = body()
+        v = bulk_hold.pop(str(b.get("token") or ""), None)
+        if not v:
+            return fail("미리보기가 없습니다. 파일을 다시 올려 주세요.")
+        out = bulkedit.apply(db, v[0], f"복사본 일괄 수정 · {v[0].get('store', '')} · {v[0].get('file', '')}")
+        out["task"] = None
+        if out["price_live"] or out["name_live"]:
+            try:
+                ids = out["price_live"]
+                out["task"] = tasks.start("baseprice", f"네이버 반영 (가격·상품명) · {v[0].get('store', '')}",
+                                          lambda **kw: bulkedit.push_all(db, ids, **kw))
+            except RuntimeError:
+                out["queued"] = True
+        out["price_live"] = len(out["price_live"])
+        return jsonify(out)
+
+    @app.get("/api/listings/push_pending")
+    def listings_push_pending():
+        sid = request.args.get("store_id")
+        return jsonify({"price": baseprice.pending_count(db, sid), "name": bulkedit.name_pending_count(db, sid)})
+
+    @app.post("/api/listings/push_retry")
+    def listings_push_retry():
+        sid = body().get("store_id")
+        try:
+            return jsonify({"task": tasks.start("baseprice", "네이버 반영 다시 시도 (가격·상품명)",
+                                                lambda **kw: bulkedit.push_all(db, None, store_id=sid, **kw))})
+        except RuntimeError as e:
+            return fail(str(e))
 
     # ── 원본 상세·옵션 고치기 (원본 상세 창)
 
