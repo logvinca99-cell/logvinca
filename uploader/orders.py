@@ -202,7 +202,7 @@ def sales_status(db, store_id):
         raise ValueError("스토어를 찾지 못했습니다.")
     kf = known_from(st)
     a = db.one("""SELECT COUNT(*) AS n, MIN(registered_at) AS reg_min, SUM(locked=1) AS locked, SUM(manual_lock=1) AS manual,
-        SUM(? IS NULL OR registered_at < ?) AS need
+        SUM(? IS NULL OR registered_at IS NULL OR registered_at < ?) AS need
         FROM listings WHERE store_id=? AND origin_no!='' AND status!='deleted'""",   # 모든 판매 중 상품 (가져온 것·이 프로그램이 올린 것)
                (kf, (kf or 0) - 3600, st["id"]))
     f = db.one("""SELECT COUNT(*) AS n, MIN(o.ordered_at) AS mn, MAX(o.ordered_at) AS mx, COUNT(DISTINCT o.listing_id) AS lst

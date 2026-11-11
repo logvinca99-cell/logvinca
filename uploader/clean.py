@@ -197,7 +197,7 @@ def import_excel(db, path, filename, opts=None, progress=None, should_stop=None)
                                                 (convert.thumbnails(row) or [""])[0], str(row.get("카테고리") or ""), pack(row), now))
         batch.clear()
 
-    for i, row in enumerate(excel.iter_rows(path, filename), 2):
+    for i, row in excel.iter_rows(path, filename, lines=True):   # i = 엑셀 실제 행 번호
         if should_stop and should_stop():
             break
         for k in row:
@@ -613,8 +613,8 @@ def to_sources(db, bid, ids=None, progress=None, should_stop=None):
     생활화학 판정 '물건'은 원본에도 남겨 올릴 때 '인증 대상 아님'으로."""
     from . import inventory
     if ids:
-        rows = db.q(f"SELECT id, row, chem FROM clean_item WHERE status='new' AND id IN ({','.join('?' * len(ids))}) ORDER BY ord",
-                    [int(i) for i in ids])
+        rows = db.q(f"SELECT id, row, chem FROM clean_item WHERE status='new' AND batch_id=? AND id IN ({','.join('?' * len(ids))}) ORDER BY ord",
+                    [bid, *[int(i) for i in ids]])
     else:
         rows = db.q("SELECT id, row, chem FROM clean_item WHERE batch_id=? AND status='new' ORDER BY ord", (bid,))
     if not rows:

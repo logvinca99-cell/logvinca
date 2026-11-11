@@ -70,7 +70,7 @@ def upload_scan(db, rows, limit=8):
         known.setdefault(r["img_key"], (r["id"], r["name"]))
     seen = {}
     dc = DupChecker(db)
-    for i, row in enumerate(rows, 2):
+    for i, row in rows:   # (엑셀 실제 행 번호, 줄)
         name = str(row.get("상품명") or "").strip()
         if not name:
             continue
@@ -159,7 +159,8 @@ def add_names(c, source_id, names, origin, now=None, cfg=None, rejected=None):
 def import_products(db, fileobj, filename, progress=None, should_stop=None, src_tags=None, store_tag=False, skip_img_dup=False):
     """원본 엑셀(셀업 양식) 불러오기. 상품명이 완전히 같은 원본이 이미 있으면(또는 파일 안에 또 나오면) '상품명 중복'으로 넣지 않는다
     (덮어쓰지 않음). src_tags: 모든 원본에 붙일 출처 태그. skip_img_dup: 대표 이미지 주소가 겹치는(상품명은 다른) 줄은 버림 (올릴 때 창에서 고름)."""
-    st = import_rows(db, ((i, r) for i, r in enumerate(excel.iter_rows(fileobj, filename), 2)), filename,
+    excel.need_name_column(fileobj, filename)
+    st = import_rows(db, excel.iter_rows(fileobj, filename, lines=True), filename,
                      total_hint=excel.count_rows(fileobj, filename), progress=progress, should_stop=should_stop,
                      src_tags=src_tags, store_tag=store_tag, skip_img=img_skipper(db) if skip_img_dup else None, line_refs=True)
     st.pop("refs", None)
@@ -225,6 +226,7 @@ def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=No
         if should_stop and should_stop():
             break
         if not row.get("상품명"):
+            stats["no_name"] = stats.get("no_name", 0) + 1   # 상품명이 빈 줄은 넣지 않음
             continue
         w = dc.where(row)
         if w:   # 상품명 중복 → 넣지 않음
@@ -1388,14 +1390,14 @@ def set_listing_name(db, lid, name):
 
 
 def reset_rounds(db, ids):
-    """회차 초기화: 지난 회차 기록을 지우고 회차를 1로. 판매 중·내린 건은 다음에 다시 올릴 때(최신화·다시 올리기)
+    """회차 초기화: 회차를 1로 (지난 회차 기록은 남김). 판매 중·내린 건은 다음에 다시 올릴 때(최신화·다시 올리기)
     +1 하지 않고 1회차로 올라가게 표시. 아직 안 올린 건은 바로 1회차. 바꾼 수."""
     n = 0
     for i in range(0, len(ids), 900):
         chunk = ids[i:i + 900]
         m = ",".join("?" * len(chunk))
         with db.tx() as c:
-            c.execute(f"DELETE FROM listing_history WHERE listing_id IN ({m})", chunk)
+            # (지난 회차 기록은 지우지 않음 — 예전 상품번호로 온 주문이 이어지고, 남은 자리 계산이 맞게)
             c.execute(f"""UPDATE listings SET round=1, round_reset=CASE WHEN origin_no!='' OR status='deleted' THEN 1 ELSE 0 END,
                 updated_at=? WHERE id IN ({m})""", (time.time(), *chunk))
             n += c.execute("SELECT changes()").fetchone()[0]
@@ -1569,6 +1571,10 @@ def cancel_listings(db, where_sql, args):
         ch = sids[i:i + 900]
         db.x(f"""UPDATE sources SET drop_pending=0 WHERE drop_pending=1 AND id IN ({','.join('?' * len(ch))})
             AND id NOT IN (SELECT source_id FROM listings WHERE op='delete' AND status IN ('planned','queued','running'))""", ch)
+    from . import chem   # '원본·복사본 모두 삭제' 중인 원본의 다른 할 일을 취소했으면 남은 것이 없을 때 마무리
+    for sid in sorted({r["source_id"] for r in rows}):
+        if (db.one("SELECT drop_pending FROM sources WHERE id=?", (sid,)) or {}).get("drop_pending"):
+            chem.after_drop(db, sid)
     db.x("DELETE FROM plans WHERE id NOT IN (SELECT DISTINCT plan_id FROM listings WHERE plan_id IS NOT NULL)")
     return len(rows)
 
@@ -1576,8 +1582,7 @@ def cancel_listings(db, where_sql, args):
 # ───────────────────────── 원본 일괄 수정
 
 def bulk_edit_sources(db, ids, clear_seller_code=False, stock=None):
-    """판매자코드 비우기(나중에 일괄로 채움), 재고수를 상품·옵션 모두 stock개로.
-    엑셀 원본을 다시 불러오면 그 파일 값으로 돌아간다."""
+    """판매자코드 비우기(나중에 일괄로 채움), 재고수를 상품·옵션 모두 stock개로."""
     n = 0
     for i in range(0, len(ids), 500):
         chunk = list(ids)[i:i + 500]

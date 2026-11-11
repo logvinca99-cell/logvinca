@@ -208,6 +208,7 @@ const App = {
     const view = $("#view");
     view.innerHTML = "";
     view.scrollTop = 0;
+    $("#term-pop")?.remove();
     this.current = this.pages[page];
     this._page = page;
     this.current.mount(view, params);
@@ -256,7 +257,7 @@ const App = {
       || (t.ended_at && (t.status === "error" ? now - t.ended_at < 600 : now - t.ended_at < 60))));
     const close = (key) => `<button class="link-btn" data-close-task="${key}" title="닫기">✕</button>`;
     box.innerHTML = this.ctxCards(now, close) + show.map((t) => {
-      const p = t.total ? Math.min(100, (t.done / t.total) * 100) : t.status !== "running" ? 100 : null;
+      const p = t.status !== "running" ? 100 : t.total ? Math.min(100, (t.done / t.total) * 100) : null;
       const st = { running: "", done: "끝", error: "오류", stopped: "중단됨" }[t.status];
       const msg = t.status === "running" ? (t.message || "준비 중…") + (t.total ? ` · ${num(t.done)}/${num(t.total)}` : "")
         : t.status === "error" ? t.error : this.taskMsg(t);
@@ -398,9 +399,11 @@ const App = {
   /* 엑셀 올리기 (원본 불러오기·상세 정리): 서버가 가격 칸을 먼저 확인 — 이상한 줄이 있으면 경고 창, 확인하면 그대로 진행 */
   async sendChecked(url, fd, extra = {}) {
     let r;
-    if (/\/api\/(sources|clean)\/import/.test(url)) this.toast("엑셀 가격 칸(판매가·할인가·원가) 확인 중…");
-    try { r = await this.api(url, { method: "POST", body: fd }); } catch (e) { this.toast(e.message, true); return null; }
-    if (r && r.token && (r.price_warn || r.name_dup)) return this.priceWarn(url, r, extra);
+    const checking = /\/api\/(sources|clean)\/import/.test(url);
+    if (checking) this.openModal({ title: "엑셀 확인 중", body: '<p><span class="spin"></span> 파일을 읽어 상품명 중복·가격 칸·대표 이미지 겹침을 확인하는 중입니다… (큰 파일은 몇십 초)</p>', buttons: [] });
+    try { r = await this.api(url, { method: "POST", body: fd }); } catch (e) { if (checking) this.closeModal(); this.toast(e.message, true); return null; }
+    if (checking) this.closeModal();
+    if (r && r.token) return this.priceWarn(url, r, extra);
     return this.startTask(Promise.resolve(r));
   },
   /* 판매 중 상품(가져온 것·올린 것 모두)의 판매 이력 확인: 판매자센터 주문 파일을 넣거나 팔린 것을 직접 잠근 뒤 '판매 이력 확인 완료'
@@ -551,11 +554,15 @@ const App = {
           <label class="check"><input type="radio" name="img-dup" value="drop"><span><b>겹치는 상품은 버리고 저장</b> — 이미 있는 원본(또는 이 파일 앞줄)과 대표 이미지가 같은 줄 ${num(im.n)}개는 넣지 않음</span></label></div>` : "";
     let done = false;
     const drop = () => { if (done) return; done = true; this.api("/api/upload/drop", { json: { token: r.token } }).catch(() => {}); };
+    const toAdd = Math.max(0, (w.total || 0) - (im.drop_default || 0));
+    const sumHtml = `<div class="notice ${w.total ? "info" : "warn"}" style="margin-bottom:12px">파일의 상품 <b>${num((w.total || 0) + (dp.n || 0))}</b>줄 →
+        새로 넣을 원본 <b>${num(w.total || 0)}</b>개${dp.n ? ` · 상품명 중복이라 안 넣음 ${num(dp.n)}개` : ""}${w.n ? ` · 가격 칸 확인 ${num(w.n)}개` : ""}${im.n ? ` · 대표 이미지 겹침 ${num(im.n)}개(아래에서 고르기)` : ""}
+        ${w.total ? "" : "<br><b>넣을 상품이 없습니다.</b>"}</div>`;
     return new Promise((resolve) => this.openModal({
       title: `올리기 전 확인 — ${r.file}`, wide: true,
       onClose: () => { if (!done) { drop(); resolve(null); } },
       body: (b) => {
-        b.innerHTML = dupHtml + priceHtml + imgHtml;
+        b.innerHTML = sumHtml + dupHtml + priceHtml + imgHtml;
         $("#pw-dupcsv", b)?.addEventListener("click", () => {
           const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
           const csv = "\ufeff" + [["줄", "상품명", "겹치는 곳"], ...dp.rows].map((x) => x.map(q).join(",")).join("\r\n");
@@ -566,8 +573,8 @@ const App = {
         });
       },
       buttons: [
-        { label: "넣지 않기", noConfirm: true, onClick: () => { drop(); resolve(null); } },
-        { label: "이대로 넣기", primary: true,
+        { label: w.total ? "넣지 않기" : "닫기", noConfirm: true, onClick: () => { drop(); resolve(null); } },
+        ...(w.total ? [{ label: "이대로 넣기", primary: true,
           validate: (b) => (im.n && !$("input[name=img-dup]:checked", b) ? "대표 이미지가 겹치는 상품을 포함할지 버릴지 골라 주세요." : ""),
           onClick: async (b) => {
           const pick = $("input[name=img-dup]:checked", b)?.value;
@@ -578,7 +585,7 @@ const App = {
           if (pick) fd.append("img_dup", pick);
           Object.entries(extra).forEach(([k, v]) => fd.append(k, v));
           resolve(await this.startTask(this.api(url, { method: "POST", body: fd })));
-        } },
+        } }] : []),
       ],
     }));
   },
@@ -620,8 +627,9 @@ const App = {
   importSources(file) {
     this.openModal({
       title: "원본 엑셀 불러오기",
-      body: `<p><b>${esc(file.name)}</b> → 원본 상품 (같은 대표 사진의 원본은 내용만 갱신, 태그는 더해짐)</p>${this.tagFields("is", { value: ymdToday() })}`,
-      buttons: [{ label: "취소" }, { label: "불러오기", primary: true, onClick: () => { this.upload("/api/sources/import", file, this.tagValues("is")); this._srcTags = null; } }],
+      body: `<p><b>${esc(file.name)}</b> → 원본 상품. 상품명이 완전히 같은 원본이 이미 있으면(또는 파일 안에 또 나오면) <b>넣지 않습니다</b>(덮어쓰지 않음).
+          [확인해 보기]를 누르면 먼저 파일을 검사해 넣을 수·상품명 중복·가격 칸·대표 이미지 겹침을 보여 드리고, 거기서 한 번 더 확인한 뒤 넣습니다.</p>${this.tagFields("is", { value: ymdToday() })}`,
+      buttons: [{ label: "취소" }, { label: "확인해 보기", primary: true, noConfirm: true, onClick: () => { this.upload("/api/sources/import", file, { ...this.tagValues("is"), always: "1" }); this._srcTags = null; } }],
     });
     this.bindTagFields("is");
   },
@@ -717,7 +725,17 @@ const App = {
     $("#modal-bg").hidden = false;
     setTimeout(() => $("[autofocus]", b)?.focus(), 50);
   },
+  /* ✕·Esc·바깥 클릭: 창이 '고친 내용 있음'을 알리면(_dirty) 먼저 묻고 닫음 */
+  async tryCloseModal() {
+    if (this._dirty && this._dirty()) {
+      const keep = this._dirty;
+      if (!confirm("고친 내용이 저장되지 않았습니다. 저장하지 않고 닫을까요?")) return;
+      if (this._dirty === keep) this._dirty = null;
+    }
+    this.closeModal();
+  },
   closeModal() {
+    this._dirty = null;
     this._endConfirmStep();
     $("#modal-bg").hidden = true;
     const f = this._onClose;
@@ -747,13 +765,15 @@ const App = {
   /* 2차 확인 화면 (같은 창 안에서): 창 제목·누른 버튼·창 설명·지금 고른 설정을 보여 주고 [← 돌아가기] / [확인 — 실행] */
   _confirmStep(title, x, b) {
     const txt = (el) => (el?.innerText || "").replace(/\s+/g, " ").trim();
-    const intro = [...b.querySelectorAll(".notice, p, li")].filter((el) => !el.closest("table") && el.offsetParent !== null)
+    const intro = [...b.querySelectorAll(".notice, p, li")].filter((el) => !el.closest("table, [data-noconfirm], details") && el.offsetParent !== null
+        && !el.querySelector("button, input[type=file]"))
       .map(txt).filter(Boolean).slice(0, 6).map((t) => t.length > 220 ? t.slice(0, 220) + "…" : t);
     const picks = [];
-    b.querySelectorAll("input, select, textarea").forEach((el) => {
-      if (el.offsetParent === null || el.type === "hidden" || el.type === "file") return;
+    if (!x.noPicks) b.querySelectorAll("input, select, textarea").forEach((el) => {
+      if (el.offsetParent === null || el.type === "hidden" || el.type === "file" || el.closest("[data-noconfirm]")) return;
       const lab = el.closest("label");
       const own = lab ? txt(lab).replace(el.tagName === "SELECT" ? txt(el) : "", "").trim() : (el.placeholder || el.name || "");
+      if (!own) return;   // 이름 없는 칸(표 안의 입력 등)은 빼기 — 창이 confirm에 요약을 넣음
       if (el.type === "checkbox") picks.push(el.checked ? `✔ ${own}` : `✘ (끔) ${own}`);
       else if (el.type === "radio") { if (el.checked) picks.push(`✔ ${own}`); }
       else if (el.tagName === "SELECT") { const o = el.selectedOptions?.[0]; if (o && o.value !== "") picks.push(`${own}: ${o.textContent.trim()}`); }
@@ -1106,7 +1126,7 @@ const App = {
     this.openModal({
       title: "파일 불러오기",
       body: `<p><b>${esc(file.name)}</b> 파일을 무엇으로 불러올까요?</p>
-        <p class="muted small">원본 상품: 수집한 상품 엑셀. 같은 판매자코드는 새로 추가하지 않고 내용만 갱신합니다.<br>
+        <p class="muted small">원본 상품: 셀업 양식 엑셀. 상품명이 완전히 같은 원본이 이미 있으면 넣지 않습니다(덮어쓰지 않음).<br>
         상품명: 외부 AI 도구 등에서 만든 새 상품명 파일. 판매자코드(또는 원본상품명) 열과 상품명 열이 있어야 합니다.<br>
         판매 이력: 아바닛 등 주문 수집 웹에서 내려받은 주문 파일. 판매된 복사본은 최신화·내리기에서 빠집니다.</p>
         <div class="card pad" style="margin-top:8px"><div class="small" style="margin-bottom:4px"><b>원본 상품으로</b> 불러올 때 붙일 태그</div>${this.tagFields("af", { value: ymdToday() })}</div>`,
@@ -1125,9 +1145,13 @@ const App = {
     $("#d-close").addEventListener("click", () => this.closeDrawer());
     $("#drawer-bg").addEventListener("click", () => this.closeDrawer());
     $("#d-tabs").addEventListener("click", (e) => { const b = e.target.closest("[data-tab]"); if (b) this.drawerTab(b.dataset.tab); });
-    $("#m-close").addEventListener("click", () => this.closeModal());
-    $("#modal-bg").addEventListener("mousedown", (e) => { if (e.target.id === "modal-bg") this.closeModal(); });
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape") { this.closeModal(); this.closeDrawer(); } });
+    $("#m-close").addEventListener("click", () => this.tryCloseModal());
+    $("#modal-bg").addEventListener("mousedown", (e) => { if (e.target.id === "modal-bg") this.tryCloseModal(); });
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      $("#term-pop")?.remove();
+      if (!$("#modal-bg").hidden) this.tryCloseModal(); else this.closeDrawer();
+    });
     $("#tasks").addEventListener("click", async (e) => {
       const cl = e.target.closest("[data-close-task]");
       if (cl) { (this.taskClosed ||= new Set()).add(cl.dataset.closeTask); this.renderTasks(this.state.tasks); return; }

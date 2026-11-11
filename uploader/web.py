@@ -168,10 +168,17 @@ def create_app(db=None):
         path = _save_upload(f)
         if price_check and request.form.get("price_ok") != "1":
             try:   # 가격 칸 + 대표 이미지 주소 겹침 (상품명이 다른데 이미지가 같은 줄)
-                scan = inventory.upload_scan(db, excel.iter_rows(path, f.filename))
+                excel.need_name_column(path, f.filename)
+                scan = inventory.upload_scan(db, excel.iter_rows(path, f.filename, lines=True))
+            except ValueError as e:   # 상품명 열이 없음 등 → 바로 알림 (작업을 돌리지 않음)
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+                return None, fail(str(e))
             except Exception:  # noqa: BLE001 - 읽기 오류는 불러오기 작업에서 알림
                 scan = {"price": {"n": 0}, "img": {"n": 0}, "dup": {"n": 0}}
-            if scan["price"]["n"] or scan["img"]["n"] or scan["dup"]["n"]:
+            if scan["price"]["n"] or scan["img"]["n"] or scan["dup"]["n"] or request.form.get("always") == "1":
                 now = time.time()
                 for k, v in list(price_hold.items()):   # 한 시간 넘게 둔 것은 지움
                     if now - v[2] > 3600:
@@ -1049,14 +1056,15 @@ def create_app(db=None):
     def adopt_drop_sources(rid):
         return jsonify({"ids": adopt.drop_source_ids(db, rid)})
 
-    @app.get("/api/adopt/<int:rid>/items.csv")
+    @app.get("/api/adopt/<int:rid>/items.xlsx")
     def adopt_items_csv(rid):
         try:
             data, name = adopt.items_csv(db, rid, request.args.get("kind") or "store_only")
         except ValueError as e:
             return fail(str(e), 404)
         from urllib.parse import quote
-        return Response(data, mimetype="text/csv", headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
+        return Response(data, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
 
     @app.get("/api/home/memo")
     def home_memo_get():
@@ -1344,8 +1352,8 @@ def create_app(db=None):
     def _ctx_sources(b):
         if b.get("retry"):   # 실패(재시도 대기)한 원본만 다시
             return [r["source_id"] for r in db.q("SELECT source_id FROM ctx_kw WHERE status='retry' ORDER BY source_id")]
-        if b.get("listing_filter"):
-            f = _filter_from(b["listing_filter"])
+        if "listing_filter" in b:
+            f = _filter_from(b["listing_filter"] or {})
             f.pop("op", None)
             lids = inventory.listing_ids(db, f)
             out = []
@@ -1469,7 +1477,7 @@ def create_app(db=None):
         if runner.state["running"]:
             return fail("등록이 진행 중일 때는 지울 수 없습니다. 끝난 뒤에 다시 시도하세요.")
         b = body()
-        ids = _ctx_sources(b) if b.get("listing_filter") else inventory.source_ids(db, _filter_from(b))
+        ids = _ctx_sources(b) if "listing_filter" in b else inventory.source_ids(db, _filter_from(b))
         if not ids:
             return fail("고른 원본이 없습니다.")
         return jsonify(trash.trash_sources(db, ids, keep_naver=bool(b.get("keep_naver"))))
@@ -1871,9 +1879,12 @@ def create_app(db=None):
             pairs.append((s, naver.make_client(s)))
         if not pairs:
             return fail("주문을 가져올 스토어가 없습니다 (API 키가 있는 사용 중 스토어).")
-        days = body().get("days") or config.load().get("orders_initial_days")
-        since = _date_ts(body().get("from"))
-        until = _date_ts(body().get("to"), end=True)
+        try:
+            days = int(body().get("days") or config.load().get("orders_initial_days") or 0) or None
+            since = _date_ts(body().get("from"))
+            until = _date_ts(body().get("to"), end=True)
+        except (TypeError, ValueError):
+            return fail("날짜(예: 2026-01-31)나 일수를 확인해 주세요.")
         title = f"주문 가져오기 · 스토어 {len(pairs)}곳" + (f" · {body().get('from')}~{body().get('to') or '오늘'}" if since else "")
         try:
             tid = tasks.start("orders", title,
@@ -2357,27 +2368,33 @@ def create_app(db=None):
             n += inventory.cancel_listings(db, f"id IN ({','.join('?' * len(chunk))})", chunk)
         return jsonify({"cancelled": n})
 
-    @app.get("/api/listings/export.csv")
+    @app.get("/api/listings/export.xlsx")
     def export():
+        """복사본 목록 엑셀 (서식: 머리줄·첫 줄 고정·코드는 글자·상태·할 일은 한국어)."""
+        from urllib.parse import quote
+        from . import xlsxout
         f = _filter_from(request.args)
-        buf = io.StringIO()
-        w = csv.writer(buf)
-        w.writerow(["스토어", "판매자 관리코드", "회차", "등록 상품명", "원본 번호", "원본 판매자코드", "원본 상품명",
-                    "판매가", "기준 가격", "상태", "할 일", "올린 날", "원상품번호", "채널상품번호", "메시지"])
-        page = 0
+        ST = {"planned": "대기", "queued": "처리 중", "running": "처리 중", "success": "판매 중", "fail": "실패", "deleted": "내림"}
+        OP = {"create": "새 등록", "refresh": "최신화", "reupload": "다시 올리기", "delete": "내리기"}
+        rows, page = [], 0
         while True:
             res = inventory.query_listings(db, f, page, 500)
             for r in res["rows"]:
-                w.writerow([r["store_name"], r["seller_code"], r["round"], r["name"], r["source_id"], r["source_code"],
-                            r["source_name"], r["price"], r["source_price"], r["status"], r["op"],
-                            time.strftime("%Y-%m-%d", time.localtime(r["registered_at"])) if r["registered_at"] else "",
-                            r["origin_no"], r["channel_no"], r["message"]])
+                rows.append([r["store_name"], r["seller_code"], r["round"], r["name"], r["source_id"], r["source_code"],
+                             r["source_name"], r["price"], r.get("sale_shown") or "", r["source_price"], ST.get(r["status"], r["status"]),
+                             OP.get(r["op"], r["op"]) if r["status"] in ("planned", "fail", "queued", "running") else "",
+                             "잠김" if r.get("locked") else "",
+                             time.strftime("%Y-%m-%d", time.localtime(r["registered_at"])) if r["registered_at"] else "",
+                             r["origin_no"], r["channel_no"], r["message"]])
             if len(res["rows"]) < 500:
                 break
             page += 1
-        name = f"listings_{time.strftime('%Y%m%d_%H%M')}.csv"
-        return Response("﻿" + buf.getvalue(), mimetype="text/csv",
-                        headers={"Content-Disposition": f"attachment; filename={name}"})
+        data = xlsxout.build("복사본", ["스토어", "판매자 관리코드", "회차", "등록 상품명", "원본 번호", "원본 판매자코드", "원본 상품명",
+                                     "손님 가격", "네이버 판매가", "기준 가격", "상태", "할 일", "잠금", "올린 날", "원상품번호", "채널상품번호", "메시지"],
+                             rows, (14, 18, 6, 50, 9, 18, 50, 12, 12, 12, 9, 11, 6, 11, 16, 16, 40), text_cols=(1, 5, 14, 15), money_cols=(7, 8, 9))
+        name = f"복사본_{time.strftime('%Y%m%d_%H%M')}.xlsx"
+        return Response(data, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
 
     # ── 등록 실행
 

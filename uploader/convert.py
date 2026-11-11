@@ -102,6 +102,13 @@ def options(row):
     o = row.get("옵션상품")
     if not isinstance(o, dict):
         return None
+    o = dict(o)
+    for k in ("optionCombinations", "optionSimple", "optionCustom", "optionStandards"):
+        v = o.get(k)
+        if v is not None and not isinstance(v, list):
+            o[k] = []
+        elif isinstance(v, list):
+            o[k] = [c for c in v if isinstance(c, dict)]
     if any(o.get(k) for k in ("optionCombinations", "optionSimple", "optionCustom", "optionStandards")):
         return o
     return None

@@ -106,7 +106,7 @@ App.page("runs", {
           : `<tr class="empty-row"><td colspan="12">아직 기록이 없습니다.</td></tr>`}</tbody></table></section>
       <section class="card table-card"><div class="sec-head pad-x"><h2>불러오기</h2></div>
         <table class="grid"><thead><tr><th>시각</th><th>종류</th><th>파일</th><th class="w-num">줄</th><th class="w-num">새로</th>
-          <th class="w-num">갱신</th><th>메모</th></tr></thead>
+          <th class="w-num">안 넣음</th><th>메모</th></tr></thead>
         <tbody>${imports.length ? imports.map((i) => `<tr><td>${when(i.created_at)}</td><td>${i.kind === "names" ? "상품명" : "원본"}</td>
           <td>${esc(i.file_name)}</td><td class="num">${num(i.total)}</td><td class="num">${num(i.added)}</td>
           <td class="num">${num(i.updated)}</td><td class="muted small">${esc(i.note)}</td></tr>`).join("")

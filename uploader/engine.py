@@ -333,6 +333,13 @@ class Runner:
             self.db.x("UPDATE listings SET status='planned' WHERE status='queued'")
             touched = {t["source_id"] for v in by_store.values() for t in v}
             self.db.recount_sources(touched)
+            try:   # '원본·복사본 모두 삭제' 중이던 원본: 남은 것이 없으면 마무리 (중단으로 대기로 돌아간 건 등)
+                from . import chem
+                for sid_ in touched:
+                    if (self.db.one("SELECT drop_pending FROM sources WHERE id=?", (sid_,)) or {}).get("drop_pending"):
+                        chem.after_drop(self.db, sid_)
+            except Exception:  # noqa: BLE001
+                pass
             try:
                 orders.rematch(self.db)  # 새로 올린 복사본에 이미 받아 둔 주문이 맞는지
             except Exception:  # noqa: BLE001

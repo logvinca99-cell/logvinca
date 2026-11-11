@@ -198,10 +198,12 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
     if products is None:
         products = fetch_products(db, store["id"], progress, should_stop)
     st["store_products"] = len(products)
-    by_code = {}
+    by_code, code_dup = {}, []
     for p in products:
         if p["code"] and p["code"] not in by_code:
             by_code[p["code"]] = p
+        elif p["code"]:
+            code_dup.append(p)
     managed = {r["channel_no"] for r in db.q("SELECT channel_no FROM listings WHERE store_id=? AND channel_no!=''", (store["id"],))}
     # '이 프로그램에서만 빼기'로 뺐던 판매 중 상품: 예전 판매자코드 → 그 상품 (최신화로 코드가 바뀌었어도 1대1로 다시 찾게)
     by_channel = {p["channel_no"]: p for p in products if p["channel_no"]}
@@ -248,6 +250,11 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
         xl = convert.net_price(r)
         r, _ = clean.auto_fix(r, {"price": True, "code": False, "info": True}, [])
         final = p["final"] or p["sale"]
+        if final <= 0:
+            st["dup_same"] += 1
+            add_item("dup_same", code=p["code"], name=p["name"], channel_no=p["channel_no"], status=p["status"], reg_at=p["reg_at"],
+                     note="연결 못 함: 네이버에서 손님 가격을 읽지 못함 (0원)")
+            continue
         if final > 0:
             if xl != final and p["channel_no"] not in managed:
                 st["price_diff"] += 1
@@ -311,11 +318,13 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
             elif k or new_tags != x["src_tags"]:
                 c.execute("UPDATE sources SET data=?, src_tags=?, updated_at=? WHERE id=?", (pack(d), new_tags, now, x["id"]))
     rows_by_i = dict(keep)
+    new_sids = set()
     new_rows = [(i, rows_by_i[i]) for k, i in first.items() if k not in exist]
     if new_rows:
         imp = inventory.import_rows(db, iter(new_rows), f"기존 상품 가져오기 · {store['name']} · {filename}", total_hint=len(new_rows),
                                     progress=progress, should_stop=should_stop, src_tags=tags, store_tag=False, price_src="adopt")
         refs.update(imp.get("refs") or {})
+        new_sids.update((imp.get("refs") or {}).values())
         for i, _ in new_rows:   # (드묾) 넣는 사이 같은 상품명 원본이 생겨 못 넣은 줄 → 알림
             if i not in refs:
                 p = matched[i]
@@ -330,9 +339,10 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
         for i, sid in refs.items():
             p = matched[i]
             sids.add(sid)
+            eye = opts.get("mark_eye", True) and sid in new_sids
             c.execute("UPDATE sources SET price_src=CASE WHEN price_src='' AND adopted=0 THEN 'adopt' ELSE price_src END, adopted=CASE WHEN adopted=0 THEN 1 ELSE adopted END"
-                      + (", eye_at=COALESCE(eye_at, ?)" if opts.get("mark_eye", True) else "") + " WHERE id=?",
-                      ((now, sid) if opts.get("mark_eye", True) else (sid,)))
+                      + (", eye_at=COALESCE(eye_at, ?)" if eye else "") + " WHERE id=?",
+                      ((now, sid) if eye else (sid,)))
             if p["channel_no"] in managed:
                 st["already"] += 1
                 add_item("already", code=p["code"], name=p["name"], channel_no=p["channel_no"], status=p["status"], reg_at=p["reg_at"], source_id=sid)
@@ -350,7 +360,7 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
                          source_id=sid, note=f"연결 못 함: 이 원본은 상품번호 {cur['channel_no']}와 연결돼 있음")
                 continue
             vals = dict(name=p["name"], price=p["final"] or p["sale"], status="success", op="create", round=1, seller_code=p["code"],
-                        origin_no=p["origin_no"], channel_no=p["channel_no"], registered_at=p["reg_at"] or now, sale_shown=p["sale"] or None,
+                        origin_no=p["origin_no"], channel_no=p["channel_no"], registered_at=p["reg_at"] or 0, sale_shown=p["sale"] or None,
                         price_fixed=1, message="", stage="", updated_at=now, nv_status=p["status"], nv_disp=p["disp"], nv_at=now)
             if cur:   # 이 스토어에 아직 안 올린(또는 내린) 복사본이 있었으면 그 줄을 올라가 있는 상품으로
                 if cur["name_id"]:
@@ -400,11 +410,18 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
             continue
         sid = _unmatched_source(db, k, code)
         st["dropped"] += 1
-        if sid:
+        note = "스토어에 없음"
+        if sid and (sid in set(refs.values()) or _source_busy(db, sid)):
+            sid, note = None, "스토어에 없음 · 같은 상품명 원본이 판매 중이라 원본은 그대로"
+        elif sid:
             drop_src.add(sid)
-        add_item("dropped", code=code, name=name, source_id=sid,
-                 note="스토어에 없음 · 원본에 있음 → 원본까지 삭제 대상" if sid else "스토어에 없음")
+            note = "스토어에 없음 · 원본에 있음 → 원본까지 삭제 대상"
+        add_item("dropped", code=code, name=name, source_id=sid, note=note)
     st["dropped_src"] = len(drop_src)
+    for p in code_dup:   # 스토어에 판매자코드가 같은 상품이 또 있음 → 연결 못 하고 알림
+        st["store_only"] += 1
+        add_item("store_only", code=p["code"], name=p["name"], channel_no=p["channel_no"], status=p["status"], reg_at=p["reg_at"],
+                 note="스토어에 판매자코드가 같은 상품이 또 있음 — 앞 상품만 연결")
 
     with db.tx() as c:
         c.executemany("""INSERT INTO adopt_item(run_id, kind, code, name, channel_no, status, reg_at, source_id, note)
@@ -430,6 +447,17 @@ def _assign_keys(db, store_id, keep, matched, managed):
         ch = bks[j:j + 900]
         for x in db.q(f"SELECT id, source_key FROM sources WHERE source_key IN ({','.join('?' * len(ch))})", ch):
             sid_of[x["source_key"]] = x["id"]
+    names = {i: str(r.get("상품명") or "").strip() for i, r in keep if base[i] not in sid_of}
+    nm = sorted({v for v in names.values() if v})
+    by_name = {}
+    for j in range(0, len(nm), 900):
+        ch = nm[j:j + 900]
+        for x in db.q(f"SELECT id, name, source_key FROM sources WHERE name IN ({','.join('?' * len(ch))}) ORDER BY id", ch):
+            by_name.setdefault(x["name"], x)
+    for i, n in names.items():
+        if n in by_name:
+            base[i] = by_name[n]["source_key"]
+            sid_of[base[i]] = by_name[n]["id"]
     sids = sorted(sid_of.values())
     for j in range(0, len(sids), 900):
         ch = sids[j:j + 900]
@@ -461,6 +489,11 @@ def _history_codes(db, store_id):
             WHERE l.store_id=? AND l.origin_no!='' AND l.status!='deleted' AND h.seller_code!=''""", (int(store_id),)):
         out[x["seller_code"]] = x["source_id"]
     return out
+
+
+def _source_busy(db, sid):
+    return bool(db.one("""SELECT 1 FROM listings WHERE source_id=? AND status!='deleted'
+        AND (origin_no!='' OR status IN ('queued','running'))""", (sid,)))
 
 
 def _unmatched_source(db, k, code):
@@ -508,6 +541,8 @@ def _dry_rest(db, store, st, samples, rows, keep, matched, managed, unmatched):
             continue
         sid = _unmatched_source(db, k, code)
         st["dropped"] += 1
+        if sid and (sid in {x["id"] for x in exist.values()} or _source_busy(db, sid)):
+            sid = None   # 이번에 연결할 원본이거나 판매 중 → 삭제 대상 아님
         if sid:
             drop_src.add(sid)
         if len(samples["dropped"]) < 8:
@@ -662,8 +697,9 @@ def _undo_targets(db, run):
     for j in range(0, len(sids), 900):
         ch = sids[j:j + 900]
         m = ",".join("?" * len(ch))
-        lids += [r["id"] for r in db.q(f"""SELECT id FROM listings WHERE store_id=? AND price_fixed=1 AND source_id IN ({m})""",
-                                       (run["store_id"], *ch))]
+        lids += [r["id"] for r in db.q(f"""SELECT id FROM listings WHERE store_id=? AND price_fixed=1 AND source_id IN ({m})
+            AND channel_no IN (SELECT channel_no FROM adopt_item WHERE run_id=? AND kind='linked' AND channel_no!='')""",
+                                       (run["store_id"], *ch, run["id"]))]
         for r in db.q(f"""SELECT s.id, s.adopted, (SELECT COUNT(*) FROM listings l WHERE l.source_id=s.id
                 AND NOT (l.store_id=? AND l.price_fixed=1)) AS others FROM sources s WHERE s.id IN ({m})""", (run["store_id"], *ch)):
             (new_src if r["adopted"] == 1 and not r["others"] else kept).append(r["id"])
@@ -679,6 +715,8 @@ def undo_run(db, run_id):
         raise ValueError("가져온 기록을 찾지 못했습니다.")
     if run["status"] == "running":
         raise ValueError("가져오는 중입니다. 끝난 뒤에 되돌리세요.")
+    if run["status"] not in ("done", "error"):
+        raise ValueError("이미 되돌린 기록입니다.")
     lids, new_src, kept = _undo_targets(db, run)
     a = trash.trash_listings(db, lids, keep_naver=True)
     b = trash.trash_sources(db, new_src, keep_naver=True)
@@ -689,7 +727,8 @@ def undo_run(db, run_id):
     stats["undone_at"] = time.time()
     stats["undone"] = {"listings": a["moved"], "sources": b["moved"], "kept_sources": len(kept)}
     db.x("UPDATE adopt_run SET status='undone', stats=? WHERE id=?", (json.dumps(stats, ensure_ascii=False), run["id"]))
-    return {"listings": a["moved"], "sources": b["moved"], "kept_sources": len(kept), "skipped": a["skipped_live"] + b["skipped_live"]}
+    return {"listings": a["moved"], "sources": b["moved"], "kept_sources": len(kept), "skipped": a["skipped_live"] + b["skipped_live"],
+            "locked": a.get("skipped_locked", 0) + b.get("skipped_locked", 0)}
 
 
 def runs(db, limit=30):
@@ -710,12 +749,11 @@ def items_csv(db, run_id, kind):
     r = db.one("SELECT * FROM adopt_run WHERE id=?", (run_id,))
     if not r:
         raise ValueError("가져오기 기록이 없습니다.")
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(["구분", "판매자코드", "상품명", "상품번호", "네이버 상태", "등록일", "원본 번호", "메모"])
-    for it in db.q("SELECT * FROM adopt_item WHERE run_id=? AND kind=? ORDER BY id", (run_id, kind)):
-        w.writerow([KIND_LABEL.get(it["kind"], it["kind"]), it["code"], it["name"], it["channel_no"],
-                    NAVER_STATUS.get(it["status"], it["status"]),
-                    time.strftime("%Y-%m-%d %H:%M", time.localtime(it["reg_at"])) if it["reg_at"] else "", it["source_id"] or "", it["note"]])
-    name = f"가져오기{run_id}_{r['store_name']}_{KIND_LABEL.get(kind, kind)}.csv"
-    return ("﻿" + buf.getvalue()).encode("utf-8"), name
+    from . import xlsxout
+    rows = [[KIND_LABEL.get(it["kind"], it["kind"]), it["code"], it["name"], it["channel_no"], NAVER_STATUS.get(it["status"], it["status"]),
+             time.strftime("%Y-%m-%d %H:%M", time.localtime(it["reg_at"])) if it["reg_at"] else "", it["source_id"] or "", it["note"]]
+            for it in db.q("SELECT * FROM adopt_item WHERE run_id=? AND kind=? ORDER BY id", (run_id, kind))]
+    data = xlsxout.build(KIND_LABEL.get(kind, kind)[:28], ["구분", "판매자코드", "상품명", "상품번호", "네이버 상태", "등록일", "원본 번호", "메모"],
+                         rows, (22, 20, 50, 16, 10, 16, 9, 50), text_cols=(1, 3))
+    name = f"가져오기{run_id}_{r['store_name']}_{KIND_LABEL.get(kind, kind)[:20]}.xlsx"
+    return data, name

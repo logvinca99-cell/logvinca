@@ -23,7 +23,7 @@ App.page("clean", {
       <section class="card pad cl-step"><div class="sec-head"><h2><span class="cl-n">1</span> 엑셀 올리기</h2></div>
         <label class="dropzone cl-drop"><input type="file" id="cl-file" accept=".xlsx,.xls,.csv" hidden><b>셀업 엑셀(.xlsx)을 이 화면에 끌어다 놓기</b><span class="muted small">또는 여기를 눌러 파일 고르기</span></label>
         <div class="cl-row small" style="margin-top:8px">올릴 때 자동으로:
-          <label class="check"><input type="checkbox" id="cl-o-price" checked><span>가격을 <b>고객 결제가 한 칸</b>으로 (판매가 − 할인가, 할인가 비움)</span></label>
+          <label class="check"><input type="checkbox" id="cl-o-price" checked><span>가격을 <b>손님 가격 한 칸</b>으로 (판매가 − 할인가, 할인가 비움)</span></label>
           <label class="check"><input type="checkbox" id="cl-o-code" checked><span>상품코드(판매자코드) 비우기</span></label>
           <label class="check"><input type="checkbox" id="cl-o-info" checked><span>브랜드·제조사·모델명·원산지 '상세페이지 참조'</span></label></div>
         <div class="small" style="margin-top:8px">${App.tagFields("cl", { value: ymdToday() })}</div>
@@ -136,7 +136,7 @@ App.page("clean", {
         <div id="cl-cat"></div><div id="cl-hold"></div>`),
       step(8, "원본 상품으로 넣기 · 새 엑셀로 저장", `<div class="cl-row"><button class="btn primary big" id="cl-send">원본 상품으로 넣기 (정리 중 <span id="cl-send-n">-</span>개)</button>
         <a class="btn" id="cl-export" href="/api/clean/${this.bid}/export" title="이 묶음의 정리 중·보류 상품을 올린 엑셀과 같은 열로 받습니다 (지운 상품 제외)">⬇ 엑셀 받기 — 이 묶음의 정리 중·보류 상품 (원래이름_수정.xlsx)</a></div>
-        <p class="small muted" style="margin:6px 0 0">생활화학 보류·지운 상품은 넣지 않습니다. 상품명이 완전히 같은 원본이 이미 있으면 내용을 갱신하고 출처 태그는 더합니다(엑셀 불러오기와 같음). 넣은 뒤 원본 상품 화면에서 상품명 변경 → 복사로 이어 가세요.</p>`),
+        <p class="small muted" style="margin:6px 0 0">생활화학 보류·지운 상품은 넣지 않습니다. 상품명이 완전히 같은 원본이 이미 있으면 넣지 않습니다(덮어쓰지 않음 — 정리함에 남음). </p>`),
     ].join("");
     this.bind();
     this.loadRules();
@@ -247,7 +247,8 @@ App.page("clean", {
       const picks = $$("[data-ph]:checked", box).map((c) => ({ id: +c.dataset.ph, text: c.dataset.t }));
       if (!picks.length) return App.toast("지울 번호를 골라 주세요.", true);
       if (!await App.yes("전화번호 지우기", `고른 번호 ${num(picks.length)}개를 정리함 상품 상세에서 지웁니다.`, { label: "지우기", danger: true })) return;
-      const r = await App.api("/api/clean/phones/remove", { json: { picks } });
+      let r;
+      try { r = await App.api("/api/clean/phones/remove", { json: { picks } }); } catch (err) { return App.toast(err.message, true); }
       App.toast(`상품 ${num(r.items)}개에서 번호 ${num(r.removed)}개를 지웠습니다`);
       this.refresh(); this.findPhones();
     });

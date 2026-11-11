@@ -452,7 +452,7 @@ App.page("inventory", {
         <span class="s-tag-add"><input id="s-tag-in" placeholder="태그 더하기 (쉼표로 여러 개)" size="18"> <button class="btn sm" id="s-tag-go">달기</button></span>`],
       ["카테고리", (d.category_fix ? `${esc(d.category_fix)} <span class="flag">직접 정함</span> <span class="muted small">(엑셀: ${esc(d.category)})</span>` : esc(d.category))
         + ` <button class="btn sm" id="s-cat">바꾸기</button>`],
-      ...(d.adopted === 1 ? [["원본 이름", '<span class="flag adopted">가져옴 · 원본 이름 없음</span> <span class="muted small">기존 상품 가져오기로 들어와 올라가 있던 이름이 원본 자리에 있습니다 (원본 엑셀을 불러오면 원본 이름만 채움 — 가격·상세는 그대로)</span>']]
+      ...(d.adopted === 1 ? [["원본 이름", '<span class="flag adopted">가져옴 · 원본 이름 없음</span> <span class="muted small">기존 상품 가져오기로 들어와 올라가 있던 이름이 원본 자리에 있습니다</span>']]
         : d.adopted ? [["가져옴", '<span class="flag adopted">가져옴</span> <span class="muted small">기존 상품 가져오기로 스토어 상품과 연결됨</span>']] : []),
       ["눈검수", `${eyeFlag(d)} <button class="btn sm" id="s-eye">${d.eye_at ? "검수 완료 풀기" : "검수 완료로 표시"}</button>`],
       ["생활화학", `${d.chem_judge ? `<b>${esc(CHEM_LABEL[d.chem_judge] || d.chem_judge)}</b> <span class="muted small">${esc(d.chem_reason || "")}</span>` : '<span class="muted">판정 안 함</span>'}
@@ -470,7 +470,7 @@ App.page("inventory", {
       (d.tags_list.length ? `<div><h3 class="sec-title">엑셀 태그</h3><div class="tags">${d.tags_list.map((t) => `<span>${esc(t)}</span>`).join("")}</div></div>` : "");
     $("#s-chem", b)?.addEventListener("click", () => App.chemSet({ ids: [d.id] }, `원본 #${d.id}`, () => { this.openSource(d.id); if ($("#i-rows")) this.load(); }));
     $("#s-edit", b)?.addEventListener("click", () => App.editContent(d.id, () => { this.openSource(d.id); if ($("#i-rows")) this.load(); }));
-    $("#s-bp", b)?.addEventListener("click", () => App.basePrice({ sourceId: d.id, current: d, after: () => { if ($("#i-rows")) this.load(); } }));
+    $("#s-bp", b)?.addEventListener("click", () => App.basePrice({ sourceId: d.id, current: d, after: () => { this.openSource(d.id); if ($("#i-rows")) this.load(); } }));
     $("#s-eye", b)?.addEventListener("click", () => App.eyeSet({ ids: [d.id] }, !d.eye_at, `원본 #${d.id}`, () => { this.openSource(d.id); if ($("#i-rows")) this.load(); }));
     const tagDo = async (add, remove) => {
       try {
@@ -523,6 +523,7 @@ App.page("inventory", {
     $(".name-list", b).addEventListener("click", async (e) => {
       const id = e.target.dataset.del;
       if (!id) return;
+      if (!await App.yes("이름 후보 지우기", "이 안 쓴 이름 후보를 지웁니다 (복사본에 쓰는 이름은 그대로).", { label: "지우기", danger: true })) return;
       try { await App.api(`/api/names/${id}`, { method: "DELETE" }); await reload(); } catch (err) { App.toast(err.message, true); }
     });
   },
@@ -629,7 +630,7 @@ App.editContent = async function (sid, after) {
           <div class="cl-row"><button type="button" class="btn sm" id="se-prev">미리보기 새로 그리기</button><span class="muted small">아래는 고친 HTML 그대로 (스토어 상단·하단은 올릴 때 붙음)</span></div>
           <iframe id="se-frame" sandbox="allow-same-origin" title="상세 미리보기" style="width:100%;height:360px;border:1px solid var(--line);border-radius:8px;margin-top:6px;background:#fff"></iframe></div>
         <div data-sec="opt" hidden>
-          ${o.editable ? `<p class="small muted" style="margin:0 0 6px">조합형 옵션입니다. 옵션 이름(예: 색상·사이즈)과 값, 추가금(기준 가격에 더하는 금액, 0이면 같은 가격)을 고치세요.
+          ${o.editable ? `<p class="small muted" style="margin:0 0 6px">조합형 옵션입니다. 옵션 이름(예: 색상·사이즈)과 값, 추가금(손님 가격에 그대로 더하는 금액 — 스토어 가격 차이 %는 붙지 않음, 0이면 같은 가격)을 고치세요.
               값 1만 쓰면 1단 옵션, 값 2·3까지 쓰면 2·3단. 모든 옵션을 빼면 옵션 없는 상품이 됩니다. 재고는 올릴 때 설정의 '등록 재고'로 들어갑니다.</p>
             <div class="cl-row"><label class="field" style="margin:0">옵션 이름 1<input id="se-g1" value="${esc(o.groups[0])}" placeholder="예) 색상"></label>
               <label class="field" style="margin:0">옵션 이름 2<input id="se-g2" value="${esc(o.groups[1])}" placeholder="(없으면 비움)"></label>
@@ -642,6 +643,9 @@ App.editContent = async function (sid, after) {
         ${d.log.length ? `<details class="small" style="margin-top:6px"><summary>고친 기록 ${num(d.log.length)}건</summary><ul>${d.log.map((x) =>
           `<li>${when(x.at)} · ${esc(x.what)}${x.memo ? ` · ${esc(x.memo)}` : ""}</li>`).join("")}</ul></details>` : ""}`;
       const draw = () => { $("#se-frame", b).srcdoc = `<meta name="referrer" content="no-referrer"><style>body{margin:0}img{max-width:100%}</style>` + $("#se-html", b).value; };
+      const snap = () => JSON.stringify([$("#se-html", b).value, $$(".se-opt input, [id^=se-g]", b).map((x) => (x.type === "checkbox" ? x.checked : x.value))]);
+      const first = snap();
+      App._dirty = () => !!$("#se-html") && snap() !== first;
       draw();
       $("#se-prev", b).addEventListener("click", draw);
       $$(".se-tabs button", b).forEach((t) => t.addEventListener("click", () => {
@@ -658,8 +662,15 @@ App.editContent = async function (sid, after) {
         this.toast("마지막 수정을 되돌렸습니다");
         if (after) after();
       } }] : []),
-      { label: "저장", primary: true,
-        confirm: d.n_live ? `판매 중 복사본 ${num(d.n_live)}건은 지금 바뀌지 않고, 다음 최신화·다시 올리기 때 새 상세·옵션으로 올라갑니다.` : "아직 안 올린 복사본은 올릴 때 새 상세·옵션으로 올라갑니다.",
+      { label: "저장", primary: true, noPicks: true,
+        get confirm() {
+          const b = $("#m-body");
+          const html = $("#se-html", b)?.value || "";
+          const rows = $$(".se-opt", b);
+          const parts = [html !== d.detail ? `상세페이지 바뀜 (글자 ${num(d.detail.length)} → ${num(html.length)})` : "상세페이지 그대로"];
+          if (o.editable) parts.push(`옵션 ${num(o.rows.length)}개 → ${num(rows.filter((tr) => $(".se-n1", tr).value.trim()).length)}개`);
+          return parts.join(" · ") + "<br>" + (d.n_live ? `판매 중 복사본 ${num(d.n_live)}건은 지금 바뀌지 않고, 다음 최신화·다시 올리기 때 새 상세·옵션으로 올라갑니다 (잠긴 상품은 최신화를 하지 않으므로 그대로).` : "아직 안 올린 복사본은 올릴 때 새 상세·옵션으로 올라갑니다.");
+        },
         validate: (b) => (!$("#se-html", b).value.trim() ? "상세페이지가 비었습니다." : ""),
         onClick: async (b) => {
           const body = { detail: $("#se-html", b).value, memo: $("#se-memo", b).value };

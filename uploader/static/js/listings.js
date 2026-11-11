@@ -219,8 +219,8 @@ App.page("listings", {
         "|",
         { id: "remove", label: "삭제", danger: true, title: "기본: 원본까지 같이 삭제 (그 원본의 모든 스토어 복사본, 판매 중인 것은 내린 뒤) · 끄면 고른 복사본만 휴지통" },
         "|",
-        { id: "export", always: true, label: n && !this.selAll ? `⬇ 엑셀(CSV) 받기 — 고른 ${num(n)}건` : `⬇ 엑셀(CSV) 받기 — ${this.selAll ? "조건에 맞는" : "지금 보이는 조건"} ${num(this.total)}건`,
-          title: "복사본 목록을 엑셀(CSV)로 받습니다: 스토어·판매자 관리코드·회차·등록 상품명·원본 번호·원본 판매자코드·원본 상품명·판매가·기준 가격·상태·할 일·올린 날·원상품번호·채널상품번호·메시지" },
+        { id: "export", always: true, label: n && !this.selAll ? `⬇ 엑셀 받기 — 고른 ${num(n)}건` : `⬇ 엑셀 받기 — ${this.selAll ? "조건에 맞는" : "지금 보이는 조건"} ${num(this.total)}건`,
+          title: "복사본 목록을 엑셀로 받습니다: 스토어·판매자 관리코드·회차·등록 상품명·원본 번호·원본 판매자코드·원본 상품명·손님 가격·네이버 판매가·기준 가격·상태·할 일·잠금·올린 날·원상품번호·채널상품번호·메시지" },
       ],
       onPageCheck: (on) => { this.selAll = false; this.rows.forEach((l) => (on ? this.sel.add(l.id) : this.sel.delete(l.id))); this.load(); },
       onAll: () => { this.selAll = true; this.sel.clear(); this.load(); },
@@ -235,7 +235,7 @@ App.page("listings", {
     if (id === "rename") this.renameModal();
     if (id === "export") {   // 고른 것이 있으면 그것만, 없으면 지금 보이는 조건 전체
       const q = this.sel.size && !this.selAll ? { store_id: this.f.store_id, ids: [...this.sel].join(",") } : this.query();
-      window.location.href = `/api/listings/export.csv?${new URLSearchParams(q)}`;
+      window.location.href = `/api/listings/export.xlsx?${new URLSearchParams(q)}`;
     }
     if (id === "refresh" || id === "delete" || id === "reupload") this.schedule(id);
     if (id === "lock" || id === "unlock") this.lock(id === "lock");
@@ -369,6 +369,7 @@ App.page("listings", {
   },
 
   async lock(on, ids) {
+    if (!on && !await App.yes("직접 잠금 풀기", `${ids ? `복사본 ${num(ids.length)}건` : "고른 복사본"}의 직접 잠금을 풉니다. 풀면 최신화·내리기로 네이버에서 지울 수 있게 됩니다 (판매 이력이 있는 것은 잠금 유지).`, { label: "잠금 풀기", danger: true })) return;
     try {
       const r = await App.api("/api/listings/lock", { json: { ...(ids ? { ids } : this.target()), lock: on } });
       App.toast(on ? `${num(r.count)}건을 잠갔습니다. 최신화·내리기로 지우지 않습니다.`
@@ -719,7 +720,7 @@ App.page("listings", {
               <dt>원본 번호</dt><dd>#${l.source_id}</dd>
               <dt>카테고리</dt><dd>${esc(l.category)}${l.category_fixed ? ` <span class="flag">직접 정함</span> <span class="muted small">(엑셀: ${esc(l.category_excel)})</span>` : ""}
                 <button class="btn sm d-cat">바꾸기</button></dd>
-              <dt>판매가</dt><dd>손님 가격 <b>${num(l.final)}원</b> <span class="muted">(기준 가격 ${num(l.source_price)}원)</span>
+              <dt>손님 가격</dt><dd>손님 가격 <b>${num(l.final)}원</b> <span class="muted">(기준 가격 ${num(l.source_price)}원)</span>
                 ${l.off ? `<br><span class="muted">네이버 판매가 ${num(l.shown)}원 · 즉시할인 ${num(l.off)}원 (할인율 ${(l.off / l.shown * 100).toFixed(1)}% — 손님 가격을 그대로 두고 ${l.disc_pct}%에 가깝게)</span>` : ""}
 </dd>
               <dt>다른 스토어</dt><dd>${l.siblings.length ? l.siblings.map((x) => `<div><button class="go-store" data-go="${x.id}">→ ${esc(x.store_name)}</button> ${esc(x.name)} <span class="muted">(${STATUS[x.status] || x.status})</span></div>`).join("") : "같은 원본이 다른 스토어에는 없음"}</dd></dl>`

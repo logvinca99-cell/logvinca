@@ -128,8 +128,16 @@ def save(db, sid, detail=None, options=None, memo=""):
         old = row.get("옵션상품") if isinstance(row.get("옵션상품"), dict) else None
         if old and not _opt_view(row)["editable"]:
             raise ValueError("이 원본의 옵션은 조합형이 아니라 여기서 고칠 수 없습니다.")
+        cur = _opt_view(row)
+        want = {"groups": [str(x or "").strip() for x in (list(options.get("groups") or []) + ["", "", ""])[:3]],
+                "rows": [{"n1": str(r.get("n1") or "").strip(), "n2": str(r.get("n2") or "").strip(), "n3": str(r.get("n3") or "").strip(),
+                          "price": convert.to_int(r.get("price")), "usable": r.get("usable", True) is not False}
+                         for r in (options.get("rows") or []) if str(r.get("n1") or "").strip()]}
+        have = {"groups": [g if any((r[f"n{i + 1}"] for r in cur["rows"])) else "" for i, g in enumerate(cur["groups"])],
+                "rows": [{k: r[k] for k in ("n1", "n2", "n3", "price", "usable")} for r in cur["rows"]]}
+        want["groups"] = [g if any((r[f"n{i + 1}"] for r in want["rows"])) else "" for i, g in enumerate(want["groups"])]
         new, warn = _build_options(old, options.get("groups") or [], options.get("rows") or [], s["price"])
-        if json.dumps(new, ensure_ascii=False, sort_keys=True) != json.dumps(old, ensure_ascii=False, sort_keys=True):
+        if want != have:   # 화면에 보이는 옵션 값이 실제로 바뀐 때만 (형식 차이는 무시)
             row["옵션상품"] = new
             what.append("옵션")
     if not what:
@@ -143,6 +151,8 @@ def _write(db, sid, row, what, before, memo=""):
     sm = convert.summary(row, cfg)
     fix = (db.one("SELECT category_fix FROM sources WHERE id=?", (sid,)) or {}).get("category_fix") or ""
     errors, warnings = convert.validate(convert.with_category_fix(row, fix), cfg, naver.cached_categories())
+    from . import inventory, lexicon
+    warnings += inventory._name_warnings(sm["name"], lexicon.get(db))   # 원본 상품명 경고(금지 단어·반복)는 그대로
     now = time.time()
     with db.tx() as c:
         c.execute("INSERT INTO source_edit_log(source_id, what, before, memo, at) VALUES(?,?,?,?,?)",
@@ -157,6 +167,8 @@ def _write(db, sid, row, what, before, memo=""):
 
 def undo_last(db, sid):
     """마지막 수정 되돌리기 (그 전 상세·옵션으로)."""
+    if db.one("SELECT 1 FROM listings WHERE source_id=? AND status IN ('queued','running')", (sid,)):
+        raise ValueError("이 원본의 복사본이 지금 등록 중입니다. 끝난 뒤에 되돌리세요.")
     r = db.one("SELECT id, before FROM source_edit_log WHERE source_id=? AND what NOT LIKE '%되돌림%' ORDER BY id DESC LIMIT 1", (sid,))
     if not r:
         raise ValueError("되돌릴 수정이 없습니다.")

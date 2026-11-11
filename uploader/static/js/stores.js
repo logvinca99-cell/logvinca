@@ -330,6 +330,7 @@ App.page("stores", {
       e.target.value = "";
     });
     $("#wm-del")?.addEventListener("click", async () => {
+      if (!confirm("워터마크 로고를 지울까요? (앞으로 올리는 상품부터 글자 워터마크로 — 이미 올라간 상품은 그대로)")) return;
       try { await App.api(`/api/stores/${s.id}/watermark`, { method: "DELETE" }); prev(); } catch (err) { App.toast(err.message, true); }
     });
     // 가격 예시 (기준 가격 50,000원 기준)

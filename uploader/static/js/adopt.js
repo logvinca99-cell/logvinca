@@ -29,7 +29,7 @@ App.page("adopt", {
         <div class="sec-head"><h2>1. 업로드했던 엑셀 올리기</h2><span class="muted small">파일 하나 = 스토어 하나</span></div>
         <label class="dropzone cl-drop"><input type="file" id="ad-file" accept=".xlsx,.xlsm,.csv" hidden><b>업로드했던 셀업 엑셀을 이 화면에 끌어다 놓기</b><span class="muted small">또는 여기를 눌러 파일 고르기</span></label>
         <div id="ad-prep"></div></section>
-      <section class="card pad"><div class="sec-head"><h2>가져온 기록</h2><span class="muted small">목록은 엑셀(CSV)로 받을 수 있습니다</span></div>
+      <section class="card pad"><div class="sec-head"><h2>가져온 기록</h2><span class="muted small">목록은 엑셀로 받을 수 있습니다</span></div>
         <div id="ad-runs"></div></section>
     </div>`;
     $("#ad-file").addEventListener("change", (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) this.prepare(f); });
@@ -202,9 +202,9 @@ App.page("adopt", {
               <button class="btn tiny primary" data-sales="${r.store_id}">판매 이력 확인</button></div>`
             : `<div class="small c-ok">판매 이력 확인됨 (${ymdOf(r.sales.known_from)}부터) <button class="btn tiny ghost" data-sales="${r.store_id}">보기</button></div>`) : ""}</td>
         <td class="num">${num(s.rows || 0)}</td>
-        ${ADOPT_KINDS.map(([k]) => `<td class="num">${s[k] ? `<a href="/api/adopt/${r.id}/items.csv?kind=${k}" title="엑셀(CSV)로 받기">${num(s[k])} ⬇</a>` : (r.status === "done" ? "0" : "")}</td>`).join("")}
+        ${ADOPT_KINDS.map(([k]) => `<td class="num">${s[k] ? `<a href="/api/adopt/${r.id}/items.xlsx?kind=${k}" title="엑셀로 받기">${num(s[k])} ⬇</a>` : (r.status === "done" ? "0" : "")}</td>`).join("")}
         <td class="num">${s.img_items !== undefined ? `${num(s.img_items)} (${num(s.img_removed || 0)}장)` : s.top_removed !== undefined ? `상단 ${num(s.top_removed || 0)} · 하단 ${num(s.bottom_removed || 0)}` : ""}</td></tr>`; }).join("")}
       </tbody></table></div>
-      <p class="small muted" style="margin:8px 0 0">숫자를 누르면 그 목록을 엑셀(CSV)로 받습니다. '엑셀≠손님 가격'은 엑셀 판매가와 스토어 손님 가격이 다른 상품(스토어 손님 가격으로 넣음), '상품명 중복'은 상품명이 완전히 같은 상품이 이 스토어에 또 있어 연결하지 않은 상품(앞 상품만 연결). '스토어에만 있음'은 그 스토어에 올라가 있지만 이 파일에 없는 상품(가져오지 않음). 스토어 상품과는 판매자코드로 <b>1대1</b>로 연결하고, 원본 기준은 <b>상품명(완전히 같음)</b>입니다 — 대표 사진(이미지 주소)은 기준이 아닙니다.</p>`;
+      <p class="small muted" style="margin:8px 0 0">숫자를 누르면 그 목록을 엑셀로 받습니다. '엑셀≠손님 가격'은 엑셀 판매가와 스토어 손님 가격이 다른 상품(스토어 손님 가격으로 넣음), '상품명 중복'은 상품명이 완전히 같은 상품이 이 스토어에 또 있어 연결하지 않은 상품(앞 상품만 연결). '스토어에만 있음'은 그 스토어에 올라가 있지만 이 파일에 없는 상품(가져오지 않음). 스토어 상품과는 판매자코드로 <b>1대1</b>로 연결하고, 원본 기준은 <b>상품명(완전히 같음)</b>입니다 — 대표 사진(이미지 주소)은 기준이 아닙니다.</p>`;
   },
 });

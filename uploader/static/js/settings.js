@@ -201,6 +201,7 @@ App.page("settings", {
         catch { App.toast(`'${el.closest("label").firstChild.textContent.trim()}'의 JSON 형식이 올바르지 않습니다.`, true); return; }
       } else out[el.name] = el.value.trim();
     }
+    if (!await App.yes("설정 저장", "바꾼 설정을 저장합니다. 새로 만드는 복사본·이름·다음 등록부터 적용됩니다 (각 칸의 '적용' 참고).", { label: "저장" })) return;
     try {
       await App.api("/api/settings", { json: out });
       $("#save-msg").textContent = "저장했습니다 ✓";

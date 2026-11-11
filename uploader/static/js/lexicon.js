@@ -48,6 +48,7 @@ App.page("lexicon", {
     const recount = () => { $("#lx-count").textContent = `${num($("#lx-block").value.split(/[,\n]/).filter((w) => w.trim()).length)}개`; };
     $("#lx-block").addEventListener("input", recount);
     $("#lx-save").addEventListener("click", async () => {
+      if (!await App.yes("금지어 저장", "금지어 목록을 이 내용으로 저장합니다. 앞으로 만드는 상품명부터 이 단어가 들어간 이름은 쓰지 않습니다.", { label: "저장" })) return;
       try {
         const r = await App.api("/api/lexicon/blocked", { json: { text: $("#lx-block").value } });
         $("#lx-block").value = r.blocked; recount();
@@ -57,6 +58,7 @@ App.page("lexicon", {
     $("#lx-block-file").addEventListener("change", async (e) => {
       const f = e.target.files[0];
       if (!f) return;
+      if (!await App.yes("금지어 파일 가져오기", `'${f.name}'의 단어를 금지어에 더합니다 (이미 있는 것은 그대로).`, { label: "가져오기" })) { e.target.value = ""; return; }
       const fd = new FormData();
       fd.append("file", f);
       try {
@@ -66,7 +68,10 @@ App.page("lexicon", {
       } catch (err) { App.toast(err.message, true); }
       e.target.value = "";
     });
-    $("#tm-all").addEventListener("click", () => App.startTask(App.api("/api/trademark/check", { json: { scope: "all" } })));
+    $("#tm-all").addEventListener("click", async () => {
+      if (!await App.yes("상표 확인", "아직 확인하지 않은 단어를 특허정보(KIPRIS)에서 상표인지 확인합니다. 단어가 많으면 오래 걸리고 외부 조회를 많이 합니다.", { label: "확인 시작" })) return;
+      App.startTask(App.api("/api/trademark/check", { json: { scope: "all" } }));
+    });
     $("#tm-sec").addEventListener("click", async (e) => {
       const b = e.target.closest("[data-allow]");
       if (!b) return;
