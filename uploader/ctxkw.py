@@ -522,6 +522,30 @@ def source_marks(lex, name):
     return found, toks
 
 
+def kw_marks(lex, kw):
+    """받은 AI 키워드(핵심·용도·맥락)에 든 상표 단어 → {단어: 등록/출원}. 보통은 조립 때 자동으로 빠짐('빼고 만들기')."""
+    out = {}
+    if not lex or not lex.marks:
+        return out
+    for g in ("core", "core2", "ctx"):
+        for w in (kw or {}).get(g) or []:
+            w = str(w or "").strip().replace(" ", "")
+            v = w and lex.mark_of(w)
+            if v:
+                out[w] = v
+    return out
+
+
+def _kw_rows(c, sids):
+    out = {}
+    sids = list(sids)
+    for i in range(0, len(sids), 900):
+        ch = sids[i:i + 900]
+        for r in c.execute(f"SELECT source_id, words FROM ctx_kw WHERE status='ok' AND source_id IN ({','.join('?' * len(ch))})", ch).fetchall():
+            out[r["source_id"]] = kw_of(r["words"])
+    return out
+
+
 def mark_mode_of(c, sids):
     """원본마다 상표 단어 처리(고른 값): drop(빼고 만들기·기본) / allow(무시하고 넣어 만들기) / skip(건너뛰기). → {원본: 값}"""
     out = {}
@@ -540,10 +564,12 @@ def set_mark_mode(db, sids, mode, lex=None):
     lex = lex or lexicon.get(db)
     sids = list(sids)
     hit = []
+    with db.tx() as c:
+        kws = _kw_rows(c, sids)
     for i in range(0, len(sids), 900):
         ch = sids[i:i + 900]
         hit += [r["id"] for r in db.q(f"SELECT id, name FROM sources WHERE id IN ({','.join('?' * len(ch))})", ch)
-                if source_marks(lex, r["name"])[0]]
+                if source_marks(lex, r["name"])[0] or kw_marks(lex, kws.get(r["id"]))]
     for i in range(0, len(hit), 900):
         ch = hit[i:i + 900]
         db.x(f"UPDATE sources SET mark_mode=? WHERE id IN ({','.join('?' * len(ch))})", (mode, *ch))
@@ -554,36 +580,74 @@ def mark_check(db, sids, examples=2):
     """고른 원본의 업스타 기준상품명에 든 상표 단어: {sources: 상표 단어가 든 원본 수, words: [{word, verdict, n, examples}]}"""
     lex = lexicon.get(db)
     words, n = {}, 0
+    kwords, kn = {}, 0
     sids = list(sids)
+    with db.tx() as c:
+        kws = _kw_rows(c, sids)
     for i in range(0, len(sids), 900):
         ch = sids[i:i + 900]
         for r in db.q(f"SELECT id, name FROM sources WHERE id IN ({','.join('?' * len(ch))})", ch):
             found, _ = source_marks(lex, r["name"])
-            if not found:
-                continue
-            n += 1
-            for w, v in found:
-                x = words.setdefault(w, {"word": w, "verdict": v, "n": 0, "examples": []})
-                x["n"] += 1
-                if len(x["examples"]) < examples:
-                    x["examples"].append({"id": r["id"], "name": r["name"]})
-    return {"sources": n, "words": sorted(words.values(), key=lambda x: -x["n"])}
+            km = kw_marks(lex, kws.get(r["id"]))
+            for bag, items in ((words, found), (kwords, list(km.items()))):
+                for w, v in items:
+                    x = bag.setdefault(w, {"word": w, "verdict": v, "n": 0, "examples": []})
+                    x["n"] += 1
+                    if len(x["examples"]) < examples:
+                        x["examples"].append({"id": r["id"], "name": r["name"]})
+            n += bool(found)
+            kn += bool(km)
+    return {"sources": n, "words": sorted(words.values(), key=lambda x: -x["n"]),
+            "kw_sources": kn, "kw_words": sorted(kwords.values(), key=lambda x: -x["n"])}
 
 
-def source_setup(cfg, lex, forb, name, mode, base_reject, c=None):
-    """원본 하나의 조립 준비: 상표 단어 처리 방식대로 (금지어 묶음, 거르기 함수). skip이면 None."""
+def source_setup(cfg, lex, forb, name, mode, base_reject, c=None, kw=None):
+    """원본 하나의 조립 준비: 상표 단어 처리 방식대로 (금지어 묶음, 거르기 함수). skip이면 None.
+    kw(받은 키워드)를 주면 키워드 속 상표 단어도: allow면 그 단어도 통과(거르기 함수의 allow_kw로 키워드 거르기에서도 통과)."""
     found, toks = source_marks(lex, name)
-    if not found:
+    km = set(kw_marks(lex, kw)) if kw is not None else set()
+    if not found and not km:
         return forb, base_reject
     if mode == "skip":
         return None
-    if mode == "allow":   # 기준상품명에 원래 있던 상표 단어는 통과, AI 키워드로 새로 들어온 상표 단어는 계속 막음
-        return forb, make_rejecter(c, cfg, lex, allow=toks) if c is not None else base_reject
-    return forb | toks, base_reject   # drop: 금지어처럼 머리·남은 단어·keep에서 빼고 다음 원본 단어로
+    if mode == "allow":   # '무시하고 만들기': 기준상품명·AI 키워드에 있던 상표 단어는 통과 (그 밖의 상표 단어는 계속 막음)
+        if c is None:
+            return forb, base_reject
+        rj = make_rejecter(c, cfg, lex, allow=toks | km)
+        rj.allow_kw = km
+        return forb, rj
+    return forb | toks, base_reject   # drop: 금지어처럼 머리·남은 단어·keep에서 빼고 다음 원본 단어로 (키워드 속 상표는 원래 빠짐)
+
+
+def bad_for(bad, reject):
+    """'무시하고 만들기'로 허용한 키워드 속 상표 단어는 키워드 거르기(bad)에서도 통과."""
+    allow = getattr(reject, "allow_kw", None)
+    return (lambda w: bad(w) and w not in allow) if allow else bad
+
+
+def _where_used(c, name):
+    """이미 있는 이름이 어디서 쓰이는지 한 줄: 복사본 #번호 스토어 상태 / 예전에 썼다 뗀 이름 / 안 쓴 후보."""
+    n = c.execute("""SELECT n.listing_id, n.source_id, l.status, l.origin_no, st.name AS store FROM names n
+        LEFT JOIN listings l ON l.id=n.listing_id LEFT JOIN stores st ON st.id=l.store_id WHERE n.norm=?""",
+                  (namegen.normalize(name),)).fetchone()
+    if not n:
+        return ""
+    if n["listing_id"] == -1:
+        return f"원본 #{n['source_id']}에서 예전에 쓰고 뗀 이름 — 다시 안 씀"
+    if n["listing_id"]:
+        st = "판매 중" if n["origin_no"] and n["status"] != "deleted" else {"deleted": "내림", "fail": "실패"}.get(n["status"], "등록 대기")
+        return f"복사본 #{n['listing_id']} {n['store'] or ''} {st}".strip()
+    return f"원본 #{n['source_id']}의 안 쓴 후보"
+
+
+WHY_TEXT = {"same_origin": "새 단어 없음", "dup": "이미 있는 이름과 겹침", "repeat": "같은 단어 반복", "mark": "상표 단어"}
 
 
 def why_fail(c, cfg, lex, sid, mode=None):
-    """이름을 못 만든 까닭 → (key, 문장). mark_skip / no_kw / no_head / dup."""
+    """이름을 못 만든 까닭 → (key, 문장 — 실제 값 포함).
+    mark_skip / no_kw / no_head 는 바로, 그 밖은 같은 조립을 한 번 더 돌려 버린 조합의 까닭을 모아 가장 많은 것을 실제 값으로:
+    same_origin(AI 키워드에 원본에 없는 새 단어가 없어 원본 이름과 같아짐) · dup(이미 있는 이름과 겹침 — 그 이름과 쓰는 곳) ·
+    repeat(반복 단어) · mark(상표 단어)."""
     s = c.execute("SELECT name, mark_mode FROM sources WHERE id=?", (sid,)).fetchone()
     if not s:
         return "dup", "원본이 없음"
@@ -592,14 +656,51 @@ def why_fail(c, cfg, lex, sid, mode=None):
     mw = ", ".join(w for w, _ in found)
     if found and mode == "skip":
         return "mark_skip", f"상표 단어({mw})가 있어 건너뜀(고른 대로)"
-    k = c.execute("SELECT status FROM ctx_kw WHERE source_id=?", (sid,)).fetchone()
+    k = c.execute("SELECT status, words FROM ctx_kw WHERE source_id=?", (sid,)).fetchone()
     if not k or k["status"] != "ok":
         return "no_kw", "AI 키워드가 없음(또는 받는 중·실패)"
-    forb = set(lex.blocked) | (toks if found and mode != "allow" else set())
+    forb0 = set(lex.blocked)
+    kw = kw_of(k["words"])
+    setup = source_setup(cfg, lex, forb0, s["name"], mode, make_rejecter(c, cfg, lex), c, kw)
+    forb, reject = setup if setup else (forb0 | toks, make_rejecter(c, cfg, lex))
     head = ctxname.split_origin(s["name"], forb, int(cfg.get("ctx_head_n") or 4))[1]
     if not head:
         return "no_head", "금지어" + ("·상표 단어" if found and mode != "allow" else "") + "를 빼니 앞에 둘 원본 단어가 없음"
-    return "dup", "만든 조합이 모두 이미 쓰는 이름과 겹치거나 반복·상표 단어에 걸림" + (f" (상표: {mw})" if found else "")
+    trace = []
+    ctxname.make_names_v2(s["name"], kw, forb, copies=12, seed=sid, reject=reject, opts=opts(cfg),
+                          bad=bad_for(word_filter(cfg, lex), reject), rep=repeat_check(cfg, lex), trace=trace)
+    trace = [t for t in trace if t[0] != "self"]
+    cnt = {}
+    for t in trace:
+        key = "dup" if t[0] == "avoid" else t[0]
+        cnt[key] = cnt.get(key, 0) + 1
+    if not cnt:   # 다시 해 보니 만들어짐 — 그새 이름이 풀렸거나(떼어 낸 이름 등) 조건이 바뀜
+        return "retry", "지금은 만들 수 있음 — 상품명 바꾸기를 한 번 더 누르세요"
+    key = max(cnt, key=cnt.get)
+    n = cnt[key]
+    if key == "same_origin":
+        toks0 = set(str(s["name"]).split())
+        new = [w for g in ("keep", "core", "core2", "ctx") for w in (kw.get(g) or []) if str(w).replace(" ", "") not in toks0]
+        shown = ", ".join(str(w) for g in ("core", "core2", "ctx") for w in (kw.get(g) or []))[:80] or "없음"
+        return key, (f"AI 키워드에 쓸 수 있는 새 단어가 없어 만든 조합 {n}개가 모두 원본 이름과 같아짐 (받은 키워드: {shown}"
+                     + (" — 모두 원본에 이미 있거나 금지어·상표·막연한 말로 빠짐" if new or shown != "없음" else "") + ") → AI 키워드 새로 받기 또는 셔플·AI로 짓기")
+    if key == "dup":
+        ex = []
+        for t in trace:
+            if t[0] in ("dup", "avoid") and t[2] not in [e[0] for e in ex]:
+                ex.append((t[2], "방금 떼어 낸 이름" if t[0] == "avoid" else _where_used(c, t[2])))
+            if len(ex) >= 2:
+                break
+        return key, (f"만든 조합 {n}개가 모두 이미 있는 이름과 겹침: " + " / ".join(f"'{nm[:40]}'({w})" for nm, w in ex)
+                     + " → AI 키워드 새로 받기")
+    if key == "repeat":
+        ws = sorted({str(t[1]) for t in trace if t[0] == "repeat" and t[1]})
+        return key, f"같은 단어가 너무 많이 반복됨: '{', '.join(ws) or '?'}' ({n}개 조합) → 기준상품명에서 반복을 줄이거나 금지어로"
+    if key == "mark":
+        ws = sorted({str(t[1]) for t in trace if t[0] == "mark" and t[1]})
+        return key, (f"상표 단어가 조합에 들어감: {', '.join(ws)} ({n}개 조합)"
+                     + (" — 원본 단어 순서가 바뀌며 붙은 두 단어 상표" if not found else "") + " → 상품명 바꾸기에서 상표 처리 고르기")
+    return key, f"{key} {n}"
 
 
 def make_rejecter(c, cfg, lex, allow=frozenset()):
@@ -610,12 +711,22 @@ def make_rejecter(c, cfg, lex, allow=frozenset()):
     rep = repeat_check(cfg, lex)
 
     def reject(name):
+        """버리면 True — 까닭은 reject.why = (dup·repeat·mark, 값)에 남김 (못 만든 까닭을 실제 값으로 보여 주려고)."""
+        reject.why = None
         if c.execute("SELECT 1 FROM names WHERE norm=?", (namegen.normalize(name),)).fetchone():
+            reject.why = ("dup", name)
             return True
-        if rep(name.split()):   # 같은 단어 3번 이상 (마지막 안전장치 — 조립 때 이미 빼지만 셔플 등 다른 길도 같게)
+        rw = rep(name.split())
+        if rw:   # 같은 단어 3번 이상 (마지막 안전장치 — 조립 때 이미 빼지만 셔플 등 다른 길도 같게)
+            reject.why = ("repeat", rw if isinstance(rw, str) else None)
             return True
         # allow: 그 원본 기준상품명에 원래 있던 상표 단어(사람이 '무시하고 만들기'로 고름)는 통과
-        return any(not all(t in allow for t in w.split()) for w, _ in lexicon.marks_in(name, lex))
+        for w, v in lexicon.marks_in(name, lex):
+            if not all(t in allow for t in w.split()):
+                reject.why = ("mark", f"{w}({v})")
+                return True
+        return False
+    reject.why = None
     return reject
 
 
@@ -730,7 +841,7 @@ def kw_of(words_json):
 def repeat_check(cfg, lex):
     """같은 단어가 설정 수(기본 2)보다 많이 나오면 참 — 원본·AI 이름 모두 같은 기준 (lexicon.repeated_word)."""
     n = int(cfg.get("max_word_repeat") or 2)
-    return lambda toks: bool(lexicon.repeated_word(toks, lex, n))
+    return lambda toks: lexicon.repeated_word(toks, lex, n)   # 반복된 단어(참) 또는 None
 
 
 def word_filter(cfg, lex):
@@ -802,12 +913,12 @@ def build_names(db, sids, cfg=None):
                 if copies <= 0:   # 칸이 다 참 — 만들지 않음 (키워드는 남겨 둠: 나중에 칸이 비면 make_more로)
                     c.execute("UPDATE ctx_kw SET names_made=1 WHERE source_id=?", (r["id"],))
                     continue
-                setup = source_setup(cfg, lex, forb, r["name"], modes.get(r["id"]), reject, c)
+                setup = source_setup(cfg, lex, forb, r["name"], modes.get(r["id"]), reject, c, kw_of(r["words"]))
                 if setup is None:   # 상표 단어가 있어 건너뛰기로 고른 원본 — 고르는 방식이 바뀌면 그때 만듦
                     st["skipped_mark"] = st.get("skipped_mark", 0) + 1
                     continue
                 res = ctxname.make_names_v2(r["name"], kw_of(r["words"]), setup[0], copies=copies, seed=r["id"],
-                                            reject=setup[1], opts=o, bad=bad, rep=rep)
+                                            reject=setup[1], opts=o, bad=bad_for(bad, setup[1]), rep=rep)
                 for k, x in enumerate(res):
                     if x is None:
                         st["none"] += 1
@@ -840,21 +951,39 @@ def make_more(db, need, avoid=None, cfg=None, skipped=None):
             modes = mark_mode_of(c, [r["id"] for r in rows])
             for r in rows:
                 skip = (avoid or {}).get(r["id"], set())
-                setup = source_setup(cfg, lex, forb, r["name"], modes.get(r["id"]), base, c)
+                setup = source_setup(cfg, lex, forb, r["name"], modes.get(r["id"]), base, c, kw_of(r["words"]))
                 if setup is None:   # 상표 단어 → 건너뛰기로 고름
                     if skipped is not None:
                         skipped.add(r["id"])
                     continue
-                reject = (lambda nm, skip=skip, b=setup[1]: nm in skip or b(nm))
-                # 앞 번호 조합(A·B)은 이미 있으니 뒤 번호부터 — copies를 넉넉히 주고 새로 나온 것만 넣는다
-                res = ctxname.make_names_v2(r["name"], kw_of(r["words"]), setup[0], copies=need[r["id"]] + 2, seed=r["id"],
-                                            reject=reject, opts=o, bad=bad, rep=rep)
-                got = [(k, x) for k, x in enumerate(res) if x][:need[r["id"]]]
+                reject = _avoid_rejecter(skip, setup[1])
+                # 앞 번호 조합(A·B)은 이미 있으니 뒤 번호부터 — copies를 넉넉히 주고 새로 나온 것만 넣는다.
+                # 그래도 모자라면(이름을 여러 번 바꿔 앞 조합이 다 쓰임) 더 뒤 번호까지 넓혀 다른 위치·섞기로 다시 (AI는 안 부름)
+                got = []
+                for extra in (2, 10, 30):
+                    res = ctxname.make_names_v2(r["name"], kw_of(r["words"]), setup[0], copies=need[r["id"]] + extra, seed=r["id"],
+                                                reject=reject, opts=o, bad=bad_for(bad, setup[1]), rep=rep)
+                    got = [(k, x) for k, x in enumerate(res) if x][:need[r["id"]]]
+                    if len(got) >= need[r["id"]]:
+                        break
                 for k, x in got:
                     added, _ = add_names(c, r["id"], [x["name"]], "ctx", now)
                     made += added
                     set_variant(c, r["id"], x["name"], "AB"[k % 2])
     return made
+
+
+def _avoid_rejecter(skip, base):
+    """떼어 낸 이름(skip)도 버리는 reject — 까닭(why)을 그대로 넘긴다."""
+    def reject(nm):
+        if nm in skip:
+            reject.why = ("avoid", nm)
+            return True
+        r = base(nm)
+        reject.why = getattr(base, "why", None) if r else None
+        return r
+    reject.why = None
+    return reject
 
 
 def after_saved(db, sids):

@@ -18,10 +18,14 @@ function dur(sec) {
 }
 
 /* 상품명을 못 만든 까닭별 수 (상품명 바꾸기 결과) */
-const WHY_LABEL = { no_head: "금지어·상표 단어를 빼니 앞 단어 없음", dup: "조합이 모두 겹침·반복·상표", no_kw: "AI 키워드 없음", mark_skip: "상표 단어로 건너뜀" };
-function whyMsg(w) {
+const WHY_LABEL = { no_head: "금지어·상표 단어를 빼니 앞 단어 없음", same_origin: "AI 키워드에 새 단어 없음", dup: "이미 있는 이름과 겹침",
+  repeat: "같은 단어 반복", mark: "상표 단어", retry: "다시 하면 됨", no_kw: "AI 키워드 없음", mark_skip: "상표 단어로 건너뜀" };
+function whyMsg(w, list) {
   const xs = Object.entries(w || {}).filter(([, n]) => n);
-  return xs.length ? ` (${xs.map(([k, n]) => `${WHY_LABEL[k] || k} ${num(n)}`).join(" · ")} — 작업 기록에서 목록)` : "";
+  if (!xs.length) return "";
+  const top = (list || []).slice(0, 2).map((x) => `#${x.source_id} ${x.why}`).join(" / ");
+  const again = xs.some(([k]) => k === "same_origin" || k === "dup") ? " · [상품명 바꾸기]에서 'AI 키워드 새로 받기'를 켜면 다른 단어로 다시 만듭니다" : "";
+  return ` (${xs.map(([k, n]) => `${WHY_LABEL[k] || k} ${num(n)}`).join(" · ")}${top ? ` — 예: ${top}` : ""}${(list || []).length > 2 ? " · 전체는 작업 기록에서" : ""})${again}`;
 }
 
 function when(ts) {
@@ -337,7 +341,7 @@ const App = {
           + (r.kw_pending ? ` · AI 키워드 받는 중인 원본 ${num(r.kw_pending)}개${r.kw_wait_listings ? `(복사본 ${num(r.kw_wait_listings)}건)` : ""}는 키워드가 오면 자동으로 이름을 바꿈 — 프로그램이 켜져 있을 때 1분마다 확인, 껐다 켜도 이어서 (오른쪽 아래 현황)` : "")
           + (r.kw_failed ? ` · AI 키워드 실패 원본 ${num(r.kw_failed)}개 (오른쪽 아래에서 사유 보고 다시 받기)` : "")
           + (r.kw_none ? ` · 키워드를 아직 안 받은 원본 ${num(r.kw_none)}개` : "")
-          + (r.short ? ` · 이름을 못 만든 ${num(r.short)}건은 '이름 변경 필요'` + whyMsg(r.why) : "") + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
+          + (r.short ? ` · 이름을 못 만든 ${num(r.short)}건은 '이름 변경 필요'` + whyMsg(r.why, r.why_list) : "") + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
           + (r.skipped_mark ? ` · 상표 단어가 있어 건너뛴 ${num(r.skipped_mark)}건(고른 대로)` : "")
         : (r.kw_error ? `네이버 키워드를 못 받음(${r.kw_error}) · ` : "") + `상품명 바꾸기 끝: ${num(r.renamed)}건 바꿈` + (r.short ? ` · 후보를 못 만든 ${num(r.short)}건은 그대로 (단어가 적음 → 직접 입력이나 AI)` : "")
         + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
@@ -838,21 +842,22 @@ const App = {
   async markCheck(target) {
     let r;
     try { r = await this.api("/api/names/mark_check", { json: target }); } catch (e) { this.toast(e.message, true); return null; }
-    if (!r.sources) return "";
+    if (!r.sources && !r.kw_sources) return "";
+    const tbl = (ws) => `<div class="tbl-wrap" style="max-height:200px"><table class="grid small"><thead><tr><th>상표 단어</th><th>구분</th><th class="w-num">원본</th><th>예시</th></tr></thead>
+            <tbody>${ws.map((w) => `<tr><td><b>${esc(w.word)}</b></td><td>${esc(w.verdict)}</td><td class="num">${num(w.n)}</td>
+              <td class="muted">${w.examples.map((x) => `#${x.id} ${esc(x.name.slice(0, 40))}`).join("<br>")}</td></tr>`).join("")}</tbody></table></div>`;
     return new Promise((resolve) => {
       let done = false;
       const end = (v) => { if (!done) { done = true; resolve(v); } };
       this.openModal({
-        title: `상표 단어가 들어 있는 원본 ${num(r.sources)}개`,
+        title: `상표 단어가 들어 있는 원본 ${num(Math.max(r.sources, r.kw_sources))}개`,
         onClose: () => end(null),
         body: `<div class="form">
-          <p class="small">업스타 기준상품명에 상표(키프리스 확인) 단어가 있습니다. 그대로 두면 이 원본은 상품명을 만들 수 없습니다.</p>
-          <div class="tbl-wrap" style="max-height:220px"><table class="grid small"><thead><tr><th>상표 단어</th><th>구분</th><th class="w-num">원본</th><th>예시</th></tr></thead>
-            <tbody>${r.words.map((w) => `<tr><td><b>${esc(w.word)}</b></td><td>${esc(w.verdict)}</td><td class="num">${num(w.n)}</td>
-              <td class="muted">${w.examples.map((x) => `#${x.id} ${esc(x.name.slice(0, 40))}`).join("<br>")}</td></tr>`).join("")}</tbody></table></div>
+          ${r.sources ? `<p class="small"><b>업스타 기준상품명</b>에 상표(키프리스 확인) 단어가 있습니다 — 원본 ${num(r.sources)}개. 그대로 두면 이 원본은 상품명을 만들 수 없습니다.</p>${tbl(r.words)}` : ""}
+          ${r.kw_sources ? `<p class="small" style="margin-top:8px"><b>AI 키워드</b>에 상표 단어가 있습니다 — 원본 ${num(r.kw_sources)}개. '빼고 만들기'면 그 단어 없이 만듭니다.</p>${tbl(r.kw_words)}` : ""}
           <div class="radio-cards" style="margin-top:8px">
             <label><input type="radio" name="mk" value="drop" checked><div><b>상표 단어 빼고 만들기</b><span class="muted small">그 단어를 빼고 다음 원본 단어로 채워 만듭니다 (추천)</span></div></label>
-            <label><input type="radio" name="mk" value="allow"><div><b>상표 단어 무시하고 그대로 넣어 만들기</b><span class="muted small">기준상품명에 있던 그 단어는 그대로 씁니다 (AI 키워드로 새로 들어오는 다른 상표 단어는 계속 막음)</span></div></label>
+            <label><input type="radio" name="mk" value="allow"><div><b>상표 단어 무시하고 그대로 넣어 만들기</b><span class="muted small">위 표의 상표 단어는 그대로 씁니다 (표에 없는 다른 상표 단어는 계속 막음)</span></div></label>
             <label><input type="radio" name="mk" value="skip"><div><b>이 원본들은 건너뛰기</b><span class="muted small">상품명을 만들지 않고 '이름 변경 필요'로 둡니다</span></div></label>
           </div></div>`,
         buttons: [{ label: "취소" }, { label: "이대로 진행", primary: true, noConfirm: true, onClick: (b) => { end($("input[name=mk]:checked", b).value); } }],

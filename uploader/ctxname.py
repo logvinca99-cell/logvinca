@@ -249,11 +249,14 @@ def _b_order(tail, made, ai_words, rnd, tries=40):
     return best
 
 
-def make_names_v2(origin_name, kw, forbidden, copies=2, seed=0, reject=None, opts=None, bad=None, rep=None):
+def make_names_v2(origin_name, kw, forbidden, copies=2, seed=0, reject=None, opts=None, bad=None, rep=None, trace=None):
     """원본 하나 → 이름 copies개 (1번째 = A, 2번째 = B, 3번째부터는 A·B 방식을 번갈아 다른 조합으로).
     A·B가 덜 비슷하게: 보라(core)는 가장 확실한 1개만 둘 다 쓰고 나머지는 번갈아 나눔, 용도·조합(core2)·맥락(ctx)은 반씩 나눔.
     A는 원본 앞 4단어 → keep → 보라 → 맥락 → 남은 원본 단어 순서, B는 원본 앞 3단어만 두고 나머지를 섞음 (숫자·수량·연식은 늘 맨 뒤).
-    못 만든 자리는 None (→ 복사본 화면 '상품명 변경 필요'). reject(name)=True면 그 조합을 버리고 다음 조합."""
+    못 만든 자리는 None (→ 복사본 화면 '상품명 변경 필요'). reject(name)=True면 그 조합을 버리고 다음 조합.
+    trace(목록)를 주면 버린 조합마다 (까닭, 값, 조합)을 넣는다 — 못 만든 까닭을 실제 값으로 보여 주려고.
+    까닭: no_head(앞 단어 없음) · repeat(반복 단어) · same_origin(원본과 같은 이름 — 새 단어 없음) · self(앞서 만든 것과 같음) ·
+    reject가 남긴 것(dup 이미 쓰는 이름 · repeat · mark 상표 · avoid 떼어 낸 이름)."""
     o = {"max_chars": MAX_CHARS, "head_n": HEAD_N, **(opts or {})}
     bad = bad or (lambda w: False)
     toks, head, pool, nums = split_origin(origin_name, forbidden, o["head_n"])
@@ -269,6 +272,8 @@ def make_names_v2(origin_name, kw, forbidden, copies=2, seed=0, reject=None, opt
         pool = [w for w in words if w not in new and (w in pool or w in head)]
         head = new
     if not head:
+        if trace is not None:
+            trace.append(("no_head", None, ""))
         return [None] * copies
     keep = [w for w in (kw.get("keep") or []) if w in toks and w not in head and not is_numeric(w)]
     core = filter_words(kw.get("core"), toks, head, forbidden, bad)
@@ -301,11 +306,23 @@ def make_names_v2(origin_name, kw, forbidden, copies=2, seed=0, reject=None, opt
                 fixed, tail = ws[:B_FIXED], [w for w in ws[B_FIXED:] if w not in nums]
                 tail_nums = [w for w in ws[B_FIXED:] if w in nums]
                 name = " ".join(fixed + _b_order(tail, made, used, random.Random(f"{seed}:{v}")) + tail_nums)
-            if rep and rep(name.split()):
+            rw = rep(name.split()) if rep else None
+            if rw:
+                if trace is not None:
+                    trace.append(("repeat", rw if isinstance(rw, str) else None, name))
                 continue   # 앞 단어만으로도 반복이면 (원본 자체 문제) 이 조합은 버림
             if name == orig or set(name.split()) == set(toks):
+                if trace is not None:
+                    trace.append(("same_origin", None, name))
                 continue   # 원본과 같은 이름 금지
-            if name in made or (reject and reject(name)):
+            if name in made:
+                if trace is not None:
+                    trace.append(("self", None, name))
+                continue
+            if reject and reject(name):
+                if trace is not None:
+                    w = getattr(reject, "why", None) or ("dup", name)
+                    trace.append((w[0], w[1], name))
                 continue
             got = {"name": name, "chars": nchars(name), "ai_used": used}
             made.append(name)
