@@ -395,16 +395,17 @@ def _usage(u, batch=False):
 
 # ───────────────────────── 대상·예상 비용
 
-def targets(db, ids, refresh=False):
+def targets(db, ids, refresh=False, again=False):
     """키워드를 받아야 할 원본 (받은 것·일괄 처리 중인 것 제외, 무효·재시도 대기는 포함).
-    refresh=True면 예전 지시(버전)로 받은 원본도 — 자동으로는 다시 받지 않는다(비용)."""
+    refresh=True면 예전 지시(버전)로 받은 원본도 — 자동으로는 다시 받지 않는다(비용).
+    again=True면 이미 받은 원본도 전부 새로 (사람이 '키워드 새로 받기'를 고름)."""
     out = []
     for i in range(0, len(ids), 900):
         chunk = list(ids)[i:i + 900]
         out += [r["id"] for r in db.q(f"""SELECT s.id FROM sources s LEFT JOIN ctx_kw k ON k.source_id=s.id
             WHERE s.id IN ({','.join('?' * len(chunk))}) AND (k.status IS NULL OR k.status IN ('retry','invalid')
-              OR (? AND k.status='ok' AND k.ver!=?))
-            ORDER BY s.id""", (*chunk, int(bool(refresh)), PROMPT_VER))]
+              OR (? AND k.status='ok' AND k.ver!=?) OR (? AND k.status='ok'))
+            ORDER BY s.id""", (*chunk, int(bool(refresh)), PROMPT_VER, int(bool(again))))]
     return out
 
 
@@ -428,9 +429,9 @@ def _est_usd(model, n, per, batch, hit=True):
     return cost(model, EST_IN * n, EST_OUT * n, batch, cache_read=SYS_TOK * (req - 1) if hit else 0, **write)
 
 
-def estimate(db, cfg, ids, mode=None, refresh=False):
+def estimate(db, cfg, ids, mode=None, refresh=False, again=False):
     mode = mode or cfg.get("ctx_mode") or "batch"
-    need = targets(db, ids, refresh)
+    need = targets(db, ids, refresh, again)
     per = max(1, int(cfg.get("ctx_per_request") or 10))
     n = len(need)
     batch = mode == "batch"
@@ -445,7 +446,7 @@ def estimate(db, cfg, ids, mode=None, refresh=False):
             "in_tok": in_tok, "out_tok": out_tok, "usd": round(usd, 4), "krw": math.ceil(usd * rate),
             "krw_max": math.ceil(usd_max * rate), "rate": rate,
             "mode": mode, "model": model_of(cfg), "pending": pending, "has_key": has_key(cfg),
-            "old": 0 if refresh else old_count(db, ids), "refresh": bool(refresh)}
+            "old": 0 if (refresh or again) else old_count(db, ids), "refresh": bool(refresh), "again": bool(again)}
 
 
 # ───────────────────────── 저장 → 이름 후보 만들기
@@ -511,7 +512,97 @@ def opts(cfg):
             "tail_max": int(cfg.get("ctx_tail_max") or 6)}
 
 
-def make_rejecter(c, cfg, lex):
+def source_marks(lex, name):
+    """업스타 기준상품명에 든 상표 단어 → ([(보이는 말, 등록/출원)], 그 낱말들 set). 붙여 쓴 두 단어 상표('효도 의자')면 두 낱말 다."""
+    from . import lexicon as _lx
+    found = _lx.marks_in(name, lex)
+    toks = set()
+    for w, _v in found:
+        toks.update(w.split())
+    return found, toks
+
+
+def mark_mode_of(c, sids):
+    """원본마다 상표 단어 처리(고른 값): drop(빼고 만들기·기본) / allow(무시하고 넣어 만들기) / skip(건너뛰기). → {원본: 값}"""
+    out = {}
+    sids = list(sids)
+    for i in range(0, len(sids), 900):
+        ch = sids[i:i + 900]
+        for r in c.execute(f"SELECT id, mark_mode FROM sources WHERE id IN ({','.join('?' * len(ch))})", ch).fetchall():
+            out[r["id"]] = r["mark_mode"] or "drop"
+    return out
+
+
+def set_mark_mode(db, sids, mode, lex=None):
+    """고른 원본 중 업스타 기준상품명에 상표 단어가 있는 것에만 처리 방식을 남긴다 (키워드가 나중에 와도 그대로 적용)."""
+    if mode not in ("drop", "allow", "skip"):
+        return 0
+    lex = lex or lexicon.get(db)
+    sids = list(sids)
+    hit = []
+    for i in range(0, len(sids), 900):
+        ch = sids[i:i + 900]
+        hit += [r["id"] for r in db.q(f"SELECT id, name FROM sources WHERE id IN ({','.join('?' * len(ch))})", ch)
+                if source_marks(lex, r["name"])[0]]
+    for i in range(0, len(hit), 900):
+        ch = hit[i:i + 900]
+        db.x(f"UPDATE sources SET mark_mode=? WHERE id IN ({','.join('?' * len(ch))})", (mode, *ch))
+    return len(hit)
+
+
+def mark_check(db, sids, examples=2):
+    """고른 원본의 업스타 기준상품명에 든 상표 단어: {sources: 상표 단어가 든 원본 수, words: [{word, verdict, n, examples}]}"""
+    lex = lexicon.get(db)
+    words, n = {}, 0
+    sids = list(sids)
+    for i in range(0, len(sids), 900):
+        ch = sids[i:i + 900]
+        for r in db.q(f"SELECT id, name FROM sources WHERE id IN ({','.join('?' * len(ch))})", ch):
+            found, _ = source_marks(lex, r["name"])
+            if not found:
+                continue
+            n += 1
+            for w, v in found:
+                x = words.setdefault(w, {"word": w, "verdict": v, "n": 0, "examples": []})
+                x["n"] += 1
+                if len(x["examples"]) < examples:
+                    x["examples"].append({"id": r["id"], "name": r["name"]})
+    return {"sources": n, "words": sorted(words.values(), key=lambda x: -x["n"])}
+
+
+def source_setup(cfg, lex, forb, name, mode, base_reject, c=None):
+    """원본 하나의 조립 준비: 상표 단어 처리 방식대로 (금지어 묶음, 거르기 함수). skip이면 None."""
+    found, toks = source_marks(lex, name)
+    if not found:
+        return forb, base_reject
+    if mode == "skip":
+        return None
+    if mode == "allow":   # 기준상품명에 원래 있던 상표 단어는 통과, AI 키워드로 새로 들어온 상표 단어는 계속 막음
+        return forb, make_rejecter(c, cfg, lex, allow=toks) if c is not None else base_reject
+    return forb | toks, base_reject   # drop: 금지어처럼 머리·남은 단어·keep에서 빼고 다음 원본 단어로
+
+
+def why_fail(c, cfg, lex, sid, mode=None):
+    """이름을 못 만든 까닭 → (key, 문장). mark_skip / no_kw / no_head / dup."""
+    s = c.execute("SELECT name, mark_mode FROM sources WHERE id=?", (sid,)).fetchone()
+    if not s:
+        return "dup", "원본이 없음"
+    mode = mode or s["mark_mode"] or "drop"
+    found, toks = source_marks(lex, s["name"])
+    mw = ", ".join(w for w, _ in found)
+    if found and mode == "skip":
+        return "mark_skip", f"상표 단어({mw})가 있어 건너뜀(고른 대로)"
+    k = c.execute("SELECT status FROM ctx_kw WHERE source_id=?", (sid,)).fetchone()
+    if not k or k["status"] != "ok":
+        return "no_kw", "AI 키워드가 없음(또는 받는 중·실패)"
+    forb = set(lex.blocked) | (toks if found and mode != "allow" else set())
+    head = ctxname.split_origin(s["name"], forb, int(cfg.get("ctx_head_n") or 4))[1]
+    if not head:
+        return "no_head", "금지어" + ("·상표 단어" if found and mode != "allow" else "") + "를 빼니 앞에 둘 원본 단어가 없음"
+    return "dup", "만든 조합이 모두 이미 쓰는 이름과 겹치거나 반복·상표 단어에 걸림" + (f" (상표: {mw})" if found else "")
+
+
+def make_rejecter(c, cfg, lex, allow=frozenset()):
     """앱의 기존 검사를 make_names의 reject로: 33개 스토어 전체에서 쓰는(또는 후보에 있는) 이름과 같음(등록된 이름 포함),
     키프리스로 확인된 상표 단어. 85% 겹침·원본과 같은 이름은 make_names가, 금지어는 clean_origin·filter_ai_words가
     기준 구현대로 단어 단위로 본다 (금지어 목록에 '높이' 같은 짧은 말이 있어 글자 단위로 보면 '높이조절'까지 막힘)."""
@@ -523,7 +614,8 @@ def make_rejecter(c, cfg, lex):
             return True
         if rep(name.split()):   # 같은 단어 3번 이상 (마지막 안전장치 — 조립 때 이미 빼지만 셔플 등 다른 길도 같게)
             return True
-        return bool(lexicon.marks_in(name, lex))
+        # allow: 그 원본 기준상품명에 원래 있던 상표 단어(사람이 '무시하고 만들기'로 고름)는 통과
+        return any(not all(t in allow for t in w.split()) for w, _ in lexicon.marks_in(name, lex))
     return reject
 
 
@@ -704,13 +796,18 @@ def build_names(db, sids, cfg=None):
             reject = make_rejecter(c, cfg, lex)
             now = time.time()
             need = slot_need(c, [r["id"] for r in rows], cfg)
+            modes = mark_mode_of(c, [r["id"] for r in rows])
             for r in rows:
                 copies = need.get(r["id"], 0)
                 if copies <= 0:   # 칸이 다 참 — 만들지 않음 (키워드는 남겨 둠: 나중에 칸이 비면 make_more로)
                     c.execute("UPDATE ctx_kw SET names_made=1 WHERE source_id=?", (r["id"],))
                     continue
-                res = ctxname.make_names_v2(r["name"], kw_of(r["words"]), forb, copies=copies, seed=r["id"],
-                                            reject=reject, opts=o, bad=bad, rep=rep)
+                setup = source_setup(cfg, lex, forb, r["name"], modes.get(r["id"]), reject, c)
+                if setup is None:   # 상표 단어가 있어 건너뛰기로 고른 원본 — 고르는 방식이 바뀌면 그때 만듦
+                    st["skipped_mark"] = st.get("skipped_mark", 0) + 1
+                    continue
+                res = ctxname.make_names_v2(r["name"], kw_of(r["words"]), setup[0], copies=copies, seed=r["id"],
+                                            reject=setup[1], opts=o, bad=bad, rep=rep)
                 for k, x in enumerate(res):
                     if x is None:
                         st["none"] += 1
@@ -723,7 +820,7 @@ def build_names(db, sids, cfg=None):
     return st
 
 
-def make_more(db, need, avoid=None, cfg=None):
+def make_more(db, need, avoid=None, cfg=None, skipped=None):
     """후보를 다 쓴 원본에 이름 후보를 더 만든다: {원본 id: 필요한 수}. 이미 있는 이름·avoid(떼어 낸 이름)는 피해
     다른 조합(다른 이름·맥락·원본 단어 위치)으로. AI는 부르지 않는다. 만든 수."""
     from .inventory import add_names
@@ -740,11 +837,17 @@ def make_more(db, need, avoid=None, cfg=None):
         with db.tx() as c:
             base = make_rejecter(c, cfg, lex)
             now = time.time()
+            modes = mark_mode_of(c, [r["id"] for r in rows])
             for r in rows:
                 skip = (avoid or {}).get(r["id"], set())
-                reject = (lambda nm, skip=skip: nm in skip or base(nm))
+                setup = source_setup(cfg, lex, forb, r["name"], modes.get(r["id"]), base, c)
+                if setup is None:   # 상표 단어 → 건너뛰기로 고름
+                    if skipped is not None:
+                        skipped.add(r["id"])
+                    continue
+                reject = (lambda nm, skip=skip, b=setup[1]: nm in skip or b(nm))
                 # 앞 번호 조합(A·B)은 이미 있으니 뒤 번호부터 — copies를 넉넉히 주고 새로 나온 것만 넣는다
-                res = ctxname.make_names_v2(r["name"], kw_of(r["words"]), forb, copies=need[r["id"]] + 2, seed=r["id"],
+                res = ctxname.make_names_v2(r["name"], kw_of(r["words"]), setup[0], copies=need[r["id"]] + 2, seed=r["id"],
                                             reject=reject, opts=o, bad=bad, rep=rep)
                 got = [(k, x) for k, x in enumerate(res) if x][:need[r["id"]]]
                 for k, x in got:
@@ -858,10 +961,10 @@ def _client(cfg):
     return anthropic.Anthropic(api_key=(cfg.get("anthropic_api_key") or "").strip(), max_retries=4)
 
 
-def run_instant(db, ids, progress=None, should_stop=None, refresh=False):
+def run_instant(db, ids, progress=None, should_stop=None, refresh=False, again=False):
     """즉시 모드: 요청 하나에 원본 10개, 요청은 한꺼번에(최대 50개 동시). 실패한 요청의 원본은 재시도 대기."""
     cfg = config.load()
-    need = targets(db, ids, refresh)
+    need = targets(db, ids, refresh, again)
     per = max(1, int(cfg.get("ctx_per_request") or 10))
     est = estimate(db, cfg, ids, "instant", refresh)
     st = {"sources": len(need), "requests": 0, "ok": 0, "failed": 0, "empty": 0, "errors": [], "cost_usd": 0.0, "names": {}}
@@ -988,11 +1091,11 @@ def _batches(cfg):
     return FakeBatches() if fake() else _client(cfg).messages.batches
 
 
-def start_batch(db, ids, refresh=False):
+def start_batch(db, ids, refresh=False, again=False):
     """일괄 처리 시작: 요청을 만들어 보내고 배치 id·요청↔원본 연결을 저장한다. 결과는 poll()이 받는다."""
     cfg = config.load()
     with _lock:
-        need = targets(db, ids, refresh)
+        need = targets(db, ids, refresh, again)
         if not need:
             return {"sources": 0, "requests": 0, "batches": 0, "run_id": None}
         if not has_key(cfg):

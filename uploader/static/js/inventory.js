@@ -184,7 +184,7 @@ App.page("inventory", {
       onAll: () => { this.selAll = true; this.sel.clear(); this.load(); },
       onClear: () => { this.clearSel(); this.load(); },
       onAction: (id) => {
-        if (id === "ctx") App.ctxConfirm(this.target()); if (id === "copy") this.copyModal(); if (id === "delete") this.remove(); if (id === "edit") this.editModal();
+        if (id === "ctx") App.ctxStart(this.target()); if (id === "copy") this.copyModal(); if (id === "delete") this.remove(); if (id === "edit") this.editModal();
         if (id === "category") App.pickCategory({ target: this.target(), what: `고른 원본 ${num(this.selAll ? this.total : this.sel.size)}개`, after: () => this.load() });
         if (id === "tags") this.tagModal();
         if (id === "eyeon" || id === "eyeoff") App.eyeSet(this.target(), id === "eyeon", `고른 원본 ${num(this.targetCount())}개`, () => this.load());
@@ -544,7 +544,7 @@ App.page("inventory", {
         + group("core2", "용도·조합 (core2)", "용도형 명칭·조합용 목적 표현 · A·B가 나눠 쓰고 자리가 남으면 상대 몫도") + group("ctx", "맥락 (ctx)", "쓰는 장소·사람·용도·상황 · A·B가 반씩 나눠 씀")
         : `<button class="btn" id="ctx-one">이 원본 AI 키워드 받기</button>`}
     </div>`;
-    $("#ctx-one", b)?.addEventListener("click", () => App.ctxConfirm({ ids: [d.id] }));
+    $("#ctx-one", b)?.addEventListener("click", () => App.ctxStart({ ids: [d.id] }));
   },
 
   renderNames(b, d) {

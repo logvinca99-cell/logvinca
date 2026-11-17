@@ -17,6 +17,13 @@ function dur(sec) {
   return `${s}초`;
 }
 
+/* 상품명을 못 만든 까닭별 수 (상품명 바꾸기 결과) */
+const WHY_LABEL = { no_head: "금지어·상표 단어를 빼니 앞 단어 없음", dup: "조합이 모두 겹침·반복·상표", no_kw: "AI 키워드 없음", mark_skip: "상표 단어로 건너뜀" };
+function whyMsg(w) {
+  const xs = Object.entries(w || {}).filter(([, n]) => n);
+  return xs.length ? ` (${xs.map(([k, n]) => `${WHY_LABEL[k] || k} ${num(n)}`).join(" · ")} — 작업 기록에서 목록)` : "";
+}
+
 function when(ts) {
   if (!ts) return "-";
   const d = new Date(ts * 1000), p = (n) => String(n).padStart(2, "0");
@@ -318,8 +325,11 @@ const App = {
           + (r.rejected ? ` · 반복·금지 단어로 버림 ${num(r.rejected)}개` : "")
           + (r.failed ? ` · 실패 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : "") + aiMsg(r.ai),
       ctxkw: () => `AI 키워드(즉시) 끝: 원본 ${num(r.ok)}개 받음` + (r.failed ? ` · 재시도 대기 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : "")
-        + ` · 실제 약 ${num(r.krw)}원 (예상 ${num(r.est_krw)}원)` + (r.names ? ` · ai상품명 ${num(r.names.made)}개 · 복사본에 배정 ${num(r.names.assigned)}건` : ""),
+        + ` · 실제 약 ${num(r.krw)}원 (예상 ${num(r.est_krw)}원)` + (r.names ? ` · ai상품명 ${num(r.names.made)}개 · 복사본에 배정 ${num((r.names.assigned || 0) + (r.names.waiting_renamed || 0))}건`
+          + (r.names.waiting_renamed ? `(이름 바꾸기를 기다리던 ${num(r.names.waiting_renamed)}건 포함)` : "")
+          + (r.names.none ? ` · 못 만든 이름 자리 ${num(r.names.none)}개` : "") + (r.names.skipped_mark ? ` · 상표 단어로 건너뛴 원본 ${num(r.names.skipped_mark)}개` : "") : ""),
       rename: () => r.method === "shuffle" ? `상품명 바꾸기(셔플) 끝: ${num(r.renamed)}건 바꿈` + (r.short ? ` · 못 만든 ${num(r.short)}건은 '이름 변경 필요'` : "") + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
+          + (r.skipped_mark ? ` · 상표 단어가 있어 건너뛴 ${num(r.skipped_mark)}건(고른 대로)` : "")
           + (r.dropped_extra?.length ? ` · 넣을 단어 중 쓸 수 없는 것 뺌: ${r.dropped_extra.join(", ")}` : "")
         : r.method === "ctx"
         ? `상품명 바꾸기(AI 키워드) 끝: ${num(r.renamed)}건 배정` + (r.kept ? ` · 이미 맥락 이름 ${num(r.kept)}건 그대로` : "")
@@ -327,7 +337,8 @@ const App = {
           + (r.kw_pending ? ` · AI 키워드 받는 중인 원본 ${num(r.kw_pending)}개${r.kw_wait_listings ? `(복사본 ${num(r.kw_wait_listings)}건)` : ""}는 키워드가 오면 자동으로 이름을 바꿈 — 프로그램이 켜져 있을 때 1분마다 확인, 껐다 켜도 이어서 (오른쪽 아래 현황)` : "")
           + (r.kw_failed ? ` · AI 키워드 실패 원본 ${num(r.kw_failed)}개 (오른쪽 아래에서 사유 보고 다시 받기)` : "")
           + (r.kw_none ? ` · 키워드를 아직 안 받은 원본 ${num(r.kw_none)}개` : "")
-          + (r.short ? ` · 이름을 못 만든 ${num(r.short)}건은 '이름 변경 필요'` : "") + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
+          + (r.short ? ` · 이름을 못 만든 ${num(r.short)}건은 '이름 변경 필요'` + whyMsg(r.why) : "") + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
+          + (r.skipped_mark ? ` · 상표 단어가 있어 건너뛴 ${num(r.skipped_mark)}건(고른 대로)` : "")
         : (r.kw_error ? `네이버 키워드를 못 받음(${r.kw_error}) · ` : "") + `상품명 바꾸기 끝: ${num(r.renamed)}건 바꿈` + (r.short ? ` · 후보를 못 만든 ${num(r.short)}건은 그대로 (단어가 적음 → 직접 입력이나 AI)` : "")
         + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
         + (r.few_words ? ` · 새 단어 후보가 설정보다 적은 원본 ${num(r.few_words)}개` : "") + aiMsg(r.ai),
@@ -822,6 +833,39 @@ const App = {
     if ($("#m-foot")) $("#m-foot").hidden = false;
   },
 
+  /* 상품명 만들기 전: 업스타 기준상품명에 상표 단어가 있으면 어떤 단어인지 보여 주고 처리 방식을 고르게 함.
+     → "" (상표 단어 없음) / "drop" · "allow" · "skip" / null (취소) */
+  async markCheck(target) {
+    let r;
+    try { r = await this.api("/api/names/mark_check", { json: target }); } catch (e) { this.toast(e.message, true); return null; }
+    if (!r.sources) return "";
+    return new Promise((resolve) => {
+      let done = false;
+      const end = (v) => { if (!done) { done = true; resolve(v); } };
+      this.openModal({
+        title: `상표 단어가 들어 있는 원본 ${num(r.sources)}개`,
+        onClose: () => end(null),
+        body: `<div class="form">
+          <p class="small">업스타 기준상품명에 상표(키프리스 확인) 단어가 있습니다. 그대로 두면 이 원본은 상품명을 만들 수 없습니다.</p>
+          <div class="tbl-wrap" style="max-height:220px"><table class="grid small"><thead><tr><th>상표 단어</th><th>구분</th><th class="w-num">원본</th><th>예시</th></tr></thead>
+            <tbody>${r.words.map((w) => `<tr><td><b>${esc(w.word)}</b></td><td>${esc(w.verdict)}</td><td class="num">${num(w.n)}</td>
+              <td class="muted">${w.examples.map((x) => `#${x.id} ${esc(x.name.slice(0, 40))}`).join("<br>")}</td></tr>`).join("")}</tbody></table></div>
+          <div class="radio-cards" style="margin-top:8px">
+            <label><input type="radio" name="mk" value="drop" checked><div><b>상표 단어 빼고 만들기</b><span class="muted small">그 단어를 빼고 다음 원본 단어로 채워 만듭니다 (추천)</span></div></label>
+            <label><input type="radio" name="mk" value="allow"><div><b>상표 단어 무시하고 그대로 넣어 만들기</b><span class="muted small">기준상품명에 있던 그 단어는 그대로 씁니다 (AI 키워드로 새로 들어오는 다른 상표 단어는 계속 막음)</span></div></label>
+            <label><input type="radio" name="mk" value="skip"><div><b>이 원본들은 건너뛰기</b><span class="muted small">상품명을 만들지 않고 '이름 변경 필요'로 둡니다</span></div></label>
+          </div></div>`,
+        buttons: [{ label: "취소" }, { label: "이대로 진행", primary: true, noConfirm: true, onClick: (b) => { end($("input[name=mk]:checked", b).value); } }],
+      });
+    });
+  },
+  /* 원본 화면 AI 키워드 받기: 상표 단어 확인 → 비용 안내 */
+  async ctxStart(target, after) {
+    const mm = await this.markCheck(target);
+    if (mm === null) { if (after) after(false); return; }
+    return this.ctxConfirm(mm ? { ...target, mark_mode: mm } : target, after);
+  },
+
   // ── 맥락 키워드: 실행 전 비용 안내 → 일괄(기본) / 즉시
 
   async ctxConfirm(target, after) {
@@ -831,6 +875,12 @@ const App = {
       if (est.old && !target.refresh) {   // 예전 지시로 받은 것만 있음 → 자동으로는 안 받고 물어봄
         if (await App.yes("AI 키워드 다시 받기", `고른 원본은 모두 키워드가 있습니다. 그중 ${num(est.old)}개는 예전 지시로 받은 키워드입니다.\n새 지시로 다시 받을까요? (다음 화면에 비용 안내가 나오고, 거기서 시작을 눌러야 받습니다)`, { label: "다시 받기" }))
           return this.ctxConfirm({ ...target, refresh: true }, after);
+        if (after) after(false);
+        return;
+      }
+      if (est.have && !target.again) {   // 이미 받은 원본뿐 → 새로 받을지 물어봄 (비용 듦)
+        if (await App.yes("AI 키워드 새로 받기", `고른 원본 ${num(est.have)}개는 이미 AI 키워드가 있습니다.\n새로 받을까요? 받으면 안 쓴 ai상품명은 지우고 새 키워드로 다시 만듭니다 (이미 붙은·올라간 이름은 그대로). 다음 화면에 비용 안내가 나오고, 거기서 시작을 눌러야 받습니다.`, { label: "새로 받기" }))
+          return this.ctxConfirm({ ...target, again: true }, after);
         if (after) after(false);
         return;
       }
@@ -847,7 +897,8 @@ const App = {
       title: "AI 키워드 받기 · 비용 안내",
       body: `<div class="form">
         <dl class="kv">
-          <dt>대상 원본</dt><dd><b>${num(est.sources)}개</b> <span class="muted small">(고른 ${num(est.selected)}개 중 이미 키워드가 있는 ${num(est.have)}개${est.full ? ` · 후보상품명 칸이 다 찬 ${num(est.full)}개` : ""} 제외${target.refresh ? " · 예전 지시로 받은 것 포함" : ""})</span>
+          <dt>대상 원본</dt><dd><b>${num(est.sources)}개</b> <span class="muted small">(고른 ${num(est.selected)}개 중 이미 키워드가 있는 ${num(est.have)}개${est.full ? ` · 후보상품명 칸이 다 찬 ${num(est.full)}개` : ""} 제외${target.refresh ? " · 예전 지시로 받은 것 포함" : ""}${target.again ? " · 이미 받은 원본도 새로 받음" : ""})</span>
+            ${est.have && !target.again ? `<br><span class="small"><a href="#" id="cm-again">이미 키워드가 있는 ${num(est.have)}개도 새로 받기</a> (비용 듦)</span>` : ""}
             ${est.old ? `<br><span class="small">예전 지시로 받은 원본 <b>${num(est.old)}개</b>는 다시 받지 않습니다. <a href="#" id="cm-refresh">이것도 새 지시로 함께 다시 받기</a></span>` : ""}</dd>
           <dt>요청 수</dt><dd>${num(est.requests)}건 <span class="muted small">(요청 1건에 원본 ${num(s.ctx_per_request)}개)</span></dd>
           <dt>예상 토큰</dt><dd>입력 ${num(est.in_tok)} · 출력 ${num(est.out_tok)}</dd>
@@ -879,6 +930,7 @@ const App = {
       } }],
     });
     $("#cm-refresh")?.addEventListener("click", (e) => { e.preventDefault(); this.closeModal(); this.ctxConfirm({ ...target, refresh: true }, after); });
+    $("#cm-again")?.addEventListener("click", (e) => { e.preventDefault(); this.closeModal(); this.ctxConfirm({ ...target, again: true }, after); });
   },
 
   // ── 쪽 넘기기

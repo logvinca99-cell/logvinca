@@ -830,7 +830,8 @@ def assign_ctx_names(db, sids, only=None, newest=False):
                 if not pool:
                     continue
                 nm = pool.pop(0)
-                c.execute("UPDATE listings SET name_id=?, name=?, updated_at=? WHERE id=?", (nm["id"], nm["name"], now, l["id"]))
+                c.execute("""UPDATE listings SET name_id=?, name=?, updated_at=?,
+                    message=CASE WHEN message LIKE '이름 못 만듦%' THEN '' ELSE message END WHERE id=?""", (nm["id"], nm["name"], now, l["id"]))
                 c.execute("UPDATE names SET listing_id=? WHERE id=?", (l["id"], nm["id"]))
                 n += 1
         db.recount_sources(chunk)
@@ -1137,7 +1138,7 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
     return st
 
 
-def rename_shuffle(db, ids, fixed_n=3, extra=(), progress=None, should_stop=None):
+def rename_shuffle(db, ids, fixed_n=3, extra=(), progress=None, should_stop=None, mark_mode=None):
     """셔플: 앞 fixed_n단어 고정, 나머지 단어와 직접 넣은 단어를 함께 섞어 복사본마다 새 이름 (AI 안 씀).
     이미 바꾼 이름이 있으면 버리고 새로 만든다. 33개 스토어 중복·원본과 같은 이름·금지어는 거른다."""
     from . import ctxname, shuffle
@@ -1150,6 +1151,9 @@ def rename_shuffle(db, ids, fixed_n=3, extra=(), progress=None, should_stop=None
     dropped = [w for w in extra if w in forb or bad(w) or ctxname.claim_word(w)]
     extra = [w for w in extra if w not in dropped]
     set_ctx_wait(db, ids, 0)   # 셔플로 바꿨으면 AI 키워드가 와도 덮어쓰지 않음
+    if mark_mode:
+        ctxkw.set_mark_mode(db, sorted({r["source_id"] for r in db.q(
+            f"SELECT source_id FROM listings WHERE id IN ({','.join('?' * len(ids))})", list(ids))}), mark_mode, lex) if ids else None
     rows = []
     for i in range(0, len(ids), 900):
         chunk = ids[i:i + 900]
@@ -1166,10 +1170,15 @@ def rename_shuffle(db, ids, fixed_n=3, extra=(), progress=None, should_stop=None
         part = todo[i:i + 500]
         with db.tx() as c:
             reject = ctxkw.make_rejecter(c, cfg, lex)
+            modes = ctxkw.mark_mode_of(c, sorted({r["source_id"] for r in part}))
             for r in part:
+                setup = ctxkw.source_setup(cfg, lex, forb, r["orig"], modes.get(r["source_id"]), reject, c)
+                if setup is None:   # 상표 단어 → 건너뛰기로 고름: 손대지 않음
+                    st["skipped_mark"] = st.get("skipped_mark", 0) + 1
+                    continue
                 if r["name_id"]:
                     release_name(c, r["id"], r["name_id"], ("original", "manual", "import", "adopt", "ready"))
-                name = shuffle.make(r["orig"], fixed_n, extra, forb, seed=f"{r['id']}:{now}", reject=reject, max_chars=max_chars,
+                name = shuffle.make(r["orig"], fixed_n, extra, setup[0], seed=f"{r['id']}:{now}", reject=setup[1], max_chars=max_chars,
                                     rep=ctxkw.repeat_check(cfg, lex))
                 if not name:
                     c.execute("UPDATE listings SET name_id=NULL, name=?, updated_at=? WHERE id=?", (r["orig"], now, r["id"]))
@@ -1205,7 +1214,7 @@ def ctx_waiting(db, sids):
     return out
 
 
-def rename_ctx(db, ids, fallback=False, progress=None, should_stop=None, redo=True):
+def rename_ctx(db, ids, fallback=False, progress=None, should_stop=None, redo=True, mark_mode=None):
     """AI 키워드 방식(기본): 키워드를 받은 원본은 이름 후보(A·B)를 만들어 고른 복사본에 붙인다.
     redo면 이미 이름이 있는 복사본(AI 키워드·셔플·AI로 짓기 이름 등)도 새 이름으로 바꾼다 — 바꾸기를 눌렀는데
     그대로면 안 되므로, 후보(A·B)를 다 썼으면 다른 조합으로 새 후보를 그 자리에서 만든다 (AI는 다시 부르지 않음).
@@ -1219,7 +1228,23 @@ def rename_ctx(db, ids, fallback=False, progress=None, should_stop=None, redo=Tr
     todo = [r for r in rows if not r["origin_no"] and r["status"] not in ("queued", "running")]
     set_ctx_wait(db, [r["id"] for r in todo], 0)
     st = {"listings": len(rows), "live": len(rows) - len(todo), "renamed": 0, "kept": 0, "short": 0, "no_kw": 0,
-          "fallback": 0, "method": "ctx"}
+          "fallback": 0, "method": "ctx", "skipped_mark": 0}
+    lex = lexicon.get(db)
+    if mark_mode:   # 상표 단어 확인 창에서 고른 방식 → 그 원본에 남김 (키워드가 나중에 와도 그대로)
+        ctxkw.set_mark_mode(db, sorted({r["source_id"] for r in todo}), mark_mode, lex)
+    # 상표 단어가 있어 '건너뛰기'로 고른 원본의 복사본은 손대지 않음
+    with db.tx() as c:
+        modes = ctxkw.mark_mode_of(c, sorted({r["source_id"] for r in todo}))
+        names_of = {}
+        for i in range(0, len(todo), 900):
+            ch = sorted({r["source_id"] for r in todo})[i:i + 900]
+            if ch:
+                names_of.update({x["id"]: x["name"] for x in c.execute(
+                    f"SELECT id, name FROM sources WHERE id IN ({','.join('?' * len(ch))})", ch).fetchall()})
+    skip_src = {s for s, m in modes.items() if m == "skip" and ctxkw.source_marks(lex, names_of.get(s, ""))[0]}
+    if skip_src:
+        st["skipped_mark"] = sum(1 for r in todo if r["source_id"] in skip_src)
+        todo = [r for r in todo if r["source_id"] not in skip_src]
     src = sorted({r["source_id"] for r in todo})
     ok = set()
     for i in range(0, len(src), 900):
@@ -1273,9 +1298,22 @@ def rename_ctx(db, ids, fallback=False, progress=None, should_stop=None, redo=Tr
     if need:
         st["extra_made"] = st.get("extra_made", 0) + ctxkw.make_more(db, need, avoid)
         st["renamed"] += assign_ctx_names(db, sorted(need), only=[r["id"] for r in mine])
-    left = db.q(f"""SELECT COUNT(*) AS n FROM listings WHERE name_id IS NULL AND origin_no=''
-        AND id IN ({','.join('?' * len(mine))})""", [r["id"] for r in mine])[0]["n"] if mine else 0
-    st["short"] = left
+    left_rows = db.q(f"""SELECT id, source_id FROM listings WHERE name_id IS NULL AND origin_no=''
+        AND id IN ({','.join('?' * len(mine))})""", [r["id"] for r in mine]) if mine else []
+    st["short"] = len(left_rows)
+    if left_rows:   # 못 만든 까닭: 복사본 메모에 한 줄 + 결과에 까닭별 수·목록(앞 50개)
+        cfg = config.load()
+        why = {}
+        with db.tx() as c:
+            for sid in sorted({r["source_id"] for r in left_rows}):
+                why[sid] = ctxkw.why_fail(c, cfg, lex, sid)
+            for r in left_rows:
+                c.execute("UPDATE listings SET message=? WHERE id=?", ("이름 못 만듦: " + why[r["source_id"]][1], r["id"]))
+        st["why"] = {}
+        for r in left_rows:
+            k = why[r["source_id"]][0]
+            st["why"][k] = st["why"].get(k, 0) + 1
+        st["why_list"] = [{"source_id": sid, "name": names_of.get(sid, ""), "why": w[1]} for sid, w in list(why.items())[:50]]
     if progress:
         progress(len(todo), max(1, len(todo)), "끝")
     if rest:

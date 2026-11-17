@@ -21,7 +21,11 @@ function actResult(r) {
     return `<ul class="act-diff">${d.map((x) => `<li><b>${esc(x.label || settingLabel(x.key))}</b> ${x.old !== "" ? `<s>${esc(x.old)}</s> → ` : ""}${esc(x.new || "(비움)")}</li>`).join("")}</ul>`;
   }
   if (d && r.status !== "running") {
-    try { return esc(App.taskMsg({ kind: r.kind, title: r.title, result: d, status: r.status })) + (r.result ? ` · ${esc(r.result)}` : ""); } catch { /* 아래로 */ }
+    try {
+      return esc(App.taskMsg({ kind: r.kind, title: r.title, result: d, status: r.status })) + (r.result ? ` · ${esc(r.result)}` : "")
+        + (d.why_list?.length ? `<details class="small"><summary>이름을 못 만든 원본 ${num(d.why_list.length)}개 보기</summary><ul>${d.why_list.map((x) =>
+          `<li>#${x.source_id} ${esc(String(x.name || "").slice(0, 50))} — ${esc(x.why)}</li>`).join("")}</ul></details>` : "");
+    } catch { /* 아래로 */ }
   }
   return esc(r.result || (r.status === "running" ? "진행 중…" : ""));
 }

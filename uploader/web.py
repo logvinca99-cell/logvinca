@@ -1395,14 +1395,19 @@ def create_app(db=None):
         b = body()
         cfg = config.load()
         ids, full = _ctx_targets(b)
-        est = ctxkw.estimate(db, cfg, ids, b.get("mode"), bool(b.get("refresh")))
+        est = ctxkw.estimate(db, cfg, ids, b.get("mode"), bool(b.get("refresh")), bool(b.get("again")))
         return jsonify({**est, "full": len(full), "selected": est["selected"] + len(full)})
+
+    @app.post("/api/names/mark_check")
+    def names_mark_check():
+        """고른 원본(또는 복사본의 원본)의 업스타 기준상품명에 든 상표 단어 — 상품명 만들기 전에 물어보려고."""
+        return jsonify(ctxkw.mark_check(db, _ctx_sources(body())))   # 복사본 화면은 {listing_filter: …}, 원본 화면은 원본 거르기 조건
 
     def _ctx_targets(b):
         """AI 키워드를 받을 원본 — 원본 화면에서 고르면 후보상품명 칸이 다 찬 원본은 뺀다(비용 아낌).
         복사본 화면에서 고른 것(이름 다시 바꾸기)은 빼지 않는다. → (원본 번호들, 뺀 원본 번호들)"""
         ids = _ctx_sources(b)
-        if "listing_filter" in b:
+        if "listing_filter" in b or b.get("again"):   # 새로 받기는 사람이 고른 것 — 칸이 다 찬(안 올린 이름이 붙은) 원본도
             return ids, set()
         full = ctxkw.full_slots(db, ids)
         return [i for i in ids if i not in full], full
@@ -1412,15 +1417,17 @@ def create_app(db=None):
         b = body()
         ids, full = _ctx_targets(b)
         mode = b.get("mode") or config.load().get("ctx_mode") or "batch"
-        refresh = bool(b.get("refresh"))
-        if not ctxkw.targets(db, ids, refresh):
+        refresh, again = bool(b.get("refresh")), bool(b.get("again"))
+        if b.get("mark_mode"):   # 상표 단어 확인 창에서 고른 방식 (키워드가 오면 그대로 적용)
+            ctxkw.set_mark_mode(db, ids, b["mark_mode"])
+        if not ctxkw.targets(db, ids, refresh, again):
             return jsonify({"started": False, "message": "고른 원본은 모두 키워드가 있거나 후보상품명 칸이 다 찼습니다 (요청 0건). AI를 부르지 않습니다."})
         try:
             if mode == "instant":
                 tid = tasks.start("ctxkw", f"AI 키워드 받기(즉시) · 원본 {len(ids):,}개",
-                                  lambda **kw: ctxkw.run_instant(db, ids, refresh=refresh, **kw))
+                                  lambda **kw: ctxkw.run_instant(db, ids, refresh=refresh, again=again, **kw))
                 return jsonify({"task": tid})
-            r = ctxkw.start_batch(db, ids, refresh)
+            r = ctxkw.start_batch(db, ids, refresh, again)
         except RuntimeError as e:
             return fail(str(e))
         return jsonify({"started": True, **r})
@@ -1976,7 +1983,7 @@ def create_app(db=None):
             extra = [w for w in str(b.get("extra") or "").replace(",", " ").split() if w]
             try:
                 tid = tasks.start("rename", f"상품명 바꾸기(셔플, 앞 {fixed}단어 고정) · 복사본 {len(ids):,}건",
-                                  lambda **kw: inventory.rename_shuffle(db, ids, fixed, extra, **kw))
+                                  lambda **kw: inventory.rename_shuffle(db, ids, fixed, extra, mark_mode=b.get("mark_mode"), **kw))
             except RuntimeError as e:
                 return fail(str(e))
             return jsonify({"task": tid})
@@ -1984,7 +1991,8 @@ def create_app(db=None):
             fb = False
             try:
                 tid = tasks.start("rename", f"상품명 바꾸기(AI 키워드) · 복사본 {len(ids):,}건",
-                                  lambda **kw: inventory.rename_ctx(db, ids, fb, redo=bool(b.get("redo", True)), **kw))
+                                  lambda **kw: inventory.rename_ctx(db, ids, fb, redo=bool(b.get("redo", False)),
+                                                                    mark_mode=b.get("mark_mode"), **kw))
             except RuntimeError as e:
                 return fail(str(e))
             return jsonify({"task": tid})

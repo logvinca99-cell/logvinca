@@ -443,25 +443,34 @@ App.page("listings", {
               <label class="field" style="margin:0;flex:1;min-width:220px">넣을 단어 (띄어쓰기·쉼표로 구분, 비워도 됨) <input id="rn-extra" placeholder="예: 업소용 카페"></label>
             </div></div></label>
         </div>
-        <label class="check"><input type="checkbox" id="rn-redo" checked> 이미 이름이 붙은 복사본도 새 이름으로 바꾸기 <span class="muted small">(끄면 '상품명 변경 필요'인 것만)</span></label>
+        <label class="check"><input type="checkbox" id="rn-redo"> 이미 이름이 붙은 복사본도 새 이름으로 바꾸기 <span class="muted small">(끄면 '이름 변경 필요'인 것만 — 기본)</span></label>
+        <label class="check"><input type="checkbox" id="rn-again"> AI 키워드를 새로 받기 <span class="muted small">(AI 키워드 방식 · 이미 받은 원본도 — 비용 듦, 즉시·일괄과 비용 안내가 나옴)</span></label>
         ${keyOk ? "" : '<p class="c-err small">AI 키워드·AI로 짓기는 설정 → API 키에서 Anthropic 키를 먼저 넣어야 합니다.</p>'}
         <p class="muted small">이미 올라간 복사본은 바꾸지 않습니다(최신화로 다시 올릴 때 바뀜). 판매자 관리코드는 그대로입니다.
           모든 이름은 금지어·상표와 33개 스토어 중복을 검사합니다. 한 건씩은 복사본을 눌러 직접 입력할 수도 있습니다.</p></div>`,
       buttons: [{ label: "취소" }, { label: "바꾸기", primary: true, onClick: async (b) => {
         const method = $("input[name=rn]:checked", b).value;
         if (method === "shuffle") {
-          return !!(await App.startTask(App.api("/api/listings/rename", { json: { ...target, method,
-            fixed_n: +$("#rn-fixed", b).value, extra: $("#rn-extra", b).value } })));
+          const fixed_n = +$("#rn-fixed", b).value, extra = $("#rn-extra", b).value;
+          App.closeModal();
+          (async () => {   // 상표 단어가 있으면 먼저 물어봄
+            const mm = await App.markCheck({ listing_filter: target });
+            if (mm === null) return;
+            await App.startTask(App.api("/api/listings/rename", { json: { ...target, method, fixed_n, extra, mark_mode: mm || undefined } }));
+          })();
+          return false;
         }
         if (method === "ctx") {
-          const redo = $("#rn-redo", b).checked;
-          const go = () => App.startTask(App.api("/api/listings/rename", { json: { ...target, method, redo } }));
-          const est = await App.api("/api/ctx/estimate", { json: { listing_filter: target } });
-          if (est.sources) {
-            // 키워드 없는 원본: 비용 안내 후 받기 → 키워드 있는 원본은 지금 붙이고, 나머지는 받는 대로 자동으로 붙음
-            App.closeModal();
-            // 즉시면 키워드를 다 받은 뒤 이름을 붙이고, 일괄이면 키워드 있는 원본만 지금 붙인다 (나머지는 끝나면 자동)
-            App.ctxConfirm({ listing_filter: target }, (ok, mode) => {
+          const redo = $("#rn-redo", b).checked, again = $("#rn-again", b).checked;
+          App.closeModal();
+          (async () => {
+            const mm = await App.markCheck({ listing_filter: target });   // 상표 단어가 있으면 먼저 물어봄
+            if (mm === null) return;
+            const go = () => App.startTask(App.api("/api/listings/rename", { json: { ...target, method, redo, mark_mode: mm || undefined } }));
+            const est = await App.api("/api/ctx/estimate", { json: { listing_filter: target, again } });
+            if (!est.sources) { await go(); return; }
+            // 키워드 없는(또는 새로 받을) 원본: 비용 안내 후 받기 → 즉시면 다 받은 뒤 이름을 붙이고, 일괄이면 키워드 있는 원본만 지금 붙인다 (나머지는 끝나면 자동)
+            App.ctxConfirm({ listing_filter: target, again, mark_mode: mm || undefined }, (ok, mode) => {
               if (!ok) return;
               if (mode !== "instant") return go();
               const h = (t) => {
@@ -472,9 +481,8 @@ App.page("listings", {
               };
               App.on("task-done", h);
             });
-            return false;
-          }
-          return !!(await go());
+          })();
+          return false;
         }
         return !!(await App.startTask(App.api("/api/listings/rename", { json: { ...target, method } })));
       } }],

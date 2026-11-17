@@ -266,7 +266,9 @@ class DB:
 
     # 예전 버전의 db에 새 열을 더한다 (SCHEMA의 CREATE는 이미 있는 표를 바꾸지 않으므로).
     NEW_COLUMNS = {
-        "sources": [("seller_code", "TEXT NOT NULL DEFAULT ''"), ("core_kw", "TEXT NOT NULL DEFAULT ''"),
+        "sources": [("seller_code", "TEXT NOT NULL DEFAULT ''"),
+                    # 업스타 기준상품명에 상표 단어가 있을 때 고른 처리: drop(빼고 만들기, 기본) / allow(무시하고 넣어 만들기) / skip(건너뛰기)
+                    ("mark_mode", "TEXT NOT NULL DEFAULT ''"), ("core_kw", "TEXT NOT NULL DEFAULT ''"),
                     ("core_manual", "INTEGER NOT NULL DEFAULT 0"), ("kw_at", "REAL"),
                     # 직접 고른 네이버 카테고리 (인증 때문에 안 올라가는 카테고리 등) — 엑셀 카테고리 대신 이것으로 검사·등록.
                     # 엑셀을 다시 불러와도 남음
