@@ -1,4 +1,4 @@
-"""기준 가격 고정·수정.
+"""기준 가격 수정 · 가격 확인 필요(네이버 가격 ≠ 업스타 가격).
 
 가격 이름: 기준 가격(원본에 저장된 손님 가격, 모든 스토어의 출발점) · 스토어 가격 차이 %(그 스토어만 더하거나 빼는 %)
 · 손님 가격(= 기준 가격 × (1 + 스토어 가격 차이 %), 100원 올림) · 네이버 판매가·즉시할인(표시 할인율로 자동).
@@ -235,7 +235,7 @@ def push_live(db, lids=None, store_id=None, progress=None, should_stop=None):
                 client, pct = clients[sid]
                 final = int(r["price_push"])
                 shown = client.update_price(r["origin_no"], final, pct, unit)
-                db.set_listing(lid, None, price=final, sale_shown=shown, price_push=None,
+                db.set_listing(lid, None, price=final, nv_price=final, sale_shown=shown, price_push=None,
                                message=f"기준 가격 수정 → 네이버 가격 바꿈 (손님 가격 {final:,}원)")
                 out["ok"] += 1
             except Exception as e:  # noqa: BLE001
@@ -252,6 +252,67 @@ def push_live(db, lids=None, store_id=None, progress=None, should_stop=None):
     out["message"] = f"네이버 가격 바꿈 {out['ok']:,}건" + (f" · 실패 {out['fail']:,}건" if out["fail"] else "") \
         + (f" · 아직 대기 {left:,}건 ([가격 바꾸기 다시 시도])" if left else "")
     return out
+
+
+# ───────────────────────── 가격 확인 필요 (네이버 가격 ≠ 업스타 가격)
+# 업스타 가격 = 기준 가격 × (1 + 그 스토어 가격 차이 %). 네이버 가격은 연결 확인·판매 중 상품 연결 때 읽어 nv_price에만 적는다.
+# 100원 단위 올림 차이(예: 23,450원 → 23,500원)는 다름으로 보지 않는다. 바꾸기 대기(price_push)·처리 중인 것은 뺀다.
+
+def price_checks(db, store_id=None, ids=None):
+    """가격 확인 필요한 판매 중 복사본 → [{id, store_id, store_name, source_id, source_name, name, nv_price, upstar, diff, locked}]"""
+    cfg = config.load()
+    unit = max(1, convert.to_int(cfg.get("price_round"), 100))
+    stores = {x["id"]: x for x in db.stores()}
+    w, a = ["l.origin_no!=''", "l.status NOT IN ('deleted','queued','running')", "l.nv_price IS NOT NULL", "l.nv_price>0",
+            "l.price_push IS NULL"], []
+    if store_id:
+        w.append("l.store_id=?")
+        a.append(int(store_id))
+    if ids:
+        ids = [int(i) for i in ids][:5000]
+        w.append(f"l.id IN ({','.join('?' * len(ids))})")
+        a += ids
+    out = []
+    for r in db.q(f"""SELECT l.id, l.store_id, l.source_id, l.name, l.nv_price, l.locked, l.channel_no, s.name AS source_name, s.price AS base
+            FROM listings l JOIN sources s ON s.id=l.source_id WHERE {' AND '.join(w)} ORDER BY l.store_id, l.id""", a):
+        st = stores.get(r["store_id"])
+        if not st:
+            continue
+        up = convert.store_price(r["base"], cfg, st)
+        if convert.round_up(int(r["nv_price"]), unit) == up:
+            continue
+        out.append({**r, "store_name": st["name"], "store_url": st.get("store_url") or "", "upstar": up, "diff": int(r["nv_price"]) - up})
+    return out
+
+
+def check_fix(db, ids, mode):
+    """고른 '가격 확인 필요' 복사본 맞추기.
+    mode='upstar': 네이버 가격을 업스타 가격(기준 가격 × %)으로 바꾸기 → 바꾸기 대기에 넣음 → 보낼 복사본 번호들
+    mode='naver' : 지금 네이버 가격을 새 기준 가격으로 (거꾸로 계산) → 그 원본의 다른 스토어 복사본도 따라감. 한 원본은 한 줄만."""
+    rows = price_checks(db, ids=ids)
+    if not rows:
+        raise ValueError("맞출 것이 없습니다 (그새 바뀌었거나 이미 같음).")
+    if mode == "upstar":
+        with db.tx() as c:
+            for r in rows:
+                c.execute("UPDATE listings SET price_push=? WHERE id=?", (r["upstar"], r["id"]))
+        return {"mode": mode, "count": len(rows), "live": [r["id"] for r in rows], "sources": 0}
+    if mode != "naver":
+        raise ValueError("맞추는 방법을 고르세요.")
+    seen = {}
+    for r in rows:
+        seen.setdefault(r["source_id"], []).append(r)
+    many = [v for v in seen.values() if len(v) > 1]
+    if many:
+        x = many[0]
+        raise ValueError(f"'{x[0]['source_name'][:30]}' 원본이 {len(x)}개 스토어({', '.join(y['store_name'] for y in x)})에서 골라졌습니다 — "
+                         f"'네이버 가격을 기준 가격으로'는 한 원본에 한 스토어만 고르세요 (그 스토어 가격이 모든 스토어의 기준이 됨).")
+    cfg = config.load()
+    stores = {x["id"]: x for x in db.stores()}
+    items = [{"source_id": r["source_id"], "price": convert.base_for(r["nv_price"], cfg, stores[r["store_id"]]),
+              "memo": f"가격 확인: {r['store_name']} 네이버 가격 {int(r['nv_price']):,}원을 기준으로"} for r in rows]
+    st = apply(db, items, "가격 확인 필요 → 네이버 가격을 기준 가격으로")
+    return {"mode": mode, "count": len(rows), "live": st["live"], "sources": st["sources"], "pending": st["pending"]}
 
 
 def log(db, sid):

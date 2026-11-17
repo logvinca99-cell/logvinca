@@ -160,9 +160,6 @@ def _write(db, sid, row, what, before, memo=""):
         c.execute("""UPDATE sources SET data=?, option_count=?, image_count=?, has_video=?, errors=?, warnings=?, valid=?, updated_at=?
             WHERE id=?""", (pack(row), sm["option_count"], sm["image_count"], int(sm["has_video"]),
                            json.dumps(errors, ensure_ascii=False), json.dumps(warnings, ensure_ascii=False), int(not errors), now, sid))
-        # 가져온(가격 고정) 판매 중 복사본의 옵션 가격 기억은 옵션 이름이 바뀌면 맞지 않으므로 옵션을 고치면 비움 (최신화 직전에 네이버에서 다시 읽음)
-        if "옵션" in what or what == "되돌림":
-            c.execute("UPDATE listings SET opt_fixed='' WHERE source_id=?", (sid,))
 
 
 def undo_last(db, sid):

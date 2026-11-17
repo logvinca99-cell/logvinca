@@ -1,8 +1,8 @@
 """복사본의 네이버 상태 (스토어처럼 판매 중·품절·판매중지·판매금지… 구분).
 
 스토어 상품 목록(커머스API products/search, 한 번에 500개)을 끝까지 받아 판매 중 복사본마다
-판매 상태·전시 상태를 적는다. 가져온 복사본(가격 고정)은 지금 손님 가격도 맞춘다
-(판매자센터에서 가격을 바꿨어도 최신화 때 그 가격 그대로).
+판매 상태·전시 상태를 적는다. 네이버 손님 가격은 nv_price에만 적고 업스타 가격은 바꾸지 않는다
+(가격은 업스타 [기준 가격 수정]으로만 — 다르면 복사본 화면 '가격 확인 필요'로 알림).
 최신화 직전에 엔진이 스토어마다 한 번 하고, 복사본 화면 '네이버 상태 확인'으로 언제든 한다.
 """
 import time
@@ -37,7 +37,7 @@ def product(it):
 
 
 def check_store(db, store_id, client, on_wait=None, progress=None, should_stop=None):
-    """그 스토어 판매 중 복사본의 네이버 상태를 채운다. {checked, by {상태: 수}, gone, repriced, store_products}"""
+    """그 스토어 판매 중 복사본의 네이버 상태·네이버 가격을 채운다. {checked, by {상태: 수}, gone, price_diff, store_products}"""
     items = {}
     n = 0
     for it in client.iter_products(on_wait=on_wait, on_page=lambda k, total: progress and progress(k, total, f"네이버 상품 목록 {k:,}/{total:,}")):
@@ -48,10 +48,10 @@ def check_store(db, store_id, client, on_wait=None, progress=None, should_stop=N
         if should_stop and should_stop():
             raise RuntimeError("중단했습니다.")
     fake = getattr(client, "fake", False)
-    rows = db.q("SELECT id, channel_no, price, price_fixed, price_push FROM listings WHERE store_id=? AND origin_no!='' AND channel_no!=''",
+    rows = db.q("SELECT id, channel_no FROM listings WHERE store_id=? AND origin_no!='' AND channel_no!=''",
                 (int(store_id),))
     now = time.time()
-    out = {"checked": len(rows), "by": {}, "gone": 0, "repriced": 0, "store_products": n}
+    out = {"checked": len(rows), "by": {}, "gone": 0, "price_diff": 0, "store_products": n}
     with db.tx() as c:
         for r in rows:
             p = items.get(r["channel_no"])
@@ -62,9 +62,10 @@ def check_store(db, store_id, client, on_wait=None, progress=None, should_stop=N
             c.execute("UPDATE listings SET nv_status=?, nv_disp=?, nv_at=? WHERE id=?", (st, disp, now, r["id"]))
             out["by"][st] = out["by"].get(st, 0) + 1
             out["gone"] += st == "GONE"
-            if r["price_fixed"] and not r["price_push"] and p and p["final"] > 0 and p["final"] != r["price"]:
-                c.execute("UPDATE listings SET price=? WHERE id=?", (p["final"], r["id"]))   # 판매자센터에서 바꾼 손님 가격
-                out["repriced"] += 1
+            if p and p["final"] > 0:
+                c.execute("UPDATE listings SET nv_price=? WHERE id=?", (p["final"], r["id"]))   # 네이버 손님 가격 (업스타 가격은 그대로)
+    from . import baseprice
+    out["price_diff"] = len(baseprice.price_checks(db, store_id))
     return out
 
 
@@ -73,6 +74,6 @@ def summary(res):
     by = res.get("by") or {}
     parts = [f"{label(k)} {v:,}" for k, v in sorted(by.items(), key=lambda kv: -kv[1])]
     s = f"복사본 {res.get('checked', 0):,}개 확인 — " + (", ".join(parts) or "판매 중 복사본 없음")
-    if res.get("repriced"):
-        s += f" · 판매자센터에서 바뀐 가격 {res['repriced']:,}개 반영(가격 고정)"
+    if res.get("price_diff"):
+        s += f" · 네이버 가격이 업스타와 다른 것 {res['price_diff']:,}개 (복사본 화면 '가격 확인 필요')"
     return s

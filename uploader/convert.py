@@ -760,12 +760,11 @@ def store_discount_pct(store, cfg):
 
 
 def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_phone=None, seller_code=None,
-               importer=None, store=None, opt_urls=None, opt_prices=None):
+               importer=None, store=None, opt_urls=None):
     """url_map: 원본 이미지 주소 → 네이버 이미지 주소. 없는 주소는 원본 그대로 쓴다.
     name / price / as_phone / seller_code: 스토어별로 바꿔 쓸 값 (없으면 엑셀 값).
     store: 스토어 템플릿 (tpl_top_html·tpl_bottom_html·tpl_customs·tpl_discount_pct). 상단·하단 이미지는
-           엔진이 네이버 주소로 바꾼 HTML을 store['_tpl_top']·['_tpl_bottom']에 넣어 준다.
-    opt_prices: {(옵션명1, 옵션명2, 옵션명3): 손님이 내는 옵션 추가금} — 가격 고정 상품은 네이버에 올라가 있던 옵션 손님 가격 그대로."""
+           엔진이 네이버 주소로 바꾼 HTML을 store['_tpl_top']·['_tpl_bottom']에 넣어 준다."""
     store = store or {}
     url_map = url_map or {}
     errors, _ = validate(row, cfg)
@@ -775,7 +774,7 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
     base_price = net_price(row)   # 판매가 - 할인가 (엑셀 할인가는 이미 빼서 기준 가격으로 씀)
     name = str(name or row["상품명"]).strip()
     unit = to_int(cfg.get("price_round"), 100) or 100
-    # 손님 가격 (할인·옵션 계산 기준). 정해 준 가격(스토어 가격·가격 고정)은 그대로(10원 단위만 맞춤)
+    # 손님 가격 (할인·옵션 계산 기준). 정해 준 가격(기준 가격 × 스토어 가격 차이 %)은 그대로(10원 단위만 맞춤)
     sale_price = round_up(price, 10) if price else round_up(base_price, unit)
     images = [url_map.get(u, u) for u in thumbnails(row)[:10]]
 
@@ -821,10 +820,7 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
     if o:
         o = copy.deepcopy(o)
         for c in o.get("optionCombinations") or []:
-            k = option_key(c)
-            if opt_prices and k in opt_prices:
-                c["price"] = int(opt_prices[k])   # 가격 고정: 올라가 있던 옵션 손님 가격 그대로
-            elif c.get("price"):   # 옵션 추가금에도 스토어 가격 차이 % (100원 단위)
+            if c.get("price"):   # 옵션 추가금에도 스토어 가격 차이 % (100원 단위)
                 c["price"] = option_add_price(c["price"], cfg, store)
         fixed = to_int(cfg.get("stock_fixed"), 0)
         if fixed > 0:   # 재고는 상품·옵션 모두 늘 같은 수 (엑셀 값과 상관없이)

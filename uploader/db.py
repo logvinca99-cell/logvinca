@@ -308,12 +308,13 @@ class DB:
         # AI 이름 A·B 양식 (만들 때 정해짐 — A는 1번째 복사본용, B는 양식이 조금 다름). 비면 만든 순서로 짐작
         "names": [("variant", "TEXT NOT NULL DEFAULT ''")],
         "listings": [("sale_shown", "INTEGER"),
-                     ("price_fixed", "INTEGER NOT NULL DEFAULT 0"),   # 가져온 복사본: 최신화·다시 올리기 때 지금 가격 그대로   # 네이버에 넣은 판매가 (표시 할인 전)
+                     # 판매 중 상품 연결로 들어온 복사본 (가져오기 되돌리기 대상 구분용 — 가격 계산은 다른 복사본과 같음)
+                     ("linked", "INTEGER NOT NULL DEFAULT 0"),
+                     # 연결 확인 때 읽은 네이버 손님 가격 (업스타 가격은 바꾸지 않음 — 다르면 '가격 확인 필요'로 알림)
+                     ("nv_price", "INTEGER"),
                      # 네이버 상태 (스토어처럼): 판매 상태 SALE·OUTOFSTOCK·SUSPENSION(판매중지)·PROHIBITION(판매금지)… · GONE(스토어에 없음),
                      # 전시 상태 ON·SUSPENSION(전시중지), 확인한 때 — 가져올 때·최신화 직전·'네이버 상태 확인'으로 채움
                      ("nv_status", "TEXT NOT NULL DEFAULT ''"), ("nv_disp", "TEXT NOT NULL DEFAULT ''"), ("nv_at", "REAL"),
-                     # 가격 고정 복사본: 최신화 직전에 읽은 옵션 손님 가격 [[옵션명1, 옵션명2, 옵션명3, 추가금], …] (다시 올릴 때 그대로)
-                     ("opt_fixed", "TEXT NOT NULL DEFAULT ''"),
                      ("sold_count", "INTEGER NOT NULL DEFAULT 0"), ("last_sold_at", "REAL"),
                      ("cancel_count", "INTEGER NOT NULL DEFAULT 0"), ("manual_lock", "INTEGER NOT NULL DEFAULT 0"),
                      ("locked", "INTEGER NOT NULL DEFAULT 0"), ("lock_note", "TEXT NOT NULL DEFAULT ''"),("op", "TEXT NOT NULL DEFAULT 'create'"), ("round", "INTEGER NOT NULL DEFAULT 1"),
@@ -331,10 +332,16 @@ class DB:
     }
 
     # 없앤 기능이 남긴 칸·기록 (가격 도둑방지 bait_*, 가격 흔들기 tpl_jitter_*·price_seed, 모바일 할인 목록)
-    REMOVED_COLUMNS = {"listings": ("bait_want", "bait", "bait_state", "bait_note", "bait_restored_at"),
+    REMOVED_COLUMNS = {"listings": ("bait_want", "bait", "bait_state", "bait_note", "bait_restored_at", "price_fixed", "opt_fixed"),
                        "sources": ("price_seed",), "stores": ("tpl_jitter_min", "tpl_jitter_max")}
 
     def _drop_removed(self):
+        have = {r[1] for r in self.c.execute("PRAGMA table_info(listings)")}
+        if "price_fixed" in have:   # 예전 '가격 고정'(연결 복사본): 연결 표시는 linked로, 그때 손님 가격(네이버에서 읽어 맞춰 둔 값)은 nv_price로
+            self.c.execute("UPDATE listings SET linked=1 WHERE price_fixed=1")
+            self.c.execute("""UPDATE listings SET nv_price=price WHERE price_fixed=1 AND origin_no!='' AND status!='deleted'
+                AND nv_price IS NULL""")
+            self.c.commit()
         for t, cols in self.REMOVED_COLUMNS.items():
             have = {r[1] for r in self.c.execute(f"PRAGMA table_info({t})")}
             for col in cols:
@@ -405,7 +412,7 @@ class DB:
                 code = ""
                 if r["adopted"]:
                     x = self.c.execute("""SELECT COALESCE((SELECT h.seller_code FROM listing_history h WHERE h.listing_id=l.id AND h.seller_code!=''
-                        ORDER BY h.round LIMIT 1), l.seller_code) AS code FROM listings l WHERE l.source_id=? AND l.price_fixed=1 LIMIT 1""",
+                        ORDER BY h.round LIMIT 1), l.seller_code) AS code FROM listings l WHERE l.source_id=? AND l.linked=1 LIMIT 1""",
                                        (r["id"],)).fetchone()
                     code = (x["code"] if x else "") or ""
                 key = f"{base}#{code}" if code and f"{base}#{code}" not in used else f"{base}#{r['id']}"

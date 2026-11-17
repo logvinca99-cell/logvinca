@@ -148,6 +148,9 @@ ACTIONS = {
     "source_content_undo": ("원본", lambda b, r: (f"원본 상세·옵션 마지막 수정 되돌림 #{r.get('undone', '')}", 1, "")),
     "listings_bulk_apply": ("복사본", lambda b, r: ("복사본 일괄 수정", (r.get("prices") or 0) + (r.get("names") or 0) + (r.get("name_live") or 0),
                                                     f"가격 바꾼 원본 {r.get('prices', 0)} · 상품명 {r.get('names', 0)} · 네이버 반영 대기 가격 {r.get('price_live', 0)}·상품명 {r.get('name_live', 0)}")),
+    "listings_price_fix": ("복사본", lambda b, r: ("가격 확인 필요 맞추기 · " + ("네이버 가격을 업스타 가격으로" if b.get("mode") == "upstar"
+                                                                       else "네이버 가격을 새 기준 가격으로"), r.get("count"),
+                                                f"네이버 가격 바꾸기 {r.get('live', 0)}건" + (f" · 기준 가격 바꾼 원본 {r.get('sources', 0)}" if r.get("sources") else ""))),
     "baseprice_apply": ("원본", lambda b, r: ("기준 가격 수정" + (f" · {b.get('how')}" if b.get("how") else ""), r.get("sources"),
                                             f"안 올린 복사본 {r.get('pending', 0)}건 다시 계산 · 판매 중 {r.get('live', 0)}건 네이버 가격 바꾸기")),
     "adopt_undo": ("원본", lambda b, r: ("판매 중 상품 연결 되돌리기 (이 프로그램에서만 — 네이버 상품은 그대로)", r.get("listings"),

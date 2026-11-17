@@ -1467,7 +1467,7 @@ def relist(db, f):
     """내린(내림) 복사본을 다시 올릴 대기로 되돌린다: 다음 회차·같은 이름, 가격은 지금 스토어 기준으로 다시. 스토어 남은 자리만큼만."""
     cfg = config.load()
     where, args = listing_where({**f, "status": "deleted"})
-    rows = db.q(f"""SELECT l.id, l.store_id, l.price AS cur, l.price_fixed, s.price FROM listings l JOIN sources s ON s.id=l.source_id{where}
+    rows = db.q(f"""SELECT l.id, l.store_id, l.price AS cur, s.price FROM listings l JOIN sources s ON s.id=l.source_id{where}
         ORDER BY l.id""", args)
     if not rows:
         return []
@@ -1480,7 +1480,7 @@ def relist(db, f):
             if not st or free.get(r["store_id"], 0) <= 0:
                 continue
             free[r["store_id"]] -= 1
-            price = r["cur"] if r["price_fixed"] else convert.store_price(r["price"], cfg, st)
+            price = convert.store_price(r["price"], cfg, st)
             c.execute("""UPDATE listings SET status='planned', op='reupload', round=CASE WHEN round_reset=1 THEN 1 ELSE round+1 END,
                 round_reset=0, price=?, message='', stage='',
                 sale_shown=NULL, updated_at=? WHERE id=?""", (price, now, r["id"]))
@@ -1565,7 +1565,7 @@ def move_listings(db, ids, to_store):
                 old_trash.append(r["id"])
             else:
                 c.execute("""UPDATE listings SET store_id=?, price=?, status='planned', op='create', round=1, round_reset=0, seller_code='',
-                    message='', stage='', sale_shown=NULL, price_fixed=0, opt_fixed='', registered_at=NULL, nv_status='', nv_disp='',
+                    message='', stage='', sale_shown=NULL, linked=0, nv_price=NULL, registered_at=NULL, nv_status='', nv_disp='',
                     updated_at=? WHERE id=?""", (to["id"], price, now, r["id"]))
             have.add(r["source_id"])
             touched.add(r["source_id"])
@@ -1661,7 +1661,7 @@ def reprice_pending(db, store_id=None):
     cfg = config.load()
     rows = db.q("""SELECT l.id, l.store_id, l.price AS cur, s.price, st.tpl_price_pct
         FROM listings l JOIN sources s ON s.id=l.source_id JOIN stores st ON st.id=l.store_id
-        WHERE l.origin_no='' AND l.status IN ('planned','fail') AND l.price_fixed=0""" + (" AND l.store_id=?" if store_id else ""),
+        WHERE l.origin_no='' AND l.status IN ('planned','fail')""" + (" AND l.store_id=?" if store_id else ""),
                 (int(store_id),) if store_id else ())
     n = 0
     with db.tx() as c:
@@ -1745,7 +1745,7 @@ def query_listings(db, f, page=0, size=100):
         l.cancel_count, l.locked, l.lock_note, l.manual_lock,
         l.channel_no, l.seller_code, l.registered_at, l.deleted_at, l.seconds, l.plan_id, l.updated_at,
         s.id AS source_id, s.source_key, s.seller_code AS source_code, s.name AS source_name,
-        s.price AS source_price, s.thumb, s.category, s.n_listings AS source_copies, s.eye_at, s.drop_pending, s.adopted, l.price_fixed,
+        s.price AS source_price, s.thumb, s.category, s.n_listings AS source_copies, s.eye_at, s.drop_pending, s.adopted, l.linked, l.nv_price, l.price_push,
         l.nv_status, l.nv_disp, l.nv_at,
         t.id AS store_id, t.name AS store_name, t.store_url,
         COALESCE(NULLIF(t.code,''), 'S'||printf('%02d', t.id)) AS store_code,
@@ -1764,6 +1764,9 @@ def query_listings(db, f, page=0, size=100):
     pv = price_viewer(db)
     lex = lexicon.get(db)
     rep_n = int(config.load().get("max_word_repeat") or 2)
+    from . import baseprice
+    live = [r["id"] for r in rows if r["origin_no"] and r["nv_price"]]
+    diff = {x["id"]: x for x in baseprice.price_checks(db, ids=live)} if live else {}
     labels = ai_variants(db, sids) if any(r["name_origin"] == "ctx" for r in rows) else {}
     for r in rows:
         r["ai_label"] = labels.get(r["name_no"]) if r["name_origin"] == "ctx" else None
@@ -1774,6 +1777,8 @@ def query_listings(db, f, page=0, size=100):
         r["nd"] = ctxkw.name_parts(r["name"], r["source_name"], kw, r["name_origin"])
         r["others"] = [c for c in sib.get(r["source_id"], []) if c["id"] != r["id"]]
         r.update(pv(r["price"], r["store_id"], bool(r["origin_no"]), r.get("sale_shown")))
+        d = diff.get(r["id"])
+        r["nv_diff"] = {"nv": d["nv_price"], "upstar": d["upstar"]} if d else None
     return {"rows": rows, "total": total}
 
 

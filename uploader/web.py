@@ -574,7 +574,7 @@ def create_app(db=None):
         if what == "prices":
             rows = db.q("""SELECT l.id, l.store_id, s.price, st.tpl_price_pct FROM listings l
                 JOIN sources s ON s.id=l.source_id JOIN stores st ON st.id=l.store_id
-                WHERE l.origin_no='' AND l.status IN ('planned','fail') AND l.price_fixed=0""")
+                WHERE l.origin_no='' AND l.status IN ('planned','fail')""")
             with db.tx() as c:
                 for r in rows:
                     c.execute("UPDATE listings SET price=? WHERE id=?",
@@ -1008,6 +1008,29 @@ def create_app(db=None):
             except RuntimeError:
                 out["queued"] = True
         out["price_live"] = len(out["price_live"])
+        return jsonify(out)
+
+    @app.get("/api/listings/price_check")
+    def listings_price_check():
+        """가격 확인 필요: 판매 중인데 네이버 가격(연결 확인 때 읽음)이 업스타 가격(기준 가격 × 스토어 가격 차이 %)과 다른 것."""
+        rows = baseprice.price_checks(db, request.args.get("store_id") or None)
+        return jsonify({"total": len(rows), "rows": rows[:2000]})
+
+    @app.post("/api/listings/price_check/fix")
+    def listings_price_fix():
+        """고른 '가격 확인 필요' 맞추기: mode=upstar(네이버 가격을 업스타 가격으로) / naver(네이버 가격을 새 기준 가격으로)."""
+        b = body()
+        try:
+            st = baseprice.check_fix(db, b.get("ids") or [], b.get("mode"))
+        except ValueError as e:
+            return fail(str(e))
+        out = {"mode": st["mode"], "count": st["count"], "sources": st["sources"], "live": len(st["live"]), "task": None}
+        if st["live"]:
+            try:
+                out["task"] = tasks.start("baseprice", f"네이버 가격 바꾸기 · {len(st['live']):,}건",
+                                          lambda **kw: baseprice.push_live(db, st["live"], **kw))
+            except RuntimeError:
+                out["queued"] = True   # 도는 가격 바꾸기가 끝나면서 이어서 보냄 (못 보낸 것은 [네이버 반영 다시 시도])
         return jsonify(out)
 
     @app.get("/api/listings/push_pending")

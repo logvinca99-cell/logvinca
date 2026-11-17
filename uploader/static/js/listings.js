@@ -59,6 +59,7 @@ App.page("listings", {
       <div class="card run" id="l-run"></div>
       <div id="l-sales"></div>
       <div id="l-push"></div>
+      <div id="l-pchk"></div>
       <div class="tiles" id="l-tiles"></div>
       <div class="filters-row">
         <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
@@ -177,6 +178,13 @@ App.page("listings", {
         App.startTask(App.api("/api/listings/push_retry", { json: { store_id: +this.f.store_id } }));
       });
     }).catch(() => {});
+    App.api(`/api/listings/price_check?store_id=${this.f.store_id}`).then((p) => {   // 네이버 가격 ≠ 업스타 가격
+      const box = $("#l-pchk");
+      if (!box) return;
+      box.innerHTML = p.total ? `<div class="notice warn" style="margin-bottom:10px">가격 확인 필요 <b>${num(p.total)}</b>건 —
+        네이버 가격이 업스타 가격(기준 가격 × 스토어 가격 차이 %)과 다릅니다. <button class="btn tiny primary" id="l-pchk-go">확인하고 맞추기</button></div>` : "";
+      $("#l-pchk-go")?.addEventListener("click", () => this.priceCheck(p));
+    }).catch(() => {});
     const active = this.f.eye ? `eye_${this.f.eye}` : this.f.nv === "bad" ? "nv_bad" : this.f.status;
     $("#l-tiles").innerHTML = tilesHtml(LST_TILES.filter((t) => !t.only || this.counts[t.key] || active === t.key), { ...this.counts, all: this.counts.all_ }, active);
     $("#l-rows").innerHTML = res.rows.length ? res.rows.map((l) => this.rowHtml(l)).join("")
@@ -184,6 +192,45 @@ App.page("listings", {
         : '이 스토어에 복사본이 없습니다. <a href="#inventory">원본 상품</a>에서 원본을 고르고 <b>다른 스토어로 복사</b>를 누르세요.'}</td></tr>`;
     this.renderBar();
     if (!App.run?.running) this.renderIdle();
+  },
+
+  /* 가격 확인 필요: 네이버 가격 ≠ 업스타 가격인 판매 중 복사본을 골라 (가) 업스타 가격으로 / (나) 네이버 가격을 새 기준 가격으로 */
+  priceCheck(p) {
+    const rows = p.rows || [];
+    const sel = new Set(rows.map((r) => r.id));
+    const srcN = {};
+    rows.forEach((r) => { srcN[r.source_id] = (srcN[r.source_id] || 0) + 1; });
+    const go = async (mode) => {
+      const ids = rows.filter((r) => sel.has(r.id)).map((r) => r.id);
+      const res = await App.api("/api/listings/price_check/fix", { json: { ids, mode } });
+      App.toast(`${num(res.count)}건 맞춤 · 네이버 가격 바꾸기 ${num(res.live)}건` + (res.sources ? ` · 기준 가격 바꾼 원본 ${num(res.sources)}개` : "")
+        + (res.queued ? " (도는 작업이 끝나면 이어서)" : ""));
+      if (res.task) App.startTask(Promise.resolve({ task: res.task }));
+      this.load();
+    };
+    App.openModal({
+      title: `가격 확인 필요 ${num(p.total)}건`, wide: true,
+      body: (b) => {
+        b.innerHTML = `<p class="small muted" style="margin:0 0 8px">연결 확인 때 읽은 <b>네이버 가격</b>이 <b>업스타 가격</b>(기준 가격 × 그 스토어 가격 차이 %)과 다른 판매 중 상품입니다.
+          업스타는 판매자센터 가격을 따르지 않으니, 고른 것을 둘 중 하나로 맞추세요.</p>
+          ${p.total > rows.length ? `<p class="small c-err">앞 ${num(rows.length)}건만 보입니다 — 맞춘 뒤 다시 여세요.</p>` : ""}
+          <div class="tbl-wrap" style="max-height:420px"><table class="grid small"><thead><tr><th><input type="checkbox" id="pc-all" checked aria-label="모두 고르기"></th>
+            <th>스토어</th><th>업스타 기준상품명</th><th class="r">업스타 가격</th><th class="r">네이버 가격</th><th class="r">차이</th></tr></thead><tbody>
+            ${rows.map((r) => `<tr><td><input type="checkbox" data-pc="${r.id}" checked aria-label="고르기"></td><td>${esc(r.store_name)}</td>
+              <td>${esc(r.source_name)}${srcN[r.source_id] > 1 ? ' <span class="flag warn" title="이 원본은 여러 스토어에서 네이버 가격이 다릅니다 — \'네이버 가격을 기준 가격으로\'는 한 스토어만 고르세요">여러 스토어</span>' : ""}${r.locked ? ' <span class="flag">잠김</span>' : ""}</td>
+              <td class="r">${num(r.upstar)}원</td><td class="r">${num(r.nv_price)}원</td><td class="r ${r.diff > 0 ? "c-ok" : "c-err"}">${r.diff > 0 ? "+" : ""}${num(r.diff)}</td></tr>`).join("")}
+            </tbody></table></div>`;
+        $("#pc-all", b).addEventListener("change", (e) => { $$("[data-pc]", b).forEach((x) => { x.checked = e.target.checked; if (x.checked) sel.add(+x.dataset.pc); else sel.delete(+x.dataset.pc); }); });
+        $$("[data-pc]", b).forEach((x) => x.addEventListener("change", () => { if (x.checked) sel.add(+x.dataset.pc); else sel.delete(+x.dataset.pc); }));
+      },
+      buttons: [{ label: "닫기" },
+        { label: "네이버 가격을 새 기준 가격으로", noPicks: true, validate: () => (!sel.size ? "고른 것이 없습니다." : ""),
+          confirm: "고른 상품의 지금 네이버 가격을 거꾸로 계산해 원본의 새 기준 가격으로 정합니다. 그 원본의 다른 스토어 판매 중 복사본도 새 가격으로 바뀝니다 (한 원본은 한 스토어만).",
+          onClick: () => go("naver") },
+        { label: "업스타 가격으로 맞추기", primary: true, noPicks: true, validate: () => (!sel.size ? "고른 것이 없습니다." : ""),
+          confirm: "고른 상품의 네이버 가격을 업스타 가격(기준 가격 × 스토어 가격 차이 %)으로 바로 바꿉니다 (상품은 지우지 않음).",
+          onClick: () => go("upstar") }],
+    });
   },
 
   pagerOpts() {
@@ -280,7 +327,7 @@ App.page("listings", {
       + (l.rep_word ? `<span class="flag warn" title="'${esc(l.rep_word)}'가 3번 이상 나옵니다 — 상품명 바꾸기로 다시 만드세요">반복: ${esc(l.rep_word)}</span>` : "")
       + (l.name_origin ? `<span class="org org-${l.name_origin}" title="${l.name_origin === "ctx" ? "ai상품명 양식 (A = 첫 복사용, B = 양식이 조금 다른 두 번째) — 원본 상품 화면에서 후보상품명 칸 전체를 볼 수 있음" : ""}">${l.name_origin === "ctx" && l.ai_label ? `ai상품명${esc(l.ai_label)}` : ORIGIN[l.name_origin] || l.name_origin}</span>` : "") + lockFlag(l) + salesFlag(l) + eyeFlag(l)
       + (l.adopted ? '<span class="flag adopted" title="판매 중 상품 연결로 들어온 원본">연결함</span>' : "")
-      + (l.price_fixed ? '<span class="flag" title="가져온 복사본: 최신화·다시 올리기 때 손님 가격 그대로 (최신화 직전에 네이버에서 다시 읽음 — 판매자센터에서 바꾼 가격·옵션 추가금도)">가격 고정</span>' : "")
+      + (l.nv_diff ? `<span class="flag warn" title="연결 확인 때 읽은 네이버 가격 ${num(l.nv_diff.nv)}원 ≠ 업스타 가격 ${num(l.nv_diff.upstar)}원 (위 '가격 확인 필요'에서 맞춤)">가격 다름</span>` : "")
       + nvFlag(l);
     return `<tr data-id="${l.id}" class="${on ? "sel" : ""} ${l.status === "deleted" ? "off" : ""}">
       <td class="w-check" data-stop><input type="checkbox" ${on ? "checked" : ""} ${this.selAll ? "disabled" : ""} aria-label="고르기"></td>

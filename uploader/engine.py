@@ -46,7 +46,7 @@ def listing_targets(db, f):
             f" AND NOT ({UNREVIEWED_NEW})")
     where = (where + f" AND {cond}") if where else f" WHERE {cond}"
     return db.q(f"""SELECT l.id, l.store_id, l.source_id, l.name, l.price, l.status, l.message, l.op, l.round,
-        l.origin_no, l.channel_no, l.seller_code, l.registered_at, l.name_id, l.round_reset, l.price_fixed, CASE WHEN l.op='delete' THEN 0 ELSE s.image_count END AS image_count
+        l.origin_no, l.channel_no, l.seller_code, l.registered_at, l.name_id, l.round_reset, CASE WHEN l.op='delete' THEN 0 ELSE s.image_count END AS image_count
         FROM listings l JOIN sources s ON s.id=l.source_id{where} ORDER BY l.id""", args)
 
 
@@ -388,7 +388,7 @@ class Runner:
                     sales_ok = False
                     self._log("err", f"주문을 가져오지 못해 이 스토어의 최신화·내리기는 하지 않습니다: {e}", store["name"])
             # 최신화가 있으면 네이버 상태(판매중지·판매금지·스토어에서 지움)를 먼저 확인한다 — 그런 상품은 다시 올리지 않게.
-            # 가져온 복사본(가격 고정)은 이때 지금 손님 가격도 맞춘다 (판매자센터에서 바꾼 가격 그대로)
+            # 이때 네이버 손님 가격도 읽어 nv_price에 적는다 (업스타 가격은 바꾸지 않음 — 다르면 '가격 확인 필요')
             nv_ok = True
             if any(t["op"] in ("refresh", "reupload") and t["origin_no"] for t in by_store[sid]):
                 with self.lock:
@@ -528,9 +528,6 @@ class Runner:
                         self._log("info", f"건너뜀 · {t['name'][:40]} · {msg}", store["name"])
                         self._count(sid, lid, None)
                         return
-                    if t.get("price_fixed"):
-                        t = {**t, "price": lk["price_push"] or lk["price"]}   # 바꾸기 대기 가격, 없으면 방금 네이버에서 확인한 손님 가격
-                        self._save_live_options(client, t, on_wait)
             if op == "delete":
                 if live:
                     self._stage(lid, label, "네이버에서 지우는 중")
@@ -616,7 +613,7 @@ class Runner:
             sec = time.time() - t0
             self.db.set_listing(lid, "success", op="create", stage="", message=" / ".join(notes), seconds=sec,
                                 seller_code=code, registered_at=time.time(),
-                                sale_shown=shown, nv_status="SALE", nv_disp="ON", nv_at=time.time(), price=tn["price"], price_push=None,
+                                sale_shown=shown, nv_status="SALE", nv_disp="ON", nv_at=time.time(), price=tn["price"], nv_price=tn["price"], price_push=None,
                                 origin_no=str(res.get("originProductNo", "")),
                                 channel_no=str(res.get("smartstoreChannelProductNo", "")))
             what = {"refresh": "최신화", "reupload": "다시 올리기"}.get(op, "등록")
@@ -650,40 +647,20 @@ class Runner:
     def _prepare(self, cfg, store, categories, t):
         """올릴 내용 준비·확인 (row, 카테고리 번호, build_body 인자). 막히는 게 있으면 여기서 예외 — 최신화는 지우기 전에 부른다.
         가격은 올리는 이 순간의 기준으로 다시 정한다 (기준 가격 × 스토어 가격 차이 %). 등록·최신화·다시 올리기 모두 같게.
-        가져온 복사본(가격 고정)은 지금 손님 가격 그대로, 옵션도 올라가 있던 옵션 손님 가격 그대로."""
+        모든 복사본 같은 규칙: 손님 가격 = 기준 가격 × (1 + 그 스토어 가격 차이 %), 옵션 추가금도 같은 %."""
         sid, lid = store["id"], t["id"]
         row = self.db.source_row(t["source_id"])
         cat_id, _ = convert.find_category(row.get("카테고리"), categories, cfg)
         if not cat_id:
             raise convert.ConvertError(f"카테고리 '{row.get('카테고리')}'를 스마트스토어에서 찾지 못했습니다.")
         base = (self.db.one("SELECT price FROM sources WHERE id=?", (t["source_id"],)) or {}).get("price") or convert.net_price(row)
-        price = t["price"] if t.get("price_fixed") else convert.store_price(base, cfg, store)   # 기준 가격 × 그 스토어 가격 차이 %
+        price = convert.store_price(base, cfg, store)   # 기준 가격 × 그 스토어 가격 차이 %
         if price != t["price"]:
             self.db.set_listing(lid, None, price=price)
         kw = dict(name=t["name"], price=price, importer=convert.importer_for(store, cfg),
-                  as_phone=store.get("as_phone") or cfg.get("as_phone"), seller_code=seller_code(cfg, store, t), store=store,
-                  opt_prices=self._fixed_opts(lid) if t.get("price_fixed") else None)
+                  as_phone=store.get("as_phone") or cfg.get("as_phone"), seller_code=seller_code(cfg, store, t), store=store)
         convert.build_body(row, cfg, cat_id, **kw)
         return row, cat_id, kw
-
-    def _save_live_options(self, client, t, on_wait):
-        """가격 고정 복사본: 지우기 전에 네이버에 올라가 있는 옵션 손님 가격을 읽어 둔다 (다시 올릴 때 그대로). 못 읽으면 지우지 않음."""
-        row = self.db.source_row(t["source_id"])
-        if not convert.options(row):
-            return
-        try:
-            live = convert.live_prices(client._get_origin(t["origin_no"], on_wait=on_wait))
-        except Exception as e:  # noqa: BLE001
-            raise naver.ApiError(f"올라가 있는 옵션 가격을 읽지 못해 최신화하지 않았습니다 ({e})") from None
-        if live["opts"]:
-            self.db.set_listing(t["id"], None, opt_fixed=json.dumps([[*k, v] for k, v in live["opts"].items()], ensure_ascii=False))
-
-    def _fixed_opts(self, lid):
-        r = self.db.one("SELECT opt_fixed FROM listings WHERE id=?", (lid,))
-        try:
-            return {tuple(x[:3]): int(x[3]) for x in json.loads((r or {}).get("opt_fixed") or "[]")}
-        except (ValueError, TypeError, IndexError):
-            return {}
 
     def _need_sales_history(self, sid, t):
         """모든 상품: 그 상품이 올라간 날부터 그 스토어 판매 이력(주문)을 빈틈없이 알고 있을 때만 지운다

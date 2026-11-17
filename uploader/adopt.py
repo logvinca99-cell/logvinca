@@ -4,7 +4,7 @@
   - 스토어에 있는 상품 → 원본(엑셀 내용, 스토어 상하단 빼고) + 그 스토어의 판매 중 복사본으로 연결
   - 엑셀에는 있는데 스토어에 없는 상품(직접 지운 것) → 버림
   - 스토어에는 있는데 엑셀에 없는 상품 → 가져오지 않고 목록으로 알려 줌
-가져온 원본은 '가져옴 · 원본 이름 없음'(올라가 있던 이름이 원본 자리), 가져온 복사본은 최신화 때 지금 가격 그대로(가격 고정).
+가져온 원본의 기준 가격은 그 스토어 지금 손님 가격을 거꾸로 계산해 처음 한 번만 정한다. 그 뒤로는 다른 복사본과 같이 기준 가격 × 스토어 가격 차이 %.
 """
 
 import csv
@@ -332,7 +332,7 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
                 add_item("dup_same", code=p["code"], name=p["name"], channel_no=p["channel_no"], status=p["status"], reg_at=p["reg_at"],
                          note="연결 못 함: 상품명이 같은 원본이 있어 새 원본을 만들지 못함 — 다시 [맞춰 보기]")
 
-    # ⑤ 그 스토어의 판매 중 복사본으로 연결 (가격 고정, 이름 = 올라가 있는 이름)
+    # ⑤ 그 스토어의 판매 중 복사본으로 연결 (이름 = 올라가 있는 이름, 가격은 기준 가격 × 스토어 가격 차이 %로 다시 계산 — 네이버 가격은 nv_price에)
     now = time.time()
     sids = set()
     with db.tx() as c:
@@ -361,7 +361,8 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
                 continue
             vals = dict(name=p["name"], price=p["final"] or p["sale"], status="success", op="create", round=1, seller_code=p["code"],
                         origin_no=p["origin_no"], channel_no=p["channel_no"], registered_at=p["reg_at"] or 0, sale_shown=p["sale"] or None,
-                        price_fixed=1, message="", stage="", updated_at=now, nv_status=p["status"], nv_disp=p["disp"], nv_at=now)
+                        linked=1, nv_price=p["final"] or p["sale"] or None, message="", stage="", updated_at=now,
+                        nv_status=p["status"], nv_disp=p["disp"], nv_at=now)
             if cur:   # 이 스토어에 아직 안 올린(또는 내린) 복사본이 있었으면 그 줄을 올라가 있는 상품으로
                 if cur["name_id"]:
                     c.execute("UPDATE names SET listing_id=NULL WHERE id=?", (cur["name_id"],))
@@ -697,11 +698,11 @@ def _undo_targets(db, run):
     for j in range(0, len(sids), 900):
         ch = sids[j:j + 900]
         m = ",".join("?" * len(ch))
-        lids += [r["id"] for r in db.q(f"""SELECT id FROM listings WHERE store_id=? AND price_fixed=1 AND source_id IN ({m})
+        lids += [r["id"] for r in db.q(f"""SELECT id FROM listings WHERE store_id=? AND linked=1 AND source_id IN ({m})
             AND channel_no IN (SELECT channel_no FROM adopt_item WHERE run_id=? AND kind='linked' AND channel_no!='')""",
                                        (run["store_id"], *ch, run["id"]))]
         for r in db.q(f"""SELECT s.id, s.adopted, (SELECT COUNT(*) FROM listings l WHERE l.source_id=s.id
-                AND NOT (l.store_id=? AND l.price_fixed=1)) AS others FROM sources s WHERE s.id IN ({m})""", (run["store_id"], *ch)):
+                AND NOT (l.store_id=? AND l.linked=1)) AS others FROM sources s WHERE s.id IN ({m})""", (run["store_id"], *ch)):
             (new_src if r["adopted"] == 1 and not r["others"] else kept).append(r["id"])
     return lids, new_src, kept
 
@@ -722,7 +723,7 @@ def undo_run(db, run_id):
     b = trash.trash_sources(db, new_src, keep_naver=True)
     for j in range(0, len(kept), 900):
         ch = kept[j:j + 900]
-        db.x(f"UPDATE sources SET adopted=0 WHERE adopted>0 AND id IN ({','.join('?' * len(ch))}) AND id NOT IN (SELECT source_id FROM listings WHERE price_fixed=1)", ch)
+        db.x(f"UPDATE sources SET adopted=0 WHERE adopted>0 AND id IN ({','.join('?' * len(ch))}) AND id NOT IN (SELECT source_id FROM listings WHERE linked=1)", ch)
     stats = json.loads(run["stats"] or "{}")
     stats["undone_at"] = time.time()
     stats["undone"] = {"listings": a["moved"], "sources": b["moved"], "kept_sources": len(kept)}
