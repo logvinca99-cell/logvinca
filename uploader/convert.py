@@ -742,6 +742,17 @@ def store_price(base, cfg, store):
     return adjusted_price(base, cfg, (store or {}).get("tpl_price_pct"))
 
 
+def option_add_price(add, cfg, store):
+    """옵션 추가금(원본 값) → 이 스토어 옵션 추가금 = 추가금 × (1 + 스토어 가격 차이 %), 100원 단위 (+는 올림, -는 0 쪽으로).
+    허용 범위를 넘어도 깎지 않는다 (역마진 방지 — 범위 검사는 원본 검사·네이버 오류로 알림)."""
+    unit = max(1, to_int(cfg.get("price_round"), 100))
+    add = to_int(add)
+    if not add:
+        return 0
+    p = add * (1 + float((store or {}).get("tpl_price_pct") or 0) / 100)
+    return round_up(math.ceil(p - 1e-9) if p > 0 else int(p), unit)
+
+
 def store_discount_pct(store, cfg):
     """스토어 표시 할인율: 템플릿에 넣었으면 그 값(0이면 할인 없음), 비우면 설정 기본값(30)."""
     v = (store or {}).get("tpl_discount_pct")
@@ -813,8 +824,8 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
             k = option_key(c)
             if opt_prices and k in opt_prices:
                 c["price"] = int(opt_prices[k])   # 가격 고정: 올라가 있던 옵션 손님 가격 그대로
-            elif c.get("price"):
-                c["price"] = round_up(to_int(c["price"]), unit)   # 옵션 추가금도 100원 단위 올림
+            elif c.get("price"):   # 옵션 추가금에도 스토어 가격 차이 % (100원 단위)
+                c["price"] = option_add_price(c["price"], cfg, store)
         fixed = to_int(cfg.get("stock_fixed"), 0)
         if fixed > 0:   # 재고는 상품·옵션 모두 늘 같은 수 (엑셀 값과 상관없이)
             for key in ("optionCombinations", "optionStandards"):

@@ -630,7 +630,7 @@ App.editContent = async function (sid, after) {
           <div class="cl-row"><button type="button" class="btn sm" id="se-prev">미리보기 새로 그리기</button><span class="muted small">아래는 고친 HTML 그대로 (스토어 상단·하단은 올릴 때 붙음)</span></div>
           <iframe id="se-frame" sandbox="allow-same-origin" title="상세 미리보기" style="width:100%;height:360px;border:1px solid var(--line);border-radius:8px;margin-top:6px;background:#fff"></iframe></div>
         <div data-sec="opt" hidden>
-          ${o.editable ? `<p class="small muted" style="margin:0 0 6px">조합형 옵션입니다. 옵션 이름(예: 색상·사이즈)과 값, 추가금(손님 가격에 그대로 더하는 금액 — 스토어 가격 차이 %는 붙지 않음, 0이면 같은 가격)을 고치세요.
+          ${o.editable ? `<p class="small muted" style="margin:0 0 6px">조합형 옵션입니다. 옵션 이름(예: 색상·사이즈)과 값, 추가금(기준 가격에 더하는 금액 — 스토어마다 그 스토어 가격 차이 %가 같이 붙음, 0이면 같은 가격)을 고치세요.
               값 1만 쓰면 1단 옵션, 값 2·3까지 쓰면 2·3단. 모든 옵션을 빼면 옵션 없는 상품이 됩니다. 재고는 올릴 때 설정의 '등록 재고'로 들어갑니다.</p>
             <div class="cl-row"><label class="field" style="margin:0">옵션 이름 1<input id="se-g1" value="${esc(o.groups[0])}" placeholder="예) 색상"></label>
               <label class="field" style="margin:0">옵션 이름 2<input id="se-g2" value="${esc(o.groups[1])}" placeholder="(없으면 비움)"></label>
