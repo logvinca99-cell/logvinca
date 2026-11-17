@@ -322,7 +322,8 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
     new_rows = [(i, rows_by_i[i]) for k, i in first.items() if k not in exist]
     if new_rows:
         imp = inventory.import_rows(db, iter(new_rows), f"판매 중 상품 연결 · {store['name']} · {filename}", total_hint=len(new_rows),
-                                    progress=progress, should_stop=should_stop, src_tags=tags, store_tag=False, price_src="adopt")
+                                    progress=progress, should_stop=should_stop, src_tags=tags, store_tag=False, price_src="adopt",
+                                    method="adopt", file=filename, store_name=store["name"])
         refs.update(imp.get("refs") or {})
         new_sids.update((imp.get("refs") or {}).values())
         for i, _ in new_rows:   # (드묾) 넣는 사이 같은 상품명 원본이 생겨 못 넣은 줄 → 알림

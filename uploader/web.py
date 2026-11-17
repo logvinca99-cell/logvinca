@@ -401,7 +401,8 @@ def create_app(db=None):
     def clean_send(bid):
         b = body()
         try:
-            return jsonify({"task": tasks.start("clean_send", f"상세 정리 → 원본 상품 · 묶음 #{bid}",
+            fn = (db.one("SELECT file_name FROM clean_batch WHERE id=?", (bid,)) or {}).get("file_name") or f"묶음 #{bid}"
+            return jsonify({"task": tasks.start("clean_send", f"수집 상품 넣기(상세 정리) · {fn}",
                                                 lambda **kw: clean.to_sources(db, bid, b.get("ids"), **kw))})
         except RuntimeError as e:
             return fail(str(e))

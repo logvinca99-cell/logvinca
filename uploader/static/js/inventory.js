@@ -1,6 +1,14 @@
 /* 원본 상품 (인벤토리): 가지고 있는 원본 DB 전체. 원본은 바꾸지 않고, 걸러서 골라 → 다른 스토어로 복사 */
 "use strict";
 
+/* 원본을 넣은 방법(3가지)·올린 파일 이름 */
+const IMP_METHOD = { collect: "수집 상품 넣기", ready: "이름 완성 상품 넣기", adopt: "판매 중 상품 연결" };
+function impLine(m) {
+  if (!m) return '<span class="muted">기록 없음 (예전 버전에서 넣음)</span>';
+  const how = (IMP_METHOD[m.method] || "수집 상품 넣기") + (m.via ? ` (${esc(m.via)})` : "") + (m.store_name ? ` · ${esc(m.store_name)}` : "");
+  return `<b>${how}</b> · <span title="올린 파일 이름">${esc(m.file || m.file_name || "")}</span> <span class="muted small">${ymd(m.created_at)} ${when(m.created_at).split(" ")[1] || ""}</span>`;
+}
+
 const INV_TILES = [
   { key: "all", label: "전체", dot: "var(--text-2)", count: "all_" },
   { key: "c0", label: "올라간 곳 0곳", dot: "var(--info)" },
@@ -479,6 +487,7 @@ App.page("inventory", {
     const kv = [["기준 가격", `<b>${num(d.price)}원</b> <span class="muted small">${d.price_src === "manual" ? "직접 수정" : d.price_src === "adopt" ? "판매 중 상품 연결 (그 스토어 손님 가격)" : "처음 원본 파일"} · 모든 스토어 손님 가격 = 기준 가격 × (1 + 스토어 가격 차이 %)</span>
         <button class="btn sm" id="s-bp">수정</button>`], ["출처 태그", `<span id="s-tags">${srcTagChips(d.src_tags, true) || '<span class="muted">없음</span>'}</span>
         <span class="s-tag-add"><input id="s-tag-in" placeholder="태그 더하기 (쉼표로 여러 개)" size="18"> <button class="btn sm" id="s-tag-go">달기</button></span>`],
+      ["넣은 방법", impLine(d.imp)],
       ["카테고리", (d.category_fix ? `${esc(d.category_fix)} <span class="flag">직접 정함</span> <span class="muted small">(엑셀: ${esc(d.category)})</span>` : esc(d.category))
         + ` <button class="btn sm" id="s-cat">바꾸기</button>`],
       ...(d.adopted === 1 ? [["업스타 기준상품명", '<span class="flag adopted">연결함</span> <span class="muted small">판매 중 상품 연결로 들어와 올라가 있던 완성 상품명이 기준상품명입니다</span>']]

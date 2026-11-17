@@ -105,10 +105,11 @@ App.page("runs", {
           <td>${{ running: "진행 중", canceling: "중지 중", canceled: "중지됨", done: "끝", failed: "실패" }[r.status] || esc(r.status)}${r.note ? ` <span class="muted small">${esc(r.note)}</span>` : ""}</td></tr>`).join("")
           : `<tr class="empty-row"><td colspan="12">아직 기록이 없습니다.</td></tr>`}</tbody></table></section>
       <section class="card table-card"><div class="sec-head pad-x"><h2>불러오기</h2></div>
-        <table class="grid"><thead><tr><th>시각</th><th>종류</th><th>파일</th><th class="w-num">줄</th><th class="w-num">새로</th>
+        <table class="grid"><thead><tr><th>시각</th><th>넣은 방법</th><th>파일 이름</th><th class="w-num">줄</th><th class="w-num">새로</th>
           <th class="w-num">안 넣음</th><th>메모</th></tr></thead>
-        <tbody>${imports.length ? imports.map((i) => `<tr><td>${when(i.created_at)}</td><td>${i.kind === "names" ? "상품명" : "원본"}</td>
-          <td>${esc(i.file_name)}</td><td class="num">${num(i.total)}</td><td class="num">${num(i.added)}</td>
+        <tbody>${imports.length ? imports.map((i) => `<tr><td>${when(i.created_at)}</td><td>${i.kind === "names" ? "상품명" : ({ collect: "수집 상품 넣기", ready: "이름 완성 상품 넣기", adopt: "판매 중 상품 연결" }[i.method] || "원본")
+            + (i.via ? ` <span class="muted small">(${esc(i.via)})</span>` : "") + (i.store_name ? ` <span class="muted small">· ${esc(i.store_name)}</span>` : "")}</td>
+          <td>${esc(i.file || i.file_name)}</td><td class="num">${num(i.total)}</td><td class="num">${num(i.added)}</td>
           <td class="num">${num(i.updated)}</td><td class="muted small">${esc(i.note)}</td></tr>`).join("")
           : `<tr class="empty-row"><td colspan="7">아직 기록이 없습니다.</td></tr>`}</tbody></table></section>
     </div>`;

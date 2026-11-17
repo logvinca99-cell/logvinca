@@ -252,6 +252,7 @@ class DB:
         mail.ensure(self)
         trash.ensure(self)
         self._rename_price_terms()
+        self._import_methods()
         self._drop_removed()
         self._busy_name_guard()
         self._orders_from_init()
@@ -307,6 +308,10 @@ class DB:
                    ("mail_to", "TEXT NOT NULL DEFAULT ''")],   # 이 스토어 메일을 받는 주소 (예: me+redcoco@gmail.com) — 메일함 스토어 구분용   # 판매자센터를 열 크롬 프로필 폴더 이름 (예: Profile 3)
         # AI 이름 A·B 양식 (만들 때 정해짐 — A는 1번째 복사본용, B는 양식이 조금 다름). 비면 만든 순서로 짐작
         "names": [("variant", "TEXT NOT NULL DEFAULT ''")],
+        # 원본을 넣은 방법: collect(수집 상품 넣기) · ready(이름 완성 상품 넣기) · adopt(판매 중 상품 연결), 올린 파일 이름 그대로,
+        # 연결한 스토어(판매 중 상품 연결), 거쳐 온 곳(상세 정리)
+        "imports": [("method", "TEXT NOT NULL DEFAULT ''"), ("file", "TEXT NOT NULL DEFAULT ''"),
+                    ("store_name", "TEXT NOT NULL DEFAULT ''"), ("via", "TEXT NOT NULL DEFAULT ''")],
         "listings": [("sale_shown", "INTEGER"),
                      # 판매 중 상품 연결로 들어온 복사본 (가져오기 되돌리기 대상 구분용 — 가격 계산은 다른 복사본과 같음)
                      ("linked", "INTEGER NOT NULL DEFAULT 0"),
@@ -373,6 +378,27 @@ class DB:
               WHEN OLD.listing_id IN {busy} AND NOT EXISTS (SELECT 1 FROM name_unlock)
               BEGIN SELECT RAISE(IGNORE); END;
             """)
+
+    def _import_methods(self):
+        """예전 불러오기 기록에 넣은 방법·파일 이름을 한 번 채움 (기록 이름의 앞말로 구분, 이름 완성 상품은 완성 상품명으로)."""
+        rows = self.q("SELECT id, kind, file_name FROM imports WHERE kind='products' AND method=''")
+        if not rows:
+            return
+        with self.tx() as c:
+            for r in rows:
+                fn = r["file_name"] or ""
+                method, file, store, via = "collect", fn, "", ""
+                for pre in ("판매 중 상품 연결 · ", "기존 상품 가져오기 · "):
+                    if fn.startswith(pre):
+                        method = "adopt"
+                        rest = fn[len(pre):]
+                        store, _, file = rest.partition(" · ") if " · " in rest else ("", "", rest)
+                if fn.startswith("상세 정리 · "):
+                    via, file = "상세 정리", fn[len("상세 정리 · "):]
+                if method == "collect" and c.execute("""SELECT 1 FROM names n JOIN sources s ON s.id=n.source_id
+                        WHERE s.import_id=? AND n.origin='ready' LIMIT 1""", (r["id"],)).fetchone():
+                    method = "ready"
+                c.execute("UPDATE imports SET method=?, file=?, store_name=?, via=? WHERE id=?", (method, file, store, via, r["id"]))
 
     def _rename_price_terms(self):
         """가격 용어 통일 (기준 가격 · 스토어 가격 차이 % · 손님 가격): 지난 기록에 남은 예전 말을 한 번 바꿈."""

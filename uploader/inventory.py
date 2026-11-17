@@ -185,7 +185,7 @@ def import_products(db, fileobj, filename, progress=None, should_stop=None, src_
 
 
 def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=None, src_tags=None, store_tag=False, skip_img=None, line_refs=False, price_src="file",
-                ready=False, mark_eye=False):
+                ready=False, mark_eye=False, method=None, file=None, store_name="", via=""):
     """원본 줄들을 새 원본 상품으로 (엑셀 불러오기·상세 정리·판매 중 상품 연결 공용). rows: (참조, 엑셀 줄 사전) 반복자.
     상품명이 완전히 같은 원본이 이미 있거나 앞줄에 있으면 '상품명 중복'으로 넣지 않는다 (덮어쓰지 않음 — 원본 기준은 처음 넣은 것).
     src_tags: 모든 줄에 붙일 출처 태그, store_tag: 수집URL의 스토어도 태그로. line_refs: 참조가 엑셀 줄 번호.
@@ -195,7 +195,9 @@ def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=No
     lex = lexicon.get(db)
     categories = naver.cached_categories()
     now = time.time()
-    iid = db.x("INSERT INTO imports(kind, file_name, created_at) VALUES('products', ?, ?)", (file_name, now))
+    method = method or ("ready" if ready else "collect")
+    iid = db.x("""INSERT INTO imports(kind, file_name, created_at, method, file, store_name, via) VALUES('products',?,?,?,?,?,?)""",
+               (file_name, now, method, file if file is not None else file_name, store_name or "", via or ""))
     stats = {"total": 0, "added": 0, "invalid": 0, "dup": 0, "dup_rows": [], "img_skipped": 0}
     refs = {}
     touched = []
@@ -793,6 +795,7 @@ def source_detail(db, sid):
         JOIN listings l ON l.id=h.listing_id JOIN stores st ON st.id=l.store_id
         WHERE l.source_id=? ORDER BY h.deleted_at DESC""", (sid,))
     s["max_copies"] = int(config.load().get("max_copies") or 2)
+    s["imp"] = db.one("SELECT method, file, file_name, store_name, via, created_at FROM imports WHERE id=?", (s.get("import_id"),)) if s.get("import_id") else None
     return s
 
 

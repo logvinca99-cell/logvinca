@@ -623,7 +623,8 @@ def to_sources(db, bid, ids=None, progress=None, should_stop=None):
     chem_of = {r["id"]: r["chem"] for r in rows}
     st = inventory.import_rows(db, ((r["id"], unpack(r["row"])) for r in rows), f"상세 정리 · {b.get('file_name') or ''}",
                                total_hint=len(rows), progress=progress, should_stop=should_stop,
-                               src_tags=srctags.split(b.get("tags")), store_tag=bool(b.get("store_tag")))
+                               src_tags=srctags.split(b.get("tags")), store_tag=bool(b.get("store_tag")),
+                               method="collect", file=b.get("file_name") or "", via="상세 정리")
     now = time.time()
     tools = 0
     with db.tx() as c:
