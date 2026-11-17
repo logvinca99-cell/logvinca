@@ -426,17 +426,20 @@ App.page("listings", {
     } catch (e) { App.toast(e.message, true); }
   },
 
-  /* 상품명 바꾸기: AI 키워드(기본) / AI로 짓기 / 셔플. ids를 주면 그 건만 */
+  /* 상품명 바꾸기 창 — 한 창 안에서 끝까지: 방식 고르기 → (상표 단어가 있으면) 상표 단계 → (키워드가 필요하면) 비용 단계
+     → 진행 → 결과. 못 만든 것은 원본별 까닭(실제 값)과 처리 버튼을 같은 창에 보여 주고 거기서 바로 처리한다.
+     ids를 주면 그 건만 */
   renameModal(ids) {
     const s = App.state.settings;
     const target = ids ? { ids } : this.target();
     const n = ids ? ids.length : this.selAll ? this.total : this.sel.size;
     const keyOk = s.has_anthropic_api_key || App.state.fake_api;
+    this._rn = { title: `상품명 바꾸기 · 복사본 ${num(n)}건`, target, n, opt: {} };
     App.openModal({
-      title: `상품명 바꾸기 · 복사본 ${num(n)}건`,
+      title: this._rn.title,
       body: `<div class="form"><div class="radio-cards">
-          <label><input type="radio" name="rn" value="ctx" checked><div><b>AI 키워드 (기본)</b><span class="muted small">[원본 앞 ${num(s.ctx_head_n)}단어] + 원본 핵심 단어(keep) + 다른 이름(core) + 용도·조합(core2) + 맥락 + 남은 원본 단어 (A·B는 보라·맥락을 나눠 쓰고, B는 앞 3단어만 두고 섞음), 최대 ${num(s.name_max_len)}자. 키워드가 없는 원본은 먼저 받습니다(비용 안내 후).</span></div></label>
-          <label><input type="radio" name="rn" value="ai"><div><b>AI로 짓기</b><span class="muted small">AI(${esc(s.ai_model)})가 원본을 보고 이름 전체를 새로 짓습니다.</span></div></label>
+          <label><input type="radio" name="rn" value="ctx" checked><div><b>AI 키워드 (기본)</b><span class="muted small">[원본 앞 ${num(s.ctx_head_n)}단어] + 원본 핵심 단어(keep) + 다른 이름(core) + 용도·조합(core2) + 맥락 + 남은 원본 단어 (A·B는 보라·맥락을 나눠 쓰고, B는 앞 3단어만 두고 섞음), 최대 ${num(s.name_max_len)}자. 키워드가 없는 원본은 먼저 받습니다(이 창에서 비용 안내).</span></div></label>
+          <label><input type="radio" name="rn" value="ai"><div><b>AI로 짓기</b><span class="muted small">AI(${esc(s.ai_model)})가 원본을 보고 이름 전체를 새로 짓습니다 (비용 듦).</span></div></label>
           <label><input type="radio" name="rn" value="shuffle"><div><b>셔플 (AI 안 씀)</b><span class="muted small">앞 단어를 고정하고 나머지 단어 순서를 섞습니다. 넣을 단어를 적으면 그 단어도 고정 단어 뒤에서 함께 섞입니다.</span>
             <div class="shuffle-opts" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px">
               <label class="field" style="margin:0">앞에서 고정할 단어 수 <input type="number" id="rn-fixed" min="0" max="10" value="${num(s.shuffle_fixed || 3)}" style="width:80px"></label>
@@ -444,49 +447,327 @@ App.page("listings", {
             </div></div></label>
         </div>
         <label class="check"><input type="checkbox" id="rn-redo"> 이미 이름이 붙은 복사본도 새 이름으로 바꾸기 <span class="muted small">(끄면 '이름 변경 필요'인 것만 — 기본)</span></label>
-        <label class="check"><input type="checkbox" id="rn-again"> AI 키워드를 새로 받기 <span class="muted small">(AI 키워드 방식 · 이미 받은 원본도 — 비용 듦, 즉시·일괄과 비용 안내가 나옴)</span></label>
+        <label class="check"><input type="checkbox" id="rn-again"> AI 키워드를 새로 받기 <span class="muted small">(AI 키워드 방식 · 이미 받은 원본도 — 비용 듦, 이 창에서 즉시·일괄과 비용 안내)</span></label>
         ${keyOk ? "" : '<p class="c-err small">AI 키워드·AI로 짓기는 설정 → API 키에서 Anthropic 키를 먼저 넣어야 합니다.</p>'}
-        <p class="muted small">이미 올라간 복사본은 바꾸지 않습니다(최신화로 다시 올릴 때 바뀜). 판매자 관리코드는 그대로입니다.
-          모든 이름은 금지어·상표와 33개 스토어 중복을 검사합니다. 한 건씩은 복사본을 눌러 직접 입력할 수도 있습니다.</p></div>`,
-      buttons: [{ label: "취소" }, { label: "바꾸기", primary: true, onClick: async (b) => {
-        const method = $("input[name=rn]:checked", b).value;
-        if (method === "shuffle") {
-          const fixed_n = +$("#rn-fixed", b).value, extra = $("#rn-extra", b).value;
-          App.closeModal();
-          (async () => {   // 상표 단어가 있으면 먼저 물어봄
-            const mm = await App.markCheck({ listing_filter: target });
-            if (mm === null) return;
-            await App.startTask(App.api("/api/listings/rename", { json: { ...target, method, fixed_n, extra, mark_mode: mm || undefined } }));
-          })();
-          return false;
-        }
-        if (method === "ctx") {
-          const redo = $("#rn-redo", b).checked, again = $("#rn-again", b).checked;
-          App.closeModal();
-          (async () => {
-            const mm = await App.markCheck({ listing_filter: target });   // 상표 단어가 있으면 먼저 물어봄
-            if (mm === null) return;
-            const go = () => App.startTask(App.api("/api/listings/rename", { json: { ...target, method, redo, mark_mode: mm || undefined } }));
-            const est = await App.api("/api/ctx/estimate", { json: { listing_filter: target, again } });
-            if (!est.sources) { await go(); return; }
-            // 키워드 없는(또는 새로 받을) 원본: 비용 안내 후 받기 → 즉시면 다 받은 뒤 이름을 붙이고, 일괄이면 키워드 있는 원본만 지금 붙인다 (나머지는 끝나면 자동)
-            App.ctxConfirm({ listing_filter: target, again, mark_mode: mm || undefined }, (ok, mode) => {
-              if (!ok) return;
-              if (mode !== "instant") return go();
-              const h = (t) => {
-                if (t.kind !== "ctxkw") return;
-                App.off("task-done", h);
-                if (t.status === "done") go();   // 키워드를 못 받았으면 이름을 바꾸지 않음
-                else App.toast("AI 키워드를 받지 못해 상품명은 바꾸지 않았습니다. 다시 시도하세요.", true);
-              };
-              App.on("task-done", h);
-            });
-          })();
-          return false;
-        }
-        return !!(await App.startTask(App.api("/api/listings/rename", { json: { ...target, method } })));
+        <p class="muted small">이미 올라간 복사본은 바꾸지 않습니다(최신화로 다시 올릴 때 바뀜). 모든 이름은 금지어·상표·전체 스토어 중복을 검사합니다.
+          못 만든 것은 이 창에서 까닭과 함께 보여 주고 바로 처리할 수 있습니다.</p></div>`,
+      buttons: [{ label: "취소" }, { label: "바꾸기", primary: true, noConfirm: true, onClick: (b) => {
+        const R = this._rn;
+        R.opt = { method: $("input[name=rn]:checked", b).value, redo: $("#rn-redo", b).checked, again: $("#rn-again", b).checked,
+          fixed_n: +$("#rn-fixed", b).value, extra: $("#rn-extra", b).value };
+        this._rnStart();
+        return false;   // 창은 닫지 않음 — 같은 창에서 다음 단계
       } }],
     });
+  },
+
+  /* 같은 창의 다음 화면 (제목은 그대로). ✕로 닫으면 기다리던 단계는 취소, 진행 중인 작업은 뒤에서 계속 */
+  _rnView(body, buttons = []) {
+    this._rnOnClose = this._rnOnClose || (() => this._rnClosed());   // 같은 함수 — 화면을 바꿀 때 '닫힘'으로 치지 않게
+    App.openModal({ title: this._rn.title, body, buttons, wide: true, onClose: this._rnOnClose });
+  },
+  _rnClosed() {
+    const R = this._rn;
+    if (!R) return;
+    if (R.pend) { const f = R.pend; R.pend = null; f(null); }
+    if (R.task && !R.bg) this._rnBackground();
+    R.closed = true;
+    if (App.current === this && $("#l-rows")) this.load();
+    App.refreshState();
+  },
+  _rnAsk(body, buttons) {   // 버튼으로 값을 고르는 화면 → Promise(값 | null)
+    return new Promise((resolve) => {
+      this._rn.pend = resolve;
+      this._rnView(body, buttons.map((x) => ({ ...x, noConfirm: true, onClick: x.value === undefined ? undefined : (b) => {
+        const v = typeof x.value === "function" ? x.value(b) : x.value;
+        const f = this._rn.pend; this._rn.pend = null;
+        if (f) f(v);
+        return false;
+      } })));
+    });
+  },
+
+  async _rnStart() {
+    const R = this._rn, { target, opt } = R;
+    this._rnView('<p><span class="spin"></span> 상표 단어 확인 중…</p>');
+    try {
+      if (opt.method !== "ai") {
+        const mc = await App.api("/api/names/mark_check", { json: { listing_filter: target } });
+        if (mc.sources || mc.kw_sources) {
+          const mm = await this._rnMarkStep(mc);
+          if (mm === null || R.closed) return;
+          opt.mark_mode = mm;
+        }
+      }
+      if (opt.method === "ctx") {
+        const t = { listing_filter: target, again: opt.again, mark_mode: opt.mark_mode || undefined };
+        const est = await App.api("/api/ctx/estimate", { json: t });
+        if (est.sources) {
+          const mode = await this._rnCostStep(t, est, "키워드가 없는(또는 새로 받을) 원본");
+          if (mode === null || R.closed) return;
+          if (mode !== "skip" && !(await this._rnKeywords(t, mode))) return;
+        }
+      }
+      await this._rnRename(target, opt);
+    } catch (e) { this._rnErr(e); }
+  },
+  _rnErr(e) {
+    this._rnView(`<div class="notice err">${esc(e.message || String(e))}</div>`, [{ label: "닫기" }]);
+  },
+
+  _rnMarkTable(ws) {
+    return `<div class="tbl-wrap" style="max-height:180px"><table class="grid small"><thead><tr><th>상표 단어</th><th>구분</th><th class="w-num">원본</th><th>예시</th></tr></thead>
+      <tbody>${ws.map((w) => `<tr><td><b>${esc(w.word)}</b></td><td>${esc(w.verdict)}</td><td class="num">${num(w.n)}</td>
+        <td class="muted">${w.examples.map((x) => `#${x.id} ${esc(x.name.slice(0, 40))}`).join("<br>")}</td></tr>`).join("")}</tbody></table></div>`;
+  },
+  _rnMarkStep(mc) {
+    return this._rnAsk(`<div class="form">
+        <div class="notice warn"><b>상표 단어가 들어 있는 원본 ${num(Math.max(mc.sources, mc.kw_sources))}개</b> — 어떻게 만들지 고르세요.</div>
+        ${mc.sources ? `<p class="small"><b>업스타 기준상품명</b>에 든 상표 단어 — 원본 ${num(mc.sources)}개 (그대로면 이 원본은 이름을 못 만듦)</p>${this._rnMarkTable(mc.words)}` : ""}
+        ${mc.kw_sources ? `<p class="small" style="margin-top:8px"><b>AI 키워드</b>에 든 상표 단어 — 원본 ${num(mc.kw_sources)}개</p>${this._rnMarkTable(mc.kw_words)}` : ""}
+        <div class="radio-cards" style="margin-top:8px">
+          <label><input type="radio" name="mk" value="drop" checked><div><b>상표 단어 빼고 만들기</b><span class="muted small">그 단어를 빼고 다음 원본 단어로 채워 만듭니다 (추천)</span></div></label>
+          <label><input type="radio" name="mk" value="allow"><div><b>상표 단어 무시하고 그대로 넣어 만들기</b><span class="muted small">위 표의 상표 단어는 그대로 씁니다 (표에 없는 상표 단어는 계속 막음)</span></div></label>
+          <label><input type="radio" name="mk" value="skip"><div><b>이 원본들은 건너뛰기</b><span class="muted small">'이름 변경 필요'로 둡니다</span></div></label>
+        </div></div>`,
+    [{ label: "취소" }, { label: "이대로 진행", primary: true, value: (b) => $("input[name=mk]:checked", b).value }]);
+  },
+
+  /* AI 키워드 비용 단계 (이 창 안): → "instant" | "batch" | "skip"(키워드 없이 진행) | null */
+  async _rnCostStep(t, est, what) {
+    const [eb, ei] = await Promise.all([App.api("/api/ctx/estimate", { json: { ...t, mode: "batch" } }), App.api("/api/ctx/estimate", { json: { ...t, mode: "instant" } })]);
+    const inst = (App.state.settings.ctx_mode || "instant") === "instant";
+    return this._rnAsk(`<div class="form">
+        <div class="notice">${esc(what)} <b>${num(est.sources)}개</b>는 AI 키워드를 받아야 이름을 만들 수 있습니다 (비용 듦).</div>
+        ${est.has_key ? "" : '<p class="c-err small">설정 → AI 상품명에 Anthropic API 키를 먼저 넣어야 합니다.</p>'}
+        <div class="radio-cards">
+          <label><input type="radio" name="rc" value="instant" ${inst ? "checked" : ""}><div><b>즉시</b> 약 <b>${num(ei.krw)}원</b><span class="muted small">1~2분 안에 받고, 이 창에서 바로 이름을 붙입니다.</span></div></label>
+          <label><input type="radio" name="rc" value="batch" ${inst ? "" : "checked"}><div><b>일괄 (50% 할인)</b> 약 <b>${num(eb.krw)}원</b><span class="muted small">몇 분~몇 시간 뒤 받으면 자동으로 이름이 붙습니다. 키워드가 있는 원본은 지금 바로 바꿉니다.</span></div></label>
+        </div></div>`,
+    [{ label: "취소" }, { label: "키워드 없이 진행", value: "skip" }, { label: "키워드 받고 진행", primary: true, value: (b) => $("input[name=rc]:checked", b).value }]);
+  },
+  /* 키워드 받기: 즉시면 이 창에서 받을 때까지 기다림, 일괄이면 보내고 계속 → 성공 여부 */
+  async _rnKeywords(t, mode) {
+    const r = await App.api("/api/ctx/start", { json: { ...t, mode } });
+    if (mode !== "instant") {
+      this._rn.note = r.started ? `AI 키워드를 일괄로 보냈습니다 (원본 ${num(r.sources)}개, 예상 약 ${num(r.est_krw)}원) — 받으면 그 원본 복사본에 이름이 자동으로 붙습니다.` : r.message;
+      return true;
+    }
+    if (!r.task) { this._rn.note = r.message || ""; return true; }
+    const k = await this._rnWait(r.task, "AI 키워드 받는 중", false);
+    if (!k) return false;
+    if (k.status !== "done") { this._rnErr(new Error(`AI 키워드를 받지 못했습니다: ${k.error || k.status}`)); return false; }
+    return true;
+  },
+
+  /* 작업 진행을 같은 창에 표시 → 끝난 작업 | null(창을 닫아 뒤에서 계속) */
+  _rnWait(tid, label, bgOk) {
+    const R = this._rn;
+    R.task = tid; R.bg = false;
+    App._rnQuiet = App._rnQuiet || new Set(); App._rnQuiet.add(tid);
+    this._rnView(`<div class="form"><p><span class="spin"></span> <b>${esc(label)}</b></p>
+        <div class="bar"><div class="bar-ok" id="rn-bar" style="width:0%"></div></div><p class="small muted" id="rn-prog">시작하는 중…</p>
+        ${bgOk ? '<p class="small muted">오래 걸리면 창을 닫아도 됩니다 — 뒤에서 계속하고, 끝나면 알림에서 못 만든 것을 열어 처리합니다.</p>' : ""}</div>`,
+    bgOk ? [{ label: "창 닫고 뒤에서 계속", noConfirm: true, onClick: () => { this._rnBackground(); App.closeModal(); return false; } }] : []);
+    return this._rnPoll(tid);
+  },
+  async _rnPoll(tid, onTick) {
+    const R = this._rn;
+    for (;;) {
+      if (R.bg || R.closed) return null;
+      let t;
+      try { t = (await App.api("/api/tasks")).find((x) => x.id === tid); } catch (e) { t = null; }
+      if (R.bg || R.closed) return null;
+      if (t) {
+        const p = t.total ? Math.round((t.done / t.total) * 100) : null;
+        const bar = $("#rn-bar"), pr = $("#rn-prog");
+        if (bar && p != null) bar.style.width = `${p}%`;
+        if (pr) pr.textContent = t.total ? `${num(t.done)} / ${num(t.total)} ${t.message || ""}` : (t.message || "진행 중…");
+        if (onTick) onTick(t);
+        if (t.status !== "running") { R.task = null; return t; }
+      }
+      await new Promise((ok) => setTimeout(ok, 700));
+    }
+  },
+  _rnBackground() {
+    const R = this._rn;
+    if (!R || !R.task) return;
+    R.bg = true;
+    App._rnQuiet?.delete(R.task);
+    App._rnBg = App._rnBg || new Map(); App._rnBg.set(R.task, { title: R.title, opt: { ...R.opt } });
+    App.taskSeen[R.task] = "running";   // 끝나면 알림 (못 만든 것 — 열어서 처리)
+    App.toast("상품명 바꾸기를 뒤에서 계속합니다. 끝나면 알림이 뜹니다.");
+  },
+
+  async _rnRename(target, opt) {
+    const r = await App.api("/api/listings/rename", { json: { ...target, method: opt.method, redo: opt.redo, fixed_n: opt.fixed_n, extra: opt.extra,
+      mark_mode: opt.mark_mode || undefined } });
+    const t = await this._rnWait(r.task, "상품명 바꾸는 중", true);
+    if (!t) return;
+    if (t.status === "error") return this._rnErr(new Error(t.error || "상품명 바꾸기 실패"));
+    this._rnResult(t.result || {});
+  },
+
+  /* 결과 화면: 바꾼 수 · 못 만든 것(원본별 까닭과 처리 버튼) */
+  _rnResult(res) {
+    const R = this._rn;
+    R.res = res;
+    R.rows = new Map();
+    for (const s of res.fail?.sources || []) R.rows.set(s.source_id, { ...s, state: "open", made: [], note: "" });
+    R.more = res.fail?.more || 0;
+    R.renamed = res.renamed || 0;
+    this._rnRender();
+  },
+  _rnRender() {
+    const R = this._rn, res = R.res, rows = [...R.rows.values()];
+    const open = rows.filter((x) => x.state === "open");
+    const fixed = rows.reduce((a, x) => a + x.made.length, 0);
+    const head = `<b>${num(R.renamed + fixed)}건 바꿈</b>` + (open.length ? ` · <span class="c-err">못 만든 ${num(open.reduce((a, x) => a + x.listings.length, 0))}건 (원본 ${num(open.length)}개)</span>` : "")
+      + (res.live ? ` · 이미 올라간 ${num(res.live)}건은 건너뜀` : "") + (res.kept ? ` · 이미 이름이 붙은 ${num(res.kept)}건은 그대로` : "");
+    const has = (f) => open.some(f);
+    const markish = (x) => x.marks.length || x.kw_marks.length;
+    const kwish = (x) => ["same_origin", "dup", "no_kw", "retry", "mark", "no_head", "repeat"].includes(x.key);
+    const bulk = open.length > 1 ? `<div class="rn-bulk"><span class="small muted">못 만든 것 전부:</span>
+        ${has(markish) ? '<button class="btn sm" data-all="allow">상표 무시하고 만들기</button>' : ""}
+        ${has(kwish) ? '<button class="btn sm" data-all="again">AI 키워드 새로 받기</button>' : ""}
+        <button class="btn sm" data-all="shuffle">셔플로 만들기</button><button class="btn sm" data-all="ai">AI로 짓기</button>
+        <button class="btn sm ghost" data-all="skip">전부 건너뛰기</button></div>` : "";
+    const row = (x) => {
+      const st = x.state, stores = [...new Set(x.listings.map((l) => l.store))].join(", ");
+      const acts = st !== "open" ? "" : `<div class="rn-acts">
+          ${markish(x) ? `<button class="btn sm primary" data-act="allow">상표 무시하고 만들기</button><button class="btn sm" data-act="drop">상표 빼고 만들기</button>` : ""}
+          ${x.key === "retry" ? '<button class="btn sm primary" data-act="retry">다시 만들기</button>' : ""}
+          ${kwish(x) ? `<button class="btn sm ${markish(x) || x.key === "retry" ? "" : "primary"}" data-act="again">AI 키워드 새로 받기</button>` : ""}
+          <button class="btn sm" data-act="shuffle">셔플로 만들기</button><button class="btn sm" data-act="ai">AI로 짓기</button>
+          <button class="btn sm" data-act="manual">직접 입력</button><button class="btn sm ghost" data-act="skip">건너뛰기</button></div>
+        <div class="rn-manual" hidden>${x.listings.map((l) => `<div class="cl-row"><span class="small muted" style="min-width:80px">${esc(l.store)}</span>
+          <input class="rn-in" data-lid="${l.id}" value="${esc(l.name)}" style="flex:1;min-width:0"><button class="btn sm" data-save="${l.id}">저장</button></div>`).join("")}</div>`;
+      const badge = st === "done" ? '<span class="flag eye-ok">바꿈</span>' : st === "skip" ? '<span class="flag">건너뜀</span>'
+        : st === "wait" ? '<span class="flag">키워드 받는 중</span>' : st === "busy" ? '<span class="spin"></span>' : "";
+      return `<div class="rn-src ${st}" data-sid="${x.source_id}">
+        <div class="rn-h">${badge} <b>#${x.source_id}</b> ${esc(x.name)} <span class="muted small">· 복사본 ${num(x.listings.length)} · ${esc(stores)}</span></div>
+        ${st === "open" || st === "busy" ? `<div class="small c-err rn-why">${esc(x.why)}</div>` : ""}
+        ${x.made.length ? `<div class="small c-ok">→ ${x.made.map((m) => esc(m)).join(" / ")}</div>` : ""}
+        ${x.note ? `<div class="small muted">${esc(x.note)}</div>` : ""}${acts}</div>`;
+    };
+    const allDone = !open.length;
+    this._rnView(`<div class="form rn-res">
+        <div class="notice ${allDone ? "ok" : "warn"}">${allDone ? "✓ " : ""}${head}${allDone && rows.length ? " — 모두 처리했습니다" : allDone ? " — 모두 바꿨습니다" : ""}</div>
+        ${R.note ? `<p class="small muted">${esc(R.note)}</p>` : ""}
+        <div id="rn-busy" class="small" hidden></div><div id="rn-cost"></div>
+        ${bulk}
+        ${rows.length ? `<div class="rn-list">${rows.map(row).join("")}</div>` : ""}
+        ${R.more ? `<p class="small muted">못 만든 원본 ${num(R.more)}개는 목록에서 뺐습니다 — 처리한 뒤 다시 [상품명 바꾸기]를 누르면 이어서 보입니다.</p>` : ""}</div>`,
+    [{ label: "닫기", noConfirm: true }]);
+    const m = $("#m-body");
+    $$("[data-act]", m).forEach((el) => el.addEventListener("click", () => this._rnAct([+el.closest(".rn-src").dataset.sid], el.dataset.act, el)));
+    $$("[data-all]", m).forEach((el) => el.addEventListener("click", () => this._rnAct(open.map((x) => x.source_id), el.dataset.all, el)));
+    $$("[data-save]", m).forEach((el) => el.addEventListener("click", () => this._rnSave(+el.dataset.save, el)));
+  },
+
+  async _rnAct(sids, act, btn) {
+    const R = this._rn;
+    const rows = sids.map((s) => R.rows.get(s)).filter((x) => x && x.state === "open");
+    if (!rows.length) return;
+    if (act === "skip") { rows.forEach((x) => { x.state = "skip"; }); return this._rnRender(); }
+    if (act === "manual") { const box = $(".rn-manual", btn.closest(".rn-src")); box.hidden = !box.hidden; return; }
+    if (act === "ai" && !btn.dataset.sure) {   // 비용 드는 것만 한 번 더
+      btn.dataset.sure = "1"; btn.textContent = "AI 비용이 듭니다 — 한 번 더 눌러 실행"; btn.classList.add("danger"); return;
+    }
+    const lids = rows.flatMap((x) => x.listings.map((l) => l.id));
+    if (act === "again") return this._rnAgain(rows, lids);
+    const body = act === "allow" || act === "drop" || act === "retry" ? { method: "ctx", redo: false, mark_mode: act === "retry" ? undefined : act }
+      : act === "shuffle" ? { method: "shuffle", fixed_n: +(App.state.settings.shuffle_fixed || 3), extra: "" } : { method: "ai" };
+    await this._rnRun(rows, lids, body);
+  },
+  /* 고른 원본 복사본만 다시 이름 만들기 → 같은 창에서 결과 갱신 */
+  async _rnRun(rows, lids, body) {
+    const R = this._rn;
+    rows.forEach((x) => { x.state = "busy"; });
+    this._rnRender();
+    const busy = $("#rn-busy");
+    if (busy) { busy.hidden = false; busy.innerHTML = '<span class="spin"></span> 만드는 중… <span id="rn-prog"></span>'; }
+    let t;
+    try {
+      const r = await App.api("/api/listings/rename", { json: { ids: lids, ...body } });
+      R.task = r.task; R.bg = false;
+      App._rnQuiet = App._rnQuiet || new Set(); App._rnQuiet.add(r.task);
+      t = await this._rnPoll(r.task);
+    } catch (e) { rows.forEach((x) => { x.state = "open"; }); App.toast(e.message, true); return this._rnRender(); }
+    if (!t) return;
+    if (t.status === "error") { rows.forEach((x) => { x.state = "open"; x.note = t.error; }); return this._rnRender(); }
+    await this._rnRefresh(rows, lids, body.method);
+  },
+  /* 처리한 복사본의 지금 상태를 다시 읽어 줄마다: 이름이 붙었으면 '바꿈', 아니면 새 까닭 */
+  async _rnRefresh(rows, lids, method) {
+    const R = this._rn;
+    let f;
+    try { f = await App.api("/api/names/fail_list", { json: { ids: lids, method: method || "ctx" } }); } catch (e) { App.toast(e.message, true); return this._rnRender(); }
+    const still = new Map((f.sources || []).map((s) => [s.source_id, s]));
+    for (const x of rows) {
+      const got = (f.done || []).filter((d) => d.source_id === x.source_id).map((d) => d.name);
+      const s = still.get(x.source_id);
+      x.made.push(...got.filter((n) => !x.made.includes(n)));
+      if (s) { Object.assign(x, { why: s.why, key: s.key, marks: s.marks, kw_marks: s.kw_marks, listings: s.listings }); x.state = x.state === "wait" ? "wait" : "open"; }
+      else if (x.state !== "wait") x.state = "done";
+    }
+    this._rnRender();
+  },
+  /* AI 키워드 새로 받기 (이 원본들만): 같은 창에 비용 안내 → 즉시면 받은 뒤 이름 붙이고 갱신, 일괄이면 받는 대로 자동 */
+  async _rnAgain(rows, lids) {
+    const box = $("#rn-cost");
+    const t = { listing_filter: { ids: lids }, again: true };
+    let eb, ei;
+    try {
+      [eb, ei] = await Promise.all([App.api("/api/ctx/estimate", { json: { ...t, mode: "batch" } }), App.api("/api/ctx/estimate", { json: { ...t, mode: "instant" } })]);
+    } catch (e) { return App.toast(e.message, true); }
+    box.innerHTML = `<div class="notice"><b>AI 키워드 새로 받기</b> — 원본 ${num(ei.sources)}개 (비용 듦)
+        <div class="cl-row" style="margin-top:6px"><button class="btn sm primary" data-k="instant">즉시 받기 · 약 ${num(ei.krw)}원</button>
+        <button class="btn sm" data-k="batch">일괄 받기 · 약 ${num(eb.krw)}원 (받으면 자동으로 붙음)</button><button class="btn sm ghost" data-k="no">취소</button></div></div>`;
+    box.scrollIntoView({ block: "nearest" });
+    $$("[data-k]", box).forEach((el) => el.addEventListener("click", async () => {
+      const mode = el.dataset.k;
+      if (mode === "no") { box.innerHTML = ""; return; }
+      const R = this._rn;
+      rows.forEach((x) => { x.state = "busy"; });
+      this._rnRender();
+      const busy = $("#rn-busy");
+      if (busy) { busy.hidden = false; busy.innerHTML = `<span class="spin"></span> AI 키워드 ${mode === "instant" ? "받는 중" : "보내는 중"}… <span id="rn-prog"></span>`; }
+      try {
+        const r = await App.api("/api/ctx/start", { json: { ...t, mode } });
+        if (mode === "instant" && r.task) {
+          R.task = r.task; R.bg = false;
+          App._rnQuiet = App._rnQuiet || new Set(); App._rnQuiet.add(r.task);
+          const k = await this._rnPoll(r.task);
+          if (!k) return;
+          if (k.status !== "done") { rows.forEach((x) => { x.state = "open"; x.note = `AI 키워드를 받지 못함: ${k.error || k.status}`; }); return this._rnRender(); }
+          return this._rnRun(rows, lids, { method: "ctx", redo: false });   // 새 키워드로 이름 붙이기
+        }
+        // 일괄: 보낸 뒤 이 복사본들은 키워드가 오면 자동으로 이름을 바꾸도록 걸어 둠
+        const w = await App.api("/api/listings/rename", { json: { ids: lids, method: "ctx", redo: false } });
+        R.task = w.task; App._rnQuiet = App._rnQuiet || new Set(); App._rnQuiet.add(w.task);
+        await this._rnPoll(w.task);
+        rows.forEach((x) => { x.state = "wait"; x.note = r.started ? "AI 키워드를 일괄로 보냄 — 받으면 이름이 자동으로 붙습니다" : (r.message || ""); });
+        this._rnRender();
+      } catch (e) { rows.forEach((x) => { x.state = "open"; }); App.toast(e.message, true); this._rnRender(); }
+    }));
+  },
+  async _rnSave(lid, btn) {
+    const R = this._rn;
+    const inp = $(`.rn-in[data-lid="${lid}"]`);
+    try {
+      const r = await App.api(`/api/listings/${lid}/name`, { json: { name: inp.value } });
+      const x = [...R.rows.values()].find((v) => v.listings.some((l) => l.id === lid));
+      x.made.push(r.name);
+      x.listings = x.listings.filter((l) => l.id !== lid);
+      if (!x.listings.length) x.state = "done";
+      this._rnRender();
+    } catch (e) { App.toast(e.message, true); btn.disabled = false; }
+  },
+  /* 뒤에서 끝난 상품명 바꾸기의 알림에서: 같은 결과 창 다시 열기 */
+  renameReopen(t, meta) {
+    this._rn = { title: meta?.title || "상품명 바꾸기 · 결과", target: {}, n: 0, opt: meta?.opt || { method: "ctx" } };
+    this._rnResult(t.result || {});
   },
 
   /* 최신화·내리기: 바로 하기(방금 고른 것만 지금 처리) 또는 대기에 넣기(나중에 시작에서 처리) */

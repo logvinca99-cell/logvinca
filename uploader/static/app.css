@@ -945,3 +945,12 @@ body.eye-open .tasks { display: none; }
 .ai-name.none .an-text { font-style: italic; }
 .m-picks { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
 .pchip { border: 1px solid var(--line); background: var(--panel); border-radius: 99px; padding: 2px 10px; font-size: 12px; color: var(--text-2); }
+
+/* 상품명 바꾸기 창 안의 결과·못 만든 것 */
+.toast .toast-act { margin-left: 10px; }
+.rn-list { display: flex; flex-direction: column; gap: 8px; max-height: 52vh; overflow-y: auto; }
+.rn-src { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 0; }
+.rn-src.done { opacity: .75; } .rn-src.skip { opacity: .55; }
+.rn-src .rn-h { overflow-wrap: anywhere; }
+.rn-acts, .rn-bulk { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; align-items: center; }
+.rn-manual { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }

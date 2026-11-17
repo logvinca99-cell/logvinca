@@ -198,13 +198,20 @@ const App = {
     return j;
   },
 
-  toast(msg, isErr = false) {
+  toast(msg, isErr = false, act = null) {
     const t = $("#toast");
     t.textContent = msg;
+    if (act) {   // 알림 안 버튼 (예: 못 만든 것 — 열어서 처리)
+      const b = document.createElement("button");
+      b.className = "btn sm toast-act";
+      b.textContent = act.label;
+      b.addEventListener("click", () => { t.hidden = true; act.fn(); });
+      t.appendChild(b);
+    }
     t.className = "toast" + (isErr ? " err" : "");
     t.hidden = false;
     clearTimeout(this._toast);
-    this._toast = setTimeout(() => (t.hidden = true), isErr ? 7000 : 3500);
+    this._toast = setTimeout(() => (t.hidden = true), act ? 20000 : isErr ? 7000 : 3500);
   },
 
   // ── 화면 이동
@@ -389,6 +396,14 @@ const App = {
   },
 
   taskFinished(t) {
+    if (this._rnQuiet?.has(t.id)) { this.emit("task-done", t); return; }   // 상품명 바꾸기 창이 직접 보여 줌
+    const bg = this._rnBg?.get(t.id);
+    if (bg && t.kind === "rename" && t.status === "done" && t.result?.fail?.sources?.length) {   // 창을 닫고 뒤에서 끝남 → 열어서 처리
+      this._rnBg.delete(t.id);
+      this.toast(this.taskMsg(t), false, { label: `못 만든 ${num(t.result.fail.short)}건 — 열어서 처리`, fn: () => this.pages.listings.renameReopen(t, bg) });
+      this.emit("task-done", t);
+      return;
+    }
     if (t.status === "error") { this.toast(`${t.title}: ${t.error}`, true); }
     else if (t.status === "stopped" && t.title.includes("자동 가져오기")) this.toast("주문 자동 가져오기를 중단하고 껐습니다. 다시 켜려면 설정 → 판매 이력의 자동 가져오기 간격을 넣으세요.");
     else {

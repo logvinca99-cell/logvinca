@@ -1398,6 +1398,12 @@ def create_app(db=None):
         est = ctxkw.estimate(db, cfg, ids, b.get("mode"), bool(b.get("refresh")), bool(b.get("again")))
         return jsonify({**est, "full": len(full), "selected": est["selected"] + len(full)})
 
+    @app.post("/api/names/fail_list")
+    def names_fail_list():
+        """상품명 바꾸기 창: 고른 복사본 중 아직 이름을 못 만든 것(원본별 까닭)과 이름이 붙은 것 — 처리한 뒤 창을 새로 그릴 때."""
+        b = body()
+        return jsonify(inventory.fail_list(db, [int(i) for i in b.get("ids") or []], method=b.get("method") or "ctx"))
+
     @app.post("/api/names/mark_check")
     def names_mark_check():
         """고른 원본(또는 복사본의 원본)의 업스타 기준상품명에 든 상표 단어 — 상품명 만들기 전에 물어보려고."""

@@ -1138,6 +1138,45 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
     return st
 
 
+def fail_list(db, ids, limit=500, method="ctx"):
+    """상품명 바꾸기 창에 보여 줄 '못 만든 것': 고른 복사본 중 아직 이름이 없는(안 올린) 것을 원본별로 묶어 까닭(실제 값)과 함께.
+    method가 ctx면 AI 키워드 조립 까닭(ctxkw.why_fail), 셔플·AI로 짓기면 그 방식으로 못 만들었다고만.
+    → {short: 못 만든 복사본 수, sources: [{source_id, name, key, why, marks, kw_marks, listings: [{id, store, name}]}],
+       more: 목록에서 뺀 원본 수, done: [{id, source_id, name}] — 고른 것 중 이름이 붙은 것}"""
+    ids = [int(i) for i in ids or []]
+    rows = []
+    for i in range(0, len(ids), 900):
+        ch = ids[i:i + 900]
+        rows += db.q(f"""SELECT l.id, l.source_id, l.name, l.name_id, l.origin_no, l.status, st.name AS store
+            FROM listings l JOIN stores st ON st.id=l.store_id WHERE l.id IN ({','.join('?' * len(ch))}) ORDER BY l.id""", ch)
+    left = [r for r in rows if not r["name_id"] and not r["origin_no"] and r["status"] not in ("queued", "running")]
+    done = [{"id": r["id"], "source_id": r["source_id"], "name": r["name"]} for r in rows if r["name_id"]]
+    by = {}
+    for r in left:
+        by.setdefault(r["source_id"], []).append({"id": r["id"], "store": r["store"], "name": r["name"]})
+    sids = list(by)
+    out = {"short": len(left), "sources": [], "more": max(0, len(sids) - limit), "done": done}
+    if not sids:
+        return out
+    cfg = config.load()
+    lex = lexicon.get(db)
+    with db.tx() as c:
+        for sid in sids[:limit]:
+            s = c.execute("SELECT name FROM sources WHERE id=?", (sid,)).fetchone()
+            name = s["name"] if s else ""
+            if method == "ctx":
+                key, why = ctxkw.why_fail(c, cfg, lex, sid)
+            else:
+                key, why = "other", {"shuffle": "셔플로 만들 수 있는 새 이름이 없음 (앞 고정 단어·남은 단어로는 모두 겹치거나 막힘)",
+                                     "ai": "AI로 짓기에서 쓸 수 있는 이름이 나오지 않음 (겹침·금지어·상표)"}.get(method, "이름을 못 만듦")
+            found, _ = ctxkw.source_marks(lex, name)
+            k = c.execute("SELECT words FROM ctx_kw WHERE source_id=? AND status='ok'", (sid,)).fetchone()
+            km = ctxkw.kw_marks(lex, ctxkw.kw_of(k["words"])) if k and k["words"] else {}
+            out["sources"].append({"source_id": sid, "name": name, "key": key, "why": why,
+                                   "marks": [w for w, _ in found], "kw_marks": list(km), "listings": by[sid]})
+    return out
+
+
 def rename_shuffle(db, ids, fixed_n=3, extra=(), progress=None, should_stop=None, mark_mode=None):
     """셔플: 앞 fixed_n단어 고정, 나머지 단어와 직접 넣은 단어를 함께 섞어 복사본마다 새 이름 (AI 안 씀).
     이미 바꾼 이름이 있으면 버리고 새로 만든다. 33개 스토어 중복·원본과 같은 이름·금지어는 거른다."""
@@ -1192,6 +1231,7 @@ def rename_shuffle(db, ids, fixed_n=3, extra=(), progress=None, should_stop=None
         db.recount_sources(sorted({r["source_id"] for r in part}))
         if progress:
             progress(min(i + 500, len(todo)), len(todo), f"셔플 {st['renamed']:,}건")
+    st["fail"] = fail_list(db, ids, method="shuffle") if st.get("short") else None   # 상품명 바꾸기 창에 보여 줄 못 만든 것
     return st
 
 
@@ -1341,6 +1381,7 @@ def rename_ctx(db, ids, fallback=False, progress=None, should_stop=None, redo=Tr
                     AND source_id IN ({','.join('?' * len(rs[i:i + 900]))})""", rs[i:i + 900])}
             set_ctx_wait(db, [r["id"] for r in rest if r["source_id"] in waiting], 1 if redo else 2)
             st["kw_wait_listings"] = sum(1 for r in rest if r["source_id"] in waiting)
+    st["fail"] = fail_list(db, ids) if (st.get("short") or st.get("no_kw")) else None   # 상품명 바꾸기 창에 보여 줄 못 만든 것 (원본별 까닭·처리 버튼)
     return st
 
 
@@ -1429,6 +1470,7 @@ def rename_listings(db, ids, method="recombine", progress=None, should_stop=None
         db.recount_sources(chunk)
         if progress:
             progress(done, len(todo), f"상품명 바꿈 {st['renamed']:,}건")
+    st["fail"] = fail_list(db, ids, method="ai" if method == "ai" else "ctx") if st.get("short") else None
     return st
 
 
