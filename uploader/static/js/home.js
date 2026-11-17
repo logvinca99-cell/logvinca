@@ -45,7 +45,7 @@ App.page("home", {
     const steps = [
       [s.stores > 0, "스토어 추가", "스토어마다 커머스API 키를 넣습니다. 여러 개는 한 번에 붙여 넣을 수 있습니다.", "#stores"],
       [st.categories > 0, "카테고리 받기", "스토어 화면의 '연결 확인'이나 설정 화면에서 받습니다.", "#stores"],
-      [s.sources > 0, "원본 엑셀 불러오기", "화면 어디에나 엑셀을 끌어다 놓아도 됩니다.", "#inventory"],
+      [s.sources > 0, "수집 상품 넣기", "화면 어디에나 엑셀을 끌어다 놓아도 됩니다.", "#inventory"],
       [s.pending + s.registered > 0, "다른 스토어로 복사", "원본 상품에서 원본을 걸러 고르고 보낼 스토어(1~2곳)를 고릅니다.", "#inventory"],
       [s.names > s.sources, "상품명 바꾸기", "복사본에서 스토어를 고르고 '이름 변경 필요'를 AI 키워드·AI로 짓기·셔플로 바꿉니다.", "#listings"],
       [s.registered > 0, "등록 시작", "복사본 화면에서 스토어를 고르고 시작합니다.", "#listings"],

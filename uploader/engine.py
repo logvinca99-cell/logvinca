@@ -40,7 +40,7 @@ def listing_targets(db, f):
     from .inventory import listing_where
     where, args = listing_where(f if f.get("visible") else {**f, "status": "all"})
     kinds = [k for k in (f.get("kinds") or KIND_COND) if k in KIND_COND]
-    # 상품명을 아직 안 바꾼(원본 상품명 그대로인) 새 등록은 올리지 않는다 → 복사본 화면 '상품명 변경 필요'
+    # 후보상품명이 없는(타스토어 원본 상품명 그대로인) 새 등록은 올리지 않는다 → 복사본 화면 '상품명 변경 필요'
     # 눈검수 안 한 원본의 새 등록도 올리지 않는다 — 그 스토어에 한 번도 안 올린 것만 (최신화 실패 뒤 다시 등록·내린 것 다시 올리기는 그대로)
     cond = (f"({' OR '.join(KIND_COND[k] for k in kinds) or '0'}) AND NOT (l.op IN ('create','reupload') AND l.name_id IS NULL)"
             f" AND NOT ({UNREVIEWED_NEW})")
@@ -125,7 +125,7 @@ class Runner:
 
     # ── 조작
 
-    busy_check = None   # web이 정함: 지금 등록을 시작하면 안 되는 이유 (예: 기존 상품 가져오기 진행 중) 또는 None
+    busy_check = None   # web이 정함: 지금 등록을 시작하면 안 되는 이유 (예: 판매 중 상품 연결 진행 중) 또는 None
 
     def start(self, f):
         why = self.busy_check() if self.busy_check else None
@@ -483,7 +483,7 @@ class Runner:
                     return
             live = op in ("refresh", "delete", "reupload") and bool(t["origin_no"])
             if op != "delete" and not t.get("name_id"):
-                raise naver.ApiError("이름 변경 필요 · 원본 상품명 그대로는 올리지 않습니다 (복사본 화면에서 상품명 바꾸기)"
+                raise naver.ApiError("이름 변경 필요 · 후보상품명이 없습니다 — 타스토어 원본 상품명 그대로는 올리지 않습니다 (복사본 화면에서 상품명 바꾸기)"
                                      + (" — 올라가 있는 상품은 지우지 않았습니다" if live else ""))
             if op in ("create", "reupload"):
                 from . import lexicon
@@ -599,11 +599,6 @@ class Runner:
                 deleted_now = True
                 self.db.set_listing(lid, None, op="create", round=tn["round"], origin_no="", channel_no="",
                                     deleted_at=time.time(), round_reset=0, nv_status="", nv_disp="", del_mark=None)
-                if op == "refresh" and cfg.get("refresh_new_name"):   # 다시 올리기는 늘 같은 이름
-                    nm = self._new_name(cfg, tn)
-                    if nm:
-                        tn["name"] = nm
-                        body["originProduct"]["name"] = nm[:100]
             self._stage(lid, label, "상품 등록 중")
             res, tries = None, (3 if deleted_now else 1)
             for k in range(tries):   # 지운 뒤라면 등록을 몇 번 다시 시도 (상품이 비어 있지 않게)
@@ -720,26 +715,6 @@ class Runner:
             registered_at, deleted_at, reason) VALUES(?,?,?,?,?,?,?,?,?,?)""",
                   (t["id"], t["round"], t["name"], t["price"], t["seller_code"] or "", t["origin_no"],
                    t["channel_no"] or "", t["registered_at"], time.time() if counted else 0, reason))
-
-    def _new_name(self, cfg, t):
-        """최신화 때 새 이름을 쓰는 설정이면: 안 쓴 AI 맥락 후보, 없으면 셔플로 새 이름 (AI를 부르지 않음)."""
-        from . import inventory, lexicon
-        cfg = {**cfg, "_lex": lexicon.get(self.db)}
-        src = self.db.one("SELECT id, name FROM sources WHERE id=?", (t["source_id"],))
-        now = time.time()
-        with self.db.tx() as c:
-            c.execute("INSERT INTO name_unlock VALUES(1)")   # 처리 중인 이 복사본 이름을 엔진이 직접 바꿈
-            try:
-                nm = inventory.refresh_name(c, src, t["store_id"], cfg, now)
-                if not nm:
-                    return None
-                # 예전 이름은 '다 쓴 이름'으로 (다른 복사본이 다시 쓰지 않게, 한 복사본에 이름이 둘 붙지 않게)
-                c.execute("UPDATE names SET listing_id=-1 WHERE listing_id=? AND id!=?", (t["id"], nm["id"]))
-                c.execute("UPDATE names SET listing_id=? WHERE id=?", (t["id"], nm["id"]))
-                c.execute("UPDATE listings SET name_id=?, name=? WHERE id=?", (nm["id"], nm["name"], t["id"]))
-            finally:
-                c.execute("DELETE FROM name_unlock")
-        return nm["name"]
 
     def _option_images(self, client, cache, boxes, look, lid, label, on_wait):
         """옵션 사진 묶음마다 2열 그림을 그려 네이버에 올린 주소들. 같은 그림은 한 번만 올리고 모든 스토어가 같이 쓴다.

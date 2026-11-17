@@ -221,7 +221,7 @@ def summary(row, cfg):
     return {
         "row_key": str(row.get("id") or ""),
         "source_key": name_key(row.get("상품명")),
-        "img_key": source_fingerprint(row),   # 대표 이미지 주소 (원본 엑셀 올릴 때 겹침 확인용 — 원본 구분에는 안 씀)
+        "img_key": source_fingerprint(row),   # 대표 이미지 주소 (원본 파일 올릴 때 겹침 확인용 — 원본 구분에는 안 씀)
         "seller_code": str(row.get("판매자코드") or ""),
         "name": str(row.get("상품명") or "").strip(),
         "price": net_price(row),

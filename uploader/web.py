@@ -17,7 +17,7 @@ from .tasks import Tasks
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 FILTER_KEYS = ("q", "status", "category", "ai", "chem", "src_tag", "eye", "adopted", "store_missing", "store_has", "import_id", "max_listings", "price_min", "price_max", "copies",
-               "min_names", "store_id", "plan_id", "op", "age_days", "sold", "locked", "nv")
+               "min_names", "store_id", "plan_id", "op", "age_days", "sold", "locked", "nv", "next_name")
 STORE_FIELDS = ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "capacity", "enabled", "memo", "wm_text", "importer",
                 "business_id", "chrome_profile", "mail_to")
 
@@ -99,7 +99,7 @@ def create_app(db=None):
 
     def _adopt_running():
         return any(t.get("kind") in ("adopt",) and t.get("status") == "running" for t in tasks.list())
-    runner.busy_check = lambda: ("기존 상품 가져오기가 진행 중입니다. 가져오기가 끝난 뒤에 등록을 시작하세요." if _adopt_running() else None)
+    runner.busy_check = lambda: ("판매 중 상품 연결가 진행 중입니다. 가져오기가 끝난 뒤에 등록을 시작하세요." if _adopt_running() else None)
     if getattr(db, "_v3", False):
         orders.recount_sold(db)
         db.x("PRAGMA user_version=3")
@@ -169,7 +169,7 @@ def create_app(db=None):
         if price_check and request.form.get("price_ok") != "1":
             try:   # 가격 칸 + 대표 이미지 주소 겹침 (상품명이 다른데 이미지가 같은 줄)
                 excel.need_name_column(path, f.filename)
-                scan = inventory.upload_scan(db, excel.iter_rows(path, f.filename, lines=True))
+                scan = inventory.upload_scan(db, excel.iter_rows(path, f.filename, lines=True), ready=request.form.get("mode") == "ready")
             except ValueError as e:   # 상품명 열이 없음 등 → 바로 알림 (작업을 돌리지 않음)
                 try:
                     os.remove(path)
@@ -849,7 +849,7 @@ def create_app(db=None):
         db.x("UPDATE stores SET memo=?, memo_at=? WHERE id=?", (str(body().get("memo") or "")[:20000], now, sid))
         return jsonify({"memo_at": now})
 
-    # ── 기존 상품 가져오기 (이미 올린 상품: 업로드했던 엑셀 + 스토어 상품 목록 → 원본 + 판매 중 복사본)
+    # ── 판매 중 상품 연결 (이미 올린 상품: 업로드했던 엑셀 + 스토어 상품 목록 → 원본 + 판매 중 복사본)
 
     @app.post("/api/adopt/prepare")
     def adopt_prepare():
@@ -894,7 +894,7 @@ def create_app(db=None):
     def adopt_undo(rid):
         """가져오기 되돌리기: 이 프로그램에서만 뺌 (네이버 상품은 그대로)."""
         if runner.state["running"] or _adopt_running():
-            return fail("등록이나 기존 상품 가져오기가 진행 중일 때는 되돌릴 수 없습니다. 끝난 뒤에 다시 시도하세요.")
+            return fail("등록이나 판매 중 상품 연결가 진행 중일 때는 되돌릴 수 없습니다. 끝난 뒤에 다시 시도하세요.")
         try:
             return jsonify(adopt.undo_run(db, rid))
         except ValueError as e:
@@ -1196,10 +1196,13 @@ def create_app(db=None):
 
     @app.post("/api/sources/import")
     def import_sources():
+        """수집 상품 넣기(셀업 원본 — 타스토어 원본 상품명 그대로) / mode=ready: 이름 완성 상품 넣기(바꿔 둔 이름 → 후보상품명①번).
+        eye=1: 넣으면서 검수 완료로 표시."""
         tags, store = request.form.get("tags") or "", request.form.get("store_tag", "0") == "1"
         skip = request.form.get("img_dup") == "drop"   # 대표 이미지 주소 겹치는 줄 버리기 (올릴 때 창에서 고름)
-        return file_task("import", "원본 불러오기", lambda db_, fh, name, **kw: inventory.import_products(
-            db_, fh, name, src_tags=tags, store_tag=store, skip_img_dup=skip, **kw), price_check=True)
+        ready, eye_ok = request.form.get("mode") == "ready", request.form.get("eye") == "1"
+        return file_task("import", "이름 완성 상품 넣기" if ready else "수집 상품 넣기", lambda db_, fh, name, **kw: inventory.import_products(
+            db_, fh, name, src_tags=tags, store_tag=store, skip_img_dup=skip, ready=ready, mark_eye=eye_ok, **kw), price_check=True)
 
     # ── 출처 태그 (어디서·언제 가져온 원본인지)
 
@@ -1367,16 +1370,27 @@ def create_app(db=None):
     def ctx_estimate():
         b = body()
         cfg = config.load()
-        return jsonify(ctxkw.estimate(db, cfg, _ctx_sources(b), b.get("mode"), bool(b.get("refresh"))))
+        ids, full = _ctx_targets(b)
+        est = ctxkw.estimate(db, cfg, ids, b.get("mode"), bool(b.get("refresh")))
+        return jsonify({**est, "full": len(full), "selected": est["selected"] + len(full)})
+
+    def _ctx_targets(b):
+        """AI 키워드를 받을 원본 — 원본 화면에서 고르면 후보상품명 칸이 다 찬 원본은 뺀다(비용 아낌).
+        복사본 화면에서 고른 것(이름 다시 바꾸기)은 빼지 않는다. → (원본 번호들, 뺀 원본 번호들)"""
+        ids = _ctx_sources(b)
+        if "listing_filter" in b:
+            return ids, set()
+        full = ctxkw.full_slots(db, ids)
+        return [i for i in ids if i not in full], full
 
     @app.post("/api/ctx/start")
     def ctx_start():
         b = body()
-        ids = _ctx_sources(b)
+        ids, full = _ctx_targets(b)
         mode = b.get("mode") or config.load().get("ctx_mode") or "batch"
         refresh = bool(b.get("refresh"))
         if not ctxkw.targets(db, ids, refresh):
-            return jsonify({"started": False, "message": "고른 원본은 모두 키워드가 있습니다 (요청 0건). AI를 부르지 않습니다."})
+            return jsonify({"started": False, "message": "고른 원본은 모두 키워드가 있거나 후보상품명 칸이 다 찼습니다 (요청 0건). AI를 부르지 않습니다."})
         try:
             if mode == "instant":
                 tid = tasks.start("ctxkw", f"AI 키워드 받기(즉시) · 원본 {len(ids):,}개",
@@ -1778,7 +1792,7 @@ def create_app(db=None):
     @app.post("/api/trash/restore")
     def trash_restore():
         if runner.state["running"] or _adopt_running():
-            return fail("등록이나 기존 상품 가져오기가 진행 중일 때는 되살릴 수 없습니다.")
+            return fail("등록이나 판매 중 상품 연결가 진행 중일 때는 되살릴 수 없습니다.")
         ids = _trash_ids(body())
         if not ids:
             return fail("고른 항목이 없습니다.")
@@ -2154,7 +2168,7 @@ def create_app(db=None):
             return fail(str(e))
         import math
         if price_pct is not None and (not math.isfinite(price_pct) or not -50 <= price_pct <= 300):
-            return fail("스토어 가격 차이 %는 -50 ~ +300 사이로 넣어 주세요 (보통 0).")
+            return fail("스토어 가격 차이 %는 -50 ~ +300 사이로 넣어 주세요.")
         if disc is not None and not 0 <= disc < 90:
             return fail("표시 할인율은 0~89% 사이로 넣어 주세요.")
         try:
@@ -2398,7 +2412,7 @@ def create_app(db=None):
             if len(res["rows"]) < 500:
                 break
             page += 1
-        data = xlsxout.build("복사본", ["스토어", "판매자 관리코드", "회차", "등록 상품명", "원본 번호", "원본 판매자코드", "원본 상품명",
+        data = xlsxout.build("복사본", ["스토어", "판매자 관리코드", "회차", "등록 상품명", "원본 번호", "원본 판매자코드", "업스타 기준상품명",
                                      "손님 가격", "네이버 판매가", "기준 가격", "상태", "할 일", "잠금", "올린 날", "원상품번호", "채널상품번호", "메시지"],
                              rows, (14, 18, 6, 50, 9, 18, 50, 12, 12, 12, 9, 11, 6, 11, 16, 16, 40), text_cols=(1, 5, 14, 15), money_cols=(7, 8, 9))
         name = f"복사본_{time.strftime('%Y%m%d_%H%M')}.xlsx"

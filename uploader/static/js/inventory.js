@@ -3,24 +3,42 @@
 
 const INV_TILES = [
   { key: "all", label: "전체", dot: "var(--text-2)", count: "all_" },
-  { key: "c0", label: "미복사", dot: "var(--info)" },
-  { key: "c1", label: "1회 복사", dot: "var(--ok)" },
-  { key: "c2", label: "2회 복사", dot: "var(--dup)" },
+  { key: "c0", label: "올라간 곳 0곳", dot: "var(--info)" },
+  { key: "c1", label: "올라간 곳 1곳", dot: "var(--ok)" },
+  { key: "c2", label: "올라간 곳 2곳", dot: "var(--dup)" },
   { key: "warn", label: "경고 있음", dot: "var(--warn)" },
   { key: "invalid", label: "오류 (고쳐야 함)", dot: "var(--err)" },
   { key: "eye_done", label: "검수 완료", dot: "var(--ok)" },
   { key: "eye_todo", label: "미검수 (새로 못 올림)", dot: "var(--muted)" },
 ];
 
-/* 원본 줄 아래: AI 이름 후보 A·B… — 어느 스토어 복사본에 쓰였는지, 남았는지 (남은 이름은 다른 스토어로 복사하면 바로 붙음) */
+/* 원본 줄 아래: 후보상품명 ①·②번 칸 — 칸마다 이름(출처)과 올라간 스토어·상태, 또는 비어 있음 */
+const SLOT_NO = ["①", "②", "③", "④", "⑤"];
 function aiNamesLine(p) {
-  const KW = { pending: "AI 키워드 받는 중", retry: "AI 키워드 실패", invalid: "원본 이름이 바뀌어 다시 받아야 함" };
-  if (!p.ai_names?.length) return p.kw_status && KW[p.kw_status] ? `<div class="ai-names muted small">${KW[p.kw_status]}</div>` : "";
-  return `<div class="ai-names">${p.ai_names.map((n) => `<div class="ai-name ${n.code ? "used" : "free"}" title="${esc(n.name)}">
-    <b>${esc(n.label)}</b><span class="an-text">${esc(n.name)}</span>
-    <span class="an-st">${n.code ? `${esc(n.code)} ${n.live ? "판매 중" : "올릴 준비"}` : "남음"}</span></div>`).join("")}
-    ${p.ai_retired ? `<div class="muted small" title="상품명 바꾸기를 다시 눌러 바꿔 버린 이름 — 다시 쓰지 않음">바꿔서 안 쓰는 이름 ${num(p.ai_retired)}개</div>` : ""}</div>`;
+  const KW = { pending: "AI 키워드 받는 중", retry: "AI 키워드 실패", invalid: "업스타 기준상품명이 바뀌어 다시 받아야 함" };
+  const slots = p.slots || [];
+  if (!slots.length) return "";
+  const kw = p.kw_status && KW[p.kw_status] ? `<div class="muted small">${KW[p.kw_status]}</div>` : "";
+  return `<div class="ai-names">${slots.map((n) => `<div class="ai-name ${n.code ? "used" : n.name ? "free" : "none"}" title="${esc(n.name || "비어 있음")}">
+    <b>${SLOT_NO[n.no - 1] || n.no}</b>${n.name ? `<span class="an-org">${esc(n.origin)}</span><span class="an-text">${esc(n.name)}</span>`
+      : `<span class="an-text muted">${n.code ? "이름 변경 필요" : "비어 있음 — 다음 스토어에 올릴 때 AI 키워드로 만듦"}</span>`}
+    <span class="an-st">${n.code ? `${esc(n.code)} ${esc(n.status)}` : n.name ? "남음" : ""}</span></div>`).join("")}
+    ${kw}${p.ai_retired ? `<div class="muted small" title="상품명을 다시 바꿔 버린 이름 — 다시 쓰지 않음">바꿔서 안 쓰는 이름 ${num(p.ai_retired)}개</div>` : ""}</div>`;
 }
+
+/* 상품명 분류 안내 (원본 상품 화면 한켠, 기본 접힘) */
+const NAME_GUIDE = `<details class="name-guide card"><summary><b>상품명 분류 안내</b> <span class="muted small">— 펼쳐 보기</span></summary>
+  <ul class="small">
+    <li><b>타스토어 원본 상품명</b>: 셀업 등으로 가져온 남의 상품명. 절대 올리지 않음</li>
+    <li><b>업스타 기준상품명</b>: 원본을 구분하는 이름. 완전히 같으면 같은 원본</li>
+    <li><b>후보상품명①번·②번</b>: 스토어에 실제로 올라가는 이름 칸. 스토어 1곳당 1칸</li>
+    <li><b>ai상품명A·B</b>: AI 키워드로 조립한 이름. ①·②를 채우는 재료</li>
+    <li><b>완성 상품명</b>: 이미 바꿔 둔 이름(이름 완성 상품·판매 중 상품 연결). 그대로 ①번</li>
+    <li><b>직접 입력 상품명</b>: 직접 적거나 고친 이름</li></ul>
+  <div class="tbl-wrap"><table class="tbl small"><thead><tr><th>넣은 방법</th><th>업스타 기준상품명</th><th>후보상품명①번</th><th>후보상품명②번</th></tr></thead><tbody>
+    <tr><td>수집 상품 넣기</td><td>타스토어 원본 상품명</td><td>ai상품명A</td><td>ai상품명B</td></tr>
+    <tr><td>판매 중 상품 연결</td><td>완성 상품명 (올라가 있던 이름)</td><td>완성 상품명</td><td>ai상품명A</td></tr>
+    <tr><td>이름 완성 상품 넣기</td><td>완성 상품명 (바꿔 둔 이름)</td><td>완성 상품명</td><td>ai상품명A</td></tr></tbody></table></div></details>`;
 
 App.page("inventory", {
   async mount(el, params) {
@@ -33,15 +51,22 @@ App.page("inventory", {
     el.innerHTML = `<div class="page">
       <header class="page-head"><h1>원본 상품</h1>
         <div class="head-actions">
-          <a class="btn" href="#adopt" title="다른 방법으로 이미 올린 상품: 업로드했던 엑셀 + 스토어 상품 목록 → 원본 + 판매 중 복사본">기존 상품 가져오기</a>
           <button class="btn" id="i-bp" title="역마진 등으로 기준 가격(모든 스토어 손님 가격의 기준)를 엑셀로 고치기 — 판매 중 상품은 네이버 가격만 바로 바꿈">기준 가격 수정</button>
           <button class="btn primary" id="i-eye" title="원본 대표 사진만 그리드로 보며 이상한 상품을 골라 지우기 · 본 쪽은 검수 완료">눈검수</button>
           <button class="btn" id="i-tagman" title="출처 태그(어디서·언제 가져왔는지) 모아 보기·이름 바꾸기·예전 원본에 채우기">출처 태그</button>
           <button class="btn" id="i-catmap" title="엑셀 카테고리를 스마트스토어 카테고리에 맞추기">카테고리 맞추기</button>
           <button class="btn ghost" id="i-revalidate" title="설정이나 카테고리가 바뀐 뒤 전체를 다시 검사">다시 검사</button>
-          <label class="btn primary"><input type="file" id="i-file" accept=".xlsx,.xlsm,.csv" hidden>
-            <svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>원본 엑셀 불러오기</label>
         </div></header>
+      <div class="put-row">
+        <label class="btn primary" title="셀업 등으로 수집한 다른 스토어 상품 — 상품명(타스토어 원본 상품명)은 그대로 두고 업스타에서 ai상품명을 만들어 올림">
+          <input type="file" id="i-file" accept=".xlsx,.xlsm,.csv" hidden>
+          <svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>수집 상품 넣기</label>
+        <label class="btn primary" title="상품명을 이미 바꿔 둔(아직 안 올린) 상품 — 그 이름을 그대로 후보상품명①번으로 씀 (AI 비용 없음)">
+          <input type="file" id="i-file-ready" accept=".xlsx,.xlsm,.csv" hidden>
+          <svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>이름 완성 상품 넣기</label>
+        <a class="btn" href="#adopt" title="이미 내 스토어에 올라가 있는 상품 — 업로드했던 엑셀과 스토어 상품을 판매자코드로 맞춰 원본 + 판매 중 복사본으로 연결">판매 중 상품 연결</a>
+      </div>
+      ${NAME_GUIDE}
       <div class="tiles" id="i-tiles"></div>
       <div class="filters-row">
         <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
@@ -49,8 +74,10 @@ App.page("inventory", {
         <span class="price-range" title="기준 가격 구간">기준 가격 <input id="i-pmin" type="number" min="0" step="1000" placeholder="최소">원 ~
           <input id="i-pmax" type="number" min="0" step="1000" placeholder="최대">원</span>
         <select id="i-missing" class="sel"><option value="">스토어 조건 없음</option></select>
-        <select id="i-ai" class="sel" title="AI 키워드·AI 이름 후보(A·B)">
-          <option value="">AI 이름 전체</option><option value="free">안 쓴 AI 이름 남음</option><option value="used">AI 이름 다 씀</option>
+        <select id="i-next" class="sel" title="칸이 남은 원본 중 다음 스토어에 쓸 후보상품명이 있는지 (없으면 AI 키워드를 받거나 직접 바꿔야 함)">
+          <option value="">다음 스토어용 이름 전체</option><option value="yes">다음 스토어용 이름 있음</option><option value="no">다음 스토어용 이름 없음</option></select>
+        <select id="i-ai" class="sel" title="AI 키워드·ai상품명(A·B)">
+          <option value="">ai상품명 전체</option><option value="free">안 쓴 ai상품명 남음</option><option value="used">ai상품명 다 씀</option>
           <option value="none">AI 키워드 안 받음</option><option value="pending">AI 키워드 받는 중</option><option value="failed">AI 키워드 실패</option><option value="old">예전 지시로 받은 키워드</option></select>
         <select id="i-chem" class="sel" title="생활화학·살생물제 인증 판정">
           <option value="">생활화학 전체</option><option value="hold">생활화학 보류 (화학제품·애매)</option><option value="chemical">화학제품</option>
@@ -72,6 +99,7 @@ App.page("inventory", {
     $("#i-missing").innerHTML += App.stores.map((s) => `<option value="${s.id}">${esc(s.name)}에 없는 것만</option>`).join("");
     $("#i-missing").value = this.f.store_missing || "";
     $("#i-ai").value = this.f.ai || "";
+    $("#i-next").value = this.f.next_name || "";
     $("#i-chem").value = this.f.chem || "";
     $("#i-q").value = this.f.q || "";
     this.bind();
@@ -114,7 +142,7 @@ App.page("inventory", {
     $("#i-tiles").innerHTML = tilesHtml(INV_TILES, { ...c, all: c.all_ }, this.tile);
     $("#i-rows").innerHTML = res.rows.length ? res.rows.map((p) => this.rowHtml(p)).join("")
       : `<tr class="empty-row"><td colspan="7">${c.all_ ? "조건에 맞는 상품이 없습니다." :
-        "아직 원본 상품이 없습니다. 오른쪽 위 <b>원본 엑셀 불러오기</b>를 누르거나 엑셀을 끌어다 놓으세요."}</td></tr>`;
+        "아직 원본 상품이 없습니다. 위의 <b>수집 상품 넣기</b>·<b>이름 완성 상품 넣기</b>를 누르거나 엑셀을 끌어다 놓으세요(수집 상품으로 넣음)."}</td></tr>`;
     this.renderBar();
   },
 
@@ -130,13 +158,13 @@ App.page("inventory", {
       ...this.pagerOpts(), count: n, selAll: this.selAll, what: "원본",
       pageChecked: this.rows.length > 0 && this.rows.every((p) => this.sel.has(p.id)),
       actions: [
-        { id: "ctx", label: "AI 키워드 받기", title: "고른 원본마다 AI에게 키워드(keep·다른 이름·맥락)를 한 번 받아 이름 후보 A·B를 만들어 둡니다 (실행 전에 비용 안내)" },
+        { id: "ctx", label: "AI 키워드 받기", title: "고른 원본마다 AI에게 키워드를 한 번 받아 빈 후보상품명 칸 수만큼 ai상품명(A·B)을 만듦 — 칸이 다 찬 원본은 뺌 (실행 전에 비용 안내)" },
         { id: "copy", label: "다른 스토어로 복사", primary: true },
         "|",
         { id: "edit", label: "일괄 수정", title: "판매자코드 비우기, 재고수(상품·옵션 모두) 바꾸기" },
         { id: "tags", label: "출처 태그 달기·빼기", title: "고른 원본에 어디서·언제 가져왔는지 태그를 달거나 뺌" },
         "|",
-        { id: "eyeon", label: "검수 완료로 표시", title: "이미 검수한 엑셀 등 — 고른 원본을 눈검수 없이 검수 완료로 (새로 올릴 수 있게)" },
+        { id: "eyeon", label: "검수 완료로 표시", title: "고른 원본을 눈검수 없이 검수 완료로 (새로 올릴 수 있게)" },
         { id: "eyeoff", label: "검수 완료 풀기" },
         { id: "category", label: "카테고리 바꾸기", title: "고른 원본의 네이버 카테고리를 직접 정함 (인증 때문에 안 올라가는 카테고리 등) — 그 원본의 모든 복사본에 적용" },
         { id: "chem", label: "생활화학 판정", title: "생활화학·살생물제 인증 대상 카테고리면 물건(→ '인증 대상 아님'으로 올림)·화학제품(→ 보류)·애매를 판정 (애매한 것은 AI)" },
@@ -178,8 +206,7 @@ App.page("inventory", {
       rep.length ? `<span class="flag rep" title="${esc(rep.join("\n"))}">반복</span>` : "",
       p.has_video ? `<span class="flag video" title="상세설명에 동영상 있음 (경고 아님)">동영상</span>` : "",
       chemFlag(p), eyeFlag(p),
-      p.adopted === 1 ? '<span class="flag adopted" title="기존 상품 가져오기로 들어옴 — 원본 이름이 없어 올라가 있던 이름이 원본 자리에 (원본 엑셀을 불러오면 원본 이름만 채워짐)">가져옴 · 원본 이름 없음</span>'
-        : p.adopted ? '<span class="flag adopted" title="기존 상품 가져오기로 스토어 상품과 연결됨 — 기준 가격은 그 스토어 손님 가격, 다른 엑셀로 덮어쓰지 않음">가져옴</span>' : "",
+      p.adopted ? '<span class="flag adopted" title="판매 중 상품 연결로 들어옴 — 업스타 기준상품명 = 올라가 있던 완성 상품명, 기준 가격은 그 스토어 손님 가격">연결함</span>' : "",
     ].join("");
     const on = this.selAll || this.sel.has(p.id);
     return `<tr data-id="${p.id}" class="${on ? "sel" : ""}">
@@ -213,6 +240,8 @@ App.page("inventory", {
 
   bind() {
     $("#i-file").addEventListener("change", (e) => { if (e.target.files[0]) App.importSources(e.target.files[0]); e.target.value = ""; });
+    $("#i-file-ready").addEventListener("change", (e) => { if (e.target.files[0]) App.importSources(e.target.files[0], "ready"); e.target.value = ""; });
+    $("#i-next").addEventListener("change", (e) => this.setFilter({ next_name: e.target.value }));
     $("#i-catmap").addEventListener("click", () => this.catMap());
     $("#i-revalidate").addEventListener("click", () => App.startTask(App.api("/api/sources/revalidate", { json: {} })));
     $("#i-tiles").addEventListener("click", (e) => {
@@ -235,9 +264,9 @@ App.page("inventory", {
     $("#i-tagman").addEventListener("click", () => this.tagManager());
     $("#i-eye").addEventListener("click", () => Eye.open({ kind: "source", storeName: "원본 상품", filter: this.query(), after: () => this.load() }));
     $("#i-reset").addEventListener("click", () => {
-      $("#i-q").value = $("#i-pmin").value = $("#i-pmax").value = ""; $("#i-missing").value = ""; $("#i-ai").value = ""; $("#i-chem").value = ""; $("#i-tag").value = "";
+      $("#i-q").value = $("#i-pmin").value = $("#i-pmax").value = ""; $("#i-missing").value = ""; $("#i-ai").value = ""; $("#i-next").value = ""; $("#i-chem").value = ""; $("#i-tag").value = "";
       this.tile = "all";
-      this.setFilter({ status: "", copies: "", q: "", price_min: "", price_max: "", store_missing: "", ai: "", chem: "", src_tag: "", eye: "", adopted: "" });
+      this.setFilter({ status: "", copies: "", q: "", price_min: "", price_max: "", store_missing: "", ai: "", next_name: "", chem: "", src_tag: "", eye: "", adopted: "" });
     });
     $("#i-rows").addEventListener("click", (e) => {
       const cr = e.target.closest("tr[data-copy]");
@@ -296,7 +325,7 @@ App.page("inventory", {
     App.openModal({
       title: "출처 태그", wide: true,
       body: `<div id="tm-box"><p class="small muted" style="margin:0 0 8px">원본을 어디서·언제 가져왔는지 붙이는 태그입니다 (엑셀 '상품태그'와 다름 — 네이버에 보내지 않음).
-          엑셀을 불러올 때(원본 엑셀 불러오기·상세 정리) 적은 태그와 수집 스토어가 붙습니다. 태그를 누르면 그 원본만 보입니다.</p>
+          엑셀을 불러올 때(수집 상품 넣기·상세 정리) 적은 태그와 수집 스토어가 붙습니다. 태그를 누르면 그 원본만 보입니다.</p>
         ${d.tags.length ? `<table class="grid"><thead><tr><th>태그</th><th class="w-num">원본</th><th></th></tr></thead><tbody>${d.tags.map(row).join("")}</tbody></table>`
           : '<p class="muted">아직 태그가 없습니다.</p>'}
         <p class="small" style="margin-top:8px">태그 없는 원본 <b>${num(d.none)}개</b></p>
@@ -340,7 +369,7 @@ App.page("inventory", {
         <label class="check"><input type="checkbox" id="e-code" checked><span><b>판매자코드 비우기</b> <span class="muted small">(나중에 일괄로 채울 때. 등록할 때는 프로그램이 스토어별 관리코드를 따로 붙입니다)</span></span></label>
         <label class="check"><input type="checkbox" id="e-stock-on" checked><span><b>재고수 바꾸기</b> · 상품 재고와 <b>옵션 재고 모두</b>
           <input type="number" id="e-stock" min="0" value="1000" class="inline-num" style="width:90px">개로</span></label>
-        <p class="muted small">원본 엑셀을 다시 불러오면 그 파일의 값으로 돌아갑니다. 이미 네이버에 올라간 복사본은 바뀌지 않고, 앞으로 올리는 것부터 적용됩니다.</p></div>`,
+        <p class="muted small">원본 파일을 다시 불러오면 그 파일의 값으로 돌아갑니다. 이미 네이버에 올라간 복사본은 바뀌지 않고, 앞으로 올리는 것부터 적용됩니다.</p></div>`,
       buttons: [{ label: "취소" }, { label: "바꾸기", primary: true, onClick: async (b) => {
         const body = { ...this.target(), clear_seller_code: $("#e-code", b).checked, stock: $("#e-stock-on", b).checked ? $("#e-stock", b).value : "" };
         try {
@@ -447,18 +476,18 @@ App.page("inventory", {
     const notes = [];
     if (d.errors.length) notes.push(`<div class="notice err"><b>고쳐야 등록할 수 있어요</b><ul>${d.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>`);
     if (d.warnings.length) notes.push(`<div class="notice warn"><b>확인해 보세요</b><ul>${d.warnings.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>`);
-    const kv = [["기준 가격", `<b>${num(d.price)}원</b> <span class="muted small">${d.price_src === "manual" ? "직접 수정" : d.price_src === "adopt" ? "기존 상품 가져오기 (그 스토어 손님 가격)" : "처음 원본 파일"} · 모든 스토어 손님 가격 = 기준 가격 × (1 + 스토어 가격 차이 %)</span>
+    const kv = [["기준 가격", `<b>${num(d.price)}원</b> <span class="muted small">${d.price_src === "manual" ? "직접 수정" : d.price_src === "adopt" ? "판매 중 상품 연결 (그 스토어 손님 가격)" : "처음 원본 파일"} · 모든 스토어 손님 가격 = 기준 가격 × (1 + 스토어 가격 차이 %)</span>
         <button class="btn sm" id="s-bp">수정</button>`], ["출처 태그", `<span id="s-tags">${srcTagChips(d.src_tags, true) || '<span class="muted">없음</span>'}</span>
         <span class="s-tag-add"><input id="s-tag-in" placeholder="태그 더하기 (쉼표로 여러 개)" size="18"> <button class="btn sm" id="s-tag-go">달기</button></span>`],
       ["카테고리", (d.category_fix ? `${esc(d.category_fix)} <span class="flag">직접 정함</span> <span class="muted small">(엑셀: ${esc(d.category)})</span>` : esc(d.category))
         + ` <button class="btn sm" id="s-cat">바꾸기</button>`],
-      ...(d.adopted === 1 ? [["원본 이름", '<span class="flag adopted">가져옴 · 원본 이름 없음</span> <span class="muted small">기존 상품 가져오기로 들어와 올라가 있던 이름이 원본 자리에 있습니다</span>']]
-        : d.adopted ? [["가져옴", '<span class="flag adopted">가져옴</span> <span class="muted small">기존 상품 가져오기로 스토어 상품과 연결됨</span>']] : []),
+      ...(d.adopted === 1 ? [["업스타 기준상품명", '<span class="flag adopted">연결함</span> <span class="muted small">판매 중 상품 연결로 들어와 올라가 있던 완성 상품명이 기준상품명입니다</span>']]
+        : d.adopted ? [["연결함", '<span class="flag adopted">연결함</span> <span class="muted small">판매 중 상품 연결로 스토어 상품과 연결됨</span>']] : []),
       ["눈검수", `${eyeFlag(d)} <button class="btn sm" id="s-eye">${d.eye_at ? "검수 완료 풀기" : "검수 완료로 표시"}</button>`],
       ["생활화학", `${d.chem_judge ? `<b>${esc(CHEM_LABEL[d.chem_judge] || d.chem_judge)}</b> <span class="muted small">${esc(d.chem_reason || "")}</span>` : '<span class="muted">판정 안 함</span>'}
         ${d.drop_pending ? ' <span class="flag warn">판매 중 내리고 지우는 중</span>' : ""} <button class="btn sm" id="s-chem">판정 바꾸기</button>`], ...Object.entries(d.fields).map(([k, v]) => [esc(k), esc(v)]),
       ["이미지", `대표·추가 ${Math.min(10, d.thumbnails.length)}장 · 상세 ${d.detail_images.length}장`],
-      ["상세·옵션", `<button class="btn sm" id="s-edit">상세·옵션 고치기</button> <span class="muted small">원본 엑셀을 다시 올려도 덮어쓰지 않으므로 여기서 고칩니다</span>`]];
+      ["상세·옵션", `<button class="btn sm" id="s-edit">상세·옵션 고치기</button> <span class="muted small">원본 파일을 다시 올려도 덮어쓰지 않으므로 여기서 고칩니다</span>`]];
     b.innerHTML = notes.join("") +
       (d.thumbnails.length ? `<div class="gallery">${d.thumbnails.map((u, i) => img(u, i === 0 ? "g-main" : "")).join("")}</div>` : "") +
       `<dl class="kv">${kv.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>` +
@@ -492,7 +521,7 @@ App.page("inventory", {
 
   renderCtx(b, d) {
     const k = d.ctx;
-    const st = { ok: "받음", pending: "일괄 처리 중", retry: "재시도 대기", invalid: "원본 상품명이 바뀌어 다시 받아야 함" }[k.status] || "아직 안 받음";
+    const st = { ok: "받음", pending: "일괄 처리 중", retry: "재시도 대기", invalid: "업스타 기준상품명이 바뀌어 다시 받아야 함" }[k.status] || "아직 안 받음";
     const group = (key, label, help) => {
       const all = k.kw?.[key] || [], use = k.use?.[key] || [];
       return `<div class="kw-grp"><h3 class="sec-title">${label} <span class="muted small" style="font-weight:400">${help}</span></h3>
@@ -511,13 +540,13 @@ App.page("inventory", {
 
   renderNames(b, d) {
     const names = d.names.filter((n) => n.listing_id !== -1);   // 바꿔 버린 이름(-1)은 숨김
-    b.innerHTML = `<p class="muted small" style="margin:0">이 원본으로 만든 이름입니다. <b>AI 이름 A·B…</b>는 AI 키워드로 만든 후보로, 1번째·2번째 스토어 복사본에 차례로 붙습니다.
-        <b>남음</b>인 이름은 이 원본을 다른 스토어로 복사하면 바로 붙습니다. 모든 이름은 33개 스토어 전체에서 겹치지 않습니다.</p>
+    b.innerHTML = `<p class="muted small" style="margin:0">이 원본의 상품명입니다. 후보상품명은 <b>완성 상품명 → ai상품명A → B</b> 차례로 복사본에 붙습니다(타스토어 원본 상품명은 올리지 않음).
+        <b>남음</b>인 이름은 이 원본을 다른 스토어로 복사하면 바로 붙습니다. 모든 이름은 모든 스토어 통틀어 겹치지 않습니다.</p>
       <ul class="name-list">${names.map((n) => `<li>
-        ${n.origin === "ctx" ? `<span class="org org-ctx">AI 이름 ${esc(n.label || "")}</span>` : `<span class="org org-${n.origin}">${ORIGIN[n.origin] || n.origin}</span>`}
+        ${n.origin === "ctx" ? `<span class="org org-ctx">ai상품명${esc(n.label || "")}</span>` : `<span class="org org-${n.origin}">${ORIGIN[n.origin] || n.origin}</span>`}
         <span class="nm">${esc(n.name)}</span>
         ${n.listing_id ? `<span class="muted small">${esc(n.store_name)} · ${STATUS[n.status] || ""}</span>`
-          : n.origin === "original" ? `<span class="muted small">원본</span>`
+          : n.origin === "original" ? `<span class="muted small">올리지 않음</span>`
           : `<span class="c-ok small"><b>남음</b></span> <button class="link-btn danger-text" data-del="${n.id}">지우기</button>`}</li>`).join("")}</ul>`;
     const reload = async () => { const nd = await App.api(`/api/sources/${d.id}`); Object.assign(d, nd); this.renderNames(b, d); if ($("#i-rows")) this.load(); };
     $(".name-list", b).addEventListener("click", async (e) => {

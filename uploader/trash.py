@@ -296,7 +296,7 @@ def _restore_one_listing(c, d, max_copies):
 def restore(db, trash_ids, allow_listing=False):
     """휴지통 되살리기 — 원본만 (그 원본의 복사본도 함께 검사해서). 복사본만 따로 되살리기는 없앴다
     (원본당 최대 복사 수를 넘거나, 같은 상품번호가 둘 붙거나, 다른 원본 밑으로 붙는 일이 생겨서):
-    안 올린 복사본은 원본에서 다시 복사, 판매 중이던 것은 기존 상품 가져오기로 다시 연결."""
+    안 올린 복사본은 원본에서 다시 복사, 판매 중이던 것은 판매 중 상품 연결로 다시 연결."""
     from . import config, orders
     max_copies = max(1, int(config.load().get("max_copies") or 2))
     st = {"restored": 0, "skipped": 0, "reasons": [], "copy_skipped": 0}
@@ -324,7 +324,7 @@ def restore(db, trash_ids, allow_listing=False):
             continue
         if t["kind"] != "source":
             st["skipped"] += 1
-            st["reasons"].append("복사본만 되살리기는 하지 않습니다 — 원본에서 다시 복사하거나, 판매 중이던 것은 기존 상품 가져오기로 다시 연결하세요")
+            st["reasons"].append("복사본만 되살리기는 하지 않습니다 — 원본에서 다시 복사하거나, 판매 중이던 것은 판매 중 상품 연결로 다시 연결하세요")
             continue
         d = unpack(t["data"])
         try:

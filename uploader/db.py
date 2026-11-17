@@ -278,11 +278,11 @@ class DB:
                     ("src_tags", "TEXT NOT NULL DEFAULT ''"),
                     # 눈검수(복사본 화면 썸네일 그리드)로 본 때 — 원본 기준이라 다른 스토어 복사본에도 '본 것'으로
                     ("eye_at", "REAL"),
-                    # 기존 상품 가져오기로 들어온 원본 (원본 이름 없음 — 올라가 있던 이름이 원본 자리)
+                    # 판매 중 상품 연결로 들어온 원본 (원본 이름 없음 — 올라가 있던 이름이 원본 자리)
                     ("adopted", "INTEGER NOT NULL DEFAULT 0"),
-                    # 대표 이미지 주소 열쇠 (원본 엑셀 올릴 때 겹침 확인용 — 원본 구분에는 안 씀)
+                    # 대표 이미지 주소 열쇠 (원본 파일 올릴 때 겹침 확인용 — 원본 구분에는 안 씀)
                     ("img_key", "TEXT NOT NULL DEFAULT ''"),
-                    # 기준 가격(기준 가격)가 어디서 왔나: file 처음 원본 파일 / adopt 기존 상품 가져오기(그 스토어 손님 가격) / manual 직접 수정
+                    # 기준 가격(기준 가격)가 어디서 왔나: file 처음 원본 파일 / adopt 판매 중 상품 연결(그 스토어 손님 가격) / manual 직접 수정
                     ("price_src", "TEXT NOT NULL DEFAULT ''"), ("price_at", "REAL")],
         "stores": [("code", "TEXT NOT NULL DEFAULT ''"), ("orders_synced_to", "REAL"),
                    # 네이버 주문을 빈틈없이 받아 둔 처음 시각 (여기부터 orders_synced_to까지는 판매 이력을 다 앎)
@@ -571,7 +571,7 @@ class DB:
     # ── 원본
 
     def source_row(self, sid):
-        """원본 엑셀 줄 (직접 고른 카테고리가 있으면 '카테고리'를 그것으로)."""
+        """원본 파일 줄 (직접 고른 카테고리가 있으면 '카테고리'를 그것으로)."""
         from .convert import with_category_fix
         r = self.one("SELECT data, category_fix, chem_judge FROM sources WHERE id=?", (sid,))
         if not r:

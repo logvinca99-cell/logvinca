@@ -18,13 +18,15 @@ from . import aiwords, config, convert, ctxkw, excel, keywords, lexicon, namegen
 from .db import pack, unpack
 
 CHUNK = 500
-NAME_ORIGIN_ORDER = {"manual": 0, "import": 1, "ctx": 2, "ai": 3, "shuffle": 4, "recombine": 5, "original": 6, "adopt": 7}
-ORIGIN_LABEL = {"original": "원본", "adopt": "올라가 있던 이름", "ctx": "AI 맥락", "shuffle": "셔플", "recombine": "재조합", "import": "가져옴", "ai": "AI", "manual": "직접"}
+NAME_ORIGIN_ORDER = {"ready": -1, "manual": 0, "import": 1, "ctx": 2, "ai": 3, "shuffle": 4, "recombine": 5, "original": 6, "adopt": 7}
+# 상품명 출처 (화면 표시): 완성 상품명 = 이미 바꿔 둔 이름(이름 완성 상품 'ready'·판매 중 상품 연결 'adopt' — 차이는 올라갔냐 뿐)
+ORIGIN_LABEL = {"original": "타스토어 원본 상품명", "ready": "완성 상품명", "adopt": "완성 상품명", "ctx": "ai상품명", "ai": "ai상품명",
+                "shuffle": "셔플 상품명", "recombine": "재조합 상품명", "import": "직접 입력 상품명", "manual": "직접 입력 상품명"}
 
 
 def source_key(row):
     """원본 구분값: 상품명이 완전히 같으면 같은 원본 (convert.name_key). 대표 이미지 주소는 기준이 아니다.
-    기존 상품 가져오기는 스토어 상품과 1대1이 되도록 겹치면 '_source_key'(상품명#판매자코드)를 넣어 준다."""
+    판매 중 상품 연결는 스토어 상품과 1대1이 되도록 겹치면 '_source_key'(상품명#판매자코드)를 넣어 준다."""
     return row.get("_source_key") or convert.name_key(row.get("상품명"))
 
 
@@ -32,12 +34,15 @@ class DupChecker:
     """상품명 중복 판정 (원본 기준 = 상품명이 '완전히' 같음): 이미 있는 원본(휴지통 제외)이나 이 파일 앞줄과 상품명이 같으면 중복.
     중복 줄은 원본으로 넣지 않는다 (덮어쓰지 않음 — 고칠 것은 원본 상세 창·기준 가격 수정으로)."""
 
-    def __init__(self, db):
+    def __init__(self, db, names=False):
         self.known = {}
         for r in db.q("SELECT id, name, source_key FROM sources"):
             self.known.setdefault(r["source_key"], r["id"])
             self.known.setdefault("=" + str(r["name"] or "").strip(), r["id"])
         self.seen = {}
+        # names=True (이름 완성 상품 넣기): 그 상품명이 후보상품명으로 이미 쓰이는지도 (모든 스토어 통틀어 같은 이름 금지)
+        self.norms = {r["norm"]: r["source_id"] for r in db.q("SELECT norm, source_id FROM names")} if names else None
+        self.seen_norm = {}
 
     def where(self, row):
         """중복이면 어디와 겹치는지 글, 아니면 None (기록은 안 함 — 넣기로 한 줄만 add)."""
@@ -50,16 +55,24 @@ class DupChecker:
             return f"이미 있는 원본 #{sid}"
         if k in self.seen:
             return f"이 파일 {self.seen[k]}행" if self.seen[k] else "이 파일 앞줄"
+        if self.norms is not None:
+            nm = namegen.normalize(name)
+            if nm in self.norms:
+                return f"이미 쓰는 상품명 (원본 #{self.norms[nm]}의 후보상품명)"
+            if nm in self.seen_norm:
+                return f"이 파일 {self.seen_norm[nm]}행과 같은 상품명" if self.seen_norm[nm] else "이 파일 앞줄과 같은 상품명"
         return None
 
     def add(self, row, line=None):
         name = str(row.get("상품명") or "").strip()
         if name:
             self.seen.setdefault(row.get("_source_key") or convert.name_key(name), line)
+            if self.norms is not None:
+                self.seen_norm.setdefault(namegen.normalize(name), line)
 
 
-def upload_scan(db, rows, limit=8):
-    """원본 엑셀 올리기 전 확인 (한 번 읽기): 상품명 중복(넣지 않음) + 가격 칸 + 대표 이미지 주소 겹침.
+def upload_scan(db, rows, limit=8, ready=False):
+    """원본 파일 올리기 전 확인 (한 번 읽기): 상품명 중복(넣지 않음) + 가격 칸 + 대표 이미지 주소 겹침.
     중복 = 상품명이 완전히 같은 원본이 이미 있거나 이 파일 앞줄에 있음 → 넣지 않음 (가격·이미지 확인에서도 뺌).
     이미지 겹침 = 상품명이 다른데 대표 이미지 주소가 같은 줄 (파일 안의 앞줄 또는 이미 있는 원본과)."""
     price = {"n": 0, "total": 0, "by": {}, "labels": convert.PRICE_FLAG, "examples": []}
@@ -69,7 +82,7 @@ def upload_scan(db, rows, limit=8):
     for r in db.q("SELECT id, img_key, name FROM sources WHERE img_key!=''"):
         known.setdefault(r["img_key"], (r["id"], r["name"]))
     seen = {}
-    dc = DupChecker(db)
+    dc = DupChecker(db, names=ready)
     for i, row in rows:   # (엑셀 실제 행 번호, 줄)
         name = str(row.get("상품명") or "").strip()
         if not name:
@@ -154,21 +167,26 @@ def add_names(c, source_id, names, origin, now=None, cfg=None, rejected=None):
     return added, dup
 
 
-# ───────────────────────── 1. 원본 불러오기
+# ───────────────────────── 1. 수집 상품 넣기
 
-def import_products(db, fileobj, filename, progress=None, should_stop=None, src_tags=None, store_tag=False, skip_img_dup=False):
-    """원본 엑셀(셀업 양식) 불러오기. 상품명이 완전히 같은 원본이 이미 있으면(또는 파일 안에 또 나오면) '상품명 중복'으로 넣지 않는다
-    (덮어쓰지 않음). src_tags: 모든 원본에 붙일 출처 태그. skip_img_dup: 대표 이미지 주소가 겹치는(상품명은 다른) 줄은 버림 (올릴 때 창에서 고름)."""
+def import_products(db, fileobj, filename, progress=None, should_stop=None, src_tags=None, store_tag=False, skip_img_dup=False,
+                    ready=False, mark_eye=False):
+    """수집 상품 넣기·이름 완성 상품 넣기 (셀업 양식). 업스타 기준상품명이 완전히 같은 원본이 이미 있으면(또는 파일 안에 또 나오면)
+    '상품명 중복'으로 넣지 않는다 (덮어쓰지 않음). src_tags: 모든 원본에 붙일 출처 태그. skip_img_dup: 대표 이미지 주소가 겹치는
+    (상품명은 다른) 줄은 버림. ready: 이름 완성 상품 — 파일 상품명이 이미 바꿔 둔 이름이라 그대로 후보상품명①번(완성 상품명)으로.
+    mark_eye: 넣으면서 검수 완료로 표시."""
     excel.need_name_column(fileobj, filename)
     st = import_rows(db, excel.iter_rows(fileobj, filename, lines=True), filename,
                      total_hint=excel.count_rows(fileobj, filename), progress=progress, should_stop=should_stop,
-                     src_tags=src_tags, store_tag=store_tag, skip_img=img_skipper(db) if skip_img_dup else None, line_refs=True)
+                     src_tags=src_tags, store_tag=store_tag, skip_img=img_skipper(db) if skip_img_dup else None, line_refs=True,
+                     ready=ready, mark_eye=mark_eye)
     st.pop("refs", None)
     return st
 
 
-def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=None, src_tags=None, store_tag=False, skip_img=None, line_refs=False, price_src="file"):
-    """원본 줄들을 새 원본 상품으로 (엑셀 불러오기·상세 정리·기존 상품 가져오기 공용). rows: (참조, 엑셀 줄 사전) 반복자.
+def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=None, src_tags=None, store_tag=False, skip_img=None, line_refs=False, price_src="file",
+                ready=False, mark_eye=False):
+    """원본 줄들을 새 원본 상품으로 (엑셀 불러오기·상세 정리·판매 중 상품 연결 공용). rows: (참조, 엑셀 줄 사전) 반복자.
     상품명이 완전히 같은 원본이 이미 있거나 앞줄에 있으면 '상품명 중복'으로 넣지 않는다 (덮어쓰지 않음 — 원본 기준은 처음 넣은 것).
     src_tags: 모든 줄에 붙일 출처 태그, store_tag: 수집URL의 스토어도 태그로. line_refs: 참조가 엑셀 줄 번호.
     돌려주는 refs: {참조: 원본 번호} (새로 넣은 것만), dup_rows: [[줄, 상품명, 겹치는 곳]] (앞 5000개)."""
@@ -182,7 +200,7 @@ def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=No
     refs = {}
     touched = []
     batch = []
-    dc = DupChecker(db)
+    dc = DupChecker(db, names=ready)
 
     def dup_row(ref, row, where):
         stats["dup"] += 1
@@ -216,7 +234,11 @@ def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=No
                     c.execute("UPDATE sources SET src_tags=? WHERE id=?", (srctags.merge("", tg), sid))
                 if errors:
                     stats["invalid"] += 1
-                add_names(c, sid, [s["name"]], "original", now)
+                if mark_eye:
+                    c.execute("UPDATE sources SET eye_at=? WHERE id=?", (now, sid))
+                # 수집 상품: 업스타 기준상품명 = 타스토어 원본 상품명('original' — 후보가 아님)
+                # 이름 완성 상품: 바꿔 둔 이름을 그대로 후보상품명으로 ('ready' — 복사하면 ①번에 바로 붙음)
+                add_names(c, sid, [s["name"]], "ready" if ready else "original", now)
                 touched.append(sid)
                 if ref is not None:
                     refs[ref] = sid
@@ -261,14 +283,14 @@ def _name_warnings(name, lex):
     out = []
     bad = lexicon.blocked_in(name, lex)
     if bad:
-        out.append(f"원본 상품명에 금지 단어가 있습니다: {', '.join(bad[:5])} (상표·효능·인증·원산지 표현인지 확인하세요)")
+        out.append(f"업스타 기준상품명에 금지 단어가 있습니다: {', '.join(bad[:5])} (상표·효능·인증·원산지 표현인지 확인하세요)")
     tm = lexicon.marks_in(name, lex)
     if tm:
-        out.append("원본 상품명에 상표로 등록·출원된 단어가 있습니다: " + ", ".join(f"{w}({v})" for w, v in tm[:5])
+        out.append("업스타 기준상품명에 상표로 등록·출원된 단어가 있습니다: " + ", ".join(f"{w}({v})" for w, v in tm[:5])
                    + " (일반 명칭으로 쓴 것인지 확인하세요)")
     rep = lexicon.repeated_word(namegen.tokens(name), lex, 2)
     if rep:
-        out.append(f"반복: 원본 상품명에 '{rep}'가 3번 이상 나옵니다")
+        out.append(f"반복: 업스타 기준상품명에 '{rep}'가 3번 이상 나옵니다")
     return out
 
 
@@ -361,10 +383,14 @@ def source_where(f):
     if f.get("price_max") not in (None, ""):
         w.append("price<=?")
         a.append(int(f["price_max"]))
-    if f.get("copies") not in (None, ""):   # 복사 횟수: 0 = 미복사, 1 = 1회, 2 = 2회 이상 (내린 것 제외)
+    if f.get("copies") not in (None, ""):   # 올라간 곳(자리 찬 스토어 수 — 올릴 대기·내림도 자리로 셈): 0곳 / 1곳 / 2곳 이상
         c = int(f["copies"])
         w.append("n_listings>=?" if c >= 2 else "n_listings=?")
         a.append(c)
+    nx = f.get("next_name") or ""
+    if nx in ("yes", "no"):   # 다음 스토어용 이름: 칸이 남은 원본 중 안 쓴 후보상품명이 있음 / 없음 (없으면 AI 키워드를 받거나 직접 바꿔야 함)
+        w.append("n_listings<? AND n_free_names" + (">0" if nx == "yes" else "=0"))
+        a.append(int(config.load().get("max_copies") or 2))
     ai = f.get("ai") or ""
     if ai == "none":        # AI 키워드를 아직 안 받음
         w.append("id NOT IN (SELECT source_id FROM ctx_kw WHERE status IN ('ok','pending'))")
@@ -379,7 +405,7 @@ def source_where(f):
         w.append("id IN (SELECT source_id FROM names WHERE origin='ctx' AND listing_id IS NULL)")
     elif ai == "used":      # 받았지만 후보를 다 씀
         w.append("id IN (SELECT source_id FROM ctx_kw WHERE status='ok') AND id NOT IN (SELECT source_id FROM names WHERE origin='ctx' AND listing_id IS NULL)")
-    if f.get("adopted") in ("1", 1, True):     # 기존 상품 가져오기로 들어온 원본 (1 원본 이름 없음 · 2 원본 이름 있음)
+    if f.get("adopted") in ("1", 1, True):     # 판매 중 상품 연결로 들어온 원본 (1 원본 이름 없음 · 2 원본 이름 있음)
         w.append("adopted>0")
     elif f.get("adopted") == "noname":
         w.append("adopted=1")
@@ -452,30 +478,55 @@ def query_sources(db, f, page=0, size=100):
     return {"rows": rows, "total": total}
 
 
+STATUS_LABEL = {"planned": "올릴 대기", "queued": "처리 중", "running": "처리 중", "success": "판매 중", "fail": "실패", "deleted": "내림"}
+
+
 def attach_ai_names(db, by_id):
-    """원본마다 AI 키워드 상태와 AI 이름 후보(A·B…: 어느 스토어 복사본에 쓰였는지 / 남았는지)를 붙인다."""
+    """원본마다 후보상품명 칸(①·②…, 원본당 최대 복사 수만큼)과 AI 키워드 상태를 붙인다.
+    칸 = 그 원본의 복사본(복사본 번호 순, 내림도 자리를 차지)에 붙은 이름, 남은 칸은 안 쓴 후보(완성 상품명 → ai상품명 A → B …).
+    칸 수보다 많은 안 쓴 후보는 예비로 두고(지우지 않음) 화면에는 안 보인다."""
     ids = list(by_id)
     for r in by_id.values():
-        r["kw_status"], r["ai_names"] = "", []
+        r["kw_status"], r["slots"] = "", []
     if not ids:
         return
+    mc = max(1, int(config.load().get("max_copies") or 2))
     marks = ",".join("?" * len(ids))
     for k in db.q(f"SELECT source_id, status FROM ctx_kw WHERE source_id IN ({marks})", ids):
         by_id[k["source_id"]]["kw_status"] = k["status"]
     labels = ai_variants(db, ids)
-    for n in db.q(f"""SELECT n.id, n.source_id, n.name, n.listing_id, l.status, l.origin_no,
-            CASE WHEN t.id IS NULL THEN '' ELSE COALESCE(NULLIF(t.code,''), 'S'||printf('%02d', t.id)) END AS code, t.name AS store
-            FROM names n LEFT JOIN listings l ON l.id=n.listing_id LEFT JOIN stores t ON t.id=l.store_id
-            WHERE n.origin='ctx' AND n.source_id IN ({marks})
-            ORDER BY n.listing_id IS NULL, CASE WHEN n.listing_id>0 THEN n.listing_id END, n.id""", ids):
-        # 글자: A = 1번째 복사본에 붙은 이름, B = 2번째 복사본(없으면 안 쓴 이름)… 다시 바꿔도 그 복사본 이름은 같은 글자.
-        # 바꿔서 안 쓰는 이름은 안 보이고 개수만
-        r = by_id[n["source_id"]]
-        if n["listing_id"] == -1:
-            r["ai_retired"] = r.get("ai_retired", 0) + 1
-            continue
-        r["ai_names"].append({"label": labels.get(n["id"], _ai_label(len(r["ai_names"]))), "name": n["name"], "code": n["code"] or "",
-                              "store": n["store"] or "", "live": bool(n["origin_no"]), "status": n["status"] or ""})
+    names = {}
+    free = {}
+    for n in db.q(f"""SELECT id, source_id, name, origin, listing_id, variant FROM names WHERE source_id IN ({marks})
+            AND origin!='original' AND (listing_id IS NULL OR listing_id>0)""", ids):
+        names[n["id"]] = n
+        if n["listing_id"] is None:
+            free.setdefault(n["source_id"], []).append(n)
+    for n in db.q(f"SELECT source_id, COUNT(*) AS c FROM names WHERE listing_id=-1 AND source_id IN ({marks}) GROUP BY source_id", ids):
+        by_id[n["source_id"]]["ai_retired"] = n["c"]
+
+    def tag(n):
+        lab = ORIGIN_LABEL.get(n["origin"], n["origin"])
+        return lab + labels[n["id"]] if n["origin"] == "ctx" and n["id"] in labels else lab
+
+    for l in db.q(f"""SELECT l.id, l.source_id, l.name_id, l.name, l.status, l.origin_no, t.name AS store,
+            COALESCE(NULLIF(t.code,''), 'S'||printf('%02d', t.id)) AS code
+            FROM listings l JOIN stores t ON t.id=l.store_id WHERE l.source_id IN ({marks}) ORDER BY l.id""", ids):
+        r = by_id[l["source_id"]]
+        n = names.get(l["name_id"])
+        r["slots"].append({"no": len(r["slots"]) + 1, "name": n["name"] if n else "", "origin": tag(n) if n else "",
+                           "store": l["store"], "code": l["code"], "status": STATUS_LABEL.get(l["status"], l["status"]),
+                           "live": bool(l["origin_no"]) and l["status"] != "deleted", "empty": not n})
+    for sid, r in by_id.items():
+        pool = sorted(free.get(sid, []), key=lambda n: (NAME_ORIGIN_ORDER.get(n["origin"], 9), n["variant"] == "B", n["id"]))
+        for n in pool:
+            if len(r["slots"]) >= mc:
+                break
+            r["slots"].append({"no": len(r["slots"]) + 1, "name": n["name"], "origin": tag(n), "store": "", "code": "", "status": "",
+                               "live": False, "empty": False, "free": True})
+        while len(r["slots"]) < mc:
+            r["slots"].append({"no": len(r["slots"]) + 1, "name": "", "origin": "", "store": "", "code": "", "status": "",
+                               "live": False, "empty": True, "free": True})
 
 
 def _ai_label(i):
@@ -505,8 +556,10 @@ def source_ids(db, f):
 
 
 def source_counts(db):
-    return db.one("""SELECT COUNT(*) AS all_, SUM(valid=1) AS valid, SUM(valid=0) AS invalid,
+    mc = int(config.load().get("max_copies") or 2)
+    return db.one(f"""SELECT COUNT(*) AS all_, SUM(valid=1) AS valid, SUM(valid=0) AS invalid,
         SUM(n_listings=0) AS c0, SUM(n_listings=1) AS c1, SUM(n_listings>=2) AS c2,
+        SUM(n_listings<{mc} AND n_free_names>0) AS next_yes, SUM(n_listings<{mc} AND n_free_names=0) AS next_no,
         SUM(valid=1 AND warnings!='[]') AS warn, SUM(eye_at IS NOT NULL) AS eye_done, SUM(eye_at IS NULL) AS eye_todo FROM sources""")
 
 
@@ -673,12 +726,12 @@ def import_names(db, fileobj, filename, progress=None, should_stop=None):
         if key_col is None:
             cols = list(row.keys())
             key_col = next((k for k in NAME_KEY_COLS if k in cols), None)
-            name_cols = [k for k in cols if "상품명" in k and not any(x in k for x in ("원본", "기존", "원래"))]
-            orig_col = next((k for k in ("원본상품명", "원본 상품명") if k in cols), None)
+            name_cols = [k for k in cols if "상품명" in k and not any(x in k for x in ("원본", "기존", "원래", "기준"))]
+            orig_col = next((k for k in ("업스타 기준상품명", "업스타기준상품명", "원본상품명", "원본 상품명") if k in cols), None)   # 뒤 둘은 예전 머리줄
             if orig_col:
                 key_col, by_name = orig_col, True   # 원본 기준은 상품명(완전히 같음) → 가장 정확
             elif "썸네일" in cols and not key_col:
-                key_col, by_thumb = "썸네일", True  # 원본 엑셀 형식 그대로면 썸네일로 (여러 원본에 맞으면 건너뜀)
+                key_col, by_thumb = "썸네일", True  # 원본 파일 형식 그대로면 썸네일로 (여러 원본에 맞으면 건너뜀)
             if not key_col or not name_cols:
                 raise ValueError(f"원본을 찾을 열(판매자코드 등)이나 새 상품명 열을 찾지 못했습니다. 이 파일의 열: {', '.join(cols)}")
         key = str(row.get(key_col) or "").strip()
@@ -746,8 +799,9 @@ def source_detail(db, sid):
 # ───────────────────────── 3. 등록 계획
 
 def assign_ctx_names(db, sids, only=None, newest=False):
-    """이 원본들의 아직 안 올린·이름 없는 복사본에 맥락 키워드로 만든 안 쓴 이름 후보를 하나씩 배정한다. 배정한 수.
-    only: 이 복사본들에만. newest: 가장 최근에 만든 후보부터 (이름 다시 바꾸기 — 다른 스토어 몫 B를 남겨 둠)."""
+    """이 원본들의 아직 안 올린·이름 없는 복사본에 안 쓴 후보상품명을 하나씩 배정한다. 배정한 수.
+    차례: 완성 상품명(이름 완성 상품 — 바꿔 둔 이름) → ai상품명 A → B.
+    only: 이 복사본들에만. newest: 가장 최근에 만든 ai상품명부터 (AI로 이름 다시 바꾸기 — 다른 스토어 몫 B를 남겨 둠, 완성 상품명은 안 씀)."""
     only = set(only) if only is not None else None
     n = 0
     now = time.time()
@@ -756,12 +810,13 @@ def assign_ctx_names(db, sids, only=None, newest=False):
         marks = ",".join("?" * len(chunk))
         with db.tx() as c:
             free = {}
-            for r in c.execute(f"""SELECT id, source_id, name, variant FROM names WHERE origin='ctx' AND listing_id IS NULL
+            org = "origin='ctx'" if newest else "origin IN ('ctx','ready')"
+            for r in c.execute(f"""SELECT id, source_id, name, variant, origin FROM names WHERE {org} AND listing_id IS NULL
                     AND source_id IN ({marks}) ORDER BY id {'DESC' if newest else ''}""", chunk):
                 free.setdefault(r["source_id"], []).append(dict(r))
-            if not newest:   # 첫 복사에는 늘 A 양식부터 (A를 쓴 복사본을 되돌리면 다음 복사에 다시 A)
+            if not newest:   # 완성 상품명 먼저, 그다음 늘 A 양식부터 (A를 쓴 복사본을 되돌리면 다음 복사에 다시 A)
                 for pool in free.values():
-                    pool.sort(key=lambda n: (n["variant"] == "B", n["id"]))
+                    pool.sort(key=lambda n: (n["origin"] != "ready", n["variant"] == "B", n["id"]))
             # 고른 복사본(only)이면 내린 것도 (다시 올리기 전 이름 바꾸기), 아니면 지금 있는 것만
             for l in c.execute(f"""SELECT id, source_id FROM listings WHERE name_id IS NULL AND origin_no=''
                     AND status NOT IN ('queued','running')
@@ -880,7 +935,7 @@ def _fill_names(c, s, need, cfg, now):
 
 def release_name(c, lid, name_id=None, drop_origins=None):
     """복사본에서 이름을 뗄 때: 네이버에 올라갔던(올린 적 있는) 복사본이면 그 이름은 '다 쓴 이름'(-1)으로 남겨
-    다른 복사본이 다시 쓰지 않게 하고, 한 번도 안 올린 복사본이면 지금처럼 후보로 돌린다(drop_origins 출처면 지움)."""
+    다른 복사본이 다시 쓰지 않게 하고, 한 번도 안 올린 복사본이면 지금처럼 후보로 돌린다(drop_origins를 주면 그 출처의 이름만 후보로 남기고 나머지는 지움 — 완성 상품명(ready)은 늘 남김)."""
     ids = [name_id] if name_id else [r[0] for r in c.execute("SELECT id FROM names WHERE listing_id=?", (lid,)).fetchall()]
     if not ids:
         return
@@ -1052,10 +1107,7 @@ def create_plan(db, ids, store_ids, mode="all", per_product=1, title="", progres
                     old = dead.get(s["id"], {}).get(sid)
                     price = convert.store_price(s["price"], cfg, stores[sid])
                     if old:
-                        # 전에 내렸던 스토어: 같은 줄을 다음 회차로 (이름 그대로, 설정하면 원본 상품명으로 돌려 다시 바꾸게)
-                        if cfg.get("refresh_new_name"):
-                            release_name(c, old["id"], drop_origins=("original", "adopt"))
-                            c.execute("UPDATE listings SET name_id=NULL, name=? WHERE id=?", (s["name"], old["id"]))
+                        # 전에 내렸던 스토어: 같은 줄을 다음 회차로 (이름 그대로)
                         c.execute("""UPDATE listings SET status='planned', op='create',
                             round=CASE WHEN round_reset=1 THEN 1 ELSE round+1 END, round_reset=0, plan_id=?,
                             message='', stage='', updated_at=? WHERE id=?""", (pid, now, old["id"]))
@@ -1113,7 +1165,7 @@ def rename_shuffle(db, ids, fixed_n=3, extra=(), progress=None, should_stop=None
             reject = ctxkw.make_rejecter(c, cfg, lex)
             for r in part:
                 if r["name_id"]:
-                    release_name(c, r["id"], r["name_id"], ("original", "manual", "import", "adopt"))
+                    release_name(c, r["id"], r["name_id"], ("original", "manual", "import", "adopt", "ready"))
                 name = shuffle.make(r["orig"], fixed_n, extra, forb, seed=f"{r['id']}:{now}", reject=reject, max_chars=max_chars,
                                     rep=ctxkw.repeat_check(cfg, lex))
                 if not name:
@@ -1129,22 +1181,6 @@ def rename_shuffle(db, ids, fixed_n=3, extra=(), progress=None, should_stop=None
         if progress:
             progress(min(i + 500, len(todo)), len(todo), f"셔플 {st['renamed']:,}건")
     return st
-
-
-def refresh_name(c, src, store_id, cfg, now):
-    """최신화 때 새 이름: 안 쓴 AI 맥락 후보가 있으면 그것, 없으면 셔플 (설정의 고정 단어 수)."""
-    from . import shuffle
-    r = c.execute("""SELECT id, name FROM names WHERE source_id=? AND origin='ctx' AND listing_id IS NULL
-        ORDER BY variant='B', id LIMIT 1""", (src["id"],)).fetchone()
-    if r:
-        return dict(r)
-    lex = cfg["_lex"]
-    name = shuffle.make(src["name"], int(cfg.get("shuffle_fixed") or 3), (), set(lex.blocked), seed=f"{src['id']}:{store_id}:{now}",
-                        reject=ctxkw.make_rejecter(c, cfg, lex), max_chars=int(cfg.get("name_max_len") or 50))
-    if not name:
-        return None
-    add_names(c, src["id"], [name], "shuffle", now)
-    return dict(c.execute("SELECT id, name FROM names WHERE norm=?", (namegen.normalize(name),)).fetchone())
 
 
 def set_ctx_wait(db, ids, value):
@@ -1319,7 +1355,7 @@ def rename_listings(db, ids, method="recombine", progress=None, should_stop=None
                 for l in ls:
                     if l["name_id"]:
                         old[l["id"]] = _new_words(s["name"], l["name"])
-                        release_name(c, l["id"], l["name_id"], ("original", "adopt"))
+                        release_name(c, l["id"], l["name_id"], ("original", "adopt", "ready"))
                 if method != "pool" and len(namegen.new_word_candidates(
                         s["name"], cfg, cfg["_lex"], s.get("category") or "", **_kw_args(s))) < new_min:
                     st["few_words"] += 1
@@ -1377,11 +1413,11 @@ def set_listing_name(db, lid, name):
         if not added:
             if rejected:
                 raise ValueError(f"쓸 수 없는 이름입니다: {rejected[0]}")
-            raise ValueError("원본 상품명이거나, 다른 상품·스토어에서 쓰는(또는 후보에 있는) 이름입니다." if dup else "이름을 넣어 주세요.")
+            raise ValueError("타스토어 원본 상품명이거나, 다른 상품·스토어에서 쓰는(또는 후보에 있는) 이름입니다." if dup else "이름을 넣어 주세요.")
         nid = c.execute("SELECT id, name FROM names WHERE source_id=? AND norm=?",
                         (l["source_id"], namegen.normalize(namegen.clean(name, 100)))).fetchone()
         if l["name_id"]:
-            release_name(c, lid, l["name_id"], ("original", "adopt"))
+            release_name(c, lid, l["name_id"], ("original", "adopt", "ready"))
         # 직접 고친 이름은 AI 키워드가 와도 덮어쓰지 않음 (ctx_wait=0)
         c.execute("UPDATE listings SET name_id=?, name=?, updated_at=?, ctx_wait=0 WHERE id=?", (nid["id"], nid["name"], now, lid))
         c.execute("UPDATE names SET listing_id=? WHERE id=?", (lid, nid["id"]))

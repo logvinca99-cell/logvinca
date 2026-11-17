@@ -220,7 +220,7 @@ App.page("listings", {
         { id: "remove", label: "삭제", danger: true, title: "기본: 원본까지 같이 삭제 (그 원본의 모든 스토어 복사본, 판매 중인 것은 내린 뒤) · 끄면 고른 복사본만 휴지통" },
         "|",
         { id: "export", always: true, label: n && !this.selAll ? `⬇ 엑셀 받기 — 고른 ${num(n)}건` : `⬇ 엑셀 받기 — ${this.selAll ? "조건에 맞는" : "지금 보이는 조건"} ${num(this.total)}건`,
-          title: "복사본 목록을 엑셀로 받습니다: 스토어·판매자 관리코드·회차·등록 상품명·원본 번호·원본 판매자코드·원본 상품명·손님 가격·네이버 판매가·기준 가격·상태·할 일·잠금·올린 날·원상품번호·채널상품번호·메시지" },
+          title: "복사본 목록을 엑셀로 받습니다: 스토어·판매자 관리코드·회차·등록 상품명·원본 번호·원본 판매자코드·업스타 기준상품명·손님 가격·네이버 판매가·기준 가격·상태·할 일·잠금·올린 날·원상품번호·채널상품번호·메시지" },
       ],
       onPageCheck: (on) => { this.selAll = false; this.rows.forEach((l) => (on ? this.sel.add(l.id) : this.sel.delete(l.id))); this.load(); },
       onAll: () => { this.selAll = true; this.sel.clear(); this.load(); },
@@ -276,10 +276,10 @@ App.page("listings", {
     const on = this.selAll || this.sel.has(l.id);
     const live = !!l.origin_no;
     const noname = !l.name_id && !live && l.status !== "deleted";
-    const flags = (noname ? `<span class="flag bad" title="원본 상품명 그대로라 올리지 않습니다">상품명 변경 필요</span>` : "")
+    const flags = (noname ? `<span class="flag bad" title="후보상품명이 없어 올리지 않습니다 (타스토어 원본 상품명 그대로는 올리지 않음)">이름 변경 필요</span>` : "")
       + (l.rep_word ? `<span class="flag warn" title="'${esc(l.rep_word)}'가 3번 이상 나옵니다 — 상품명 바꾸기로 다시 만드세요">반복: ${esc(l.rep_word)}</span>` : "")
-      + (l.name_origin ? `<span class="org org-${l.name_origin}" title="${l.name_origin === "ctx" ? "AI 키워드 이름의 양식 (A = 첫 복사용, B = 양식이 조금 다른 두 번째) — 원본 상품 화면에서 A·B 전체를 볼 수 있음" : ""}">${l.name_origin === "ctx" && l.ai_label ? `AI 이름 ${esc(l.ai_label)}` : ORIGIN[l.name_origin] || l.name_origin}</span>` : "") + lockFlag(l) + salesFlag(l) + eyeFlag(l)
-      + (l.adopted ? '<span class="flag adopted" title="기존 상품 가져오기로 들어온 원본">가져옴</span>' : "")
+      + (l.name_origin ? `<span class="org org-${l.name_origin}" title="${l.name_origin === "ctx" ? "ai상품명 양식 (A = 첫 복사용, B = 양식이 조금 다른 두 번째) — 원본 상품 화면에서 후보상품명 칸 전체를 볼 수 있음" : ""}">${l.name_origin === "ctx" && l.ai_label ? `ai상품명${esc(l.ai_label)}` : ORIGIN[l.name_origin] || l.name_origin}</span>` : "") + lockFlag(l) + salesFlag(l) + eyeFlag(l)
+      + (l.adopted ? '<span class="flag adopted" title="판매 중 상품 연결로 들어온 원본">연결함</span>' : "")
       + (l.price_fixed ? '<span class="flag" title="가져온 복사본: 최신화·다시 올리기 때 손님 가격 그대로 (최신화 직전에 네이버에서 다시 읽음 — 판매자센터에서 바꾼 가격·옵션 추가금도)">가격 고정</span>' : "")
       + nvFlag(l);
     return `<tr data-id="${l.id}" class="${on ? "sel" : ""} ${l.status === "deleted" ? "off" : ""}">
@@ -438,7 +438,7 @@ App.page("listings", {
   schedule(op) {
     const name = OP[op];
     const label = {
-      refresh: "<b>최신화</b>: 올린 지 오래된 판매 중 상품을 네이버에서 지우고 다시 올립니다 (설정에 따라 새 상품명)",
+      refresh: "<b>최신화</b>: 올린 지 오래된 판매 중 상품을 네이버에서 지우고 같은 이름으로 다시 올립니다",
       reupload: "<b>다시 올리기</b>: 문제가 있는 상품을 네이버에서 지우고 <b>같은 상품명·지금 가격</b>으로 다시 올립니다. <b>이미 내린(내림) 건은 지우는 단계 없이 다시 올립니다.</b> 스토어에서 이미 지운 상품이어도 됩니다",
       delete: "<b>내리기</b>: 판매 중인 상품을 네이버에서 지웁니다",
     }[op];
@@ -710,12 +710,12 @@ App.page("listings", {
                 ${sellerLink((App.stores || []).find((s) => s.id === l.store_id), `https://sell.smartstore.naver.com/#/products/edit/${l.origin_no}`, "스마트스토어센터에서 수정")}</div>` : "")
             + `<div class="gallery">${img(l.thumb, "g-main")}</div>
               ${!l.origin_no && l.status !== "deleted" ? `<div class="notice ${l.name_id ? "" : "err"} name-edit">
-                <div><b>${l.name_id ? "바꾼 상품명" : "이름 변경 필요 — 원본 상품명 그대로라 올리지 않습니다"}</b></div>
+                <div><b>${l.name_id ? "바꾼 상품명" : "이름 변경 필요 — 후보상품명이 없어 올리지 않습니다"}</b></div>
                 <div class="add-name"><input id="d-name" value="${esc(l.name)}" maxlength="100"><button class="btn primary" id="d-name-save">이 이름으로</button></div>
                 <span class="muted small">직접 고쳐 저장하거나 <button class="link-btn" id="d-rename">상품명 바꾸기</button>(AI 키워드·AI로 짓기·셔플). 금지어·상표·33개 스토어 중복을 검사합니다.</span></div>` : ""}
               <dl class="kv"><dt>스토어</dt><dd>${esc(l.store_name)}</dd>
-              <dt>등록 상품명</dt><dd>${l.name_id ? nameDiff(l.nd) + ND_LEGEND : `${esc(l.name)} <span class="flag bad">원본 상품명 그대로</span>`}</dd>
-              <dt>원본 상품명</dt><dd>${esc(l.source_name)} <button class="btn sm" id="d-src">원본 보기</button></dd>
+              <dt>등록 상품명</dt><dd>${l.name_id ? nameDiff(l.nd) + ND_LEGEND : `${esc(l.name)} <span class="flag bad">후보상품명 없음</span>`}</dd>
+              <dt>업스타 기준상품명</dt><dd>${esc(l.source_name)} <button class="btn sm" id="d-src">원본 보기</button></dd>
               <dt>판매자 관리코드</dt><dd>${esc(l.seller_code || l.next_seller_code)} <span class="muted">(${l.round}회차${l.seller_code ? "" : ", 등록하면 붙음"})</span></dd>
               <dt>원본 번호</dt><dd>#${l.source_id}</dd>
               <dt>카테고리</dt><dd>${esc(l.category)}${l.category_fixed ? ` <span class="flag">직접 정함</span> <span class="muted small">(엑셀: ${esc(l.category_excel)})</span>` : ""}

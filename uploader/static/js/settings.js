@@ -25,7 +25,6 @@ const SETTING_SECTIONS = [
   { tab: "product", title: "복사·구분", note: "판매자 관리코드로 어느 원본의 몇 번째 등록인지 스마트스토어센터에서 바로 찾을 수 있습니다.", fields: [
     ["max_copies", "원본 하나를 올릴 수 있는 최대 스토어 수 (내린 것은 세지 않음)", "number"],
     ["seller_code_format", "판매자 관리코드 형식", "text", { hint: "{store}=스토어 코드, {source:07d}=원본 번호, {round}=회차" }],
-    ["refresh_new_name", "최신화 때 상품명을 새로 (안 쓴 AI 키워드 후보 → 없으면 셔플)", "check"],
   ] },
   { tab: "price", title: "가격 (기본값)", note: "손님 가격 = 원본의 기준 가격 × (1 + 스토어 가격 차이 %), 100원 단위 올림. 기준 가격은 처음 원본 파일의 손님 가격(판매가 − 할인가)이고, 원본 상품의 '기준 가격 수정'으로만 바뀝니다. 표시 할인율은 손님 가격을 1원도 바꾸지 않고, 네이버 판매가를 100원 단위로 정해 할인율이 그 %에 아주 가깝게 되도록 금액으로 겁니다. 아래는 기본값이고, 스토어 → 템플릿에서 스토어마다 바꿉니다.", fields: [
     ["display_discount_pct", "표시 할인율 % (0이면 할인 없음)", "number", { step: 1 }],
@@ -37,7 +36,6 @@ const SETTING_SECTIONS = [
   ] },
   { tab: "name", title: "AI 키워드 (기본 방식)", note: "AI는 원본마다 한 번 keep(지킬 원본 단어)·다른 이름(core)·맥락(ctx)만 줍니다. 이름 = [원본 앞 단어] + keep + 다른 이름(core) + 용도·조합(core2) + 맥락 + 남은 원본 단어 (A·B는 보라·맥락을 나눠 쓰고, B는 앞 3단어만 두고 섞음) + 숫자·수량·연식(뒤로), 50자 안. 조립은 프로그램이 하고 원본마다 이름 A·B를 한 번에 만들어 1번째·2번째 복사본에 붙입니다. 틀린 다른 이름은 금지어 화면 → AI 다른 이름 확인에서 차단.", fields: [
     ["ctx_head_n", "앞 고정 단어 수 (숫자·수량·연식만 있는 단어는 세지 않고 뒤로)", "number"],
-    ["ctx_names_per_source", "원본당 이름 수", "number"],
     ["ctx_per_request", "요청당 원본 수", "number"],
     ["ctx_structured", "구조화 출력으로 받기 (JSON이 깨지지 않게 · 실패 사유에 output_config 오류가 보이면 끄기)", "check"],
     ["ctx_model", "모델", "select", { options: [["claude-sonnet-5-5", "Claude Sonnet 5.5 (기본)"], ["claude-haiku-5-5", "Claude Haiku 5.5 (가장 저렴)"]] }],

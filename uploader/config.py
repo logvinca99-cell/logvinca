@@ -42,8 +42,6 @@ DEFAULTS = {
     "max_copies": 2,                 # 원본 하나는 최대 2곳 (예전 3에서 바꿈)
     # 스토어에 등록하는 판매자 관리코드. {store}=스토어 코드, {source}=원본 번호, {round}=회차
     "seller_code_format": "{store}-{source:07d}-{round}",
-    # 최신화(지우고 다시 올리기)·다시 올리기 때 상품명을 새 후보로 바꿀지 (끄면 같은 이름)
-    "refresh_new_name": False,
 
     # ── 주문(판매 이력): 판매자센터 주문을 커머스API로 가져온다
     # 프로그램이 켜져 있는 동안 이 간격(분)마다 모든 스토어 주문을 가져옴 (0이면 끔)
@@ -128,7 +126,6 @@ DEFAULTS = {
     "ctx_ai_per_name": 6,            # 이름당 AI 키워드 (최대)
     "ctx_tail_min": 3,               # 원본 나머지 단어 (최소~최대)
     "ctx_tail_max": 6,
-    "ctx_names_per_source": 2,       # 원본당 이름 수 (한 번에 만듦)
     "ctx_kw_count": 12,              # (예전 설정, 안 씀) v2는 keep 6·core 4·ctx 8개까지
     "ctx_block_words": [],           # 다른 이름·맥락 단어 중 직접 차단한 것 (금지어 화면 → AI 다른 이름 확인)
     "ctx_structured": True,          # 구조화 출력(output_config.format)으로 받기
@@ -201,7 +198,7 @@ def migrate_legacy_data():
     return LEGACY_DATA_DIR
 
 
-REMOVED_KEYS = ("phone_view", "phone_key", "price_jitter_pct", "price_jitter_min", "price_jitter_max", "use_original_name", "bait_enabled", "bait_pct",
+REMOVED_KEYS = ("refresh_new_name", "ctx_names_per_source", "phone_view", "phone_key", "price_jitter_pct", "price_jitter_min", "price_jitter_max", "use_original_name", "bait_enabled", "bait_pct",
                 "bait_price_pct", "bait_ratio")
 
 

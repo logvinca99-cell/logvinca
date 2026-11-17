@@ -150,7 +150,7 @@ ACTIONS = {
                                                     f"가격 바꾼 원본 {r.get('prices', 0)} · 상품명 {r.get('names', 0)} · 네이버 반영 대기 가격 {r.get('price_live', 0)}·상품명 {r.get('name_live', 0)}")),
     "baseprice_apply": ("원본", lambda b, r: ("기준 가격 수정" + (f" · {b.get('how')}" if b.get("how") else ""), r.get("sources"),
                                             f"안 올린 복사본 {r.get('pending', 0)}건 다시 계산 · 판매 중 {r.get('live', 0)}건 네이버 가격 바꾸기")),
-    "adopt_undo": ("원본", lambda b, r: ("기존 상품 가져오기 되돌리기 (이 프로그램에서만 — 네이버 상품은 그대로)", r.get("listings"),
+    "adopt_undo": ("원본", lambda b, r: ("판매 중 상품 연결 되돌리기 (이 프로그램에서만 — 네이버 상품은 그대로)", r.get("listings"),
                                       f"원본 {r.get('sources', 0)}개 휴지통 · 예전부터 있던 원본 {r.get('kept_sources', 0)}개는 남김")),
     "trash_restore": ("휴지통", lambda b, r: ("휴지통에서 되살림", _count_of(r, "count", "restored", "ids"), "")),
     "trash_purge": ("휴지통", lambda b, r: ("휴지통 비우기" if b.get("empty") else "휴지통에서 완전히 삭제", _count_of(r, "count", "purged", "deleted"), "")),

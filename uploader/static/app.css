@@ -935,3 +935,13 @@ body.eye-open .tasks { display: none; }
 @media (max-width: 700px) { .btn { white-space: normal; text-align: center; } }
 @media (max-width: 700px) { .tiles { grid-template-columns: repeat(auto-fill, minmax(min(150px, 45%), 1fr)) !important; } .tile { min-width: 0; } }
 @media (max-width: 700px) { #l-tiles { flex-wrap: wrap; } #l-tiles .tile { flex: 1 1 30%; } }
+/* 원본 상품: 넣기 버튼 3개 · 상품명 분류 안내 · 후보상품명 칸 */
+.put-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+.name-guide { padding: 8px 12px; margin: 0 0 12px; }
+.name-guide summary { cursor: pointer; }
+.name-guide ul { margin: 8px 0; padding-left: 18px; display: grid; gap: 2px; }
+.name-guide .tbl-wrap { overflow-x: auto; }
+.ai-name .an-org { flex: none; font-size: 11px; color: var(--muted); }
+.ai-name.none .an-text { font-style: italic; }
+.m-picks { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.pchip { border: 1px solid var(--line); background: var(--panel); border-radius: 99px; padding: 2px 10px; font-size: 12px; color: var(--text-2); }

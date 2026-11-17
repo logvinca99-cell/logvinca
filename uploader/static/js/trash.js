@@ -13,7 +13,7 @@ App.page("trash", {
       <header class="page-head"><h1>휴지통</h1>
         <div class="head-actions"><button class="btn danger" id="t-empty">휴지통 비우기</button></div></header>
       <p class="muted" style="margin:0">지운 원본·복사본이 여기 모입니다. <b>원본</b>은 되살릴 수 있고(그 원본의 복사본도 함께 — 원본당 최대 복사 수·같은 상품번호를 확인해서),
-        <b>복사본</b>은 기록만 남습니다(복사본만 되살리면 중복이 생길 수 있어 막음 — 원본에서 다시 복사하거나, 판매 중이던 것은 기존 상품 가져오기로 다시 연결).
+        <b>복사본</b>은 기록만 남습니다(복사본만 되살리면 중복이 생길 수 있어 막음 — 원본에서 다시 복사하거나, 판매 중이던 것은 판매 중 상품 연결로 다시 연결).
         <b>완전히 삭제</b>하면 되돌릴 수 없습니다.</p>
       <div class="tiles" id="t-tiles"></div>
       <div class="filters-row"><div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>

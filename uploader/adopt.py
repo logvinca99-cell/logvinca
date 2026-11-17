@@ -1,4 +1,4 @@
-"""기존 상품 가져오기: 다른 방법으로 이미 스토어에 올린 상품을 이 프로그램으로.
+"""판매 중 상품 연결: 다른 방법으로 이미 스토어에 올린 상품을 이 프로그램으로.
 
 업로드했던 셀업 엑셀 + 그 스토어의 상품 목록(커머스API)을 판매자코드로 맞춰서
   - 스토어에 있는 상품 → 원본(엑셀 내용, 스토어 상하단 빼고) + 그 스토어의 판매 중 복사본으로 연결
@@ -280,7 +280,7 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
     if progress:
         progress(0, len(keep), f"원본으로 넣는 중 {len(keep):,}개")
     tags = ["가져옴", store["name"]]
-    keys, why = _assign_keys(db, store["id"], keep, matched, managed)   # 원본 열쇠 = 상품명 (원본 엑셀과 같은 기준)
+    keys, why = _assign_keys(db, store["id"], keep, matched, managed)   # 원본 열쇠 = 상품명 (원본 파일과 같은 기준)
     first, refs = {}, {}
     for i, r in keep:
         p = matched[i]
@@ -321,7 +321,7 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
     new_sids = set()
     new_rows = [(i, rows_by_i[i]) for k, i in first.items() if k not in exist]
     if new_rows:
-        imp = inventory.import_rows(db, iter(new_rows), f"기존 상품 가져오기 · {store['name']} · {filename}", total_hint=len(new_rows),
+        imp = inventory.import_rows(db, iter(new_rows), f"판매 중 상품 연결 · {store['name']} · {filename}", total_hint=len(new_rows),
                                     progress=progress, should_stop=should_stop, src_tags=tags, store_tag=False, price_src="adopt")
         refs.update(imp.get("refs") or {})
         new_sids.update((imp.get("refs") or {}).values())
@@ -436,7 +436,7 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
 
 
 def _assign_keys(db, store_id, keep, matched, managed):
-    """스토어 상품 하나 = 원본 하나 (판매자코드로 1대1, 대표 이미지는 기준이 아님). 원본 열쇠 = 상품명(완전히 같음) — 원본 엑셀과 같은 기준.
+    """스토어 상품 하나 = 원본 하나 (판매자코드로 1대1, 대표 이미지는 기준이 아님). 원본 열쇠 = 상품명(완전히 같음) — 원본 파일과 같은 기준.
     상품명이 같은 원본이 이미 있으면 그 원본에 연결한다 (기준 가격·내용은 그대로, 다른 스토어 복사본과 같은 원본).
     그 원본이 이 스토어에 이미 다른 상품으로 올라가 있거나, 이 파일에서 같은 상품명이 앞서 나왔으면 → '상품명 중복'
     (열쇠 None — 연결 안 함: 한 스토어에 상품명이 완전히 같은 상품은 하나만 관리). → ({줄: 열쇠 또는 None}, {줄: 중복 이유})"""
@@ -633,7 +633,7 @@ def start(db, tasks, token, store_id, opts):
             raise
         finally:
             _drop_token(token)
-    return tasks.start("adopt", f"기존 상품 가져오기 · {store['name']} · {meta['file']}", job)
+    return tasks.start("adopt", f"판매 중 상품 연결 · {store['name']} · {meta['file']}", job)
 
 
 def _snap_path(token):

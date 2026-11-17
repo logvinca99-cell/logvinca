@@ -270,7 +270,7 @@ App.page("stores", {
         <p class="muted small" style="margin:0">손님 가격 = 기준 가격 × (1 + 스토어 가격 차이 %), 100원 올림. 스토어 가격 차이 %는 마진이 아니라 이 스토어만 기준 가격에서 더하거나 빼는 값입니다(0이면 기준 가격 = 손님 가격).
           표시 할인율은 <b>손님 가격을 그대로 두고</b> 네이버 판매가를 100원 단위로 정해 그 %에 가깝게 금액으로 겁니다. 칸을 비우면 설정의 기본값입니다.</p>
         <div class="four">
-          <label class="field">스토어 가격 차이 % <span class="muted">(스토어끼리 가격 차이를 줄 때만, 예: 5 · 보통 0)</span>
+          <label class="field">스토어 가격 차이 % <span class="muted">(같은 상품이 스토어마다 같은 가격이 되지 않게 조금씩, 예: 3)</span>
             <input id="t-price" type="number" step="0.5" value="${t.price_pct ?? ""}" placeholder="0"></label>
           <label class="field">표시 할인율 % <span class="muted">(0 = 할인 없음)</span>
             <input id="t-disc" type="number" min="0" max="89" step="1" value="${t.discount_pct ?? ""}" placeholder="기본 ${cfg.display_discount_pct ?? 30}"></label>

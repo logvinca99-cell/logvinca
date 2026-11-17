@@ -320,7 +320,7 @@ class Client:
         return int(r.json().get("totalElements", 0))
 
     def iter_products(self, on_wait=None, on_page=None):
-        """상품 목록을 끝까지 (한 번에 500개씩). 원상품 하나씩 API가 준 그대로 돌려준다 (기존 상품 가져오기용)."""
+        """상품 목록을 끝까지 (한 번에 500개씩). 원상품 하나씩 API가 준 그대로 돌려준다 (판매 중 상품 연결용)."""
         page, n = 1, 0
         while True:
             r = self.request("POST", "/v1/products/search", json={"page": page, "size": 500}, on_wait=on_wait)

@@ -163,7 +163,8 @@ function priceCell(x, srcPrice) {
     ${x.off ? `<div class="p-sub r nowrap" title="네이버 판매가 ${num(x.shown)}원 · 즉시할인 ${num(x.off)}원 → 손님 가격 ${num(fin)}원">판매가 ${num(x.shown)} · ${x.disc_pct}%</div>`
       : x.old_rule ? `<div class="p-sub r" title="예전 규칙으로 올라간 상품이라 네이버 판매가·할인은 판매자센터에서 확인하세요. 최신화·다시 올리기를 하면 지금 기준으로 올라갑니다">예전 규칙</div>` : ""}</td>`;
 }
-const ORIGIN = { original: "원본", ctx: "AI 키워드", shuffle: "셔플", recombine: "재조합(예전)", import: "가져옴", adopt: "올라가 있던 이름", ai: "AI", manual: "직접" };
+const ORIGIN = { original: "타스토어 원본 상품명", ready: "완성 상품명", adopt: "완성 상품명", ctx: "ai상품명", ai: "ai상품명", shuffle: "셔플 상품명",
+  recombine: "재조합 상품명", import: "직접 입력 상품명", manual: "직접 입력 상품명" };
 
 const App = {
   pages: {}, current: null, state: null, stores: [], run: null, listeners: {}, taskSeen: {},
@@ -230,7 +231,7 @@ const App = {
     const mb = $("#nav-mail");
     if (mb) { mb.hidden = !this.state.mail_warn_open; mb.textContent = this.state.mail_warn_open || ""; mb.title = "확인 안 한 경고·제재 메일"; }
     $("#side-stats").innerHTML =
-      `원본 ${num(st.sources)}개 · 이름 후보 ${num(st.names_free)}개<br>` +
+      `원본 ${num(st.sources)}개 · 남은 후보상품명 ${num(st.names_free)}개<br>` +
       `등록 완료 ${num(st.registered)}건 · 대기 ${num(st.pending)}건<br>` +
       `카테고리 ${this.state.categories ? num(this.state.categories) + "개" : "아직 안 받음"}` +
       (st.trash ? `<br><a href="#trash">휴지통 ${num(st.trash)}개</a>` : "");
@@ -308,7 +309,7 @@ const App = {
   taskMsg(t) {
     const r = t.result || {};
     const msg = {
-      import: () => `원본 불러오기 끝: 새로 ${num(r.added)}개 · 오류 ${num(r.invalid)}개` + (r.dup ? ` · 상품명 중복이라 안 넣음 ${num(r.dup)}개 (덮어쓰지 않음)` : "") + (r.img_skipped ? ` · 대표 이미지 겹쳐서 버림 ${num(r.img_skipped)}개` : ""),
+      import: () => `원본 넣기 끝: 새로 ${num(r.added)}개 · 오류 ${num(r.invalid)}개` + (r.dup ? ` · 상품명 중복이라 안 넣음 ${num(r.dup)}개 (덮어쓰지 않음)` : "") + (r.img_skipped ? ` · 대표 이미지 겹쳐서 버림 ${num(r.img_skipped)}개` : ""),
       names: () => r.not_found !== undefined
         ? `상품명 가져오기 끝: 새 이름 ${num(r.added)}개 · 다른 이름과 중복 ${num(r.dup)}개 · 원본 못 찾음 ${num(r.not_found)}줄`
           + (r.rejected ? ` · 반복·금지 단어로 버림 ${num(r.rejected)}개 (예: ${r.rejected_examples?.[0] || ""})` : "")
@@ -317,7 +318,7 @@ const App = {
           + (r.rejected ? ` · 반복·금지 단어로 버림 ${num(r.rejected)}개` : "")
           + (r.failed ? ` · 실패 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : "") + aiMsg(r.ai),
       ctxkw: () => `AI 키워드(즉시) 끝: 원본 ${num(r.ok)}개 받음` + (r.failed ? ` · 재시도 대기 ${num(r.failed)}개 (${r.errors?.[0] || ""})` : "")
-        + ` · 실제 약 ${num(r.krw)}원 (예상 ${num(r.est_krw)}원)` + (r.names ? ` · 이름 후보 ${num(r.names.made)}개 · 복사본에 배정 ${num(r.names.assigned)}건` : ""),
+        + ` · 실제 약 ${num(r.krw)}원 (예상 ${num(r.est_krw)}원)` + (r.names ? ` · ai상품명 ${num(r.names.made)}개 · 복사본에 배정 ${num(r.names.assigned)}건` : ""),
       rename: () => r.method === "shuffle" ? `상품명 바꾸기(셔플) 끝: ${num(r.renamed)}건 바꿈` + (r.short ? ` · 못 만든 ${num(r.short)}건은 '이름 변경 필요'` : "") + (r.live ? ` · 이미 올라간 ${num(r.live)}건은 건너뜀` : "")
           + (r.dropped_extra?.length ? ` · 넣을 단어 중 쓸 수 없는 것 뺌: ${r.dropped_extra.join(", ")}` : "")
         : r.method === "ctx"
@@ -343,7 +344,7 @@ const App = {
         + (r.exists ? ` · 그 스토어에 이미 있어 뺀 것 ${num(r.exists)}` : "")
         + (r.full ? ` · 최대 ${App.state.settings.max_copies}회라 일부·전부 못 보낸 원본 ${num(r.full)}개` : "")
         + (r.capacity ? ` · 스토어 자리 부족 ${num(r.capacity)}` : "") + (r.invalid ? ` · 오류 원본 ${num(r.invalid)}개는 뺌` : "")
-        + (r.named ? ` · AI 키워드 이름 바로 붙음 ${num(r.named)}건` : "")
+        + (r.named ? ` · 후보상품명 바로 붙음 ${num(r.named)}건` : "")
         + (r.created - (r.named || 0) > 0 ? " · 나머지는 복사본 화면 '이름 변경 필요'에서 상품명을 바꾼 뒤 올리세요" : ""),
       clean_import: () => `엑셀 올리기 끝: ${num(r.total)}개 → 정리함 · 가격 한 칸으로 ${num(r.price)}개 · 상품코드 비움 ${num(r.code)}개` + (r.dup ? ` · 상품명 중복이라 안 넣음 ${num(r.dup)}개` : "") + (r.img_skipped ? ` · 대표 이미지 겹쳐서 버림 ${num(r.img_skipped)}개` : "")
         + (r.rule_imgs ? ` · 기억한 공통 이미지 뺌 ${num(r.rule_imgs)}장` : "") + " · 상세 정리 화면에서 이어서",
@@ -353,14 +354,14 @@ const App = {
         + (r.invalid ? ` · 검사 오류 ${num(r.invalid)}개 (원본 상품 화면에서 확인)` : "") + " · 이어서 상품명 변경 → 복사",
       chem: () => `생활화학 판정 끝: 물건 ${num(r.tool)}개(인증 대상 아님으로 올림) · 화학제품 ${num(r.chemical)}개(보류) · 애매 ${num(r.unclear)}개`
         + (r.requeued ? ` · 실패했던 복사본 ${num(r.requeued)}건 다시 등록 대기` : "") + (r.chemical + r.unclear ? " · 원본 상품 '생활화학 보류'에서 검수" : ""),
-      adopt: () => `기존 상품 가져오기 끝 (${r.store}): 연결 ${num(r.linked)}개` + (r.already ? ` · 이미 연결 ${num(r.already)}` : "")
+      adopt: () => `판매 중 상품 연결 끝 (${r.store}): 연결 ${num(r.linked)}개` + (r.already ? ` · 이미 연결 ${num(r.already)}` : "")
         + ` · 스토어에 없어서 뺌 ${num((r.dropped || 0) + (r.no_code || 0))} · 스토어에만 있음 ${num(r.store_only)}` + (r.dup_same ? ` · 연결 못 함 ${num(r.dup_same)}` : "")
         + (r.dropped_src ? ` · 지운 상품의 원본 ${num(r.dropped_src)}개 (원본까지 삭제 대상)` : "")
         + (r.need_orders ? " · 판매 이력 받기 필요(그 전엔 최신화·내리기 안 함)" : "")
         + " — 가져오기 화면에서 확인",
       nvcheck: () => `네이버 상태 확인 끝: ${r.message || ""}`,
       baseprice: () => `기준 가격 수정 → ${r.message || ""}`,
-      adopt_check: () => `맞춰 보기 끝 (${r.store}): 새로 연결될 상품 ${num(r.linked)}개 · 스토어에 없어 뺄 ${num((r.dropped || 0) + (r.no_code || 0))} · 판매자코드 맞는 줄 ${Math.round((r.match_rate || 0) * 1000) / 10}% — 기존 상품 가져오기 화면에서 결과 확인 후 가져오기`,
+      adopt_check: () => `맞춰 보기 끝 (${r.store}): 새로 연결될 상품 ${num(r.linked)}개 · 스토어에 없어 뺄 ${num((r.dropped || 0) + (r.no_code || 0))} · 판매자코드 맞는 줄 ${Math.round((r.match_rate || 0) * 1000) / 10}% — 판매 중 상품 연결 화면에서 결과 확인 후 가져오기`,
       srctags: () => `출처 태그 채우기 끝: 원본 ${num(r.total)}개 중 ${num(r.changed)}개에 더함 · 수집 스토어 ${num(r.store)}개 · 가져온 날 ${num(r.date)}개`,
       mail: () => `메일함: 확인 ${num(r.checked)}통 · 새로 ${num(r.new)}통` + (r.warn ? ` · 경고·제재 ${num(r.warn)}통` : "") + (r.auth ? ` · 인증번호 ${num(r.auth)}통` : ""),
       revalidate: () => `다시 검사 끝: ${num(r.total)}개` + (r.invalid !== undefined ? ` · 오류 ${num(r.invalid)}개` : ""),
@@ -396,7 +397,7 @@ const App = {
     Object.entries(extra).forEach(([k, v]) => fd.append(k, v));
     return this.sendChecked(url, fd, extra);
   },
-  /* 엑셀 올리기 (원본 불러오기·상세 정리): 서버가 가격 칸을 먼저 확인 — 이상한 줄이 있으면 경고 창, 확인하면 그대로 진행 */
+  /* 엑셀 올리기 (수집 상품 넣기·상세 정리): 서버가 가격 칸을 먼저 확인 — 이상한 줄이 있으면 경고 창, 확인하면 그대로 진행 */
   async sendChecked(url, fd, extra = {}) {
     let r;
     const checking = /\/api\/(sources|clean)\/import/.test(url);
@@ -460,7 +461,7 @@ const App = {
      미리보기(예전 → 새 기준 가격, 스토어별 새 손님 가격) → [바꾸기] → 안 올린 복사본은 바로 다시 계산, 판매 중은 네이버 가격만 바로 바꿈 */
   basePrice({ sourceId = null, current = null, after = null } = {}) {
     let pv = null;
-    const SRC = { file: "처음 원본 파일", adopt: "기존 상품 가져오기(그 스토어 손님 가격)", manual: "직접 수정" };
+    const SRC = { file: "처음 원본 파일", adopt: "판매 중 상품 연결(그 스토어 손님 가격)", manual: "직접 수정" };
     const table = (d) => `<div class="tbl-wrap"><table class="tbl small"><thead><tr><th>줄</th><th>찾은 방법</th><th>원본</th>
         <th class="r">기준 가격</th><th>복사본 (스토어: 지금 → 새 손님 가격)</th><th>상태</th></tr></thead><tbody>${d.items.map((x) => `<tr>
         <td>${x.line || ""}</td><td class="small">${esc(x.how || "")}${x.key ? `<div class="muted">${esc(x.key)}</div>` : ""}</td>
@@ -478,8 +479,8 @@ const App = {
         <div class="cl-row"><label class="field" style="margin:0">새 기준 가격 (원) <span class="muted small">= 가격 차이 0% 스토어의 손님 가격</span><input id="bp-new" type="number" min="1" step="100" autofocus></label>
           <label class="field" style="margin:0;flex:1">메모 <span class="muted small">(예: 역마진 — 가격 올림)</span><input id="bp-memo"></label>
           <button class="btn" id="bp-pv">미리보기</button></div><div id="bp-out"></div><div id="bp-log"></div>`
-      : `<p>여러 원본의 가격을 엑셀로 한꺼번에 고칩니다. <a href="/api/baseprice/template.xlsx">⬇ 양식 받기</a> — 찾는 칸(<b>원본 상품명 / 복사본 상품명(AI로 만든 이름) / 판매자 관리코드 / 상품번호</b>)은 넷 중 하나만 채우고 <b>새 손님 가격</b>을 넣으세요.
-          복사본(상품명·관리코드·상품번호)으로 찾은 줄은 <b>그 스토어 손님 가격</b>으로 보고 기준 가격을 거꾸로 계산하고, 원본 상품명으로 찾은 줄은 그 값이 기준 가격입니다. 상품명은 완전히 같을 때만 찾습니다. '(예)'로 시작하는 줄은 읽지 않습니다.</p>
+      : `<p>여러 원본의 가격을 엑셀로 한꺼번에 고칩니다. <a href="/api/baseprice/template.xlsx">⬇ 양식 받기</a> — 찾는 칸(<b>업스타 기준상품명 / 복사본 상품명(후보상품명) / 판매자 관리코드 / 상품번호</b>)은 넷 중 하나만 채우고 <b>새 손님 가격</b>을 넣으세요.
+          복사본(상품명·관리코드·상품번호)으로 찾은 줄은 <b>그 스토어 손님 가격</b>으로 보고 기준 가격을 거꾸로 계산하고, 업스타 기준상품명으로 찾은 줄은 그 값이 기준 가격입니다. 상품명은 완전히 같을 때만 찾습니다. '(예)'로 시작하는 줄은 읽지 않습니다.</p>
         <label class="btn"><input type="file" id="bp-file" accept=".xlsx,.xlsm,.csv" hidden>수정 엑셀 올리기 (미리보기)</label><div id="bp-out"></div>`;
     this.openModal({
       title: sourceId ? "기준 가격 수정" : "기준 가격 수정 (엑셀)", wide: true, body,
@@ -527,7 +528,7 @@ const App = {
     }
   },
 
-  /* 원본 엑셀 올리기 전 확인 창: 상품명 중복(넣지 않음) · 가격 칸이 이상한 줄 · 대표 이미지 주소가 겹치는 줄(상품명은 다름) → 포함할지 버릴지 고르고 넣기 */
+  /* 원본 파일 올리기 전 확인 창: 상품명 중복(넣지 않음) · 가격 칸이 이상한 줄 · 대표 이미지 주소가 겹치는 줄(상품명은 다름) → 포함할지 버릴지 고르고 넣기 */
   priceWarn(url, r, extra) {
     const w = r.price_warn || { n: 0 }, im = r.img_dup || { n: 0 }, dp = r.name_dup || { n: 0 };
     const dupHtml = dp.n ? `<h3 style="margin:0 0 6px">상품명 중복 — ${num(dp.n)}개 <span class="flag">넣지 않음</span></h3>
@@ -623,13 +624,21 @@ const App = {
   tagValues(prefix, box = document) {
     return { tags: $(`#${prefix}-tags`, box)?.value || "", store_tag: $(`#${prefix}-store`, box)?.checked ? "1" : "0" };
   },
-  /* 원본 엑셀 불러오기 (출처 태그를 묻고) */
-  importSources(file) {
+  /* 수집 상품 넣기 / 이름 완성 상품 넣기(mode="ready") — 출처 태그·검수 완료로 넣기를 묻고 */
+  importSources(file, mode = "") {
+    const ready = mode === "ready";
     this.openModal({
-      title: "원본 엑셀 불러오기",
-      body: `<p><b>${esc(file.name)}</b> → 원본 상품. 상품명이 완전히 같은 원본이 이미 있으면(또는 파일 안에 또 나오면) <b>넣지 않습니다</b>(덮어쓰지 않음).
-          [확인해 보기]를 누르면 먼저 파일을 검사해 넣을 수·상품명 중복·가격 칸·대표 이미지 겹침을 보여 드리고, 거기서 한 번 더 확인한 뒤 넣습니다.</p>${this.tagFields("is", { value: ymdToday() })}`,
-      buttons: [{ label: "취소" }, { label: "확인해 보기", primary: true, noConfirm: true, onClick: () => { this.upload("/api/sources/import", file, { ...this.tagValues("is"), always: "1" }); this._srcTags = null; } }],
+      title: ready ? "이름 완성 상품 넣기" : "수집 상품 넣기",
+      body: `<p><b>${esc(file.name)}</b> → 원본. ${ready
+          ? "파일 상품명(이미 바꿔 둔 이름)이 업스타 기준상품명이자 <b>후보상품명①번</b>이 됩니다 — 복사하면 바로 올릴 준비(AI 비용 없음)."
+          : "파일 상품명은 <b>타스토어 원본 상품명</b>으로 두고, 올릴 이름은 AI 키워드로 만듭니다."}
+          상품명이 완전히 같은 원본${ready ? "이나 이미 쓰는 상품명" : ""}은 넣지 않습니다.</p>
+        ${this.tagFields("is", { value: ymdToday() })}
+        <label class="check"><input type="checkbox" id="is-eye"><span><b>검수 완료로 넣기</b> <span class="muted small">(이미 검수한 파일일 때만 — 끄면 업스타 눈검수 뒤에 올라감)</span></span></label>`,
+      buttons: [{ label: "취소" }, { label: "확인해 보기", primary: true, noConfirm: true, onClick: () => {
+        this.upload("/api/sources/import", file, { ...this.tagValues("is"), always: "1", mode, eye: $("#is-eye").checked ? "1" : "0" });
+        this._srcTags = null;
+      } }],
     });
     this.bindTagFields("is");
   },
@@ -762,34 +771,36 @@ const App = {
     });
   },
 
-  /* 2차 확인 화면 (같은 창 안에서): 창 제목·누른 버튼·창 설명·지금 고른 설정을 보여 주고 [← 돌아가기] / [확인 — 실행] */
+  /* 2차 확인 화면 (같은 창 안에서) — 짧게: 【버튼】 실행할까요? + 무엇이 바뀌는지(x.confirm) + 고른 설정 몇 개.
+     x.confirm이 없을 때만 창 설명 첫 문장 하나. [← 돌아가기] / [확인 — 실행] */
   _confirmStep(title, x, b) {
     const txt = (el) => (el?.innerText || "").replace(/\s+/g, " ").trim();
-    const intro = [...b.querySelectorAll(".notice, p, li")].filter((el) => !el.closest("table, [data-noconfirm], details") && el.offsetParent !== null
-        && !el.querySelector("button, input[type=file]"))
-      .map(txt).filter(Boolean).slice(0, 6).map((t) => t.length > 220 ? t.slice(0, 220) + "…" : t);
+    let intro = "";
+    if (!x.confirm) {
+      const el = [...b.querySelectorAll(".notice, p, li")].find((e) => !e.closest("table, [data-noconfirm], details") && e.offsetParent !== null
+        && !e.querySelector("button, input[type=file]") && txt(e));
+      const t = txt(el).split(/(?<=[.。!?])\s|(?<=다\.)\s/)[0] || "";
+      intro = t.length > 100 ? t.slice(0, 100) + "…" : t;
+    }
     const picks = [];
     if (!x.noPicks) b.querySelectorAll("input, select, textarea").forEach((el) => {
       if (el.offsetParent === null || el.type === "hidden" || el.type === "file" || el.closest("[data-noconfirm]")) return;
       const lab = el.closest("label");
-      const own = lab ? txt(lab).replace(el.tagName === "SELECT" ? txt(el) : "", "").trim() : (el.placeholder || el.name || "");
+      let own = lab ? txt(lab).replace(el.tagName === "SELECT" ? txt(el) : "", "").trim() : (el.placeholder || el.name || "");
       if (!own) return;   // 이름 없는 칸(표 안의 입력 등)은 빼기 — 창이 confirm에 요약을 넣음
-      if (el.type === "checkbox") picks.push(el.checked ? `✔ ${own}` : `✘ (끔) ${own}`);
+      own = own.replace(/\s*\(.*$/, "").slice(0, 40);   // 괄호 설명은 떼고 짧게
+      if (el.type === "checkbox") picks.push(el.checked ? `✔ ${own}` : `✘ ${own}`);
       else if (el.type === "radio") { if (el.checked) picks.push(`✔ ${own}`); }
-      else if (el.tagName === "SELECT") { const o = el.selectedOptions?.[0]; if (o && o.value !== "") picks.push(`${own}: ${o.textContent.trim()}`); }
-      else if (el.type === "password" || /secret|password|key/i.test(el.id || el.name || "")) { if (String(el.value || "").trim()) picks.push(`${own}: ●●● (입력함)`); }
-      else if (String(el.value || "").trim()) picks.push(`${own}: ${String(el.value).trim().slice(0, 120)}`);
+      else if (el.tagName === "SELECT") { const o = el.selectedOptions?.[0]; if (o && o.value !== "") picks.push(`${own}: ${o.textContent.trim().slice(0, 30)}`); }
+      else if (el.type === "password" || /secret|password|key/i.test(el.id || el.name || "")) { if (String(el.value || "").trim()) picks.push(`${own}: ●●●`); }
+      else if (String(el.value || "").trim()) picks.push(`${own}: ${String(el.value).trim().slice(0, 40)}`);
     });
-    const terms = this.termsIn ? this.termsIn([title, x.label, x.confirm || "", ...intro].join(" "), 5) : [];
     const box = document.createElement("div");
     box.id = "m-confirm";
     box.innerHTML = `<div class="m-confirm-body">
-        <div class="notice warn"><b>한 번 더 확인하세요.</b> 【${esc(title)}】 창에서 <b>【${esc(x.label)}】</b>을(를) 누르셨습니다.</div>
-        ${x.confirm ? `<p>${x.confirm}</p>` : ""}
-        ${intro.length ? `<p class="small muted" style="margin:10px 0 4px">이 창의 설명 (이대로 실행됩니다)</p><ul class="small">${intro.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>` : ""}
-        ${picks.length ? `<p class="small muted" style="margin:10px 0 4px">지금 고른 설정</p><ul class="small">${picks.slice(0, 14).map((t) => `<li>${esc(t)}</li>`).join("")}${picks.length > 14 ? `<li class="muted">외 ${picks.length - 14}개 (창으로 돌아가 확인)</li>` : ""}</ul>` : ""}
-        ${terms.length ? `<p class="small muted" style="margin:10px 0 4px">용어 설명</p><dl class="small m-terms">${terms.map((t) => `<dt>${esc(t.term)}</dt><dd>${esc(t.desc)}</dd>`).join("")}</dl>` : ""}
-        <p class="small">맞으면 <b>[확인 — 실행]</b>, 아니면 <b>[← 돌아가기]</b>로 돌아가 고치세요.</p></div>
+        <div class="notice warn"><b>【${esc(x.label)}】 실행할까요?</b> <span class="muted small">${esc(title)}</span></div>
+        ${x.confirm ? `<p>${x.confirm}</p>` : intro ? `<p class="small">${esc(intro)}</p>` : ""}
+        ${picks.length ? `<div class="m-picks">${picks.slice(0, 8).map((t) => `<span class="pchip">${esc(t)}</span>`).join("")}${picks.length > 8 ? `<span class="muted small">외 ${picks.length - 8}개</span>` : ""}</div>` : ""}</div>
       <div class="m-confirm-foot"><button class="btn" data-back>← 돌아가기</button><button class="btn ${x.danger ? "danger" : "primary"}" data-go>확인 — 실행 (${esc(x.label)})</button></div>`;
     $("#m-body").hidden = true;
     $("#m-foot").hidden = true;
@@ -823,7 +834,7 @@ const App = {
         if (after) after(false);
         return;
       }
-      this.toast(`고른 원본 ${num(est.selected)}개 모두 키워드가 있습니다 · 요청 0건 (AI를 부르지 않음)`);
+      this.toast(`고른 원본 ${num(est.selected)}개 모두 키워드가 있거나 후보상품명 칸이 다 찼습니다 · 요청 0건 (AI를 부르지 않음)`);
       if (after) after(false);
       return;
     }
@@ -836,7 +847,7 @@ const App = {
       title: "AI 키워드 받기 · 비용 안내",
       body: `<div class="form">
         <dl class="kv">
-          <dt>대상 원본</dt><dd><b>${num(est.sources)}개</b> <span class="muted small">(고른 ${num(est.selected)}개 중 이미 키워드가 있는 ${num(est.have)}개 제외${target.refresh ? " · 예전 지시로 받은 것 포함" : ""})</span>
+          <dt>대상 원본</dt><dd><b>${num(est.sources)}개</b> <span class="muted small">(고른 ${num(est.selected)}개 중 이미 키워드가 있는 ${num(est.have)}개${est.full ? ` · 후보상품명 칸이 다 찬 ${num(est.full)}개` : ""} 제외${target.refresh ? " · 예전 지시로 받은 것 포함" : ""})</span>
             ${est.old ? `<br><span class="small">예전 지시로 받은 원본 <b>${num(est.old)}개</b>는 다시 받지 않습니다. <a href="#" id="cm-refresh">이것도 새 지시로 함께 다시 받기</a></span>` : ""}</dd>
           <dt>요청 수</dt><dd>${num(est.requests)}건 <span class="muted small">(요청 1건에 원본 ${num(s.ctx_per_request)}개)</span></dd>
           <dt>예상 토큰</dt><dd>입력 ${num(est.in_tok)} · 출력 ${num(est.out_tok)}</dd>
@@ -846,7 +857,7 @@ const App = {
         ${est.pending ? `<p class="muted small">지금 일괄 처리 중인 원본 ${num(est.pending)}개는 다시 보내지 않습니다.</p>` : ""}
         <div class="radio-cards">
           <label><input type="radio" name="cm" value="batch" ${!inst ? "checked" : ""}><div><b>일괄 처리 (50% 할인)</b>
-            <span class="muted small">결과가 오기까지 몇 분~몇 시간. 프로그램을 꺼도 다시 켜면 이어서 확인합니다. 결과가 오면 이름 후보 2개를 만들고 이름 없는 복사본에 바로 배정합니다.</span></div></label>
+            <span class="muted small">결과가 오기까지 몇 분~몇 시간. 프로그램을 꺼도 다시 켜면 이어서 확인합니다. 결과가 오면 빈 후보상품명 칸 수만큼 ai상품명을 만들고(수집 상품 A·B, 완성 상품명이 있는 원본은 A만) 이름 없는 복사본에 바로 배정합니다.</span></div></label>
           <label><input type="radio" name="cm" value="instant" ${inst ? "checked" : ""}><div><b>즉시</b>
             <span class="muted small">1~2분 안에 받습니다. 첫 요청 1개로 지시문을 캐시에 기억시킨 뒤 나머지를 한꺼번에 보냅니다 (요금은 일괄의 약 2배 — 원본 ${num(est.sources)}개면 차이 약 ${num(Math.max(0, i.krw - b.krw))}원).</span></div></label>
         </div>
@@ -1126,15 +1137,15 @@ const App = {
     this.openModal({
       title: "파일 불러오기",
       body: `<p><b>${esc(file.name)}</b> 파일을 무엇으로 불러올까요?</p>
-        <p class="muted small">원본 상품: 셀업 양식 엑셀. 상품명이 완전히 같은 원본이 이미 있으면 넣지 않습니다(덮어쓰지 않음).<br>
-        상품명: 외부 AI 도구 등에서 만든 새 상품명 파일. 판매자코드(또는 원본상품명) 열과 상품명 열이 있어야 합니다.<br>
+        <p class="muted small">수집 상품: 셀업 양식 엑셀(타스토어 원본 상품명). 상품명이 완전히 같은 원본이 이미 있으면 넣지 않습니다(덮어쓰지 않음). 이름을 이미 바꾼 파일은 원본 상품 화면의 [이름 완성 상품 넣기]로.<br>
+        상품명: 외부 AI 도구 등에서 만든 새 상품명 파일. 판매자코드(또는 업스타 기준상품명) 열과 상품명 열이 있어야 합니다.<br>
         판매 이력: 아바닛 등 주문 수집 웹에서 내려받은 주문 파일. 판매된 복사본은 최신화·내리기에서 빠집니다.</p>
-        <div class="card pad" style="margin-top:8px"><div class="small" style="margin-bottom:4px"><b>원본 상품으로</b> 불러올 때 붙일 태그</div>${this.tagFields("af", { value: ymdToday() })}</div>`,
+        <div class="card pad" style="margin-top:8px"><div class="small" style="margin-bottom:4px"><b>수집 상품으로</b> 넣을 때 붙일 태그</div>${this.tagFields("af", { value: ymdToday() })}</div>`,
       buttons: [
         { label: "취소" },
         { label: "판매 이력으로", onClick: () => this.upload("/api/orders/import", file) },
         { label: "상품명 후보로", onClick: () => this.upload("/api/names/import", file) },
-        { label: "원본 상품으로", primary: true, onClick: () => { this.upload("/api/sources/import", file, this.tagValues("af")); this._srcTags = null; } },
+        { label: "수집 상품으로", primary: true, onClick: () => { this.upload("/api/sources/import", file, this.tagValues("af")); this._srcTags = null; } },
       ],
     });
     this.bindTagFields("af");

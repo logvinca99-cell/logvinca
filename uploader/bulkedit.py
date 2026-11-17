@@ -1,6 +1,6 @@
 """복사본 일괄 수정 (한 스토어): 양식 엑셀을 받아 '새 손님 가격'·'새 상품명'을 적어 올리면 미리보기 → 적용.
 
-- 줄 찾기: 복사본 번호 + 상품번호(올라간 것) 또는 판매자 관리코드(관리코드만 있는 것) 또는 원본 상품명(안 올린 것)이 둘 다 맞아야 함.
+- 줄 찾기: 복사본 번호 + 상품번호(올라간 것) 또는 판매자 관리코드(관리코드만 있는 것) 또는 업스타 기준상품명(안 올린 것)이 둘 다 맞아야 함.
   다른 스토어 양식이면 거절 (양식에 스토어 번호가 들어 있음).
 - 새 손님 가격: 역마진 등으로 가격을 고치는 것 → 그 스토어 가격 차이 %로 거꾸로 계산한 값이 원본의 새 기준 가격.
   그 원본의 모든 스토어 복사본이 따라 바뀜 (baseprice.apply — 판매 중이면 지우지 않고 네이버 가격만).
@@ -13,7 +13,7 @@ import time
 
 from . import baseprice, config, convert, excel, lexicon, namegen, naver
 
-COLS = ["복사본 번호", "상품번호", "판매자 관리코드", "상태", "잠금", "원본 상품명", "지금 상품명", "새 상품명",
+COLS = ["복사본 번호", "상품번호", "판매자 관리코드", "상태", "잠금", "업스타 기준상품명", "지금 상품명", "새 상품명",
         "지금 손님 가격", "새 손님 가격", "네이버 판매가 (참고)", "메모"]
 STATUS = {"planned": "등록 대기", "queued": "처리 중", "running": "처리 중", "success": "판매 중", "fail": "실패", "deleted": "내림"}
 
@@ -113,10 +113,10 @@ def preview(db, path, filename, store_id):
             it.update(status="notfound", why=["이 스토어에 그 복사본 번호가 없음"])
             items.append(it)
             continue
-        ch, code, src = _s(r.get("상품번호")), _s(r.get("판매자 관리코드")), _s(r.get("원본 상품명"))
+        ch, code, src = _s(r.get("상품번호")), _s(r.get("판매자 관리코드")), _s(r.get("업스타 기준상품명") or r.get("원본 상품명"))
         same = (ch == l["channel_no"]) if l["channel_no"] else (code == l["seller_code"]) if l["seller_code"] else (src == l["src"])
         if not same:
-            it.update(status="mismatch", why=["복사본 번호와 상품번호(또는 관리코드·원본 상품명)가 서로 안 맞음 — 양식을 새로 받으세요"])
+            it.update(status="mismatch", why=["복사본 번호와 상품번호(또는 관리코드·업스타 기준상품명)가 서로 안 맞음 — 양식을 새로 받으세요"])
             items.append(it)
             continue
         it.update(name_old=l["name"], price_old=l["price"], source_id=l["source_id"], live=bool(l["origin_no"]) and l["status"] != "deleted",
@@ -130,8 +130,10 @@ def preview(db, path, filename, store_id):
             why = namegen.check_name(new_name, cfg, cfg["_lex"])
             src_words = set(l["src"].split())
             claims = [w for w in new_name.split() if w not in src_words and ctxname.claim_word(w)]
-            if namegen.normalize(l["src"]) == norm:
-                it["why"].append("원본 상품명 그대로는 올리지 않음")
+            if namegen.normalize(l["src"]) == norm and not db.one(
+                    "SELECT 1 FROM names WHERE source_id=? AND norm=? AND origin IN ('ready','adopt')", (l["source_id"], norm)):
+                # 업스타 기준상품명이 타스토어 원본 상품명인 원본만 막음 (이름 완성 상품·판매 중 상품 연결은 기준상품명 = 완성 상품명이라 괜찮음)
+                it["why"].append("타스토어 원본 상품명 그대로는 올리지 않음")
             elif why:
                 it["why"].append(f"상품명: {why}")
             elif claims:
@@ -204,7 +206,7 @@ def apply(db, pv, how=""):
                 out["name_live"] += 1
             else:
                 if l["name_id"] and l["name_id"] != nid["id"]:
-                    release_name(c, l["id"], l["name_id"], ("original", "adopt"))
+                    release_name(c, l["id"], l["name_id"], ("original", "adopt", "ready"))
                 c.execute("UPDATE listings SET name_id=?, name=?, ctx_wait=0, updated_at=? WHERE id=?", (nid["id"], nid["name"], now, l["id"]))
                 out["names"] += 1
     return out

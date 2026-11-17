@@ -654,14 +654,45 @@ def set_variant(c, sid, name, v):
               (v, sid, namegen.normalize(namegen.clean(name, 100))))
 
 
+def slot_need(c, sids, cfg=None):
+    """원본마다 AI로 더 만들 이름 수 = 원본당 최대 복사 수 − 이미 채워진 칸.
+    채워진 칸 = 이름이 붙은 복사본(내림 포함) + 안 쓴 AI 아닌 후보(완성 상품명·직접 입력 등 — 타스토어 원본 상품명은 후보가 아님).
+    수집 상품은 2(ai상품명 A·B), 이름 완성 상품·판매 중 상품 연결은 1(A만), 칸이 다 찬 원본은 0. → {원본 번호: 수}"""
+    mc = max(1, int((cfg or config.load()).get("max_copies") or 2))
+    out = {}
+    sids = list(sids)
+    for i in range(0, len(sids), 900):
+        ch = sids[i:i + 900]
+        for r in c.execute(f"""SELECT s.id,
+                (SELECT COUNT(*) FROM listings l WHERE l.source_id=s.id AND l.name_id IS NOT NULL) AS named,
+                (SELECT COUNT(*) FROM names n WHERE n.source_id=s.id AND n.listing_id IS NULL
+                    AND n.origin NOT IN ('original','adopt','ctx')) AS other
+                FROM sources s WHERE s.id IN ({','.join('?' * len(ch))})""", ch).fetchall():
+            out[r["id"]] = max(0, mc - r["named"] - r["other"])
+    return out
+
+
+def full_slots(db, sids):
+    """칸이 다 찬 원본(AI 이름을 더 만들 필요 없음 + AI 이름을 기다리는 복사본도 없음) — AI 키워드를 받지 않아 비용을 아낀다."""
+    with db.tx() as c:
+        need = slot_need(c, sids)
+    full = [s for s, n in need.items() if n == 0]
+    wait = set()
+    for i in range(0, len(full), 900):
+        ch = full[i:i + 900]
+        wait |= {r["source_id"] for r in db.q(f"""SELECT DISTINCT source_id FROM listings WHERE ctx_wait IN (1, 2) AND origin_no=''
+            AND source_id IN ({','.join('?' * len(ch))})""", ch)}
+    return {s for s in full if s not in wait}
+
+
 def build_names(db, sids, cfg=None):
-    """키워드를 받은 원본마다 이름 후보 N개(기본 2)를 한 번에 만들어 저장한다. 이미 만든 원본은 건너뜀.
+    """키워드를 받은 원본마다 필요한 만큼(slot_need — 수집 상품 A·B 2개, 이름 완성 상품·판매 중 상품 연결 A 1개)
+    ai상품명을 한 번에 만들어 저장한다. 이미 만든 원본은 건너뜀.
     {made: 만든 이름 수, none: 못 만든 수(이름 변경 필요로 남음)}"""
     from .inventory import add_names
     cfg = cfg or config.load()
     lex = lexicon.get(db)
     forb = set(lex.blocked)
-    copies = max(1, int(cfg.get("ctx_names_per_source") or 2))
     st = {"made": 0, "none": 0}
     o = opts(cfg)
     bad, rep = word_filter(cfg, lex), repeat_check(cfg, lex)
@@ -672,7 +703,12 @@ def build_names(db, sids, cfg=None):
         with db.tx() as c:
             reject = make_rejecter(c, cfg, lex)
             now = time.time()
+            need = slot_need(c, [r["id"] for r in rows], cfg)
             for r in rows:
+                copies = need.get(r["id"], 0)
+                if copies <= 0:   # 칸이 다 참 — 만들지 않음 (키워드는 남겨 둠: 나중에 칸이 비면 make_more로)
+                    c.execute("UPDATE ctx_kw SET names_made=1 WHERE source_id=?", (r["id"],))
+                    continue
                 res = ctxname.make_names_v2(r["name"], kw_of(r["words"]), forb, copies=copies, seed=r["id"],
                                             reject=reject, opts=o, bad=bad, rep=rep)
                 for k, x in enumerate(res):
@@ -746,12 +782,13 @@ def rebuild_repeated(db):
 
 
 def rebuild_pairs(db):
-    """A·B 짝이 깨진 원본(이름 다시 바꾸기가 다른 스토어 몫 B까지 써 버림)을 되살림: 복사본이 원본당 이름 수(기본 2)보다
-    적은데 안 쓴 AI 이름이 하나도 없는 원본만, 받은 키워드로 다시 조립 (1번째 복사본에 A, B는 안 씀으로). 다시 만든 원본 수."""
-    copies = max(1, int(config.load().get("ctx_names_per_source") or 2))
-    sids = [r["source_id"] for r in db.q("""SELECT k.source_id FROM ctx_kw k WHERE k.status='ok'
-        AND NOT EXISTS (SELECT 1 FROM names n WHERE n.source_id=k.source_id AND n.origin='ctx' AND n.listing_id IS NULL)
-        AND (SELECT COUNT(*) FROM listings l WHERE l.source_id=k.source_id AND l.status!='deleted') < ?""", (copies,))]
+    """A·B 짝이 깨진 원본(이름 다시 바꾸기가 다른 스토어 몫 B까지 써 버림)을 되살림: 빈 칸이 남았는데(slot_need) 안 쓴 AI 이름이
+    하나도 없는 원본만, 받은 키워드로 다시 조립 (1번째 복사본에 A, B는 안 씀으로). 다시 만든 원본 수."""
+    cand = [r["source_id"] for r in db.q("""SELECT k.source_id FROM ctx_kw k WHERE k.status='ok'
+        AND NOT EXISTS (SELECT 1 FROM names n WHERE n.source_id=k.source_id AND n.origin='ctx' AND n.listing_id IS NULL)""")]
+    with db.tx() as c:
+        need = slot_need(c, cand)
+    sids = [s for s in cand if need.get(s, 0) > 0]
     return rebuild_unused(db, sids) if sids else 0
 
 

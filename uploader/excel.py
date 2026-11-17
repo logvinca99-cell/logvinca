@@ -90,7 +90,7 @@ def header(path_or_file, filename=""):
 
 
 def need_name_column(path_or_file, filename=""):
-    """원본 엑셀(셀업 양식)인지: 첫 줄에 '상품명' 열이 없으면 이유를 알려 주는 오류."""
+    """원본 파일(셀업 양식)인지: 첫 줄에 '상품명' 열이 없으면 이유를 알려 주는 오류."""
     cols = header(path_or_file, filename)
     if "상품명" not in cols:
         raise ValueError("첫 줄에서 '상품명' 열을 찾지 못했습니다 — 셀업 양식 엑셀인지, 첫 줄이 열 이름인지 확인하세요"

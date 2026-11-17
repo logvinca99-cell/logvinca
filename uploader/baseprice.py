@@ -4,7 +4,7 @@
 · 손님 가격(= 기준 가격 × (1 + 스토어 가격 차이 %), 100원 올림) · 네이버 판매가·즉시할인(표시 할인율로 자동).
 기준 가격은 처음 원본을 넣을 때 정해지고 여기 수정 기능으로만 바뀐다(역마진 등). 사장님은 늘 '손님 가격'을 적는다:
   - 복사본(그 스토어)으로 찾은 줄: 그 스토어 가격 차이 %로 거꾸로 계산한 값이 새 기준 가격
-  - 원본 상품명으로 찾은 줄: 적은 값이 새 기준 가격 (가격 차이 0%인 스토어의 손님 가격)
+  - 업스타 기준상품명으로 찾은 줄: 적은 값이 새 기준 가격 (가격 차이 0%인 스토어의 손님 가격)
 바꾸면 그 원본의 모든 스토어 복사본이 따라 바뀐다:
   - 아직 안 올린·내린 복사본: 가격을 바로 다시 계산
   - 판매 중 복사본(잠긴 것 포함): 지우지 않고 네이버 가격만 바꿈 → 바꾸기 대기(price_push)에 넣고 작업으로 보냄,
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS base_price_log (
 CREATE INDEX IF NOT EXISTS ix_bpl_src ON base_price_log(source_id);
 """
 
-COLS = ["원본 상품명", "복사본 상품명", "판매자 관리코드", "상품번호", "새 손님 가격", "메모"]
+COLS = ["업스타 기준상품명", "복사본 상품명", "판매자 관리코드", "상품번호", "새 손님 가격", "메모"]
 PRICE_COLS = ("새 손님 가격", "새 기준 가격", "새 기준 구매가")   # 예전 양식 머리글도 읽음
 
 
@@ -51,13 +51,13 @@ def _style(ws, widths):
 
 
 def template_xlsx():
-    """수정 양식: 찾기 칸(원본 상품명·복사본 상품명·판매자 관리코드·상품번호) 중 하나만 채우고 '새 손님 가격'을 적음."""
+    """수정 양식: 찾기 칸(업스타 기준상품명·복사본 상품명·판매자 관리코드·상품번호) 중 하나만 채우고 '새 손님 가격'을 적음."""
     from openpyxl import Workbook
     wb = Workbook()
     ws = wb.active
     ws.title = "기준 가격 수정"
     ws.append(COLS)
-    ws.append(["(예) 원본 상품명을 그대로 — 이 값이 새 기준 가격", "", "", "", 12000, "(예)로 시작하는 줄은 읽지 않음"])
+    ws.append(["(예) 업스타 기준상품명을 그대로 — 이 값이 새 기준 가격", "", "", "", 12000, "(예)로 시작하는 줄은 읽지 않음"])
     ws.append(["", "(예) 스토어에 올라간 복사본 상품명", "", "", 15500, "그 스토어에서 받을 손님 가격"])
     ws.append(["", "", "(예) S01-123-2", "", 9900, ""])
     _style(ws, (44, 40, 20, 18, 14, 34))
@@ -86,9 +86,9 @@ def _match(db, row):
     if cn:
         return (pairs("SELECT source_id, store_id FROM listings WHERE name=?", (cn,))
                 | pairs("SELECT l.source_id, l.store_id FROM listing_history h JOIN listings l ON l.id=h.listing_id WHERE h.name=?", (cn,))), "복사본 상품명"
-    on = str(row.get("원본 상품명") or "").strip()
+    on = str(row.get("업스타 기준상품명") or row.get("원본 상품명") or "").strip()   # 뒤는 예전 양식 머리줄
     if on:
-        return {(r["id"], None) for r in db.q("SELECT id FROM sources WHERE name=?", (on,))}, "원본 상품명"
+        return {(r["id"], None) for r in db.q("SELECT id FROM sources WHERE name=?", (on,))}, "업스타 기준상품명"
     return set(), ""
 
 
@@ -104,7 +104,7 @@ def preview(db, path, filename):
         raw = next((row.get(k) for k in PRICE_COLS if row.get(k) not in (None, "")), None)
         target = convert.to_int(str(raw or "").replace("원", "").replace(",", ""))
         found, how = _match(db, row)
-        key = next((str(row.get(k) or "").strip() for k in COLS[:4] if str(row.get(k) or "").strip()), "")
+        key = next((str(row.get(k) or "").strip() for k in (*COLS[:4], "원본 상품명") if str(row.get(k) or "").strip()), "")
         item = {"line": i, "key": key[:80], "how": how, "target": target, "memo": str(row.get("메모") or "")[:200]}
         sids = {sid for sid, _ in found}
         if target <= 0:

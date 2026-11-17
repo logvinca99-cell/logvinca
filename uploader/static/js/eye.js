@@ -480,7 +480,7 @@ const Eye = {
     c.innerHTML = `<div class="eye-card-img" style="height:${W}px"><img referrerpolicy="no-referrer" src="${esc(l.thumb)}" alt=""></div>
       <div class="eye-card-name">${esc(l.name)}</div>
       ${this.kind === "listing" && named && l.source_name && l.source_name !== l.name ? `<div class="small muted">원본: ${esc(l.source_name)}</div>` : ""}
-      ${this.kind === "listing" && !named && !dead ? '<div class="small c-err">상품명 변경 전 (원본 이름 그대로)</div>' : ""}
+      ${this.kind === "listing" && !named && !dead ? '<div class="small c-err">이름 변경 필요 (후보상품명 없음)</div>' : ""}
       ${flagged.length ? `<div class="small eye-card-flags">${flagged.map(([w, why]) => `<em class="${EYE_KW[why][0]}">${esc(w)}</em> ${EYE_KW[why][1]}`).join(" · ")}</div>` : ""}
       <div class="small" style="margin-top:6px">${dead ? `<b class="c-err">${esc(dead.label)}</b> ` : ""}${this.kind === "source"
         ? `원본 #${l.id} · 기준 가격 ${num(l.price)}원 · 복사 ${num(l.n_listings || 0)}곳 ${l.eye_at ? '<span class="flag eye-ok">검수 완료</span>' : ""}<div class="muted">${esc(l.category || "")}</div>`
