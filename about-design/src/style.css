@@ -1,0 +1,52 @@
+/* ============================================================
+   에이바우트 브랜드 시스템
+   - 컬러: 흰 배경 + 딥 플럼(메인) + 다크 플럼(진한 띠) + 라일락(진한 바탕 위 숫자)
+   - 글씨 크기는 아래 4단계만 사용 (임의 크기 금지)
+   ============================================================ */
+@font-face { font-family: "Pretendard"; font-weight: 500; src: url("../../onnuri-design/fonts/Pretendard-Medium.otf"); }
+@font-face { font-family: "Pretendard"; font-weight: 600; src: url("../../onnuri-design/fonts/Pretendard-SemiBold.otf"); }
+@font-face { font-family: "Pretendard"; font-weight: 700; src: url("../../onnuri-design/fonts/Pretendard-Bold.otf"); }
+@font-face { font-family: "Pretendard"; font-weight: 800; src: url("../../onnuri-design/fonts/Pretendard-ExtraBold.otf"); }
+@font-face { font-family: "Pretendard"; font-weight: 900; src: url("../../onnuri-design/fonts/Pretendard-Black.otf"); }
+
+:root {
+  --main: #553C8B;       /* 에이바우트 플럼: 테두리·아이콘·배지 */
+  --main-deep: #553C8B;  /* 흰 바탕 위 강조 글자 */
+  --main-soft: #F1ECF8;  /* 라벤더: 아주 옅은 보조면 */
+  --dark: #2E2145;       /* 다크 플럼: 진한 띠·블록 */
+  --lilac: #D9C8FF;      /* 진한 바탕 위 숫자·강조 */
+  --ink: #1D1A24;
+  --gray: #67626F;
+  --line: #E4DDEF;
+  --bg: #FFFFFF;
+  --bg-2: #F6F4F9;
+
+  /* 글씨 크기 4단계 */
+  --xl: 64px;   /* 핵심 숫자·대표 문구 */
+  --l: 40px;    /* 섹션 제목·강조 문장 */
+  --m: 30px;    /* 본문 */
+  --s: 24px;    /* 보조 설명 (최소 크기) */
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: var(--bg); }
+body { width: 860px; font-family: "Pretendard", sans-serif; color: var(--ink); letter-spacing: -0.03em; word-break: keep-all; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+b { font-weight: 800; }
+.xl { font-size: var(--xl); font-weight: 900; line-height: 1.15; }
+.l  { font-size: var(--l);  font-weight: 800; line-height: 1.3; }
+.m  { font-size: var(--m);  font-weight: 600; }
+.s  { font-size: var(--s);  font-weight: 500; color: var(--gray); }
+.c-main { color: var(--main-deep); }
+.c-point { color: var(--lilac); }
+.ic { width: 1em; height: 1em; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+
+/* 로고 */
+.brand { display: flex; align-items: center; justify-content: center; gap: 18px; }
+.brand .name { font-size: var(--xl); font-weight: 900; color: var(--ink); letter-spacing: -0.05em; line-height: 1; }
+
+/* 레퍼런스 구조: 테두리 박스 + 위에 걸친 알약 제목 */
+.box { position: relative; margin: 0 40px; border: 4px solid var(--main); border-radius: 32px; background: #fff; overflow: visible; }
+.box > .pill { position: absolute; top: 0; left: 50%; transform: translate(-50%, -50%); background: #fff; border: 4px solid var(--main); border-radius: 999px; padding: 6px 36px; font-size: var(--m); font-weight: 800; white-space: nowrap; }
+.box-in { padding: 64px 36px 40px; }
+.box-foot { background: var(--dark); color: #fff; margin: 0 -4px -4px; border-radius: 0 0 32px 32px; padding: 32px 30px; text-align: center; }
+.gap { height: 96px; }

@@ -72,9 +72,11 @@ function compress(file) {
         parts.push([start, end]); start = end;
       }
       parts.push([start, total]);
-      await page.setViewportSize({ width: j.width, height: Math.ceil(total) });
+      await page.setViewportSize({ width: j.width, height: Math.ceil(total) + 200 });
       for (let i = 0; i < parts.length; i++) {
-        const a = Math.round(parts[i][0]), b = Math.round(parts[i][1]);
+        // 1000px 출력 기준으로 픽셀이 딱 떨어지게 잘라 마지막 줄이 흐려지지 않게 함
+        const px = v => Math.floor(v * j.scale) / j.scale;
+        const a = px(parts[i][0]), b = px(parts[i][1]);
         const f = path.join(OUT, parts.length === 1 ? `${j.out}.png` : `${j.out}_${String(i + 1).padStart(2, '0')}.png`);
         await page.screenshot({ path: f, clip: { x: 0, y: a, width: j.width, height: b - a } });
         files.push(f);
