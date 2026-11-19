@@ -7,9 +7,9 @@
 """
 
 import math
+from array import array
 import os
 import shutil
-import struct
 import subprocess
 import sys
 import threading
@@ -25,14 +25,14 @@ BUILTIN = {"chime": "풍경 (싱잉볼)", "musicbox": "오르골"}
 def _add(buf, start, s):
     i0 = int(start * SR)
     if i0 + len(s) > len(buf):
-        buf.extend([0.0] * (i0 + len(s) - len(buf)))
+        buf.extend(array("d", bytes(8 * (i0 + len(s) - len(buf)))))
     for i, v in enumerate(s):
         buf[i0 + i] += v
 
 
 def _tone(freq, dur, partials, decay, amp=1.0, attack=0.25):
     n = int(SR * dur)
-    out = [0.0] * n
+    out = array("d", bytes(8 * n))
     two_pi = 2 * math.pi
     for ratio, pa, pd in partials:
         w = two_pi * freq * ratio / SR
@@ -50,7 +50,7 @@ def _tone(freq, dur, partials, decay, amp=1.0, attack=0.25):
 
 def _chime():
     bowl = [(1, 1.0, 1.0), (1.002, 0.5, 1.0), (2.76, 0.18, 1.8), (5.40, 0.05, 3.0)]
-    buf = []
+    buf = array("d")
     for i, f in enumerate([392.0, 329.6, 392.0, 293.7]):
         _add(buf, i * 3.0, _tone(f, 7.0, bowl, 0.45, amp=0.55 + 0.15 * i, attack=0.35))
     return buf, 6.0
@@ -59,7 +59,7 @@ def _chime():
 def _musicbox():
     t = [(1, 1.0, 1.0), (2, 0.15, 1.6), (3, 0.04, 2.4)]
     notes = [523.25, 659.25, 783.99, 1046.5, 783.99, 659.25, 783.99, 1046.5]
-    buf = []
+    buf = array("d")
     for i, f in enumerate(notes):
         _add(buf, i * 0.75, _tone(f, 4.0, t, 0.9, amp=0.35 + 0.08 * i, attack=0.12))
     end = len(notes) * 0.75 + 0.3
@@ -72,12 +72,12 @@ def _finish(buf, peak, rise):
     m = max(abs(v) for v in buf) or 1.0
     n_rise, n_out = int(SR * rise), int(SR * 1.5)
     n = len(buf)
-    out = []
+    out = array("h")
     for i, v in enumerate(buf):
         g = 10 ** (-45 * (1 - i / n_rise) / 20) if i < n_rise else 1.0
         if i > n - n_out:
             g *= (n - i) / n_out
-        out.append(v / m * peak * g)
+        out.append(int(max(-1.0, min(1.0, v / m * peak * g)) * 32767))
     return out
 
 
@@ -87,7 +87,9 @@ def _save(path, buf):
         w.setnchannels(1)
         w.setsampwidth(2)
         w.setframerate(SR)
-        w.writeframes(b"".join(struct.pack("<h", int(max(-1, min(1, v)) * 32767)) for v in buf))
+        if sys.byteorder == "big":
+            buf.byteswap()
+        w.writeframes(buf.tobytes())
     os.replace(tmp, path)
 
 

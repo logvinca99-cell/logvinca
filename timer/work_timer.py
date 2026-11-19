@@ -1,12 +1,13 @@
 """내 전용 업무 타이머.
 
-- 항상 맨 위에 떠 있는 작은 창: 날짜·요일·시각, 남은 시간, ⛵ 항해 진행바, 오늘 도착한 섬 수, 메모
+- 항상 맨 위에 떠 있는 위젯: 날짜·요일·시각, 남은 시간, ⛵ 항해 진행바, 오늘 도착한 섬 수, 메모
 - 50분 업무 → 풍경 소리 + 화면 전체를 덮는 휴식 창(천천히 숨 쉬듯 색이 변함) 10분
 - 휴식이 끝나면 오르골 소리 → '다시 집중 시작'을 눌러야 다음 업무 시작
 - 사이클마다 '할 일'(시작할 때)과 '한 일'(휴식 때)을 한 줄씩 기록, 날짜별로 모아 보기
 """
 
 import csv
+import ctypes
 import datetime as dt
 import json
 import math
@@ -17,6 +18,7 @@ import sys
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from tkinter import font as tkfont
 
 import timer_sound
 
@@ -24,22 +26,18 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(HERE, "timer_settings.json")
 MEMO_FILE = os.path.join(HERE, "timer_memo.txt")
 LOG_FILE = os.path.join(HERE, "timer_log.csv")
+WIN = sys.platform == "win32"
 
-FONT = "맑은 고딕"
-EMOJI_FONT = "Segoe UI Emoji"
 WEEKDAYS = "월화수목금토일"
-
+LOG_FIELDS = ["날짜", "시작", "끝", "집중(분)", "할 일", "한 일", "휴식"]
 DEFAULTS = {
     "work_min": 50,
     "break_min": 10,
     "work_end_sound": "chime",      # 업무 끝 → 풍경
     "break_end_sound": "musicbox",  # 휴식 끝 → 오르골
     "volume": 7,
-    "geometry": "",
+    "pos": None,
 }
-
-LOG_FIELDS = ["날짜", "시작", "끝", "집중(분)", "할 일", "한 일", "휴식"]
-
 TIPS = [
     "자리에서 일어나 기지개를 한 번 켜 보세요",
     "물 한 잔 천천히 마셔 보세요",
@@ -49,15 +47,70 @@ TIPS = [
     "잠깐 걸으면서 몸을 풀어 보세요",
 ]
 
-# 색
-SEA = "#d6ecfa"
-WAKE = "#93cbee"
-REST_TRACK = "#dcefe2"
-REST_FILL = "#a9d9b8"
-BREATH = {
-    "break": ("#e4f4e8", "#b9e0c6"),       # 휴식 중: 부드러운 초록
-    "break_done": ("#fdeee2", "#f5cfb0"),  # 휴식 끝: 따뜻한 살구색
-}
+
+class C:
+    """색. 흰 바탕 + 회색 단계 + 파랑 포인트 하나."""
+    bg = "#ffffff"
+    line = "#e8ebf0"
+    surface = "#f4f6f9"
+    surface_hover = "#eaedf2"
+    text = "#1d2533"
+    sub = "#8b95a5"
+    hint = "#b3bac6"
+    accent = "#3b82f6"
+    accent_hover = "#2f6fdf"
+    accent_soft = "#eaf2fe"
+    sea = "#e9eef5"
+    rest = "#1f9d6a"
+    rest_soft = "#e6f6ee"
+    rest_track = "#e3efe8"
+    warn = "#d97706"
+    warn_soft = "#fdf3e4"
+    island = "#2c9f6f"
+    # 휴식 화면이 숨 쉬듯 오가는 두 색
+    breath = {"break": ("#eef8f1", "#cdeAd8"), "break_done": ("#fdf3ea", "#f6d9c0")}
+    rest_text = "#1e4634"
+    done_text = "#5b3a1e"
+
+
+# ───────────────────────── 화면 배율·글꼴
+
+SCALE = 1.0
+
+
+def S(v):
+    return int(round(v * SCALE))
+
+
+def enable_dpi_awareness():
+    """윈도우 고해상도 화면에서 글자가 흐릿하게 늘어나지 않게 한다."""
+    if not WIN:
+        return
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+
+class F:
+    ui = "TkDefaultFont"
+    num = "TkDefaultFont"
+
+    @classmethod
+    def pick(cls, root):
+        fams = set(tkfont.families(root))
+
+        def first(*names):
+            return next((n for n in names if n in fams), None)
+
+        cls.ui = first("Pretendard", "Pretendard Variable", "맑은 고딕", "Malgun Gothic",
+                       "Apple SD Gothic Neo", "Noto Sans CJK KR", "Noto Sans KR") or "TkDefaultFont"
+        cls.num = first("Segoe UI Light", "Pretendard Light", "Helvetica Neue", "Noto Sans CJK KR Light",
+                        "Noto Sans Light") or cls.ui
+        cls.num_regular = first("Segoe UI", "Pretendard", "Helvetica Neue") or cls.ui
 
 
 # ───────────────────────── 저장소
@@ -121,15 +174,18 @@ def sound_label(v):
     return os.path.basename(v)
 
 
+def rgb(c):
+    return tuple(int(c[i:i + 2], 16) for i in (1, 3, 5))
+
+
 def mix(c1, c2, t):
-    a = [int(c1[i:i + 2], 16) for i in (1, 3, 5)]
-    b = [int(c2[i:i + 2], 16) for i in (1, 3, 5)]
+    a, b = rgb(c1), rgb(c2)
     return "#" + "".join(f"{round(x + (y - x) * t):02x}" for x, y in zip(a, b))
 
 
 def open_file(path):
     try:
-        if sys.platform == "win32":
+        if WIN:
             os.startfile(path)
         else:
             subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", path])
@@ -137,9 +193,215 @@ def open_file(path):
         messagebox.showerror("열기 실패", str(e))
 
 
-# ───────────────────────── 메인 창
+# ───────────────────────── 둥근 모양 (계단 없이 부드러운 가장자리)
+
+_img_cache = {}
+
+
+def rounded(w, h, r, fill, bg, border=None):
+    """둥근 사각형 그림. 가장자리를 바탕색과 섞어 부드럽게 만든다(외부 라이브러리 없이)."""
+    w, h = max(1, int(w)), max(1, int(h))
+    key = (w, h, r, fill, bg, border)
+    img = _img_cache.get(key)
+    if img is not None:
+        return img
+    if len(_img_cache) > 600:
+        _img_cache.clear()
+    r = min(r, w / 2, h / 2)
+    Fc, Bc = rgb(fill), rgb(bg)
+    Ec = rgb(border) if border else None
+    bw = 1.0
+    hw, hh = w / 2, h / 2
+
+    def blend(a, b, t):
+        return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
+
+    rows, row_cache = [], {}
+    for y in range(h):
+        py = abs(y + 0.5 - hh) - (hh - r)
+        key_py = round(py, 3) if py > -1.5 else "mid"
+        cached = row_cache.get(key_py)
+        if cached is None:
+            px_list = []
+            for x in range(w):
+                px = abs(x + 0.5 - hw) - (hw - r)
+                d = math.hypot(max(px, 0), max(py, 0)) + min(max(px, py), 0) - r
+                cov = min(1.0, max(0.0, 0.5 - d))
+                if Ec:
+                    inner = min(1.0, max(0.0, 0.5 - (d + bw)))
+                    col = blend(Ec, Fc, inner)
+                else:
+                    col = Fc
+                px_list.append("#%02x%02x%02x" % blend(Bc, col, cov))
+            cached = "{" + " ".join(px_list) + "}"
+            row_cache[key_py] = cached
+        rows.append(cached)
+    img = tk.PhotoImage(width=w, height=h)
+    img.put(" ".join(rows))
+    _img_cache[key] = img
+    return img
+
+
+class PillButton(tk.Canvas):
+    """둥근 버튼. kind: primary / soft / rest / ghost"""
+    KINDS = {
+        "primary": (C.accent, C.accent_hover, "#ffffff"),
+        "soft": (C.surface, C.surface_hover, C.text),
+        "rest": (C.rest, "#18855a", "#ffffff"),
+        "ghost": (None, C.surface, C.sub),
+    }
+
+    def __init__(self, master, text, command=None, kind="primary", width=None, height=40, bg=C.bg,
+                 font=None, radius=12):
+        super().__init__(master, width=S(width) if width else S(40), height=S(height), bg=bg,
+                         highlightthickness=0, bd=0, cursor="hand2" if command else "")
+        self.text, self.command, self.kind = text, command, kind
+        self.font = font or (F.ui, 11, "bold")
+        self.radius = S(radius)
+        self.enabled, self.hover = True, False
+        self.bind("<Configure>", lambda e: self.draw())
+        self.bind("<Enter>", lambda e: self._hover(True))
+        self.bind("<Leave>", lambda e: self._hover(False))
+        self.bind("<ButtonRelease-1>", self._click)
+
+    def _hover(self, v):
+        self.hover = v
+        self.draw()
+
+    def _click(self, e):
+        if self.enabled and self.command and 0 <= e.x <= self.winfo_width() and 0 <= e.y <= self.winfo_height():
+            self.command()
+
+    def set(self, text=None, kind=None, enabled=None):
+        if text is not None:
+            self.text = text
+        if kind is not None:
+            self.kind = kind
+        if enabled is not None:
+            self.enabled = enabled
+            self.configure(cursor="hand2" if enabled and self.command else "")
+        self.draw()
+
+    def set_bg(self, color):
+        self.configure(bg=color)
+        self.draw()
+
+    def draw(self):
+        w, h = self.winfo_width(), self.winfo_height()
+        if w < 4 or h < 4:
+            return
+        fill, hover, fg = self.KINDS[self.kind]
+        bg = self["bg"]
+        if not self.enabled:
+            fill, fg = C.surface, C.hint
+        elif self.hover:
+            fill = hover
+        self.delete("all")
+        if fill:
+            self._img = rounded(w, h, self.radius, fill, bg)
+            self.create_image(0, 0, anchor="nw", image=self._img)
+        self.create_text(w / 2, h / 2, text=self.text, font=self.font, fill=fg)
+
+
+class RoundPanel(tk.Canvas):
+    """둥근 바탕 위에 입력칸·메모칸 같은 위젯 하나를 올려 둔다."""
+
+    def __init__(self, master, fill=C.surface, bg=C.bg, radius=12, pad=(12, 9), height=None, border=None):
+        super().__init__(master, bg=bg, highlightthickness=0, bd=0, height=S(height) if height else 10)
+        self.fill, self.radius, self.pad, self.border = fill, S(radius), (S(pad[0]), S(pad[1])), border
+        self.win = None
+        self.bind("<Configure>", lambda e: self.redraw())
+
+    def hold(self, widget):
+        self.win = self.create_window(*self.pad, anchor="nw", window=widget)
+        self.redraw()
+        return widget
+
+    def set_bg(self, color):
+        self.configure(bg=color)
+
+    def redraw(self):
+        w, h = self.winfo_width(), self.winfo_height()
+        if w < 4 or h < 4:
+            return
+        self.delete("bgimg")
+        self._img = rounded(w, h, self.radius, self.fill, self["bg"], self.border)
+        self.create_image(0, 0, anchor="nw", image=self._img, tags="bgimg")
+        self.tag_lower("bgimg")
+        if self.win:
+            self.coords(self.win, *self.pad)
+            self.itemconfigure(self.win, width=w - 2 * self.pad[0], height=h - 2 * self.pad[1])
+
+
+class HintEntry(tk.Entry):
+    """비어 있으면 흐린 안내 글씨가 보이는 입력칸."""
+
+    def __init__(self, master, hint, bg=C.surface, size=11, **kw):
+        super().__init__(master, bd=0, relief="flat", bg=bg, fg=C.text, insertbackground=C.text,
+                         highlightthickness=0, font=(F.ui, size), **kw)
+        self.hint, self.showing = hint, False
+        self.bind("<FocusIn>", self._in)
+        self.bind("<FocusOut>", self._out)
+        self._out()
+
+    def _in(self, _=None):
+        if self.showing:
+            self.delete(0, "end")
+            self.configure(fg=C.text)
+            self.showing = False
+
+    def _out(self, _=None):
+        if not self.get():
+            self.insert(0, self.hint)
+            self.configure(fg=C.hint)
+            self.showing = True
+
+    def value(self):
+        return "" if self.showing else self.get().strip()
+
+    def set_value(self, v):
+        self.delete(0, "end")
+        self.showing = False
+        self.configure(fg=C.text)
+        if v:
+            self.insert(0, v)
+        elif self.focus_get() is not self:
+            self._out()
+
+
+def icon_label(master, text, command, size=12, bg=C.bg):
+    lbl = tk.Label(master, text=text, font=(F.ui, size), bg=bg, fg=C.sub, cursor="hand2", padx=S(4))
+    lbl.bind("<Enter>", lambda e: lbl.configure(fg=C.text))
+    lbl.bind("<Leave>", lambda e: lbl.configure(fg=C.sub))
+    lbl.bind("<ButtonRelease-1>", lambda e: command())
+    return lbl
+
+
+def style_window_win(win, taskbar=False):
+    """윈도우: 제목줄 없는 창도 작업 표시줄에 보이게 하고, 윈도우 11 이면 모서리를 둥글게."""
+    if not WIN:
+        return
+    try:
+        hwnd = ctypes.windll.user32.GetParent(win.winfo_id())
+        if taskbar:
+            GWL_EXSTYLE, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW = -20, 0x00040000, 0x00000080
+            st = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, (st & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW)
+        pref = ctypes.c_int(2)  # DWMWCP_ROUND
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(pref), ctypes.sizeof(pref))
+        if taskbar:
+            win.withdraw()
+            win.after(10, win.deiconify)
+    except Exception:
+        pass
+
+
+# ───────────────────────── 메인 위젯
 
 class App:
+    W, H = 300, 610
+    MINI_W, MINI_H = 236, 86
+
     def __init__(self, root):
         self.root = root
         self.s = load_settings()
@@ -148,124 +410,147 @@ class App:
 
         self.phase = "idle"       # idle / work / break / break_done
         self.paused = False
-        self.end_at = 0.0         # 진행 중일 때 끝나는 시각(monotonic)
+        self.end_at = 0.0
         self.remain = self.s["work_min"] * 60.0
-        self.total = self.remain  # 이번 단계 전체 길이(초)
-        self.cur = None           # 이번 사이클 기록(dict, self.rows 안의 같은 객체)
+        self.total = self.remain
+        self.cur = None
+        self.cur_minutes = 0
         self.overlay = None
         self.compact = False
         self.memo_job = None
+        self._shown = {}          # 화면에 이미 그린 값(바뀐 것만 다시 그리기)
 
         timer_sound.prepare_async(["chime", "musicbox"], self.s["volume"])
 
         root.title("업무 타이머")
+        root.configure(bg=C.line)
+        root.overrideredirect(True)
         root.attributes("-topmost", True)
-        root.protocol("WM_DELETE_WINDOW", self.on_close)
-        root.configure(bg="white")
-        if self.s.get("geometry"):
-            try:
-                root.geometry(self.s["geometry"])
-            except tk.TclError:
-                pass
-        else:
-            sw = root.winfo_screenwidth()
-            root.geometry(f"330x640+{sw - 350}+20")
-        root.minsize(250, 120)
+        self.place_window(S(self.W), S(self.H))
 
-        style = ttk.Style()
-        style.configure(".", font=(FONT, 10))
-        style.configure("Big.TButton", font=(FONT, 11, "bold"), padding=5)
+        # 1px 테두리 안쪽에 흰 카드
+        self.card = tk.Frame(root, bg=C.bg)
+        self.card.pack(fill="both", expand=True, padx=1, pady=1)
+        self.build_full()
+        self.build_mini()
+        self.full.pack(fill="both", expand=True)
 
-        self.build()
         self.load_memo()
         self.refresh_stats()
+        root.after(20, lambda: style_window_win(root, taskbar=True))
         self.tick()
 
-    # ── 화면 구성
-    def build(self):
-        r = self.root
-        bg = "white"
-        self.layout = []  # (위젯, pack 옵션, 접힌 모드에서도 보이는지)
+    def place_window(self, w, h):
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        pos = self.s.get("pos")
+        if pos and len(pos) == 2:
+            x, y = int(pos[0]), int(pos[1])
+        else:
+            x, y = sw - w - S(24), S(24)
+        x = min(max(0, x), sw - S(80))
+        y = min(max(0, y), sh - S(60))
+        self.root.geometry(f"{w}x{h}+{x}+{y}")
 
-        def place(w, compact=False, **opts):
-            self.layout.append((w, opts, compact))
+    def draggable(self, *widgets):
+        for w in widgets:
+            w.bind("<ButtonPress-1>", self._drag_start, add="+")
+            w.bind("<B1-Motion>", self._drag_move, add="+")
 
-        top = tk.Frame(r, bg=bg)
-        self.date_lbl = tk.Label(top, font=(FONT, 11), bg=bg, fg="#333")
+    def _drag_start(self, e):
+        self._dx, self._dy = e.x_root - self.root.winfo_x(), e.y_root - self.root.winfo_y()
+
+    def _drag_move(self, e):
+        self.root.geometry(f"+{e.x_root - self._dx}+{e.y_root - self._dy}")
+
+    # ── 큰 화면
+    def build_full(self):
+        f = self.full = tk.Frame(self.card, bg=C.bg)
+        px = S(20)
+
+        head = tk.Frame(f, bg=C.bg)
+        head.pack(fill="x", padx=(px, S(12)), pady=(S(14), 0))
+        self.date_lbl = tk.Label(head, font=(F.ui, 10), bg=C.bg, fg=C.sub)
         self.date_lbl.pack(side="left")
-        self.clock_lbl = tk.Label(top, font=(FONT, 11, "bold"), bg=bg, fg="#333")
-        self.clock_lbl.pack(side="right")
-        place(top, fill="x", padx=12, pady=(10, 0))
+        icon_label(head, "✕", self.on_close, 11).pack(side="right")
+        icon_label(head, "—", self.toggle_compact, 10).pack(side="right")
 
-        self.status_lbl = tk.Label(r, font=(FONT, 11, "bold"), bg=bg)
-        place(self.status_lbl, pady=(8, 0))
+        self.chip = PillButton(f, "", kind="soft", height=26, width=120, font=(F.ui, 9, "bold"), radius=13)
+        self.chip.pack(pady=(S(18), 0))
 
-        self.time_lbl = tk.Label(r, font=(FONT, 34, "bold"), bg=bg, fg="#1f3b57")
-        place(self.time_lbl, compact=True, pady=(0, 2))
+        self.time_lbl = tk.Label(f, font=(F.num, 46), bg=C.bg, fg=C.text)
+        self.time_lbl.pack(pady=(S(2), 0))
 
-        self.bar = tk.Canvas(r, height=40, bg=bg, highlightthickness=0)
-        self.bar.bind("<Configure>", lambda e: self.draw_bar())
-        place(self.bar, compact=True, fill="x", padx=12)
+        self.bar = tk.Canvas(f, height=S(38), bg=C.bg, highlightthickness=0)
+        self.bar.pack(fill="x", padx=px)
+        self.bar.bind("<Configure>", lambda e: self.draw_bar(self.bar, force=True))
 
-        self.expand_btn = ttk.Button(r, text="▢ 펼치기", command=self.toggle_compact)
-        self.layout.append((self.expand_btn, {"pady": (4, 6)}, "only"))
+        plan = RoundPanel(f, height=40, pad=(14, 10))
+        plan.pack(fill="x", padx=px, pady=(S(14), 0))
+        self.plan = plan.hold(HintEntry(plan, "이번 항해에서 할 일 (선택)"))
 
-        pf = tk.Frame(r, bg=bg)
-        tk.Label(pf, text="이번 항해에서 할 일", font=(FONT, 9), bg=bg, fg="#666").pack(anchor="w")
-        self.plan_var = tk.StringVar()
-        ttk.Entry(pf, textvariable=self.plan_var, font=(FONT, 10)).pack(fill="x")
-        place(pf, fill="x", padx=12, pady=(10, 0))
+        btns = tk.Frame(f, bg=C.bg)
+        btns.pack(fill="x", padx=px, pady=(S(10), 0))
+        self.btn_main = PillButton(btns, "시작", self.on_main_button, "primary", height=42)
+        self.btn_main.pack(side="left", fill="x", expand=True)
+        self.btn_reset = PillButton(btns, "↺", self.reset, "soft", width=42, height=42,
+                                    font=(F.ui, 14))
+        self.btn_reset.pack(side="left", padx=(S(8), 0))
 
-        bf = tk.Frame(r, bg=bg)
-        self.btn_main = ttk.Button(bf, text="▶ 시작", style="Big.TButton", command=self.on_main_button)
-        self.btn_reset = ttk.Button(bf, text="↺ 리셋", command=self.reset)
-        self.btn_fold = ttk.Button(bf, text="▁ 접기", command=self.toggle_compact)
-        self.btn_main.pack(side="left", expand=True, fill="x", padx=(0, 3))
-        self.btn_reset.pack(side="left", padx=3)
-        self.btn_fold.pack(side="left", padx=(3, 0))
-        place(bf, fill="x", padx=12, pady=8)
+        self.stats_lbl = tk.Label(f, font=(F.ui, 9), bg=C.bg, fg=C.sub)
+        self.stats_lbl.pack(pady=(S(14), 0))
 
-        self.stats_lbl = tk.Label(r, font=(FONT, 10), bg=bg, fg="#333")
-        place(self.stats_lbl)
+        tk.Frame(f, bg=C.line, height=1).pack(fill="x", padx=px, pady=(S(14), S(12)))
 
-        mf = tk.Frame(r, bg=bg)
-        tk.Label(mf, text="메모 (자동 저장)", font=(FONT, 9), bg=bg, fg="#666").pack(anchor="w")
-        self.memo = tk.Text(mf, height=8, font=(FONT, 10), wrap="word", relief="solid", bd=1,
-                            undo=True)
-        self.memo.pack(fill="both", expand=True)
+        mh = tk.Frame(f, bg=C.bg)
+        mh.pack(fill="x", padx=px)
+        tk.Label(mh, text="메모", font=(F.ui, 9, "bold"), bg=C.bg, fg=C.sub).pack(side="left")
+        self.saved_lbl = tk.Label(mh, text="", font=(F.ui, 8), bg=C.bg, fg=C.hint)
+        self.saved_lbl.pack(side="right")
+
+        memo = RoundPanel(f, pad=(12, 10))
+        memo.pack(fill="both", expand=True, padx=px, pady=(S(6), 0))
+        self.memo = memo.hold(tk.Text(memo, font=(F.ui, 10), wrap="word", bd=0, relief="flat",
+                                      bg=C.surface, fg=C.text, insertbackground=C.text,
+                                      highlightthickness=0, undo=True, spacing1=S(2), spacing3=S(2)))
         self.memo.bind("<<Modified>>", self.on_memo_change)
-        place(mf, fill="both", expand=True, padx=12, pady=(8, 0))
 
-        lf = tk.Frame(r, bg=bg)
-        ttk.Button(lf, text="📒 기록 보기", command=self.open_log).pack(side="left", expand=True, fill="x",
-                                                                     padx=(0, 3))
-        ttk.Button(lf, text="⚙ 설정", command=self.open_settings).pack(side="left", expand=True, fill="x",
-                                                                    padx=(3, 0))
-        place(lf, fill="x", padx=12, pady=10)
+        foot = tk.Frame(f, bg=C.bg)
+        foot.pack(fill="x", padx=px, pady=(S(10), S(12)))
+        icon_label(foot, "기록 보기", self.open_log, 9).pack(side="left")
+        icon_label(foot, "설정", self.open_settings, 9).pack(side="right")
 
-        self.apply_layout()
+        self.draggable(f, head, self.date_lbl, self.time_lbl, self.bar, self.stats_lbl, btns, mh, foot)
 
-    def apply_layout(self):
-        for w, _, _ in self.layout:
-            w.pack_forget()
-        for w, opts, compact in self.layout:
-            show = (compact in (True, "only")) if self.compact else (compact != "only")
-            if show:
-                w.pack(**opts)
+    # ── 접힌 화면
+    def build_mini(self):
+        m = self.mini = tk.Frame(self.card, bg=C.bg)
+        row = tk.Frame(m, bg=C.bg)
+        row.pack(fill="x", padx=(S(16), S(10)), pady=(S(10), 0))
+        self.mini_state = tk.Label(row, font=(F.ui, 12), bg=C.bg, fg=C.accent)
+        self.mini_state.pack(side="left")
+        self.mini_time = tk.Label(row, font=(F.num, 22), bg=C.bg, fg=C.text)
+        self.mini_time.pack(side="left", padx=(S(6), 0))
+        icon_label(row, "⤢", self.toggle_compact, 12).pack(side="right")
+        self.mini_bar = tk.Canvas(m, height=S(22), bg=C.bg, highlightthickness=0)
+        self.mini_bar.pack(fill="x", padx=S(16), pady=(S(2), S(8)))
+        self.mini_bar.bind("<Configure>", lambda e: self.draw_bar(self.mini_bar, force=True))
+        self.draggable(m, row, self.mini_state, self.mini_time, self.mini_bar)
 
     def toggle_compact(self):
-        if not self.compact:
-            self.full_geometry = self.root.geometry()
         self.compact = not self.compact
-        self.apply_layout()
         x, y = self.root.winfo_x(), self.root.winfo_y()
         if self.compact:
-            self.time_lbl.configure(font=(FONT, 22, "bold"))
-            self.root.geometry(f"240x150+{x}+{y}")
+            self.full.pack_forget()
+            self.mini.pack(fill="both", expand=True)
+            w, h = S(self.MINI_W), S(self.MINI_H)
+            x += S(self.W) - w  # 오른쪽 끝을 맞춰서 접는다
         else:
-            self.time_lbl.configure(font=(FONT, 34, "bold"))
-            size = getattr(self, "full_geometry", "330x640").split("+")[0]
-            self.root.geometry(f"{size}+{x}+{y}")
+            self.mini.pack_forget()
+            self.full.pack(fill="both", expand=True)
+            w, h = S(self.W), S(self.H)
+            x -= S(self.W) - S(self.MINI_W)
+        self.root.geometry(f"{w}x{h}+{max(0, x)}+{y}")
+        self._shown.clear()
 
     # ── 타이머
     def remaining(self):
@@ -273,10 +558,14 @@ class App:
             return max(0.0, self.end_at - time.monotonic())
         return self.remain
 
+    def show(self, key, widget, **kw):
+        """값이 바뀐 경우에만 위젯을 고친다(가볍게)."""
+        if self._shown.get(key) != kw:
+            self._shown[key] = kw
+            widget.configure(**kw)
+
     def tick(self):
         now = dt.datetime.now()
-        self.date_lbl.configure(text=f"{now:%Y.%m.%d} ({WEEKDAYS[now.weekday()]})")
-        self.clock_lbl.configure(text=f"{now:%H:%M:%S}")
         if getattr(self, "_today", None) != now.date():
             self._today = now.date()
             self.refresh_stats()
@@ -287,78 +576,92 @@ class App:
             self.finish_break()
 
         rem = self.remaining()
-        self.time_lbl.configure(text=fmt_clock(rem))
+        t = fmt_clock(rem)
+        self.show("date", self.date_lbl,
+                  text=f"{now.month}월 {now.day}일 {WEEKDAYS[now.weekday()]}요일  ·  {now:%H:%M}")
+        if self.compact:
+            self.show("mini_time", self.mini_time, text=t)
+        else:
+            self.show("time", self.time_lbl, text=t)
         self.update_status()
-        self.draw_bar()
+        self.draw_bar(self.mini_bar if self.compact else self.bar)
         if self.overlay:
             self.overlay.update_time(rem)
         if self.rows_dirty:
             self.flush_rows()
-        self.root.after(200, self.tick)
+        self.root.after(250, self.tick)
 
     def update_status(self):
         if self.phase == "idle":
-            text, color = "대기 중 · 출항 준비", "#666"
+            text, kind, icon, col = "출항 준비", "soft", "⛵", C.sub
+        elif self.phase == "work" and self.paused:
+            text, kind, icon, col = "잠시 멈춤", "soft", "❙❙", C.warn
         elif self.phase == "work":
-            text, color = ("⏸ 일시정지", "#b35900") if self.paused else ("⛵ 항해 중 (집중)", "#0969da")
+            text, kind, icon, col = "⛵  항해 중", "soft", "⛵", C.accent
         elif self.phase == "break":
-            text, color = "⚓ 섬에서 휴식 중", "#1a7f37"
+            text, kind, icon, col = "⚓  섬에서 휴식", "soft", "⚓", C.rest
         else:
-            text, color = "🌅 휴식 끝 · 출항 대기", "#b35900"
-        self.status_lbl.configure(text=text, fg=color)
-        self.root.title(f"{fmt_clock(self.remaining())} · {text.split(' ', 1)[-1]}"
-                        if self.phase != "idle" else "업무 타이머")
+            text, kind, icon, col = "출항 대기", "soft", "⛵", C.warn
+        key = (text, col)
+        if self._shown.get("chip") != key:
+            self._shown["chip"] = key
+            self.chip.KINDS = dict(PillButton.KINDS)
+            soft = {C.accent: C.accent_soft, C.rest: C.rest_soft, C.warn: C.warn_soft}.get(col, C.surface)
+            self.chip.KINDS["soft"] = (soft, soft, col)
+            self.chip.set(text=text)
+            self.mini_state.configure(text=icon, fg=col)
+            self.root.title(f"{fmt_clock(self.remaining())} {text}" if self.phase != "idle" else "업무 타이머")
 
-    def draw_bar(self):
-        c = self.bar
-        c.delete("all")
-        w, h = c.winfo_width(), int(c["height"])
-        if w < 40:
+    def draw_bar(self, c, force=False):
+        w, h = c.winfo_width(), c.winfo_height()
+        if w < 60:
             return
         resting = self.phase in ("break", "break_done")
         frac = 0.0 if not self.total else 1 - self.remaining() / self.total
         frac = max(0.0, min(1.0, frac))
-        x0, x1 = 4, w - 34  # 오른쪽 끝에 섬 자리
-        y0, y1 = 9, h - 9
-        r = (y1 - y0) / 2
-        track, fill = (REST_TRACK, REST_FILL) if resting else (SEA, WAKE)
-
-        def pill(xa, xb, color):
-            if xb - xa < 2 * r:
-                xb = xa + 2 * r
-            c.create_oval(xa, y0, xa + 2 * r, y1, fill=color, outline=color)
-            c.create_oval(xb - 2 * r, y0, xb, y1, fill=color, outline=color)
-            c.create_rectangle(xa + r, y0, xb - r, y1, fill=color, outline=color)
-
-        pill(x0, x1, track)
-        bx = x0 + (x1 - x0) * frac
-        if frac > 0:
-            pill(x0, max(bx, x0 + 2 * r), fill)
-        c.create_text(w - 16, h / 2, text="🏝", font=(EMOJI_FONT, 17))
-        if resting:
-            c.create_text(x1 - 12, h / 2, text="⚓", font=(EMOJI_FONT, 15))
-        else:
-            c.create_text(min(max(bx, x0 + 12), x1 - 12), h / 2 - 2, text="⛵", font=(EMOJI_FONT, 17))
+        mini = c is self.mini_bar
+        isl = S(16) if mini else S(24)
+        x1 = w - isl - S(6)
+        bx = round(frac * x1)
+        key = (w, bx, resting, self.phase)
+        if not force and getattr(c, "_key", None) == key:
+            return
+        c._key = key
+        c.delete("all")
+        th = S(4) if mini else S(6)
+        ty = h - th - (S(3) if mini else S(6))
+        track, fill = (C.rest_track, C.rest) if resting else (C.sea, C.accent)
+        c._imgs = [rounded(x1, th, th, track, C.bg)]
+        c.create_image(0, ty, anchor="nw", image=c._imgs[0])
+        if bx > th:
+            c._imgs.append(rounded(bx, th, th, fill, C.bg))
+            c.create_image(0, ty, anchor="nw", image=c._imgs[1])
+        ey = ty + th / 2
+        c.create_text(w - isl / 2, ey - S(2), text="🏝", font=(F.ui, 10 if mini else 14), fill=C.island)
+        if not mini:
+            if resting:
+                c.create_text(x1 - S(8), ty - S(11), text="⚓", font=(F.ui, 12), fill=C.rest)
+            else:
+                c.create_text(min(max(bx, S(9)), x1 - S(9)), ty - S(12), text="⛵", font=(F.ui, 13),
+                              fill=C.accent)
 
     def on_main_button(self):
-        if self.phase == "idle":
+        if self.phase in ("idle", "break_done"):
             self.start_work()
         elif self.phase == "work":
             self.toggle_pause()
-        elif self.phase == "break_done":
-            self.start_work()
 
     def start_work(self):
         mins = float(self.s["work_min"])
         now = dt.datetime.now()
         self.cur = {"날짜": now.strftime("%Y-%m-%d"), "시작": now.strftime("%H:%M"), "끝": "",
-                    "집중(분)": "", "할 일": self.plan_var.get().strip(), "한 일": "", "휴식": ""}
+                    "집중(분)": "", "할 일": self.plan.value(), "한 일": "", "휴식": ""}
         self.cur_minutes = mins
         self.phase, self.paused = "work", False
         self.total = mins * 60.0
         self.end_at = time.monotonic() + self.total
-        self.btn_main.configure(text="⏸ 일시정지", state="normal")
-        self.btn_reset.configure(state="normal")
+        self.btn_main.set(text="일시정지", kind="soft", enabled=True)
+        self.btn_reset.set(enabled=True)
 
     def toggle_pause(self):
         if self.phase != "work":
@@ -366,13 +669,15 @@ class App:
         if self.paused:
             self.end_at = time.monotonic() + self.remain
             self.paused = False
-            self.btn_main.configure(text="⏸ 일시정지")
+            self.btn_main.set(text="일시정지", kind="soft")
         else:
             self.remain = self.remaining()
             self.paused = True
-            self.btn_main.configure(text="▶ 계속")
+            self.btn_main.set(text="계속", kind="primary")
 
     def reset(self):
+        if self.phase in ("break", "break_done"):
+            return
         if self.phase == "work":
             done = self.total - self.remaining()
             if done > 60 and not messagebox.askyesno(
@@ -381,12 +686,13 @@ class App:
                 return
         self.phase, self.paused, self.cur = "idle", False, None
         self.total = self.remain = self.s["work_min"] * 60.0
-        self.btn_main.configure(text="▶ 시작", state="normal")
+        self.btn_main.set(text="시작", kind="primary", enabled=True)
 
     def finish_work(self):
         now = dt.datetime.now()
-        self.cur["할 일"] = self.plan_var.get().strip() or self.cur["할 일"]
-        self.cur.update({"끝": now.strftime("%H:%M"), "집중(분)": str(round(self.cur_minutes)), "휴식": "휴식 중"})
+        self.cur["할 일"] = self.plan.value() or self.cur["할 일"]
+        self.cur.update({"끝": now.strftime("%H:%M"), "집중(분)": str(round(self.cur_minutes)),
+                         "휴식": "휴식 중"})
         self.rows.append(self.cur)
         self.rows_dirty = True
         self.refresh_stats()
@@ -394,8 +700,8 @@ class App:
         self.phase = "break"
         self.total = self.s["break_min"] * 60.0
         self.end_at = time.monotonic() + self.total
-        self.btn_main.configure(text="⚓ 휴식 중", state="disabled")
-        self.btn_reset.configure(state="disabled")
+        self.btn_main.set(text="휴식 중", kind="soft", enabled=False)
+        self.btn_reset.set(enabled=False)
         timer_sound.play(self.s["work_end_sound"], self.s["volume"])
         self.overlay = BreakOverlay(self)
 
@@ -406,29 +712,28 @@ class App:
             self.cur["휴식"] = "완료"
             self.rows_dirty = True
         timer_sound.play(self.s["break_end_sound"], self.s["volume"])
-        self.btn_main.configure(text="⛵ 다시 집중 시작", state="normal")
+        self.btn_main.set(text="다시 집중 시작", kind="primary", enabled=True)
         if self.overlay:
             self.overlay.show_done()
 
     def skip_break(self):
-        """휴식을 끝까지 하지 않고 바로 다음 항해로 (기록에 남는다)."""
         left = max(1, round(self.remaining() / 60))
         if self.cur:
             self.cur["휴식"] = f"건너뜀 ({left}분 남기고)"
             self.rows_dirty = True
         self.close_overlay()
-        self.plan_var.set("")
+        self.plan.set_value("")
         self.start_work()
 
     def resume_from_overlay(self, next_plan):
         self.close_overlay()
-        self.plan_var.set(next_plan)
+        self.plan.set_value(next_plan)
         self.start_work()
 
     def close_overlay(self):
         if self.overlay:
             if self.cur:
-                self.cur["한 일"] = self.overlay.result_var.get().strip()
+                self.cur["한 일"] = self.overlay.result.value()
                 self.rows_dirty = True
             self.overlay.destroy()
             self.overlay = None
@@ -448,10 +753,10 @@ class App:
 
     def refresh_stats(self):
         n, mins, skipped = self.today_stats()
-        text = f"오늘 도착한 섬 🏝×{n}  ·  집중 {fmt_minutes(mins)}"
+        text = f"오늘 도착한 섬  {n}개   ·   집중 {fmt_minutes(mins)}"
         if skipped:
-            text += f"\n휴식 건너뜀 {skipped}회"
-        self.stats_lbl.configure(text=text, fg="#b35900" if skipped else "#333")
+            text += f"   ·   휴식 건너뜀 {skipped}"
+        self.stats_lbl.configure(text=text, fg=C.warn if skipped else C.sub)
 
     # ── 메모
     def load_memo(self):
@@ -467,6 +772,7 @@ class App:
         if not self.memo.edit_modified():
             return
         self.memo.edit_modified(False)
+        self.saved_lbl.configure(text="")
         if self.memo_job:
             self.root.after_cancel(self.memo_job)
         self.memo_job = self.root.after(800, self.save_memo)
@@ -476,8 +782,9 @@ class App:
         try:
             with open(MEMO_FILE, "w", encoding="utf-8") as f:
                 f.write(self.memo.get("1.0", "end-1c"))
+            self.saved_lbl.configure(text="저장됨")
         except OSError:
-            pass
+            self.saved_lbl.configure(text="저장 실패")
 
     # ── 창
     def open_log(self):
@@ -492,12 +799,12 @@ class App:
             return
         if self.overlay:
             self.close_overlay()
-        if self.phase == "work":
-            self.cur = None  # 다 못 채운 사이클은 기록하지 않음
         self.save_memo()
         self.flush_rows()
-        if not self.compact:
-            self.s["geometry"] = self.root.geometry()
+        x, y = self.root.winfo_x(), self.root.winfo_y()
+        if self.compact:
+            x -= S(self.W) - S(self.MINI_W)
+        self.s["pos"] = [x, y]
         save_settings(self.s)
         timer_sound.stop()
         self.root.destroy()
@@ -506,110 +813,123 @@ class App:
 # ───────────────────────── 휴식 화면 (전체 화면)
 
 class BreakOverlay:
-    PERIOD = 6.0  # 숨 한 번(밝아졌다 어두워지는) 길이, 초
+    PERIOD = 6.0  # 숨 한 번 길이(초)
 
     def __init__(self, app):
         self.app = app
         self.mode = "break"
         self.t0 = time.monotonic()
+        self.asking = False
         w = self.win = tk.Toplevel(app.root)
         w.title("쉬는 시간")
         w.geometry(f"{w.winfo_screenwidth()}x{w.winfo_screenheight()}+0+0")
         w.attributes("-fullscreen", True)
         w.attributes("-topmost", True)
         w.protocol("WM_DELETE_WINDOW", lambda: None)  # 닫기·Alt+F4 무시
-        self.colored = []
+        a, b = C.breath["break"]
+        self.mid = mix(a, b, 0.5)
+        self.plain, self.canvases = [w], []
 
-        def lbl(parent, **kw):
-            x = tk.Label(parent, **kw)
-            self.colored.append(x)
+        def L(parent, **kw):
+            x = tk.Label(parent, bg=self.mid, **kw)
+            self.plain.append(x)
             return x
 
-        box = tk.Frame(w)
-        box.place(relx=0.5, rely=0.45, anchor="center")
-        self.colored += [w, box]
+        def Fr(parent):
+            x = tk.Frame(parent, bg=self.mid)
+            self.plain.append(x)
+            return x
 
-        self.title = lbl(box, font=(FONT, 30, "bold"), fg="#24452f")
-        self.title.pack(pady=(0, 6))
-        self.sub = lbl(box, font=(FONT, 15), fg="#3d5c47")
-        self.sub.pack()
-        self.time = lbl(box, font=(FONT, 72, "bold"), fg="#24452f")
-        self.time.pack(pady=10)
-        self.tip = lbl(box, text="☕ " + random.choice(TIPS), font=(FONT, 15), fg="#3d5c47")
-        self.tip.pack(pady=(0, 24))
+        box = Fr(w)
+        box.place(relx=0.5, rely=0.46, anchor="center")
+        self.title = L(box, font=(F.ui, 24, "bold"), fg=C.rest_text)
+        self.title.pack()
+        self.sub = L(box, font=(F.ui, 12), fg=C.rest_text)
+        self.sub.pack(pady=(S(6), 0))
+        self.time = L(box, font=(F.num, 96), fg=C.rest_text)
+        self.time.pack(pady=(S(8), 0))
+        self.tip = L(box, text=random.choice(TIPS), font=(F.ui, 13), fg=C.rest_text)
+        self.tip.pack(pady=(0, S(34)))
 
-        self.form = tk.Frame(box)
-        self.colored.append(self.form)
-        self.form.pack(fill="x")
+        form = Fr(box)
+        form.pack(fill="x")
         plan = app.cur["할 일"] if app.cur else ""
-        self.plan_lbl = lbl(self.form, text=f"계획했던 일: {plan}" if plan else "",
-                            font=(FONT, 12), fg="#555")
-        self.plan_lbl.pack(anchor="w")
-        lbl(self.form, text="이번 항해에서 한 일 (한 줄, 비워도 돼요)", font=(FONT, 12), fg="#333"
-            ).pack(anchor="w", pady=(4, 2))
-        self.result_var = tk.StringVar()
-        self.result_entry = tk.Entry(self.form, textvariable=self.result_var, font=(FONT, 14), width=46,
-                                     relief="solid", bd=1)
-        self.result_entry.pack(fill="x", ipady=4)
+        if plan:
+            L(form, text=f"계획했던 일  ·  {plan}", font=(F.ui, 10), fg=C.rest_text).pack(anchor="w")
+        L(form, text="이번 항해에서 한 일", font=(F.ui, 10, "bold"), fg=C.rest_text).pack(anchor="w",
+                                                                                pady=(S(6), S(6)))
+        p1 = RoundPanel(form, fill="#ffffff", bg=self.mid, radius=14, pad=(16, 12), height=48)
+        p1.configure(width=S(480))
+        p1.pack(fill="x")
+        self.canvases.append(p1)
+        self.result = p1.hold(HintEntry(p1, "한 줄로 적어 두세요 (비워도 돼요)", bg="#ffffff", size=12))
 
-        self.next_frame = tk.Frame(box)
-        self.colored.append(self.next_frame)
-        lbl(self.next_frame, text="다음 항해에서 할 일 (비워도 돼요)", font=(FONT, 12), fg="#333"
-            ).pack(anchor="w", pady=(16, 2))
-        self.next_var = tk.StringVar()
-        self.next_entry = tk.Entry(self.next_frame, textvariable=self.next_var, font=(FONT, 14),
-                                   relief="solid", bd=1)
-        self.next_entry.pack(fill="x", ipady=4)
-        self.next_entry.bind("<Return>", lambda e: self.resume())
-        self.go_btn = tk.Button(self.next_frame, text="⛵  다시 집중 시작", font=(FONT, 18, "bold"),
-                                bg="#2f6f9f", fg="white", activebackground="#24577e",
-                                activeforeground="white", relief="flat", padx=30, pady=10,
-                                command=self.resume)
-        self.go_btn.pack(pady=(18, 0))
+        self.next_box = Fr(box)
+        L(self.next_box, text="다음 항해에서 할 일", font=(F.ui, 10, "bold"), fg=C.done_text).pack(
+            anchor="w", pady=(S(18), S(6)))
+        p2 = RoundPanel(self.next_box, fill="#ffffff", bg=self.mid, radius=14, pad=(16, 12), height=48)
+        p2.pack(fill="x")
+        self.canvases.append(p2)
+        self.next = p2.hold(HintEntry(p2, "비워도 돼요", bg="#ffffff", size=12))
+        self.next.bind("<Return>", lambda e: self.resume())
+        self.go = PillButton(self.next_box, "⛵  다시 집중 시작", self.resume, "primary", height=52,
+                             bg=self.mid, font=(F.ui, 13, "bold"), radius=16)
+        self.go.pack(fill="x", pady=(S(22), 0))
+        self.canvases.append(self.go)
 
-        self.skip_btn = tk.Button(w, text="급하게 계속하기…", font=(FONT, 10), fg="#777", relief="flat",
-                                  bd=0, command=self.ask_skip)
-        self.skip_btn.place(relx=0.5, rely=0.94, anchor="center")
+        self.skip = tk.Label(w, text="급하게 계속하기", font=(F.ui, 9), bg=self.mid, fg=C.sub,
+                             cursor="hand2")
+        self.skip.bind("<ButtonRelease-1>", lambda e: self.ask_skip())
+        self.skip.place(relx=0.5, rely=0.95, anchor="center")
+        self.plain.append(self.skip)
 
         n, mins, _ = app.today_stats()
-        self.set_texts("⚓ 섬에 도착했어요", f"오늘 {n}번째 항해 완료 · 집중 {fmt_minutes(mins)}")
+        self.title.configure(text="⚓  섬에 도착했어요")
+        self.sub.configure(text=f"오늘 {n}번째 항해 완료  ·  집중 {fmt_minutes(mins)}")
         self.breathe()
         self.keep_on_top()
-        w.after(300, lambda: (w.focus_force(), self.result_entry.focus_set()))
-
-    def set_texts(self, title, sub):
-        self.title.configure(text=title)
-        self.sub.configure(text=sub)
+        w.after(300, lambda: (w.focus_force(), self.result.focus_set()))
 
     def update_time(self, rem):
         if self.mode == "break":
-            self.time.configure(text=fmt_clock(rem))
+            t = fmt_clock(rem)
+            if self.time.cget("text") != t:
+                self.time.configure(text=t)
 
     def show_done(self):
         self.mode = "break_done"
-        self.set_texts("🌅 다시 출항할 시간이에요", "충분히 쉬었다면 천천히 시작해요")
-        self.time.configure(text="")
-        self.tip.configure(text="")
-        self.skip_btn.place_forget()
-        self.next_frame.pack(fill="x")
-        self.next_entry.focus_set()
+        a, b = C.breath["break_done"]
+        self.mid = mix(a, b, 0.5)
+        for c in self.canvases:
+            c.set_bg(self.mid)
+        for x in self.plain:
+            if isinstance(x, tk.Label) and x is not self.skip:
+                x.configure(fg=C.done_text)
+        self.title.configure(text="다시 출항할 시간이에요")
+        self.sub.configure(text="충분히 쉬었다면 천천히 시작해요")
+        self.time.pack_forget()
+        self.tip.pack_forget()
+        self.sub.pack_configure(pady=(S(6), S(36)))
+        self.skip.place_forget()
+        self.next_box.pack(fill="x")
+        self.next.focus_set()
 
     def breathe(self):
         if not self.win.winfo_exists():
             return
-        a, b = BREATH[self.mode]
+        a, b = C.breath[self.mode]
         t = (1 - math.cos(2 * math.pi * (time.monotonic() - self.t0) / self.PERIOD)) / 2
         color = mix(a, b, t)
-        for x in self.colored:
+        for x in self.plain:
             x.configure(bg=color)
-        self.skip_btn.configure(bg=color, activebackground=color)
-        self.win.after(60, self.breathe)
+        for c in self.canvases:
+            c.configure(bg=color)
+        self.win.after(80, self.breathe)
 
     def keep_on_top(self):
-        """다른 창을 띄워도 휴식 화면이 다시 맨 위로 온다."""
         if not self.win.winfo_exists():
             return
-        if not getattr(self, "asking", False):
+        if not self.asking:
             self.win.attributes("-topmost", True)
             self.win.lift()
         self.win.after(1000, self.keep_on_top)
@@ -628,11 +948,54 @@ class BreakOverlay:
 
     def resume(self):
         if self.mode == "break_done":
-            self.app.resume_from_overlay(self.next_var.get().strip())
+            self.app.resume_from_overlay(self.next.value())
 
     def destroy(self):
         if self.win.winfo_exists():
             self.win.destroy()
+
+
+# ───────────────────────── 작은 창 공통
+
+def styled_toplevel(app, title, w, h=None):
+    win = tk.Toplevel(app.root)
+    win.title(title)
+    win.configure(bg=C.bg)
+    win.attributes("-topmost", True)
+    x = max(0, app.root.winfo_x() - S(w) - S(12))
+    size = f"{S(w)}x{S(h)}" if h else ""
+    win.geometry(f"{size}+{x}+{app.root.winfo_y()}")
+    win.after(20, lambda: style_window_win(win))
+    return win
+
+
+def setup_ttk(root):
+    st = ttk.Style(root)
+    try:
+        st.theme_use("clam")
+    except tk.TclError:
+        pass
+    st.configure(".", font=(F.ui, 10), background=C.bg)
+    st.configure("TFrame", background=C.bg)
+    st.configure("TLabel", background=C.bg, foreground=C.text, font=(F.ui, 10))
+    st.configure("Sub.TLabel", background=C.bg, foreground=C.sub, font=(F.ui, 9))
+    st.configure("Head.TLabel", background=C.bg, foreground=C.text, font=(F.ui, 13, "bold"))
+    st.configure("TCombobox", fieldbackground=C.surface, background=C.surface, bordercolor=C.line,
+                 lightcolor=C.surface, darkcolor=C.surface, arrowcolor=C.sub, padding=S(5))
+    st.map("TCombobox", fieldbackground=[("readonly", C.surface)])
+    st.configure("TSpinbox", fieldbackground=C.surface, background=C.surface, bordercolor=C.line,
+                 lightcolor=C.surface, darkcolor=C.surface, arrowcolor=C.sub, padding=S(5))
+    st.configure("Horizontal.TScale", background=C.accent, troughcolor=C.sea, bordercolor=C.bg,
+                 lightcolor=C.accent, darkcolor=C.accent)
+    st.configure("Treeview", background=C.bg, fieldbackground=C.bg, foreground=C.text, borderwidth=0,
+                 bordercolor=C.bg, lightcolor=C.bg, darkcolor=C.bg,
+                 rowheight=S(32), font=(F.ui, 10))
+    st.configure("Treeview.Heading", background=C.bg, foreground=C.sub, borderwidth=0, relief="flat",
+                 font=(F.ui, 9, "bold"), padding=(S(4), S(8)))
+    st.map("Treeview", background=[("selected", C.accent_soft)], foreground=[("selected", C.text)])
+    st.map("Treeview.Heading", background=[("active", C.bg)])
+    st.configure("Vertical.TScrollbar", background=C.surface, troughcolor=C.bg, bordercolor=C.bg,
+                 arrowcolor=C.sub, lightcolor=C.surface, darkcolor=C.surface)
 
 
 # ───────────────────────── 설정
@@ -641,51 +1004,58 @@ class SettingsWindow:
     def __init__(self, app):
         self.app = app
         s = app.s
-        w = self.win = tk.Toplevel(app.root)
-        w.title("설정")
-        w.attributes("-topmost", True)
+        w = self.win = styled_toplevel(app, "설정", 380)
         w.resizable(False, False)
-        w.transient(app.root)
         w.grab_set()
-        f = ttk.Frame(w, padding=16)
-        f.pack(fill="both")
+        f = ttk.Frame(w, padding=(S(24), S(20)))
+        f.pack(fill="both", expand=True)
+        f.columnconfigure(1, weight=1)
 
-        self.work = tk.IntVar(value=s["work_min"])
-        self.brk = tk.IntVar(value=s["break_min"])
+        ttk.Label(f, text="설정", style="Head.TLabel").grid(row=0, column=0, columnspan=3, sticky="w",
+                                                         pady=(0, S(14)))
+        self.work = tk.StringVar(value=str(s["work_min"]))
+        self.brk = tk.StringVar(value=str(s["break_min"]))
         self.vol = tk.IntVar(value=s["volume"])
         self.sounds = {"work_end_sound": s["work_end_sound"], "break_end_sound": s["break_end_sound"]}
 
-        ttk.Label(f, text="업무 시간(분)").grid(row=0, column=0, sticky="w", pady=4)
-        ttk.Spinbox(f, from_=1, to=180, textvariable=self.work, width=6).grid(row=0, column=1, sticky="w")
-        ttk.Label(f, text="휴식 시간(분)").grid(row=1, column=0, sticky="w", pady=4)
-        ttk.Spinbox(f, from_=1, to=60, textvariable=self.brk, width=6).grid(row=1, column=1, sticky="w")
+        def row_label(r, text):
+            ttk.Label(f, text=text).grid(row=r, column=0, sticky="w", pady=S(7), padx=(0, S(14)))
+
+        row_label(1, "업무 시간")
+        ttk.Spinbox(f, from_=1, to=180, textvariable=self.work, width=6).grid(row=1, column=1, sticky="w")
+        row_label(2, "휴식 시간")
+        ttk.Spinbox(f, from_=1, to=60, textvariable=self.brk, width=6).grid(row=2, column=1, sticky="w")
+        ttk.Label(f, text="분 단위", style="Sub.TLabel").grid(row=1, column=2, sticky="e")
 
         self.combos = {}
         for i, (key, label) in enumerate([("work_end_sound", "업무 끝 소리"),
                                           ("break_end_sound", "휴식 끝 소리")]):
-            row = 2 + i
-            ttk.Label(f, text=label).grid(row=row, column=0, sticky="w", pady=4)
-            cb = ttk.Combobox(f, state="readonly", width=18)
-            cb.grid(row=row, column=1, sticky="w")
+            r = 3 + i
+            row_label(r, label)
+            cb = ttk.Combobox(f, state="readonly", width=16)
+            cb.grid(row=r, column=1, sticky="we")
             cb.bind("<<ComboboxSelected>>", lambda e, k=key: self.on_pick(k))
             self.combos[key] = cb
             self.fill_combo(key)
-            ttk.Button(f, text="▶ 들어보기", command=lambda k=key: self.preview(k)).grid(
-                row=row, column=2, padx=(6, 0))
+            PillButton(f, "▶", lambda k=key: self.preview(k), "soft", width=34, height=30,
+                       font=(F.ui, 9), radius=10).grid(row=r, column=2, sticky="e", padx=(S(8), 0))
 
-        ttk.Label(f, text="소리 크기").grid(row=4, column=0, sticky="w", pady=4)
+        row_label(5, "소리 크기")
         vf = ttk.Frame(f)
-        vf.grid(row=4, column=1, columnspan=2, sticky="w")
-        ttk.Scale(vf, from_=1, to=10, variable=self.vol, length=150,
-                  command=lambda v: self.vol.set(round(float(v)))).pack(side="left")
-        ttk.Label(vf, textvariable=self.vol, width=3).pack(side="left", padx=4)
-        ttk.Label(f, text="7 = 처음 들어보신 크기. 소리는 늘 아주 작게 시작해 천천히 커집니다.",
-                  foreground="#777").grid(row=5, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        vf.grid(row=5, column=1, columnspan=2, sticky="we")
+        ttk.Scale(vf, from_=1, to=10, variable=self.vol,
+                  command=lambda v: self.vol.set(round(float(v)))).pack(side="left", fill="x", expand=True)
+        ttk.Label(vf, textvariable=self.vol, width=3, anchor="e").pack(side="left")
+        ttk.Label(f, text="7 = 처음 들어보신 크기. 늘 아주 작게 시작해 천천히 커집니다.",
+                  style="Sub.TLabel", wraplength=S(320)).grid(row=6, column=0, columnspan=3, sticky="w",
+                                                              pady=(S(4), 0))
 
         bf = ttk.Frame(f)
-        bf.grid(row=6, column=0, columnspan=3, sticky="e")
-        ttk.Button(bf, text="취소", command=self.close).pack(side="right")
-        ttk.Button(bf, text="저장", command=self.save).pack(side="right", padx=6)
+        bf.grid(row=7, column=0, columnspan=3, sticky="we", pady=(S(26), 0))
+        PillButton(bf, "저장", self.save, "primary", height=40).pack(side="right", fill="x", expand=True,
+                                                                  padx=(S(4), 0))
+        PillButton(bf, "취소", self.close, "soft", height=40).pack(side="right", fill="x", expand=True,
+                                                                padx=(0, S(4)))
         w.protocol("WM_DELETE_WINDOW", self.close)
 
     def fill_combo(self, key):
@@ -716,12 +1086,14 @@ class SettingsWindow:
 
     def save(self):
         try:
-            work, brk = int(self.work.get()), int(self.brk.get())
-        except (tk.TclError, ValueError):
+            work, brk = float(self.work.get()), float(self.brk.get())
+        except ValueError:
             messagebox.showerror("설정", "시간은 숫자로 넣어 주세요.", parent=self.win)
             return
+        work = int(work) if work >= 1 else work
+        brk = int(brk) if brk >= 1 else brk
         app = self.app
-        app.s.update({"work_min": max(1, work), "break_min": max(1, brk), "volume": self.vol.get(),
+        app.s.update({"work_min": max(0.05, work), "break_min": max(0.05, brk), "volume": self.vol.get(),
                       **self.sounds})
         save_settings(app.s)
         timer_sound.prepare_async(["chime", "musicbox"], app.s["volume"])
@@ -738,87 +1110,104 @@ class SettingsWindow:
 # ───────────────────────── 기록 보기
 
 class LogWindow:
-    COLS = [("날짜", 90), ("시작", 55), ("끝", 55), ("집중(분)", 60), ("할 일", 220), ("한 일", 220),
-            ("휴식", 130)]
+    COLS = [("시작", 64), ("끝", 64), ("집중", 56), ("할 일", 210), ("한 일", 210), ("휴식", 130)]
 
     def __init__(self, app):
         self.app = app
-        w = self.win = tk.Toplevel(app.root)
-        w.title("항해 기록")
-        w.attributes("-topmost", True)
-        w.geometry("880x480")
-        f = ttk.Frame(w, padding=10)
+        w = self.win = styled_toplevel(app, "항해 기록", 820, 520)
+        f = ttk.Frame(w, padding=(S(24), S(20)))
         f.pack(fill="both", expand=True)
 
         top = ttk.Frame(f)
         top.pack(fill="x")
-        ttk.Label(top, text="날짜").pack(side="left")
-        self.day = ttk.Combobox(top, state="readonly", width=14)
-        self.day.pack(side="left", padx=6)
+        ttk.Label(top, text="항해 기록", style="Head.TLabel").pack(side="left")
+        PillButton(top, "엑셀로 열기", self.open_csv, "soft", width=104, height=34,
+                   font=(F.ui, 9, "bold"), radius=10).pack(side="right")
+        self.day = ttk.Combobox(top, state="readonly", width=13)
+        self.day.pack(side="right", padx=S(10))
         self.day.bind("<<ComboboxSelected>>", lambda e: self.fill())
-        self.summary = ttk.Label(top)
-        self.summary.pack(side="left", padx=12)
-        ttk.Button(top, text="엑셀로 열기", command=self.open_csv).pack(side="right")
+
+        self.summary = ttk.Label(f, style="Sub.TLabel")
+        self.summary.pack(anchor="w", pady=(S(6), S(12)))
+        tk.Frame(f, bg=C.line, height=1).pack(fill="x")
 
         tf = ttk.Frame(f)
-        tf.pack(fill="both", expand=True, pady=8)
+        tf.pack(fill="both", expand=True)
         self.tree = ttk.Treeview(tf, columns=[c for c, _ in self.COLS], show="headings")
         for c, width in self.COLS:
-            self.tree.heading(c, text=c)
-            self.tree.column(c, width=width, anchor="w" if c in ("할 일", "한 일", "휴식") else "center")
+            self.tree.heading(c, text=c, anchor="w")
+            self.tree.column(c, width=S(width), anchor="w", stretch=c in ("할 일", "한 일"))
+        self.tree.tag_configure("odd", background="#fafbfc")
+        self.tree.tag_configure("skip", foreground=C.warn)
+        self.tree.tag_configure("day", background=C.bg, foreground=C.sub, font=(F.ui, 9, "bold"))
         sb = ttk.Scrollbar(tf, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=sb.set)
         self.tree.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
         self.tree.bind("<Double-1>", lambda e: self.edit())
-        ttk.Label(f, text="줄을 두 번 누르면 '할 일 / 한 일'을 고칠 수 있어요.", foreground="#777").pack(anchor="w")
+        ttk.Label(f, text="줄을 두 번 누르면 할 일 · 한 일을 고칠 수 있어요", style="Sub.TLabel").pack(
+            anchor="w", pady=(S(10), 0))
 
         days = sorted({r["날짜"] for r in app.rows}, reverse=True)
-        self.day["values"] = ["전체"] + days
+        self.day["values"] = ["전체 보기"] + days
         today = dt.date.today().strftime("%Y-%m-%d")
-        self.day.set(today if today in days else (days[0] if days else "전체"))
+        self.day.set(today if today in days else (days[0] if days else "전체 보기"))
         self.fill()
 
     def fill(self):
         self.tree.delete(*self.tree.get_children())
         d = self.day.get()
-        self.shown = [r for r in self.app.rows if d == "전체" or r["날짜"] == d]
-        for i, r in enumerate(reversed(self.shown)):
-            self.tree.insert("", "end", iid=str(len(self.shown) - 1 - i), values=[r[c] for c, _ in self.COLS])
-        done = [r for r in self.shown if r["집중(분)"]]
+        idx = [i for i, r in enumerate(self.app.rows) if d == "전체 보기" or r["날짜"] == d]
+        last_day = None
+        for n, i in enumerate(reversed(idx)):
+            r = self.app.rows[i]
+            if d == "전체 보기" and r["날짜"] != last_day:
+                last_day = r["날짜"]
+                y, m, dd = last_day.split("-")
+                wd = WEEKDAYS[dt.date(int(y), int(m), int(dd)).weekday()]
+                self.tree.insert("", "end", values=[f"{int(m)}월 {int(dd)}일 ({wd})", "", "", "", "", ""],
+                                 tags=("day",))
+            tags = ["odd"] if n % 2 else []
+            if r["휴식"].startswith("건너뜀"):
+                tags.append("skip")
+            mins = f"{r['집중(분)']}분" if r["집중(분)"] else ""
+            self.tree.insert("", "end", iid=str(i), tags=tags,
+                             values=[r["시작"], r["끝"], mins, r["할 일"], r["한 일"], r["휴식"]])
+        done = [self.app.rows[i] for i in idx if self.app.rows[i]["집중(분)"]]
         mins = sum(int(r["집중(분)"] or 0) for r in done)
         skipped = sum(1 for r in done if r["휴식"].startswith("건너뜀"))
-        self.summary.configure(text=f"도착한 섬 {len(done)}개 · 집중 {fmt_minutes(mins)} · "
+        self.summary.configure(text=f"도착한 섬 {len(done)}개   ·   집중 {fmt_minutes(mins)}   ·   "
                                     f"휴식 건너뜀 {skipped}회")
 
     def edit(self):
         sel = self.tree.selection()
-        if not sel:
+        if not sel or not sel[0].isdigit():
             return
-        row = self.shown[int(sel[0])]
-        d = tk.Toplevel(self.win)
-        d.title("기록 고치기")
-        d.attributes("-topmost", True)
+        row = self.app.rows[int(sel[0])]
+        d = styled_toplevel(self.app, "기록 고치기", 420)
         d.transient(self.win)
         d.grab_set()
-        f = ttk.Frame(d, padding=14)
-        f.pack(fill="both")
-        ttk.Label(f, text=f"{row['날짜']} {row['시작']}~{row['끝']}").pack(anchor="w")
-        vals = {}
+        f = ttk.Frame(d, padding=(S(22), S(18)))
+        f.pack(fill="both", expand=True)
+        ttk.Label(f, text=f"{row['날짜']}  {row['시작']} ~ {row['끝']}", style="Sub.TLabel").pack(anchor="w")
+        entries = {}
         for k in ("할 일", "한 일"):
-            ttk.Label(f, text=k).pack(anchor="w", pady=(8, 0))
-            vals[k] = tk.StringVar(value=row[k])
-            ttk.Entry(f, textvariable=vals[k], width=60).pack(fill="x")
+            ttk.Label(f, text=k).pack(anchor="w", pady=(S(12), S(4)))
+            p = RoundPanel(f, height=40, pad=(12, 10))
+            p.pack(fill="x")
+            e = p.hold(HintEntry(p, "비어 있음"))
+            e.set_value(row[k])
+            entries[k] = e
 
         def ok():
-            for k, v in vals.items():
-                row[k] = v.get().strip()
+            for k, e in entries.items():
+                row[k] = e.value()
             self.app.rows_dirty = True
             self.app.flush_rows()
             d.destroy()
             self.fill()
 
-        ttk.Button(f, text="저장", command=ok).pack(anchor="e", pady=(12, 0))
+        PillButton(f, "저장", ok, "primary", height=38).pack(fill="x", pady=(S(18), 0))
 
     def open_csv(self):
         self.app.flush_rows()
@@ -829,7 +1218,12 @@ class LogWindow:
 
 
 def main():
+    global SCALE
+    enable_dpi_awareness()
     root = tk.Tk()
+    SCALE = max(1.0, root.winfo_fpixels("1i") / 96)
+    F.pick(root)
+    setup_ttk(root)
     App(root)
     root.mainloop()
 
