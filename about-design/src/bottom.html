@@ -32,7 +32,7 @@
   .step.last .no { background: var(--dark); color: #fff; }
   .step .s { margin-top: 12px; color: var(--ink); font-weight: 700; }
 
-  /* 띠 헤더 (개인통관고유부호) */
+  /* 띠 헤더 */
   .band { background: var(--main); padding: 36px 40px; text-align: center; }
   .band span { display: inline-block; background: #fff; border-radius: 20px; padding: 10px 40px; }
   .band-end { height: 24px; background: var(--main); }
@@ -136,7 +136,7 @@
       <li>재고를 쌓아두지 않고 <b>주문이 들어오면 발주해 준비하는 상품</b>이라, 일반 상품보다 배송 기간이 깁니다.</li>
       <li>입고된 상품은 <b>검수를 마친 뒤 발송</b>합니다.</li>
       <li>운송장 배송 조회는 <b>택배 출고 이후부터</b> 가능합니다.</li>
-      <li>입고·검수 과정에서 상품 박스가 개봉될 수 있으며, 반품 사유에 해당하지 않습니다.</li>
+      <li>검수 과정에서 상품 박스가 개봉될 수 있으며, 반품 사유에 해당하지 않습니다.</li>
       <li>입고 지연·명절·기상 상황 등으로 배송이 늦어질 수 있습니다.</li>
       <li>여러 상품을 함께 주문하시면 따로 도착할 수 있습니다.</li>
     </ul>
@@ -145,26 +145,11 @@
 
 <div class="gap"></div>
 
-<!-- 02 주문 정보 입력 -->
-<div class="box">
-  <div class="pill">주문 정보 입력 안내</div>
-  <div class="box-in">
-    <ul class="bul m" style="margin-top:0">
-      <li>주문서에 <b>개인통관고유부호</b> 입력란이 나오면 꼭 입력해 주세요.<span class="s">처음이시면 포털에서 ‘개인통관고유부호’를 검색해 1분이면 무료로 발급받으실 수 있습니다.</span></li>
-      <li><b>수령인 이름·연락처·우편번호</b>가 등록 정보와 일치해야 합니다.<span class="s">일치하지 않으면 배송이 보류되거나 지연될 수 있습니다.</span></li>
-      <li>미기재·오기재로 배송이 지연되거나 반송되는 경우 발생 비용은 구매자 부담입니다.</li>
-    </ul>
-  </div>
-</div>
-
-<div class="gap"></div>
-
 <!-- 03 배송비 안내 -->
 <div class="box">
-  <div class="pill">추가 비용 안내</div>
+  <div class="pill">착불 배송비 안내</div>
   <div class="box-in">
-    <div class="m sub-t">착불 배송비 안내</div>
-    <div class="m" style="margin-top:6px">아래에 해당하면 <b>착불 배송비가 발생하며 구매자 부담</b>입니다.</div>
+    <div class="m">아래에 해당하면 <b>착불 배송비가 발생하며 구매자 부담</b>입니다.</div>
     <div class="cod">
       <div><div class="lab">1m ↑</div><div class="s">박스 한 변이<br>1m 이상</div></div>
       <div><div class="lab">150cm ↑</div><div class="s">박스 세 변<br>합이 150cm 이상</div></div>
@@ -172,13 +157,6 @@
       <div><div class="lab">이형</div><div class="s">상품 모양이<br>이형인 경우</div></div>
     </div>
     <ul class="bul m"><li>착불 배송비는 담당 기사님이 실제로 측정해 결정하므로 미리 안내드리기 어렵습니다.</li></ul>
-    <div class="sub">
-      <div class="m sub-t">관·부가세 안내</div>
-      <ul class="bul m" style="margin-top:16px">
-        <li>결제 금액이 <b>미화 150달러(일부 상품 200달러)를 넘으면</b> 관·부가세가 별도로 부과될 수 있으며, 구매자 부담입니다.<span class="s">부과 시 관세청에서 알림톡 또는 문자로 납부 안내가 발송됩니다.</span></li>
-        <li>같은 날 들어오는 여러 건의 주문은 합산되어 부과될 수 있습니다.</li>
-      </ul>
-    </div>
   </div>
 </div>
 
@@ -206,12 +184,14 @@
   <div class="pill">교환·반품 안내</div>
   <div class="box-in">
     <div class="rcard">
-      <div class="free"><span class="tag2 me">무상</span><div class="m">파손·오배송·제품 결함</div><div class="s">무상 교환·환불해 드립니다.<br>수령 후 7일 이내 고객센터로 사진 또는 동영상과 함께 접수해 주세요.</div></div>
+      <div class="free"><span class="tag2 me">무상</span><div class="m">파손·오배송·제품 결함</div><div class="s">무상 교환·환불해 드립니다.<br>수령 후 7일 이내 <b>상품 개봉 영상</b>과 포장 상태 사진을 함께 보내주세요.</div></div>
       <div class="paid"><span class="tag2 you">구매자 부담</span><div class="m">단순 변심</div><div class="s">왕복 배송비를 구매자가 부담합니다. 상품 부피·무게에 따라 금액이 달라지며, 접수 시 안내해 드립니다.</div></div>
     </div>
     <ul class="bul m">
       <li>교환·반품은 <b>상품 수령 후 7일 이내</b>에 고객센터 문자로 먼저 접수해 주세요.</li>
-      <li>반품 회수는 당사에서 진행합니다. <b>사전 연락 없이 보내신 상품은 수취 거부</b>되며, 이후 발생하는 비용과 문제는 책임지지 않습니다.</li>
+      <li>반품 회수는 당사에서 진행합니다. <b>사전 연락 없이 보내신 상품은 수취 거부</b>되며, 임의로 다른 택배사로 보내 분실된 경우 환불이 어렵습니다.</li>
+      <li>무상 교환·환불은 <b>처음 상자를 여는 모습이 담긴 개봉 영상</b>이 있어야 진행이 가능합니다. 영상이 없으면 무상 처리가 어려울 수 있습니다.</li>
+      <li>전자·전기제품은 <b>개봉 후 교환·반품이 불가</b>하니 신중한 구매 부탁드립니다.</li>
       <li>배송 중 생길 수 있는 미세한 스크래치, 찌그러짐, 마감·접착 흔적, 박스 눌림·손상은 무상 교환·환불 대상이 아닙니다.</li>
       <li>사용·세탁하셨거나 택·본품 박스가 훼손된 경우, 위생 상품을 개봉한 경우, 기능상 문제가 없는 경미한 하자는 반품이 어렵습니다.</li>
       <li>제조사 <b>A/S는 제공되지 않습니다.</b></li>
@@ -252,9 +232,9 @@
       <li>주문하신 상품은 발주부터 배송까지 여러 업체를 거치며, 이 과정에서 수취인 정보를 제공해야 배송이 가능합니다. <b>주문 시 아래 내용에 동의하신 것으로 봅니다.</b></li>
     </ul>
     <div class="pt">
-      <div><b>제공받는 자</b><span>물류대행사, 운송사, 통관 대행사(관세사), 택배사</span></div>
-      <div><b>제공 목적</b><span>상품 발주, 운송, 통관, 배송</span></div>
-      <div><b>제공 항목</b><span>수취인 성명, 연락처, 배송지 주소, 개인통관고유부호</span></div>
+      <div><b>제공받는 자</b><span>물류대행사, 운송사, 택배사</span></div>
+      <div><b>제공 목적</b><span>상품 발주, 운송, 배송</span></div>
+      <div><b>제공 항목</b><span>수취인 성명, 연락처, 배송지 주소</span></div>
       <div><b>보유·이용 기간</b><span>제공 목적 달성 시까지 (관계 법령에 보존 기간이 정해진 경우 해당 기간까지)</span></div>
     </div>
     <ul class="bul m">
@@ -273,10 +253,8 @@
   <div class="time m">전화 상담은 운영하지 않습니다 (문자로 남겨주세요)</div>
 </div>
 
-<!-- 법적 고지 (구매대행 사업자 표시 의무 문구) -->
+<!-- 이미지 권리 안내 -->
 <div class="legal s">
-  <p>이 제품은 구매대행을 통하여 유통되는 제품입니다.<br>이 제품은 전기용품 및 생활용품 안전관리법에 따른 안전관리대상 제품입니다.</p>
   <p>본 상품페이지는 제조 업체의 이미지를 사용하여 제작되었습니다.<br>권리침해 등의 문제가 있는 경우 연락 주시면 즉시 시정하겠습니다.</p>
-  <p class="lic">수입식품안전관리 특별법에 의한 영업허가 제20230025296호</p>
 </div>
 </body></html>
