@@ -1,52 +1,54 @@
 <!doctype html><html lang="ko"><head><meta charset="utf-8"><title>에이바우트 브랜드 가이드</title>
 <link rel="stylesheet" href="style.css">
 <style>
- body{width:1200px;padding:0 70px 80px;border-top:14px solid var(--plum)}
- .top{display:flex;justify-content:space-between;align-items:center;padding-top:40px}
- .top .en{font-size:40px;color:var(--plum)}
- h2{margin:70px 0 22px;border-top:8px solid var(--ink);padding-top:18px;font-family:"Serif KR";font-weight:900;font-size:var(--t);letter-spacing:-.055em}
- h2 .en{font-size:36px;color:var(--plum);margin-right:16px}
- .row{display:grid;grid-template-columns:repeat(4,1fr);border:2px solid var(--ink)}
- .row > div + div{border-left:2px solid var(--ink)}
- .row i{display:block;height:130px;border-bottom:2px solid var(--ink)}
- .row p{padding:14px 18px 18px}
- .fonts > div{display:grid;grid-template-columns:330px 1fr;align-items:center;border-bottom:1px solid var(--hair);padding:20px 0}
- .logos{display:grid;grid-template-columns:1fr 1fr;border:2px solid var(--ink)}
- .logos > div{height:200px;display:grid;place-items:center}
- .logos > div + div{background:var(--plum);color:#fff}
- .logos .mark.inv{background:#fff;color:var(--plum)}
+ body{width:1200px}
+ .hero{background:var(--ink);color:#fff;padding:50px 70px 60px}
+ .hero .bar{display:flex;justify-content:space-between;align-items:center}
+ .hero .bar .en{font-size:38px;color:var(--mark)}
+ .hero .chat{margin-top:36px}
+ .hero .q{background:#fff;color:var(--ink)}
+ .body{padding:0 70px 70px}
+ h2{margin:56px 0 18px;font-weight:900;font-size:var(--t);letter-spacing:-.035em}
+ h2 .en{font-size:36px;color:var(--plum);margin-right:14px;font-weight:400}
+ .row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+ .row i{display:block;height:120px;border-radius:20px}
+ .row p{padding:12px 4px 0;font-size:var(--c)}
+ .fonts > div{display:grid;grid-template-columns:330px 1fr;align-items:center;border-bottom:1px solid var(--hair);padding:18px 0}
+ .fonts > div > span:first-child{font-size:var(--c);color:var(--gray)}
+ .logos{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+ .logos > div{height:180px;border-radius:24px;display:grid;place-items:center;background:var(--tint)}
+ .logos > div + div{background:var(--ink);color:#fff}
 </style></head><body>
-<div class="top"><div class="logo"><span class="mark">a<i>.</i></span><span class="name">에이바우트</span></div><span class="en">brand guide</span></div>
-<div class="d" style="margin-top:50px">잡지처럼 읽히는<br><span class="hl">구매 안내서</span></div>
-<p style="margin-top:20px">about = ~에 대하여. 섹션마다 ‘about delivery’, ‘about returns’처럼 이름을 붙여 한 권의 안내서로 만듭니다.</p>
-
+<div class="hero">
+ <div class="bar"><div class="logo"><span class="mark">a<i>.</i></span><span class="name">에이바우트</span></div><span class="en">brand guide</span></div>
+ <div class="chat"><p class="q">에이바우트는 어떤 느낌인가요?</p><p class="a t">손님이 묻고 가게가 답하는<br><span class="y">문자 대화</span>처럼 안내해요</p></div>
+</div>
+<div class="body">
 <h2><span class="en">logo</span>로고</h2>
 <div class="logos">
- <div><div class="logo"><span class="mark">a<i>.</i></span><span class="name" style="font-family:'Serif KR';font-weight:900;font-size:46px;letter-spacing:-.06em">에이바우트</span></div></div>
- <div><div class="logo"><span class="mark inv">a<i>.</i></span><span class="name" style="font-family:'Serif KR';font-weight:900;font-size:46px;letter-spacing:-.06em">에이바우트</span></div></div>
+ <div><div class="logo"><span class="mark">a<i>.</i></span><span class="name" style="font-size:44px">에이바우트</span></div></div>
+ <div><div class="logo"><span class="mark">a<i>.</i></span><span class="name" style="font-size:44px">에이바우트</span></div></div>
 </div>
-
 <h2><span class="en">color</span>컬러</h2>
 <div class="row">
- <div><i style="background:#553C8B"></i><p><b>플럼</b><br><span class="c">#553C8B<br>85, 60, 139</span></p></div>
- <div><i style="background:#17141C"></i><p><b>먹색</b><br><span class="c">#17141C<br>23, 20, 28</span></p></div>
- <div><i style="background:#FFE45C"></i><p><b>형광펜 노랑</b><br><span class="c">#FFE45C<br>255, 228, 92</span></p></div>
- <div><i style="background:#F3F0F8"></i><p><b>연보라 면</b><br><span class="c">#F3F0F8<br>243, 240, 248</span></p></div>
+ <div><i style="background:#553C8B"></i><p><b>플럼</b><br>#553C8B · 85, 60, 139</p></div>
+ <div><i style="background:#17141C"></i><p><b>먹색</b><br>#17141C · 23, 20, 28</p></div>
+ <div><i style="background:#FFE45C"></i><p><b>노랑</b><br>#FFE45C · 255, 228, 92</p></div>
+ <div><i style="background:#F1EEF5"></i><p><b>연보라</b><br>#F1EEF5 · 241, 238, 245</p></div>
 </div>
-
-<h2><span class="en">type</span>글꼴 — 네 가지를 역할별로 섞어 씁니다</h2>
+<h2><span class="en">type</span>글꼴</h2>
 <div class="fonts">
- <div><span class="c">제목 · Noto Serif KR Black<br>76px / 46px</span><span class="t">받아보시기까지 약 2주</span></div>
- <div><span class="c">본문 · IBM Plex Sans KR<br>29px / 보조 23px</span><span>주문이 들어오면 발주해 준비하는 상품입니다.</span></div>
- <div><span class="c">숫자 · Anton</span><span class="num plum" style="font-size:76px">010-5934-5488</span></div>
- <div><span class="c">영문 · Instrument Serif Italic</span><span class="en plum" style="font-size:60px">about delivery</span></div>
+ <div><span>답 말풍선·제목<br>Wanted Sans ExtraBlack 40px</span><span class="t">받아보시기까지 약 2주 걸려요</span></div>
+ <div><span>본문·질문<br>Wanted Sans Medium 27px</span><span>배송 조회는 택배 출고 이후부터 가능합니다.</span></div>
+ <div><span>숫자 · Anton</span><span class="num" style="font-size:70px;color:var(--plum)">010-5934-5488</span></div>
+ <div><span>영문 · Instrument Serif Italic</span><span class="en" style="font-size:56px;color:var(--plum)">about delivery</span></div>
 </div>
-
-<h2><span class="en">rules</span>지면 규칙</h2>
+<h2><span class="en">rules</span>규칙</h2>
 <ul class="rows" style="margin-top:0">
- <li>왼쪽 정렬. 둥근 박스 없이 굵은 선(8px)과 가는 선(1px)으로 나눕니다.</li>
- <li>섹션 머리 = 테두리만 있는 큰 숫자 + 영문 라벨 + 명조 제목.</li>
- <li>강조는 <span class="hl">형광펜 밑줄</span> 하나로만. 색 글씨를 남발하지 않습니다.</li>
- <li>배송은 ‘주문 후 발주해 준비되는 상품’, ‘약 2주’로만 표현합니다.</li>
+ <li>섹션마다 질문 말풍선 → 답 말풍선 → 짧은 줄 목록 순서로 구성합니다.</li>
+ <li>강조는 답 말풍선 안의 노란 글씨 한 군데만. 목록에는 굵은 글씨·밑줄을 쓰지 않습니다.</li>
+ <li>본문은 한 가지 크기로만 쓰고, 작은 회색 보조 글씨를 덧붙이지 않습니다.</li>
+ <li>배송은 ‘주문 후 준비되는 상품’, ‘약 2주’로만 표현합니다.</li>
 </ul>
+</div>
 </body></html>
