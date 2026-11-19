@@ -3,3 +3,8 @@ zzim_*.csv
 stores.txt
 zzim_settings.json
 zzim_report*.csv
+timer/timer_settings.json
+timer/timer_memo.txt
+timer/timer_log.csv
+timer/timer_log.csv.tmp
+timer/timer_sounds/
