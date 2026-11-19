@@ -37,6 +37,8 @@ DEFAULTS = {
     "break_end_sound": "musicbox",  # 휴식 끝 → 오르골
     "volume": 7,
     "pos": None,
+    "memo_open": True,
+    "wave_anim": True,
 }
 TIPS = [
     "자리에서 일어나 기지개를 한 번 켜 보세요",
@@ -111,6 +113,7 @@ class F:
         cls.num = first("Segoe UI Light", "Pretendard Light", "Helvetica Neue", "Noto Sans CJK KR Light",
                         "Noto Sans Light") or cls.ui
         cls.num_regular = first("Segoe UI", "Pretendard", "Helvetica Neue") or cls.ui
+        cls.num_bold = first("Segoe UI", "Pretendard", "Helvetica Neue", "Noto Sans CJK KR") or cls.ui
 
 
 # ───────────────────────── 저장소
@@ -396,15 +399,350 @@ def style_window_win(win, taskbar=False):
         pass
 
 
+# ───────────────────────── 모니터
+
+def monitors():
+    """[(x, y, w, h, 주모니터여부)]. 윈도우가 아니면 화면 하나로 본다."""
+    if WIN:
+        try:
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                            ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+
+            res = []
+            proto = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HMONITOR, wintypes.HDC,
+                                       ctypes.POINTER(wintypes.RECT), wintypes.LPARAM)
+
+            def cb(hmon, hdc, rect, data):
+                mi = MONITORINFO()
+                mi.cbSize = ctypes.sizeof(MONITORINFO)
+                user32.GetMonitorInfoW(hmon, ctypes.byref(mi))
+                r = mi.rcMonitor
+                res.append((r.left, r.top, r.right - r.left, r.bottom - r.top, bool(mi.dwFlags & 1)))
+                return True
+
+            user32.EnumDisplayMonitors(None, None, proto(cb), 0)
+            if res:
+                return res
+        except Exception:
+            pass
+    return None
+
+
+def all_monitors(root):
+    return monitors() or [(0, 0, root.winfo_screenwidth(), root.winfo_screenheight(), True)]
+
+
+def monitor_of(win):
+    mons = all_monitors(win)
+    cx = win.winfo_rootx() + win.winfo_width() // 2
+    cy = win.winfo_rooty() + win.winfo_height() // 2
+    for m in mons:
+        if m[0] <= cx < m[0] + m[2] and m[1] <= cy < m[1] + m[3]:
+            return m
+    return next((m for m in mons if m[4]), mons[0])
+
+
+# ───────────────────────── 바다 장면
+
+SKY_TOP, SKY_BOTTOM = "#f3f8ff", "#e1edfd"
+WAVE_BACK = "#bcd8fb"
+WAVE_FRONT = ("#86baf8", "#3b82f6")
+SCENE_TEXT = "#1b3556"
+FRAMES = 36            # 물결 한 바퀴 그림 수
+FRAME_MS = 125         # 한 칸 넘어가는 간격(ms) → 한 바퀴 4.5초
+
+
+def gradient_image(w, h, top, bottom):
+    img = tk.PhotoImage(width=w, height=h)
+    for y in range(h):
+        img.put(mix(top, bottom, y / max(1, h - 1)), to=(0, y, w, y + 1))
+    return img
+
+
+class WaveFrames:
+    """앞·뒤 두 겹 물결이 흐르는 그림들. 가장자리를 부드럽게 섞어 미리 그려 두고 돌려 쓴다.
+
+    처음 한 장만 바로 그리고 나머지는 조금씩 나눠 그려서 시작할 때 멈칫하지 않게 한다.
+    """
+
+    def __init__(self, widget, w, h, sky_rows, wavelen, amp_f, amp_b, base_f, base_b):
+        self.w, self.h = w, h
+        self.len_f, self.len_b = wavelen, wavelen * 1.35
+        self.amp_f, self.amp_b, self.base_f, self.base_b = amp_f, amp_b, base_f, base_b
+        self.rows = []
+        for y in range(h):
+            sky, back = sky_rows[y], WAVE_BACK
+            front = mix(WAVE_FRONT[0], WAVE_FRONT[1], max(0.0, (y - base_f + amp_f) / max(1, h - base_f + amp_f)))
+            lv = [i / 8 for i in range(9)]
+            self.rows.append((sky, back, front,
+                              [mix(sky, back, t) for t in lv],
+                              [mix(sky, front, t) for t in lv],
+                              [mix(back, front, t) for t in lv]))
+        self.frames = [None] * FRAMES
+        self.frames[0] = self.make(0)
+        self.widget = widget
+        self.next = 1
+        widget.after(200, self._more)
+
+    def _more(self):
+        if self.next < FRAMES:
+            try:
+                self.frames[self.next] = self.make(self.next)
+            except tk.TclError:
+                return
+            self.next += 1
+            self.widget.after(20, self._more)
+
+    def y_front(self, x, k):
+        return self.base_f + self.amp_f * math.sin(2 * math.pi * (x / self.len_f + k / FRAMES))
+
+    def make(self, k):
+        W, H = self.w, self.h
+        p = k / FRAMES
+        two_pi = 2 * math.pi
+        YF = [self.base_f + self.amp_f * math.sin(two_pi * (x / self.len_f + p)) for x in range(W)]
+        YB = [self.base_b + self.amp_b * math.sin(two_pi * (x / self.len_b - p) + 1.7) for x in range(W)]
+        top = min(min(YF), min(YB)) - 1
+        bottom = max(YF) + 1
+        rows = []
+        for y in range(H):
+            sky, back, front, sb, sf, bf = self.rows[y]
+            yc = y + 0.5
+            if yc <= top:
+                rows.append("{" + " ".join([sky] * W) + "}")
+                continue
+            if yc >= bottom:
+                rows.append("{" + " ".join([front] * W) + "}")
+                continue
+            out = []
+            ap = out.append
+            for x in range(W):
+                cf = yc - YF[x]
+                if cf >= 1:
+                    ap(front)
+                    continue
+                cb = yc - YB[x]
+                if cf <= 0:
+                    if cb >= 1:
+                        ap(back)
+                    elif cb <= 0:
+                        ap(sky)
+                    else:
+                        ap(sb[int(cb * 8 + 0.5)])
+                else:
+                    q = int(cf * 8 + 0.5)
+                    ap(bf[q] if cb >= 1 else sf[q])
+            rows.append("{" + " ".join(out) + "}")
+        img = tk.PhotoImage(width=W, height=H)
+        img.put(" ".join(rows))
+        return img
+
+    def get(self, k):
+        return self.frames[k] or self.frames[0]
+
+
+class Scene(tk.Canvas):
+    """위쪽 하늘·바다 장면: 날짜, 현재 시각, 상태, 큰 타이머, 흐르는 물결 위의 배와 섬."""
+
+    def __init__(self, app, master, mini=False):
+        self.app, self.mini = app, mini
+        W = S(App.W)
+        H = S(96) if mini else S(262)
+        super().__init__(master, width=W, height=H, highlightthickness=0, bd=0, bg=SKY_BOTTOM)
+        self.W, self.H = W, H
+        self.Hw = S(40) if mini else S(66)
+        self._bg = gradient_image(W, H, SKY_TOP, SKY_BOTTOM)
+        self.create_image(0, 0, anchor="nw", image=self._bg)
+        sky_rows = [mix(SKY_TOP, SKY_BOTTOM, (H - self.Hw + y) / max(1, H - 1)) for y in range(self.Hw)]
+        if mini:
+            self.waves = WaveFrames(self, W, self.Hw, sky_rows, S(42), S(3.2), S(2.6), S(22), S(15))
+        else:
+            self.waves = WaveFrames(self, W, self.Hw, sky_rows, S(58), S(5), S(4), S(32), S(21))
+        self.wave = self.create_image(0, H - self.Hw, anchor="nw", image=self.waves.get(0))
+        self.frame = 0
+
+        self.island_x = W - (S(22) if mini else S(32))
+        self.create_text(self.island_x, H - self.Hw + self.waves.base_f + S(5), anchor="s", text="🏝",
+                         font=(F.ui, -S(20 if mini else 30)), fill="#2c8a5f")
+        self.boat = self.create_text(0, 0, anchor="s", text="⛵", font=(F.ui, -S(20 if mini else 30)),
+                                     fill=SCENE_TEXT)
+        self.bx = S(22)
+
+        if mini:
+            self.timer = self.create_text(S(18), S(32), anchor="w", font=(F.num_bold, -S(40), "bold"),
+                                          fill=SCENE_TEXT)
+            self.clock = self.create_text(W - S(40), S(32), anchor="e", font=(F.num_bold, -S(17), "bold"),
+                                          fill="#4b5565")
+            self.icon("⤢", W - S(18), S(32), app.toggle_compact, 14)
+        else:
+            self.date = self.create_text(S(22), S(32), anchor="w", font=(F.ui, -S(15), "bold"), fill="#4b5565")
+            self.clock = self.create_text(S(21), S(68), anchor="w", font=(F.num_bold, -S(34), "bold"),
+                                          fill=C.text)
+            self.icon("✕", W - S(18), S(22), app.on_close, 13)
+            self.icon("—", W - S(44), S(22), app.toggle_compact, 12)
+            self.icon("⛶", W - S(72), S(22), app.open_big, 13)
+            self.chip_img = self.create_image(W - S(22), S(68), anchor="e")
+            self.chip_txt = self.create_text(0, S(68), anchor="center", font=(F.ui, -S(13), "bold"))
+            self.timer = self.create_text(W / 2, S(142), anchor="center", font=(F.num_bold, -S(80), "bold"),
+                                          fill=SCENE_TEXT)
+        self._shown = {}
+        self.place_boat()
+
+    def icon(self, text, x, y, command, size):
+        t = self.create_text(x, y, text=text, font=(F.ui, -S(size)), fill=C.sub)
+        self.tag_bind(t, "<Enter>", lambda e: (self.itemconfigure(t, fill=C.text), self.configure(cursor="hand2")))
+        self.tag_bind(t, "<Leave>", lambda e: (self.itemconfigure(t, fill=C.sub), self.configure(cursor="")))
+        self.tag_bind(t, "<ButtonRelease-1>", lambda e: command())
+
+    def set_text(self, item, key, text):
+        if self._shown.get(key) != text:
+            self._shown[key] = text
+            self.itemconfigure(item, text=text)
+
+    def set_chip(self, text, color):
+        if self.mini or self._shown.get("chip") == (text, color):
+            return
+        self._shown["chip"] = (text, color)
+        f = tkfont.Font(family=F.ui, size=-S(13), weight="bold")
+        w, h = f.measure(text) + S(28), S(30)
+        bg = mix(SKY_TOP, SKY_BOTTOM, S(68) / self.H)
+        self._chip = rounded(w, h, h // 2, "#ffffff", bg)
+        self.itemconfigure(self.chip_img, image=self._chip)
+        self.coords(self.chip_txt, self.W - S(22) - w / 2, S(68))
+        self.itemconfigure(self.chip_txt, text=text, fill=color)
+
+    def set_progress(self, frac, docked):
+        x0, x1 = S(20 if self.mini else 26), self.island_x - S(30 if self.mini else 42)
+        bx = x1 + S(10) if docked else x0 + (x1 - x0) * frac
+        if abs(bx - self.bx) >= 0.5:
+            self.bx = bx
+            self.place_boat()
+
+    def place_boat(self):
+        k = self.frame
+        y = self.waves.y_front(self.bx, k)
+        slope = (self.waves.y_front(self.bx + 3, k) - self.waves.y_front(self.bx - 3, k)) / 6
+        self.coords(self.boat, self.bx, self.H - self.Hw + y + S(4))
+        try:
+            self.itemconfigure(self.boat, angle=-math.degrees(math.atan(slope)) * 0.45)
+        except tk.TclError:
+            pass
+
+    def step(self):
+        self.frame = (self.frame + 1) % FRAMES
+        self.itemconfigure(self.wave, image=self.waves.get(self.frame))
+        self.place_boat()
+
+
+class BigView:
+    """위젯을 모니터 한 대에 크게 띄우는 모드. 멀리서도 보이는 시계처럼 쓴다."""
+
+    def __init__(self, app):
+        self.app = app
+        x, y, w, h, _ = monitor_of(app.root)
+        self.w, self.h = w, h
+        win = self.win = tk.Toplevel(app.root)
+        win.overrideredirect(True)
+        win.geometry(f"{w}x{h}+{x}+{y}")
+        win.configure(bg=SKY_BOTTOM)
+        c = self.c = tk.Canvas(win, width=w, height=h, highlightthickness=0, bd=0, bg=SKY_BOTTOM)
+        c.pack(fill="both", expand=True)
+        self._bg = gradient_image(w, h, SKY_TOP, SKY_BOTTOM)
+        c.create_image(0, 0, anchor="nw", image=self._bg)
+
+        u = h / 100  # 화면 높이의 1%
+        self.date = c.create_text(w * 0.05, u * 9, anchor="w", font=(F.ui, -int(u * 3.6), "bold"), fill="#4b5565")
+        self.clock = c.create_text(w * 0.05, u * 16, anchor="w", font=(F.num_bold, -int(u * 8), "bold"),
+                                   fill=C.text)
+        self.state = c.create_text(w * 0.95, u * 9, anchor="e", font=(F.ui, -int(u * 3.2), "bold"),
+                                   fill=C.accent)
+        self.timer = c.create_text(w / 2, u * 46, anchor="center", font=(F.num_bold, -int(u * 30), "bold"),
+                                   fill=SCENE_TEXT)
+        self.plan = c.create_text(w / 2, u * 66, anchor="center", font=(F.ui, -int(u * 3), "bold"),
+                                  fill="#4b5565")
+
+        self.wave_h, self.wave_top = u * 16, h - u * 16
+        self.back = c.create_polygon(0, 0, 0, 0, fill=WAVE_BACK, outline="", smooth=True)
+        self.front = c.create_polygon(0, 0, 0, 0, fill="#5b9cf6", outline="", smooth=True)
+        self.len_f, self.amp = w / 7, u * 1.6
+        self.island_x = w - w * 0.06
+        c.create_text(self.island_x, self.wave_top + u * 5, anchor="s", text="🏝",
+                      font=(F.ui, -int(u * 8)), fill="#2c8a5f")
+        self.boat = c.create_text(0, 0, anchor="s", text="⛵", font=(F.ui, -int(u * 8)), fill=SCENE_TEXT)
+        self.bx = w * 0.05
+        self.frame = 0
+
+        bw = int(max(110, u * 14) / SCALE)
+        self.btn = PillButton(c, "일시정지", app.on_main_button, "soft", width=bw, height=int(u * 5.4 / SCALE),
+                              bg=mix(SKY_TOP, SKY_BOTTOM, 0.25), font=(F.ui, -int(u * 2.2), "bold"))
+        small = PillButton(c, "작게 보기", app.close_big, "soft", width=bw, height=int(u * 5.4 / SCALE),
+                           bg=mix(SKY_TOP, SKY_BOTTOM, 0.25), font=(F.ui, -int(u * 2.2), "bold"))
+        c.create_window(w * 0.95, u * 22, anchor="ne", window=small)
+        c.create_window(w * 0.95 - S(bw) - S(10), u * 22, anchor="ne", window=self.btn)
+        win.bind("<Escape>", lambda e: app.close_big())
+        c.bind("<Double-Button-1>", lambda e: app.close_big())
+        self.draw_waves()
+
+    def wy(self, x, k, back=False):
+        if back:
+            return self.wave_top + self.amp * math.sin(2 * math.pi * (x / (self.len_f * 1.35) - k / FRAMES) + 1.7)
+        return self.wave_top + self.amp * 2.2 + self.amp * math.sin(2 * math.pi * (x / self.len_f + k / FRAMES))
+
+    def draw_waves(self):
+        k, w, h = self.frame, self.w, self.h
+        step = max(8, w // 90)
+        for item, back in ((self.back, True), (self.front, False)):
+            pts = []
+            for x in range(-step, w + 2 * step, step):
+                pts += [x, self.wy(x, k, back)]
+            pts += [w + step, h + 10, w + step, h + 10, -step, h + 10, -step, h + 10]
+            self.c.coords(item, *pts)
+        y = self.wy(self.bx, k)
+        slope = (self.wy(self.bx + 4, k) - self.wy(self.bx - 4, k)) / 8
+        self.c.coords(self.boat, self.bx, y + self.h * 0.012)
+        try:
+            self.c.itemconfigure(self.boat, angle=-math.degrees(math.atan(slope)) * 0.45)
+        except tk.TclError:
+            pass
+
+    def step(self):
+        self.frame = (self.frame + 1) % FRAMES
+        self.draw_waves()
+
+    def update(self, now, timer_text, state_text, state_color, frac, docked, plan, btn_text, btn_enabled):
+        c = self.c
+        c.itemconfigure(self.date, text=f"{now.month}월 {now.day}일 {WEEKDAYS[now.weekday()]}요일")
+        c.itemconfigure(self.clock, text=f"{now:%H:%M}")
+        c.itemconfigure(self.timer, text=timer_text)
+        c.itemconfigure(self.state, text=state_text, fill=state_color)
+        c.itemconfigure(self.plan, text=plan)
+        if self.btn.text != btn_text or self.btn.enabled != btn_enabled:
+            self.btn.set(text=btn_text, enabled=btn_enabled)
+        x0, x1 = self.w * 0.05, self.island_x - self.w * 0.06
+        bx = x1 + self.w * 0.015 if docked else x0 + (x1 - x0) * frac
+        if abs(bx - self.bx) >= 1:
+            self.bx = bx
+            self.draw_waves()
+
+    def destroy(self):
+        if self.win.winfo_exists():
+            self.win.destroy()
+
+
 # ───────────────────────── 메인 위젯
 
 class App:
-    W, H = 300, 610
-    MINI_W, MINI_H = 236, 86
+    W = 330
 
     def __init__(self, root):
         self.root = root
         self.s = load_settings()
+        self.s.setdefault("memo_open", True)
+        self.s.setdefault("wave_anim", True)
         self.rows = load_rows()
         self.rows_dirty = False
 
@@ -416,9 +754,10 @@ class App:
         self.cur = None
         self.cur_minutes = 0
         self.overlay = None
+        self.big = None
         self.compact = False
         self.memo_job = None
-        self._shown = {}          # 화면에 이미 그린 값(바뀐 것만 다시 그리기)
+        self._shown = {}
 
         timer_sound.prepare_async(["chime", "musicbox"], self.s["volume"])
 
@@ -426,30 +765,42 @@ class App:
         root.configure(bg=C.line)
         root.overrideredirect(True)
         root.attributes("-topmost", True)
-        self.place_window(S(self.W), S(self.H))
 
-        # 1px 테두리 안쪽에 흰 카드
         self.card = tk.Frame(root, bg=C.bg)
         self.card.pack(fill="both", expand=True, padx=1, pady=1)
         self.build_full()
         self.build_mini()
-        self.full.pack(fill="both", expand=True)
+        self.full.pack(fill="x")
 
         self.load_memo()
         self.refresh_stats()
+        self.apply_memo()
+        self.place_window()
         root.after(20, lambda: style_window_win(root, taskbar=True))
         self.tick()
+        self.animate()
 
-    def place_window(self, w, h):
+    # ── 창 위치·크기
+    def place_window(self):
+        self.root.update_idletasks()
+        w, h = S(self.W) + 2, self.card.winfo_reqheight() + 2
         sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
         pos = self.s.get("pos")
         if pos and len(pos) == 2:
             x, y = int(pos[0]), int(pos[1])
         else:
             x, y = sw - w - S(24), S(24)
-        x = min(max(0, x), sw - S(80))
-        y = min(max(0, y), sh - S(60))
+        vx, vy = self.root.winfo_vrootx(), self.root.winfo_vrooty()
+        vw = max(sw, self.root.winfo_vrootwidth())
+        vh = max(sh, self.root.winfo_vrootheight())
+        x = min(max(vx, x), vx + vw - S(80))
+        y = min(max(vy, y), vy + vh - S(60))
         self.root.geometry(f"{w}x{h}+{x}+{y}")
+
+    def fit_height(self):
+        self.root.update_idletasks()
+        w, h = S(self.W) + 2, self.card.winfo_reqheight() + 2
+        self.root.geometry(f"{w}x{h}+{self.root.winfo_x()}+{self.root.winfo_y()}")
 
     def draggable(self, *widgets):
         for w in widgets:
@@ -465,104 +816,107 @@ class App:
     # ── 큰 화면
     def build_full(self):
         f = self.full = tk.Frame(self.card, bg=C.bg)
-        px = S(20)
+        px = S(22)
+        self.scene = Scene(self, f)
+        self.scene.pack(fill="x")
 
-        head = tk.Frame(f, bg=C.bg)
-        head.pack(fill="x", padx=(px, S(12)), pady=(S(14), 0))
-        self.date_lbl = tk.Label(head, font=(F.ui, 10), bg=C.bg, fg=C.sub)
-        self.date_lbl.pack(side="left")
-        icon_label(head, "✕", self.on_close, 11).pack(side="right")
-        icon_label(head, "—", self.toggle_compact, 10).pack(side="right")
-
-        self.chip = PillButton(f, "", kind="soft", height=26, width=120, font=(F.ui, 9, "bold"), radius=13)
-        self.chip.pack(pady=(S(18), 0))
-
-        self.time_lbl = tk.Label(f, font=(F.num, 46), bg=C.bg, fg=C.text)
-        self.time_lbl.pack(pady=(S(2), 0))
-
-        self.bar = tk.Canvas(f, height=S(38), bg=C.bg, highlightthickness=0)
-        self.bar.pack(fill="x", padx=px)
-        self.bar.bind("<Configure>", lambda e: self.draw_bar(self.bar, force=True))
-
-        plan = RoundPanel(f, height=40, pad=(14, 10))
-        plan.pack(fill="x", padx=px, pady=(S(14), 0))
-        self.plan = plan.hold(HintEntry(plan, "이번 항해에서 할 일 (선택)"))
+        plan = RoundPanel(f, height=46, pad=(16, 12))
+        plan.pack(fill="x", padx=px, pady=(S(16), 0))
+        self.plan = plan.hold(HintEntry(plan, "이번 항해에서 할 일 (선택)", size=11))
 
         btns = tk.Frame(f, bg=C.bg)
         btns.pack(fill="x", padx=px, pady=(S(10), 0))
-        self.btn_main = PillButton(btns, "시작", self.on_main_button, "primary", height=42)
+        self.btn_main = PillButton(btns, "시작", self.on_main_button, "primary", height=48,
+                                   font=(F.ui, 12, "bold"), radius=14)
         self.btn_main.pack(side="left", fill="x", expand=True)
-        self.btn_reset = PillButton(btns, "↺", self.reset, "soft", width=42, height=42,
-                                    font=(F.ui, 14))
+        self.btn_reset = PillButton(btns, "↺", self.reset, "soft", width=48, height=48,
+                                    font=(F.ui, 15), radius=14)
         self.btn_reset.pack(side="left", padx=(S(8), 0))
 
-        self.stats_lbl = tk.Label(f, font=(F.ui, 9), bg=C.bg, fg=C.sub)
+        self.stats_lbl = tk.Label(f, font=(F.ui, 10), bg=C.bg, fg=C.sub)
         self.stats_lbl.pack(pady=(S(14), 0))
+        tk.Frame(f, bg=C.line, height=1).pack(fill="x", padx=px, pady=(S(14), S(10)))
 
-        tk.Frame(f, bg=C.line, height=1).pack(fill="x", padx=px, pady=(S(14), S(12)))
-
-        mh = tk.Frame(f, bg=C.bg)
+        mh = tk.Frame(f, bg=C.bg, cursor="hand2")
         mh.pack(fill="x", padx=px)
-        tk.Label(mh, text="메모", font=(F.ui, 9, "bold"), bg=C.bg, fg=C.sub).pack(side="left")
+        self.memo_title = tk.Label(mh, text="메모", font=(F.ui, 10, "bold"), bg=C.bg, fg=C.sub, cursor="hand2")
+        self.memo_title.pack(side="left")
+        self.memo_toggle = tk.Label(mh, font=(F.ui, 10, "bold"), bg=C.bg, fg=C.sub, cursor="hand2")
+        self.memo_toggle.pack(side="right")
         self.saved_lbl = tk.Label(mh, text="", font=(F.ui, 8), bg=C.bg, fg=C.hint)
-        self.saved_lbl.pack(side="right")
+        self.saved_lbl.pack(side="right", padx=S(8))
+        for x in (mh, self.memo_title, self.memo_toggle):
+            x.bind("<ButtonRelease-1>", lambda e: self.toggle_memo())
+            x.bind("<Enter>", lambda e: self.memo_toggle.configure(fg=C.text))
+            x.bind("<Leave>", lambda e: self.memo_toggle.configure(fg=C.sub))
 
-        memo = RoundPanel(f, pad=(12, 10))
-        memo.pack(fill="both", expand=True, padx=px, pady=(S(6), 0))
-        self.memo = memo.hold(tk.Text(memo, font=(F.ui, 10), wrap="word", bd=0, relief="flat",
-                                      bg=C.surface, fg=C.text, insertbackground=C.text,
-                                      highlightthickness=0, undo=True, spacing1=S(2), spacing3=S(2)))
+        self.memo_panel = RoundPanel(f, pad=(14, 12), height=140)
+        self.memo = self.memo_panel.hold(tk.Text(self.memo_panel, font=(F.ui, 11), wrap="word", bd=0,
+                                                 relief="flat", bg=C.surface, fg=C.text,
+                                                 insertbackground=C.text, highlightthickness=0, undo=True,
+                                                 spacing1=S(2), spacing3=S(2)))
         self.memo.bind("<<Modified>>", self.on_memo_change)
 
-        foot = tk.Frame(f, bg=C.bg)
-        foot.pack(fill="x", padx=px, pady=(S(10), S(12)))
-        icon_label(foot, "기록 보기", self.open_log, 9).pack(side="left")
-        icon_label(foot, "설정", self.open_settings, 9).pack(side="right")
+        self.foot = tk.Frame(f, bg=C.bg)
+        self.foot.pack(fill="x", padx=px, pady=(S(12), S(14)))
+        icon_label(self.foot, "기록 보기", self.open_log, 10).pack(side="left")
+        icon_label(self.foot, "설정", self.open_settings, 10).pack(side="right")
 
-        self.draggable(f, head, self.date_lbl, self.time_lbl, self.bar, self.stats_lbl, btns, mh, foot)
+        self.draggable(self.scene, f, btns, self.foot, self.stats_lbl)
+
+    def apply_memo(self):
+        if self.s["memo_open"]:
+            self.memo_panel.pack(fill="x", padx=S(22), pady=(S(8), 0), before=self.foot)
+            self.memo_toggle.configure(text="▾ 접기")
+            self.memo_title.configure(text="메모")
+        else:
+            self.memo_panel.pack_forget()
+            self.memo_toggle.configure(text="▸ 펼치기")
+            lines = [l for l in self.memo.get("1.0", "end-1c").splitlines() if l.strip()]
+            self.memo_title.configure(text=f"메모 · {len(lines)}줄" if lines else "메모")
+
+    def toggle_memo(self):
+        self.s["memo_open"] = not self.s["memo_open"]
+        self.apply_memo()
+        save_settings(self.s)
+        self.fit_height()
 
     # ── 접힌 화면
     def build_mini(self):
-        m = self.mini = tk.Frame(self.card, bg=C.bg)
-        row = tk.Frame(m, bg=C.bg)
-        row.pack(fill="x", padx=(S(16), S(10)), pady=(S(10), 0))
-        self.mini_state = tk.Label(row, font=(F.ui, 12), bg=C.bg, fg=C.accent)
-        self.mini_state.pack(side="left")
-        self.mini_time = tk.Label(row, font=(F.num, 22), bg=C.bg, fg=C.text)
-        self.mini_time.pack(side="left", padx=(S(6), 0))
-        icon_label(row, "⤢", self.toggle_compact, 12).pack(side="right")
-        self.mini_bar = tk.Canvas(m, height=S(22), bg=C.bg, highlightthickness=0)
-        self.mini_bar.pack(fill="x", padx=S(16), pady=(S(2), S(8)))
-        self.mini_bar.bind("<Configure>", lambda e: self.draw_bar(self.mini_bar, force=True))
-        self.draggable(m, row, self.mini_state, self.mini_time, self.mini_bar)
+        self.mini = tk.Frame(self.card, bg=C.bg)
+        self.mini_scene = Scene(self, self.mini, mini=True)
+        self.mini_scene.pack(fill="x")
+        self.draggable(self.mini_scene)
 
     def toggle_compact(self):
         self.compact = not self.compact
-        x, y = self.root.winfo_x(), self.root.winfo_y()
         if self.compact:
             self.full.pack_forget()
-            self.mini.pack(fill="both", expand=True)
-            w, h = S(self.MINI_W), S(self.MINI_H)
-            x += S(self.W) - w  # 오른쪽 끝을 맞춰서 접는다
+            self.mini.pack(fill="x")
         else:
             self.mini.pack_forget()
-            self.full.pack(fill="both", expand=True)
-            w, h = S(self.W), S(self.H)
-            x -= S(self.W) - S(self.MINI_W)
-        self.root.geometry(f"{w}x{h}+{max(0, x)}+{y}")
-        self._shown.clear()
+            self.full.pack(fill="x")
+        self.fit_height()
+
+    # ── 크게 보기
+    def open_big(self):
+        if self.big:
+            return
+        self.big = BigView(self)
+        self.root.withdraw()
+
+    def close_big(self):
+        if self.big:
+            self.big.destroy()
+            self.big = None
+            self.root.deiconify()
+            self.root.attributes("-topmost", True)
 
     # ── 타이머
     def remaining(self):
         if self.phase in ("work", "break") and not self.paused:
             return max(0.0, self.end_at - time.monotonic())
         return self.remain
-
-    def show(self, key, widget, **kw):
-        """값이 바뀐 경우에만 위젯을 고친다(가볍게)."""
-        if self._shown.get(key) != kw:
-            self._shown[key] = kw
-            widget.configure(**kw)
 
     def tick(self):
         now = dt.datetime.now()
@@ -577,77 +931,57 @@ class App:
 
         rem = self.remaining()
         t = fmt_clock(rem)
-        self.show("date", self.date_lbl,
-                  text=f"{now.month}월 {now.day}일 {WEEKDAYS[now.weekday()]}요일  ·  {now:%H:%M}")
-        if self.compact:
-            self.show("mini_time", self.mini_time, text=t)
-        else:
-            self.show("time", self.time_lbl, text=t)
-        self.update_status()
-        self.draw_bar(self.mini_bar if self.compact else self.bar)
+        state, color = self.status()
+        frac = 0.0 if not self.total else max(0.0, min(1.0, 1 - rem / self.total))
+        docked = self.phase in ("break", "break_done")
+        sc = self.mini_scene if self.compact else self.scene
+        sc.set_text(sc.timer, "timer", t)
+        sc.set_text(sc.clock, "clock", f"{now:%H:%M}")
+        if not self.compact:
+            sc.set_text(sc.date, "date", f"{now.month}월 {now.day}일 {WEEKDAYS[now.weekday()]}요일")
+            sc.set_chip(state, color)
+        sc.set_progress(frac, docked)
+        if self.big:
+            btn = {"idle": "시작", "work": "계속" if self.paused else "일시정지", "break": "휴식 중",
+                   "break_done": "다시 시작"}[self.phase]
+            plan = self.plan.value() if self.phase == "work" else ""
+            self.big.update(now, t, state, color, frac, docked, plan, btn, self.phase != "break")
         if self.overlay:
             self.overlay.update_time(rem)
+        if self._shown.get("title") != (t, state):
+            self._shown["title"] = (t, state)
+            self.root.title(f"{t} {state}" if self.phase != "idle" else "업무 타이머")
         if self.rows_dirty:
             self.flush_rows()
         self.root.after(250, self.tick)
 
-    def update_status(self):
-        if self.phase == "idle":
-            text, kind, icon, col = "출항 준비", "soft", "⛵", C.sub
-        elif self.phase == "work" and self.paused:
-            text, kind, icon, col = "잠시 멈춤", "soft", "❙❙", C.warn
-        elif self.phase == "work":
-            text, kind, icon, col = "⛵  항해 중", "soft", "⛵", C.accent
-        elif self.phase == "break":
-            text, kind, icon, col = "⚓  섬에서 휴식", "soft", "⚓", C.rest
-        else:
-            text, kind, icon, col = "출항 대기", "soft", "⛵", C.warn
-        key = (text, col)
-        if self._shown.get("chip") != key:
-            self._shown["chip"] = key
-            self.chip.KINDS = dict(PillButton.KINDS)
-            soft = {C.accent: C.accent_soft, C.rest: C.rest_soft, C.warn: C.warn_soft}.get(col, C.surface)
-            self.chip.KINDS["soft"] = (soft, soft, col)
-            self.chip.set(text=text)
-            self.mini_state.configure(text=icon, fg=col)
-            self.root.title(f"{fmt_clock(self.remaining())} {text}" if self.phase != "idle" else "업무 타이머")
-
-    def draw_bar(self, c, force=False):
-        w, h = c.winfo_width(), c.winfo_height()
-        if w < 60:
-            return
-        resting = self.phase in ("break", "break_done")
-        frac = 0.0 if not self.total else 1 - self.remaining() / self.total
-        frac = max(0.0, min(1.0, frac))
-        mini = c is self.mini_bar
-        isl = S(16) if mini else S(24)
-        x1 = w - isl - S(6)
-        bx = round(frac * x1)
-        key = (w, bx, resting, self.phase)
-        if not force and getattr(c, "_key", None) == key:
-            return
-        c._key = key
-        c.delete("all")
-        th = S(4) if mini else S(6)
-        ty = h - th - (S(3) if mini else S(6))
-        track, fill = (C.rest_track, C.rest) if resting else (C.sea, C.accent)
-        c._imgs = [rounded(x1, th, th, track, C.bg)]
-        c.create_image(0, ty, anchor="nw", image=c._imgs[0])
-        if bx > th:
-            c._imgs.append(rounded(bx, th, th, fill, C.bg))
-            c.create_image(0, ty, anchor="nw", image=c._imgs[1])
-        ey = ty + th / 2
-        c.create_text(w - isl / 2, ey - S(2), text="🏝", font=(F.ui, 10 if mini else 14), fill=C.island)
-        if not mini:
-            if resting:
-                c.create_text(x1 - S(8), ty - S(11), text="⚓", font=(F.ui, 12), fill=C.rest)
+    def animate(self):
+        """업무 중에만 물결이 흐른다(설정에서 끌 수 있음)."""
+        on = self.s.get("wave_anim", True) and self.phase == "work" and not self.paused
+        if on:
+            if self.big:
+                self.big.step()
+            elif self.compact:
+                self.mini_scene.step()
             else:
-                c.create_text(min(max(bx, S(9)), x1 - S(9)), ty - S(12), text="⛵", font=(F.ui, 13),
-                              fill=C.accent)
+                self.scene.step()
+        self.root.after(FRAME_MS if on else 500, self.animate)
+
+    def status(self):
+        if self.phase == "idle":
+            return "출항 준비", C.sub
+        if self.phase == "work":
+            return ("잠시 멈춤", C.warn) if self.paused else ("⛵ 항해 중", C.accent)
+        if self.phase == "break":
+            return "⚓ 섬에서 휴식", C.rest
+        return "출항 대기", C.warn
 
     def on_main_button(self):
         if self.phase in ("idle", "break_done"):
-            self.start_work()
+            if self.overlay:
+                self.overlay.resume()
+            else:
+                self.start_work()
         elif self.phase == "work":
             self.toggle_pause()
 
@@ -753,9 +1087,9 @@ class App:
 
     def refresh_stats(self):
         n, mins, skipped = self.today_stats()
-        text = f"오늘 도착한 섬  {n}개   ·   집중 {fmt_minutes(mins)}"
+        text = f"오늘 도착한 섬 {n}개  ·  집중 {fmt_minutes(mins)}"
         if skipped:
-            text += f"   ·   휴식 건너뜀 {skipped}"
+            text += f"  ·  휴식 건너뜀 {skipped}"
         self.stats_lbl.configure(text=text, fg=C.warn if skipped else C.sub)
 
     # ── 메모
@@ -799,20 +1133,19 @@ class App:
             return
         if self.overlay:
             self.close_overlay()
+        self.close_big()
         self.save_memo()
         self.flush_rows()
-        x, y = self.root.winfo_x(), self.root.winfo_y()
-        if self.compact:
-            x -= S(self.W) - S(self.MINI_W)
-        self.s["pos"] = [x, y]
+        self.s["pos"] = [self.root.winfo_x(), self.root.winfo_y()]
         save_settings(self.s)
         timer_sound.stop()
         self.root.destroy()
 
 
-# ───────────────────────── 휴식 화면 (전체 화면)
+# ───────────────────────── 휴식 화면 (모든 모니터)
 
 class BreakOverlay:
+    """주 모니터: 남은 시간 + 한 일/할 일 입력. 다른 모니터: 아주 큰 남은 시간만."""
     PERIOD = 6.0  # 숨 한 번 길이(초)
 
     def __init__(self, app):
@@ -820,81 +1153,116 @@ class BreakOverlay:
         self.mode = "break"
         self.t0 = time.monotonic()
         self.asking = False
-        w = self.win = tk.Toplevel(app.root)
-        w.title("쉬는 시간")
-        w.geometry(f"{w.winfo_screenwidth()}x{w.winfo_screenheight()}+0+0")
-        w.attributes("-fullscreen", True)
-        w.attributes("-topmost", True)
-        w.protocol("WM_DELETE_WINDOW", lambda: None)  # 닫기·Alt+F4 무시
         a, b = C.breath["break"]
         self.mid = mix(a, b, 0.5)
-        self.plain, self.canvases = [w], []
+        self.plain, self.canvases, self.wins, self.times, self.extras = [], [], [], [], []
 
-        def L(parent, **kw):
-            x = tk.Label(parent, bg=self.mid, **kw)
-            self.plain.append(x)
-            return x
-
-        def Fr(parent):
-            x = tk.Frame(parent, bg=self.mid)
-            self.plain.append(x)
-            return x
-
-        box = Fr(w)
-        box.place(relx=0.5, rely=0.46, anchor="center")
-        self.title = L(box, font=(F.ui, 24, "bold"), fg=C.rest_text)
-        self.title.pack()
-        self.sub = L(box, font=(F.ui, 12), fg=C.rest_text)
-        self.sub.pack(pady=(S(6), 0))
-        self.time = L(box, font=(F.num, 96), fg=C.rest_text)
-        self.time.pack(pady=(S(8), 0))
-        self.tip = L(box, text=random.choice(TIPS), font=(F.ui, 13), fg=C.rest_text)
-        self.tip.pack(pady=(0, S(34)))
-
-        form = Fr(box)
-        form.pack(fill="x")
-        plan = app.cur["할 일"] if app.cur else ""
-        if plan:
-            L(form, text=f"계획했던 일  ·  {plan}", font=(F.ui, 10), fg=C.rest_text).pack(anchor="w")
-        L(form, text="이번 항해에서 한 일", font=(F.ui, 10, "bold"), fg=C.rest_text).pack(anchor="w",
-                                                                                pady=(S(6), S(6)))
-        p1 = RoundPanel(form, fill="#ffffff", bg=self.mid, radius=14, pad=(16, 12), height=48)
-        p1.configure(width=S(480))
-        p1.pack(fill="x")
-        self.canvases.append(p1)
-        self.result = p1.hold(HintEntry(p1, "한 줄로 적어 두세요 (비워도 돼요)", bg="#ffffff", size=12))
-
-        self.next_box = Fr(box)
-        L(self.next_box, text="다음 항해에서 할 일", font=(F.ui, 10, "bold"), fg=C.done_text).pack(
-            anchor="w", pady=(S(18), S(6)))
-        p2 = RoundPanel(self.next_box, fill="#ffffff", bg=self.mid, radius=14, pad=(16, 12), height=48)
-        p2.pack(fill="x")
-        self.canvases.append(p2)
-        self.next = p2.hold(HintEntry(p2, "비워도 돼요", bg="#ffffff", size=12))
-        self.next.bind("<Return>", lambda e: self.resume())
-        self.go = PillButton(self.next_box, "⛵  다시 집중 시작", self.resume, "primary", height=52,
-                             bg=self.mid, font=(F.ui, 13, "bold"), radius=16)
-        self.go.pack(fill="x", pady=(S(22), 0))
-        self.canvases.append(self.go)
-
-        self.skip = tk.Label(w, text="급하게 계속하기", font=(F.ui, 9), bg=self.mid, fg=C.sub,
-                             cursor="hand2")
-        self.skip.bind("<ButtonRelease-1>", lambda e: self.ask_skip())
-        self.skip.place(relx=0.5, rely=0.95, anchor="center")
-        self.plain.append(self.skip)
+        mons = all_monitors(app.root)
+        primary = next((m for m in mons if m[4]), mons[0])
+        for m in mons:
+            if m is not primary:
+                self.build_side(m)
+        self.build_main(primary)
 
         n, mins, _ = app.today_stats()
         self.title.configure(text="⚓  섬에 도착했어요")
         self.sub.configure(text=f"오늘 {n}번째 항해 완료  ·  집중 {fmt_minutes(mins)}")
         self.breathe()
         self.keep_on_top()
-        w.after(300, lambda: (w.focus_force(), self.result.focus_set()))
+        self.win.after(300, lambda: (self.win.focus_force(), self.result.focus_set()))
+
+    def new_window(self, m, focusable):
+        x, y, w, h, _ = m
+        win = tk.Toplevel(self.app.root)
+        win.title("쉬는 시간")
+        win.configure(bg=self.mid)
+        if focusable:
+            win.geometry(f"{w}x{h}+{x}+{y}")
+            win.attributes("-fullscreen", True)
+        else:
+            win.overrideredirect(True)
+            win.geometry(f"{w}x{h}+{x}+{y}")
+        win.attributes("-topmost", True)
+        win.protocol("WM_DELETE_WINDOW", lambda: None)  # 닫기·Alt+F4 무시
+        self.wins.append(win)
+        self.plain.append(win)
+        return win
+
+    def L(self, parent, **kw):
+        x = tk.Label(parent, bg=self.mid, **kw)
+        self.plain.append(x)
+        return x
+
+    def Fr(self, parent):
+        x = tk.Frame(parent, bg=self.mid)
+        self.plain.append(x)
+        return x
+
+    def build_side(self, m):
+        win = self.new_window(m, False)
+        h = m[3]
+        box = self.Fr(win)
+        box.place(relx=0.5, rely=0.5, anchor="center")
+        t = self.L(box, font=(F.num_bold, -int(h * 0.30), "bold"), fg=C.rest_text)
+        t.pack()
+        msg = self.L(box, text="쉬는 시간이에요", font=(F.ui, -int(h * 0.035), "bold"), fg=C.rest_text)
+        msg.pack(pady=(int(h * 0.01), 0))
+        self.times.append(t)
+        self.extras.append((t, msg))
+
+    def build_main(self, m):
+        app = self.app
+        h = m[3]
+        w = self.win = self.new_window(m, True)
+        box = self.Fr(w)
+        box.place(relx=0.5, rely=0.47, anchor="center")
+        self.title = self.L(box, font=(F.ui, -int(h * 0.032), "bold"), fg=C.rest_text)
+        self.title.pack()
+        self.sub = self.L(box, font=(F.ui, -int(h * 0.017)), fg=C.rest_text)
+        self.sub.pack(pady=(S(6), 0))
+        self.time = self.L(box, font=(F.num_bold, -int(h * 0.22), "bold"), fg=C.rest_text)
+        self.time.pack()
+        self.times.append(self.time)
+        self.tip = self.L(box, text=random.choice(TIPS), font=(F.ui, -int(h * 0.019)), fg=C.rest_text)
+        self.tip.pack(pady=(0, S(30)))
+
+        form = self.Fr(box)
+        form.pack(fill="x")
+        plan = app.cur["할 일"] if app.cur else ""
+        if plan:
+            self.L(form, text=f"계획했던 일  ·  {plan}", font=(F.ui, 11), fg=C.rest_text).pack(anchor="w")
+        self.L(form, text="이번 항해에서 한 일", font=(F.ui, 11, "bold"), fg=C.rest_text).pack(
+            anchor="w", pady=(S(6), S(6)))
+        p1 = RoundPanel(form, fill="#ffffff", bg=self.mid, radius=14, pad=(16, 12), height=50)
+        p1.configure(width=S(520))
+        p1.pack(fill="x")
+        self.canvases.append(p1)
+        self.result = p1.hold(HintEntry(p1, "한 줄로 적어 두세요 (비워도 돼요)", bg="#ffffff", size=13))
+
+        self.next_box = self.Fr(box)
+        self.L(self.next_box, text="다음 항해에서 할 일", font=(F.ui, 11, "bold"), fg=C.done_text).pack(
+            anchor="w", pady=(S(18), S(6)))
+        p2 = RoundPanel(self.next_box, fill="#ffffff", bg=self.mid, radius=14, pad=(16, 12), height=50)
+        p2.pack(fill="x")
+        self.canvases.append(p2)
+        self.next = p2.hold(HintEntry(p2, "비워도 돼요", bg="#ffffff", size=13))
+        self.next.bind("<Return>", lambda e: self.resume())
+        self.go = PillButton(self.next_box, "⛵  다시 집중 시작", self.resume, "primary", height=56,
+                             bg=self.mid, font=(F.ui, 14, "bold"), radius=16)
+        self.go.pack(fill="x", pady=(S(22), 0))
+        self.canvases.append(self.go)
+
+        self.skip = tk.Label(w, text="급하게 계속하기", font=(F.ui, 10), bg=self.mid, fg=C.sub, cursor="hand2")
+        self.skip.bind("<ButtonRelease-1>", lambda e: self.ask_skip())
+        self.skip.place(relx=0.5, rely=0.95, anchor="center")
+        self.plain.append(self.skip)
 
     def update_time(self, rem):
         if self.mode == "break":
             t = fmt_clock(rem)
-            if self.time.cget("text") != t:
-                self.time.configure(text=t)
+            for lbl in self.times:
+                if lbl.cget("text") != t:
+                    lbl.configure(text=t)
 
     def show_done(self):
         self.mode = "break_done"
@@ -905,6 +1273,10 @@ class BreakOverlay:
         for x in self.plain:
             if isinstance(x, tk.Label) and x is not self.skip:
                 x.configure(fg=C.done_text)
+        for t, msg in self.extras:
+            h = t.winfo_toplevel().winfo_height()
+            t.configure(text="다시 출항할 시간이에요", font=(F.ui, -int(h * 0.07), "bold"))
+            msg.configure(text="주 모니터에서 ‘다시 집중 시작’을 눌러 주세요", font=(F.ui, -int(h * 0.028)))
         self.title.configure(text="다시 출항할 시간이에요")
         self.sub.configure(text="충분히 쉬었다면 천천히 시작해요")
         self.time.pack_forget()
@@ -930,8 +1302,9 @@ class BreakOverlay:
         if not self.win.winfo_exists():
             return
         if not self.asking:
-            self.win.attributes("-topmost", True)
-            self.win.lift()
+            for w in self.wins:
+                w.attributes("-topmost", True)
+                w.lift()
         self.win.after(1000, self.keep_on_top)
 
     def ask_skip(self):
@@ -951,8 +1324,9 @@ class BreakOverlay:
             self.app.resume_from_overlay(self.next.value())
 
     def destroy(self):
-        if self.win.winfo_exists():
-            self.win.destroy()
+        for w in self.wins:
+            if w.winfo_exists():
+                w.destroy()
 
 
 # ───────────────────────── 작은 창 공통
@@ -985,6 +1359,9 @@ def setup_ttk(root):
     st.map("TCombobox", fieldbackground=[("readonly", C.surface)])
     st.configure("TSpinbox", fieldbackground=C.surface, background=C.surface, bordercolor=C.line,
                  lightcolor=C.surface, darkcolor=C.surface, arrowcolor=C.sub, padding=S(5))
+    st.configure("TCheckbutton", background=C.bg, foreground=C.text, font=(F.ui, 10),
+                 indicatorbackground=C.surface, indicatorforeground=C.accent)
+    st.map("TCheckbutton", background=[("active", C.bg)])
     st.configure("Horizontal.TScale", background=C.accent, troughcolor=C.sea, bordercolor=C.bg,
                  lightcolor=C.accent, darkcolor=C.accent)
     st.configure("Treeview", background=C.bg, fieldbackground=C.bg, foreground=C.text, borderwidth=0,
@@ -1050,8 +1427,12 @@ class SettingsWindow:
                   style="Sub.TLabel", wraplength=S(320)).grid(row=6, column=0, columnspan=3, sticky="w",
                                                               pady=(S(4), 0))
 
+        self.anim = tk.BooleanVar(value=s.get("wave_anim", True))
+        ttk.Checkbutton(f, text="업무 중 물결이 천천히 흐르기", variable=self.anim).grid(
+            row=7, column=0, columnspan=3, sticky="w", pady=(S(14), 0))
+
         bf = ttk.Frame(f)
-        bf.grid(row=7, column=0, columnspan=3, sticky="we", pady=(S(26), 0))
+        bf.grid(row=8, column=0, columnspan=3, sticky="we", pady=(S(26), 0))
         PillButton(bf, "저장", self.save, "primary", height=40).pack(side="right", fill="x", expand=True,
                                                                   padx=(S(4), 0))
         PillButton(bf, "취소", self.close, "soft", height=40).pack(side="right", fill="x", expand=True,
@@ -1094,7 +1475,7 @@ class SettingsWindow:
         brk = int(brk) if brk >= 1 else brk
         app = self.app
         app.s.update({"work_min": max(0.05, work), "break_min": max(0.05, brk), "volume": self.vol.get(),
-                      **self.sounds})
+                      "wave_anim": bool(self.anim.get()), **self.sounds})
         save_settings(app.s)
         timer_sound.prepare_async(["chime", "musicbox"], app.s["volume"])
         if app.phase == "idle":
