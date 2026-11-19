@@ -17,8 +17,8 @@ const SCALE = 1000 / 860;     // 860px 디자인 → 가로 1000px 출력
 const jobs = [
   { file: 'top.html',    out: 'about_top',    width: 860, scale: SCALE, split: true },
   { file: 'bottom.html', out: 'about_bottom', width: 860, scale: SCALE, split: true },
-  { file: 'watermark.html', out: 'about_watermark',       width: 250, scale: 2, element: '#wm', transparent: true, vars: { __VARIANT__: '', __LOGO__: 'logo.svg' } },
-  { file: 'watermark.html', out: 'about_watermark_white', width: 250, scale: 2, element: '#wm', transparent: true, vars: { __VARIANT__: 'white', __LOGO__: 'logo-white.svg' } },
+  { file: 'watermark.html', out: 'about_watermark',       width: 250, scale: 2, element: '#wm', transparent: true, vars: { __VARIANT__: '' } },
+  { file: 'watermark.html', out: 'about_watermark_white', width: 250, scale: 2, element: '#wm', transparent: true, vars: { __VARIANT__: 'white' } },
   { file: 'profile.html', out: 'about_profile', width: 1000, height: 1000, scale: 1 },
   { file: 'banner.html',  out: 'about_banner',  width: 1280, height: 480,  scale: 1 },
   { file: 'guide.html',   out: 'about_brand_guide', width: 1200, scale: 1 },
@@ -54,21 +54,24 @@ function compress(file) {
       await page.locator(j.element).screenshot({ path: f, omitBackground: !!j.transparent });
       files.push(f);
     } else if (j.split) {
-      // 분할 후보: 섹션 사이 흰 여백(.gap)의 가운데 → 섹션 중간이 잘리지 않음
-      const { total, cuts } = await page.evaluate(() => {
-        const cuts = [];
+      // 분할 후보 1순위: 섹션 사이 흰 여백(.gap)의 가운데
+      // 2순위(섹션이 한 장보다 길 때): 섹션 안 블록·목록 줄 사이 경계
+      const { total, cuts, soft } = await page.evaluate(() => {
+        const cuts = [], soft = [];
         for (const el of document.querySelectorAll('body > .gap')) {
           const r = el.getBoundingClientRect();
           cuts.push(r.top + r.height / 2);
         }
-        return { total: document.documentElement.scrollHeight, cuts };
+        for (const el of document.querySelectorAll('.page > *, .rows > li')) soft.push(el.getBoundingClientRect().top);
+        return { total: document.documentElement.scrollHeight, cuts, soft };
       });
       const maxCss = MAX_H / j.scale;
       const parts = [];
       let start = 0;
       while (total - start > maxCss) {
-        const ok = cuts.filter(c => c > start + 200 && c - start <= maxCss);
-        const end = ok.length ? ok[ok.length - 1] : start + maxCss;
+        const fit = list => list.filter(c => c > start + 200 && c - start <= maxCss);
+        const ok = fit(cuts), ok2 = fit(soft);
+        const end = ok.length ? ok[ok.length - 1] : ok2.length ? Math.max(...ok2) : start + maxCss;
         parts.push([start, end]); start = end;
       }
       parts.push([start, total]);

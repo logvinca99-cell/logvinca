@@ -1,45 +1,52 @@
 <!doctype html><html lang="ko"><head><meta charset="utf-8"><title>에이바우트 브랜드 가이드</title>
 <link rel="stylesheet" href="style.css">
 <style>
- body{width:1200px;padding:70px}
- h2{font-size:var(--m);font-weight:800;margin:56px 0 18px;color:var(--main-deep)}
- .row{display:flex;gap:20px}
- .sw{flex:1;border-radius:20px;overflow:hidden;border:2px solid var(--line)}
- .sw i{display:block;height:120px}
- .sw div{padding:16px 20px}
- .logos{display:flex;gap:20px}
- .logos > div{flex:1;border-radius:20px;height:200px;display:grid;place-items:center}
- .type > div{border:2px solid var(--line);border-radius:20px;padding:22px 30px;margin-bottom:12px;display:flex;align-items:center;gap:24px}
- .type .s{width:320px;flex:none}
- ul.rule{list-style:none;border:2px solid var(--line);border-radius:20px;padding:10px 30px}
- ul.rule li{padding:14px 0}
- ul.rule li+li{border-top:2px dashed var(--line)}
+ body{width:1200px;padding:0 70px 80px;border-top:14px solid var(--plum)}
+ .top{display:flex;justify-content:space-between;align-items:center;padding-top:40px}
+ .top .en{font-size:40px;color:var(--plum)}
+ h2{margin:70px 0 22px;border-top:8px solid var(--ink);padding-top:18px;font-family:"Serif KR";font-weight:900;font-size:var(--t);letter-spacing:-.055em}
+ h2 .en{font-size:36px;color:var(--plum);margin-right:16px}
+ .row{display:grid;grid-template-columns:repeat(4,1fr);border:2px solid var(--ink)}
+ .row > div + div{border-left:2px solid var(--ink)}
+ .row i{display:block;height:130px;border-bottom:2px solid var(--ink)}
+ .row p{padding:14px 18px 18px}
+ .fonts > div{display:grid;grid-template-columns:330px 1fr;align-items:center;border-bottom:1px solid var(--hair);padding:20px 0}
+ .logos{display:grid;grid-template-columns:1fr 1fr;border:2px solid var(--ink)}
+ .logos > div{height:200px;display:grid;place-items:center}
+ .logos > div + div{background:var(--plum);color:#fff}
+ .logos .mark.inv{background:#fff;color:var(--plum)}
 </style></head><body>
-<div class="l">에이바우트 브랜드 가이드</div>
-<div class="s">이름 뜻: about(~에 대하여) — 일상에 꼭 맞는 물건을 찾아 소개하는 스토어</div>
-<h2>로고 — about의 첫 글자 ‘a.’</h2>
+<div class="top"><div class="logo"><span class="mark">a<i>.</i></span><span class="name">에이바우트</span></div><span class="en">brand guide</span></div>
+<div class="d" style="margin-top:50px">잡지처럼 읽히는<br><span class="hl">구매 안내서</span></div>
+<p style="margin-top:20px">about = ~에 대하여. 섹션마다 ‘about delivery’, ‘about returns’처럼 이름을 붙여 한 권의 안내서로 만듭니다.</p>
+
+<h2><span class="en">logo</span>로고</h2>
 <div class="logos">
- <div style="border:2px solid var(--line)"><div class="brand"><img src="logo.svg" width="84" height="84"><div class="name">에이바우트</div></div></div>
- <div style="background:var(--dark)"><div class="brand"><img src="logo-white.svg" width="84" height="84"><div class="name" style="color:#fff">에이바우트</div></div></div>
+ <div><div class="logo"><span class="mark">a<i>.</i></span><span class="name" style="font-family:'Serif KR';font-weight:900;font-size:46px;letter-spacing:-.06em">에이바우트</span></div></div>
+ <div><div class="logo"><span class="mark inv">a<i>.</i></span><span class="name" style="font-family:'Serif KR';font-weight:900;font-size:46px;letter-spacing:-.06em">에이바우트</span></div></div>
 </div>
-<h2>컬러 — 딥 플럼 하나로 통일, 라일락은 진한 바탕 위 강조에만</h2>
+
+<h2><span class="en">color</span>컬러</h2>
 <div class="row">
- <div class="sw"><i style="background:#553C8B"></i><div><div class="m"><b>딥 플럼</b></div><div class="s">#553C8B · 85, 60, 139<br>메인·테두리·강조 글자</div></div></div>
- <div class="sw"><i style="background:#2E2145"></i><div><div class="m"><b>다크 플럼</b></div><div class="s">#2E2145 · 46, 33, 69<br>진한 띠·블록</div></div></div>
- <div class="sw"><i style="background:#D9C8FF"></i><div><div class="m"><b>라일락</b></div><div class="s">#D9C8FF · 217, 200, 255<br>진한 바탕 위 숫자</div></div></div>
- <div class="sw"><i style="background:#F1ECF8"></i><div><div class="m"><b>라벤더</b></div><div class="s">#F1ECF8 · 241, 236, 248<br>보조면</div></div></div>
+ <div><i style="background:#553C8B"></i><p><b>플럼</b><br><span class="c">#553C8B<br>85, 60, 139</span></p></div>
+ <div><i style="background:#17141C"></i><p><b>먹색</b><br><span class="c">#17141C<br>23, 20, 28</span></p></div>
+ <div><i style="background:#FFE45C"></i><p><b>형광펜 노랑</b><br><span class="c">#FFE45C<br>255, 228, 92</span></p></div>
+ <div><i style="background:#F3F0F8"></i><p><b>연보라 면</b><br><span class="c">#F3F0F8<br>243, 240, 248</span></p></div>
 </div>
-<h2>글씨 크기 — 이 4단계만 사용 (Pretendard)</h2>
-<div class="type">
- <div><span class="s">XL · 64px · Black</span><span class="xl">약 2주</span></div>
- <div><span class="s">L · 40px · ExtraBold</span><span class="l">주문 후 준비되는 상품</span></div>
- <div><span class="s">M · 30px · SemiBold</span><span class="m">본문은 모두 이 크기</span></div>
- <div><span class="s">S · 24px · Medium</span><span class="s" style="width:auto">보조 설명, 가장 작은 크기</span></div>
+
+<h2><span class="en">type</span>글꼴 — 네 가지를 역할별로 섞어 씁니다</h2>
+<div class="fonts">
+ <div><span class="c">제목 · Noto Serif KR Black<br>76px / 46px</span><span class="t">받아보시기까지 약 2주</span></div>
+ <div><span class="c">본문 · IBM Plex Sans KR<br>29px / 보조 23px</span><span>주문이 들어오면 발주해 준비하는 상품입니다.</span></div>
+ <div><span class="c">숫자 · Anton</span><span class="num plum" style="font-size:76px">010-5934-5488</span></div>
+ <div><span class="c">영문 · Instrument Serif Italic</span><span class="en plum" style="font-size:60px">about delivery</span></div>
 </div>
-<h2>문구 규칙</h2>
-<ul class="rule m">
- <li>· 배송은 ‘주문 후 발주해 준비되는 상품’, ‘약 2주’로만 표현</li>
- <li>· 섹션은 플럼 테두리 박스 + 위에 걸친 알약 제목으로 통일</li>
- <li>· 폭 860px(출력 1000px), 좌우 여백 40px, 섹션 간격 96px</li>
+
+<h2><span class="en">rules</span>지면 규칙</h2>
+<ul class="rows" style="margin-top:0">
+ <li>왼쪽 정렬. 둥근 박스 없이 굵은 선(8px)과 가는 선(1px)으로 나눕니다.</li>
+ <li>섹션 머리 = 테두리만 있는 큰 숫자 + 영문 라벨 + 명조 제목.</li>
+ <li>강조는 <span class="hl">형광펜 밑줄</span> 하나로만. 색 글씨를 남발하지 않습니다.</li>
+ <li>배송은 ‘주문 후 발주해 준비되는 상품’, ‘약 2주’로만 표현합니다.</li>
 </ul>
 </body></html>

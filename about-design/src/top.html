@@ -2,24 +2,23 @@
 <html lang="ko"><head><meta charset="utf-8"><title>에이바우트 상단</title>
 <link rel="stylesheet" href="style.css">
 <style>
-  .head { padding: 36px 40px 32px; }
-  .head .brand .name { font-size: var(--l); }
-  .opt { background: var(--dark); color: #fff; text-align: center; padding: 44px 40px 40px; }
-  .opt .s { color: rgba(255,255,255,.8); font-weight: 700; }
-  .opt .l { margin-top: 8px; }
-  .opt .l span { background: var(--lilac); color: var(--ink); border-radius: 10px; padding: 0 10px; }
-  .ship { margin-top: 30px; display: inline-flex; align-items: center; gap: 12px; border: 2px solid rgba(217,200,255,.45); border-radius: 999px; padding: 10px 28px; }
-  .ship svg { font-size: var(--m); color: var(--lilac); stroke-width: 2.2; }
-  .ship b { color: var(--lilac); }
-  .opt .down { margin-top: 22px; display: flex; justify-content: center; align-items: center; gap: 8px; color: var(--lilac); font-size: var(--s); font-weight: 800; }
-  .opt .down svg { stroke-width: 2.6; }
+  .cover { border-top: 14px solid var(--plum); padding: 30px 48px 44px; }
+  .bar { display: flex; justify-content: space-between; align-items: center; }
+  .bar .en { font-size: 34px; color: var(--plum); }
+  .q { margin-top: 44px; font-weight: 700; color: var(--plum); }
+  .cover .t { margin-top: 6px; }
+  .cover .d { margin: 2px 0 4px -4px; }
+  .strip { background: var(--ink); color: #fff; padding: 22px 48px; display: flex; justify-content: space-between; align-items: center; }
+  .strip b { color: var(--mark); }
+  .strip .dn { font-size: var(--c); font-weight: 700; color: var(--mark); white-space: nowrap; }
 </style></head>
 <body>
-<div class="head"><div class="brand"><img src="logo.svg" width="56" height="56" alt=""><div class="name">에이바우트</div></div></div>
-<div class="opt">
-  <div class="s">옵션 선택, 헷갈리셨죠?</div>
-  <div class="l">대표 사진이 아닌<br><span>옵션명·옵션 이미지</span>를 꼭 확인해 주세요</div>
-  <div class="ship m"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>주문 후 준비되는 상품으로 <b>약 2주</b> 걸려요</span></div>
-  <div class="down">아래 옵션표를 확인하세요<svg class="ic" viewBox="0 0 24 24"><path d="M12 4v15"/><path d="m6 13 6 6 6-6"/></svg></div>
+<div class="cover">
+  <div class="bar"><div class="logo"><span class="mark">a<i>.</i></span><span class="name">에이바우트</span></div><span class="en">before you order</span></div>
+  <div class="c q">옵션 선택, 헷갈리셨죠?</div>
+  <div class="t">대표 사진이 아닌</div>
+  <div class="d"><span class="hl">옵션명·옵션 이미지</span></div>
+  <div class="t">를 꼭 확인해 주세요</div>
 </div>
+<div class="strip"><span>주문 후 준비되는 상품 · <b>약 2주</b> 소요</span><span class="dn">아래 옵션표 ↓</span></div>
 </body></html>
