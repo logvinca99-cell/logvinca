@@ -17,6 +17,11 @@ const SCALE = 1000 / 860;     // 860px 디자인 → 가로 1000px 출력
 const jobs = [
   { file: 'top.html',    out: 'about_top',    width: 860, scale: SCALE, split: true },
   { file: 'bottom.html', out: 'about_bottom', width: 860, scale: SCALE, split: true },
+  { file: 'top_a.html', out: 'about_top_A', width: 860, scale: SCALE, split: true },
+  { file: 'top_b.html', out: 'about_top_B', width: 860, scale: SCALE, split: true },
+  { file: 'top_c.html', out: 'about_top_C', width: 860, scale: SCALE, split: true },
+  { file: 'top_d.html', out: 'about_top_D', width: 860, scale: SCALE, split: true },
+  { file: 'top_e.html', out: 'about_top_E', width: 860, scale: SCALE, split: true },
   { file: 'watermark.html', out: 'about_watermark',       width: 250, scale: 2, element: '#wm', transparent: true, vars: { __VARIANT__: '' } },
   { file: 'watermark.html', out: 'about_watermark_white', width: 250, scale: 2, element: '#wm', transparent: true, vars: { __VARIANT__: 'white' } },
   { file: 'profile.html', out: 'about_profile', width: 1000, height: 1000, scale: 1 },

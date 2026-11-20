@@ -28,6 +28,7 @@
 | 파일 | 내용 |
 |---|---|
 | `about_top.png` | 상단: 로고 + 옵션 확인 큰 문구 + 약 2주 안내 (1000 × 676) |
+| `about_top_A~E.png` | 상단 시안 5종 (A 체크 카드 / B 사진 비교 / C 티켓 / D 미니멀 표 / E 옐로 스티커) |
 | `about_bottom_01.png` | 표지 + 배송 |
 | `about_bottom_02.png` | 착불 배송비 + 상품 안내 |
 | `about_bottom_03.png` | 교환·반품 |
