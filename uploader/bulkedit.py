@@ -259,13 +259,17 @@ def push_names(db, store_id=None, progress=None, should_stop=None):
 
 
 def push_all(db, price_ids=None, store_id=None, progress=None, should_stop=None):
-    """네이버 반영 대기(가격·상품명)를 모두 보냄."""
+    """네이버 반영 대기(가격·상품명·상세)를 모두 보냄."""
+    from . import engine
     a = baseprice.push_live(db, price_ids, store_id=store_id, progress=progress, should_stop=should_stop)
     b = push_names(db, store_id, progress=progress, should_stop=should_stop)
-    left = baseprice.pending_count(db, store_id) + name_pending_count(db, store_id)
-    msg = f"네이버 가격 바꿈 {a['ok']:,}건 · 상품명 바꿈 {b['ok']:,}건"
-    if a["fail"] or b["fail"]:
-        msg += f" · 실패 {a['fail'] + b['fail']:,}건"
+    d = engine.push_details(db, store_id=store_id, progress=progress, should_stop=should_stop)
+    left = baseprice.pending_count(db, store_id) + name_pending_count(db, store_id) + engine.detail_pending_count(db, store_id)
+    msg = f"네이버 가격 바꿈 {a['ok']:,}건 · 상품명 바꿈 {b['ok']:,}건" + (f" · 상세 바꿈 {d['ok']:,}건" if d["ok"] or d["fail"] else "")
+    fails = a["fail"] + b["fail"] + d["fail"]
+    if fails:
+        msg += f" · 실패 {fails:,}건"
     if left:
         msg += f" · 아직 대기 {left:,}건 ([네이버 반영 다시 시도])"
-    return {"price_ok": a["ok"], "name_ok": b["ok"], "fail": a["fail"] + b["fail"], "left": left, "errors": (a["errors"] + b["errors"])[:5], "message": msg}
+    return {"price_ok": a["ok"], "name_ok": b["ok"], "detail_ok": d["ok"], "fail": fails, "left": left,
+            "errors": (a["errors"] + b["errors"] + d["errors"])[:5], "message": msg}

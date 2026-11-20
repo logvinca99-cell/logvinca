@@ -1019,6 +1019,17 @@ const App = {
   },
 
   /* 검수 완료로 표시 / 풀기. target: 원본 조건·{ids}, 또는 {listing_filter} */
+  /* 이미 들어온 원본의 상세 정리: 고른 원본(복사본이면 그 원본)을 상세 정리 새 묶음으로 → 상세만 정리해 [원본에 반영] */
+  async sendToClean(target, what) {
+    if (!await this.yes("상세 정리로 보내기", `${what}을(를) 상세 정리로 보냅니다.\n상세 정리에서 공통 이미지(다른 스토어 배너)·전화번호·상세를 정리한 뒤 [원본에 반영]을 누르면 원본 상세만 바뀌고, 판매 중 복사본은 네이버 상세만 바꿉니다(지우지 않음 — 상품번호·리뷰 그대로). 상품명·가격·옵션은 그대로입니다.`, { label: "보내기" })) return;
+    try {
+      const r = await this.api("/api/clean/from_sources", { json: target });
+      this.toast(`원본 ${num(r.total)}개를 상세 정리로 보냈습니다` + (r.rule_imgs ? ` (기억한 공통 이미지 ${num(r.rule_imgs)}장은 미리 뺌)` : ""));
+      this._cleanBid = r.batch_id;
+      location.hash = "#clean";
+    } catch (e) { this.toast(e.message, true); }
+  },
+
   async eyeSet(target, done, what, after) {
     if (!done && !await App.yes("검수 완료 풀기", `${what}의 검수 완료를 풀까요? 풀면 새로 올리지 않습니다 (최신화·내리기는 그대로).`, { label: "풀기", danger: true })) return;
     try {

@@ -3,7 +3,8 @@
 원본 파일을 다시 올려도 원본을 덮어쓰지 않으므로, 상세페이지(HTML)와 옵션은 여기서만 고친다.
 - 상품명은 원본 기준(상품명이 완전히 같으면 같은 원본)이라 여기서 바꾸지 않는다.
 - 기준 가격은 [기준 가격 수정]으로 (baseprice.py).
-- 고친 내용은 아직 안 올린 복사본은 올릴 때, 판매 중 복사본은 다음 최신화·다시 올리기 때 반영된다 (네이버에 바로 보내지 않음).
+- 고친 내용은 아직 안 올린 복사본은 올릴 때 반영된다. 상세를 고치면 판매 중 복사본은 '네이버 상세 바꾸기'로
+  상세만 바로 바꾼다(지우지 않음 — 상품번호·리뷰 그대로, 실패하면 네이버 반영 대기). 옵션은 다음 최신화·다시 올리기 때.
 - 고치기 전 내용을 source_edit_log에 남겨 [마지막 수정 되돌리기]로 돌릴 수 있다.
 """
 import json
@@ -143,7 +144,14 @@ def save(db, sid, detail=None, options=None, memo=""):
     if not what:
         return {"changed": False, "warnings": warn}
     _write(db, sid, row, "·".join(what), before, memo)
-    return {"changed": True, "what": "·".join(what), "warnings": warn}
+    lids = _push_detail(db, sid) if "상세" in what else []
+    return {"changed": True, "what": "·".join(what), "warnings": warn, "detail_push": lids}
+
+
+def _push_detail(db, sid):
+    """상세를 바꾼 원본의 판매 중 복사본에 '네이버 상세 바꾸기 대기'를 건다 → 복사본 번호들."""
+    from . import engine
+    return engine.mark_detail_push(db, [sid])
 
 
 def _write(db, sid, row, what, before, memo=""):
@@ -178,7 +186,8 @@ def undo_last(db, sid):
     row["상세설명"], row["옵션상품"] = b.get("상세설명"), b.get("옵션상품")
     _write(db, sid, row, "되돌림", cur, f"수정 #{r['id']} 되돌림")
     db.x("UPDATE source_edit_log SET what=what||' (되돌림)' WHERE id=?", (r["id"],))
-    return {"undone": r["id"]}
+    lids = _push_detail(db, sid) if str(cur.get("상세설명") or "") != str(row.get("상세설명") or "") else []
+    return {"undone": r["id"], "detail_push": lids}
 
 
 def log(db, sid):

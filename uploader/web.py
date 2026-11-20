@@ -407,6 +407,42 @@ def create_app(db=None):
         except RuntimeError as e:
             return fail(str(e))
 
+    @app.post("/api/clean/from_sources")
+    def clean_from_sources():
+        """원본 상품·복사본 화면에서 고른 원본 → 상세 정리 새 묶음 (상세만 정리해 [원본에 반영])."""
+        sids = _ctx_sources(body())
+        try:
+            return jsonify(clean.from_sources(db, sids))
+        except ValueError as e:
+            return fail(str(e))
+
+    @app.post("/api/clean/<int:bid>/apply_preview")
+    def clean_apply_preview(bid):
+        return jsonify(clean.apply_preview(db, bid, body().get("ids")))
+
+    @app.post("/api/clean/<int:bid>/apply")
+    def clean_apply(bid):
+        """원본에 반영(상세만) → 판매 중 복사본은 이어서 네이버 상세만 바꿈 (지우지 않음)."""
+        b = body()
+        fn = (db.one("SELECT file_name FROM clean_batch WHERE id=?", (bid,)) or {}).get("file_name") or f"묶음 #{bid}"
+
+        def job(progress=None, should_stop=None):
+            st = clean.apply_to_sources(db, bid, b.get("ids"), progress=progress, should_stop=should_stop)
+            lids = st.pop("detail_push")
+            msg = f"원본 상세 반영 {st['applied']:,}개" + (f" · 바뀐 것 없음 {st['same']:,}" if st["same"] else "") \
+                + (f" · 지금 등록 중이라 건너뜀 {st['busy']:,} (끝난 뒤 다시 반영)" if st["busy"] else "") \
+                + (f" · 원본 없음 {st['gone']:,}" if st["gone"] else "") + (f" · 빈 상세라 안 함 {st['empty']:,}" if st.get("empty") else "")
+            if lids:
+                d = engine.push_details(db, lids, progress=progress, should_stop=should_stop)
+                st.update(detail_ok=d["ok"], detail_fail=d["fail"])
+                msg += f" · 판매 중 {len(lids):,}건 네이버 상세 바꿈 {d['ok']:,}" + (f" · 실패 {d['fail']:,} (네이버 반영 대기 — 복사본 화면 [네이버 반영 다시 시도])" if d["fail"] else "")
+            st["message"] = msg
+            return st
+        try:
+            return jsonify({"task": tasks.start("clean_send", f"상세 정리 → 원본에 반영 · {fn}", job)})
+        except RuntimeError as e:
+            return fail(str(e))
+
     @app.get("/api/clean/<int:bid>/export")
     def clean_export(bid):
         try:
@@ -1037,13 +1073,14 @@ def create_app(db=None):
     @app.get("/api/listings/push_pending")
     def listings_push_pending():
         sid = request.args.get("store_id")
-        return jsonify({"price": baseprice.pending_count(db, sid), "name": bulkedit.name_pending_count(db, sid)})
+        return jsonify({"price": baseprice.pending_count(db, sid), "name": bulkedit.name_pending_count(db, sid),
+                        "detail": engine.detail_pending_count(db, sid)})
 
     @app.post("/api/listings/push_retry")
     def listings_push_retry():
         sid = body().get("store_id")
         try:
-            return jsonify({"task": tasks.start("baseprice", "네이버 반영 다시 시도 (가격·상품명)",
+            return jsonify({"task": tasks.start("baseprice", "네이버 반영 다시 시도 (가격·상품명·상세)",
                                                 lambda **kw: bulkedit.push_all(db, None, store_id=sid, **kw))})
         except RuntimeError as e:
             return fail(str(e))
@@ -1061,16 +1098,29 @@ def create_app(db=None):
     def source_content_save(sid):
         b = body()
         try:
-            return jsonify(srcedit.save(db, sid, detail=b.get("detail"), options=b.get("options"), memo=b.get("memo") or ""))
+            out = srcedit.save(db, sid, detail=b.get("detail"), options=b.get("options"), memo=b.get("memo") or "")
         except ValueError as e:
             return fail(str(e))
+        return jsonify({**out, **_start_detail_push(out.get("detail_push"))})
+
+    def _start_detail_push(lids):
+        """판매 중 복사본 상세를 네이버에서 바로 바꾸기 (작업으로). 다른 반영 작업이 돌고 있으면 대기로 남김."""
+        if not lids:
+            return {"detail_push": 0}
+        try:
+            tid = tasks.start("baseprice", f"네이버 상세 바꾸기 · {len(lids):,}건",
+                              lambda **kw: engine.push_details(db, lids, **kw))
+            return {"detail_push": len(lids), "detail_task": tid}
+        except RuntimeError:
+            return {"detail_push": len(lids), "detail_queued": True}
 
     @app.post("/api/sources/<int:sid>/content_undo")
     def source_content_undo(sid):
         try:
-            return jsonify(srcedit.undo_last(db, sid))
+            out = srcedit.undo_last(db, sid)
         except ValueError as e:
             return fail(str(e))
+        return jsonify({**out, **_start_detail_push(out.get("detail_push"))})
 
     @app.get("/api/sources/<int:sid>/price_log")
     def source_price_log(sid):

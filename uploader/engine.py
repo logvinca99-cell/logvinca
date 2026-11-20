@@ -613,7 +613,7 @@ class Runner:
             sec = time.time() - t0
             self.db.set_listing(lid, "success", op="create", stage="", message=" / ".join(notes), seconds=sec,
                                 seller_code=code, registered_at=time.time(),
-                                sale_shown=shown, nv_status="SALE", nv_disp="ON", nv_at=time.time(), price=tn["price"], nv_price=tn["price"], price_push=None,
+                                sale_shown=shown, nv_status="SALE", nv_disp="ON", nv_at=time.time(), price=tn["price"], nv_price=tn["price"], price_push=None, detail_push=None,
                                 origin_no=str(res.get("originProductNo", "")),
                                 channel_no=str(res.get("smartstoreChannelProductNo", "")))
             what = {"refresh": "최신화", "reupload": "다시 올리기"}.get(op, "등록")
@@ -673,7 +673,7 @@ class Runner:
             have = f"지금은 {time.strftime('%Y-%m-%d', time.localtime(kf))}부터만 있음" if kf else "아직 받은 주문 없음"
             raise naver.ApiError(f"판매 이력 확인 전이라 지우지 않음 · 이 상품은 {d}에 올라갔는데 주문은 {have} → "
                                  f"복사본 화면 위 [판매 이력 확인]에서 판매자센터 주문 파일을 넣거나 팔린 것을 직접 잠근 뒤 "
-                                 f"'판매 이력 확인 완료' (또는 네이버에서 {d} ~ 오늘 주문 받기) 후 다시 시도")
+                                 f"'판매 이력 확인 완료' (또는 네이버에서 {d} ~ 오늘 주문 받기) 후 같은 버튼([내리기]/[최신화])을 다시 누르면 다시 시도합니다")
 
     def _count(self, sid, lid, ok):
         """ok: True 성공 / False 실패 / None 건너뜀"""
@@ -767,3 +767,95 @@ class Runner:
             with self.lock:
                 self.state["images"] += len(chunk)
         return url_map, sent, failed
+
+
+# ───────────────────────── 네이버 상세 바꾸기 (원본 상세를 고친 뒤, 판매 중 복사본의 상세만 — 지우지 않음)
+
+def detail_pending_count(db, store_id=None):
+    w, a = "detail_push IS NOT NULL AND origin_no!='' AND status!='deleted'", []
+    if store_id:
+        w += " AND store_id=?"
+        a.append(int(store_id))
+    return db.one(f"SELECT COUNT(*) AS n FROM listings WHERE {w}", a)["n"]
+
+
+def mark_detail_push(db, sids):
+    """원본 상세를 고쳤을 때: 그 원본의 판매 중 복사본(잠긴 것 포함 — 지우지 않으니까)에 '네이버 상세 바꾸기 대기'. → 건 복사본 번호들"""
+    sids = [int(s) for s in sids]
+    out, now = [], time.time()
+    for i in range(0, len(sids), 900):
+        ch = sids[i:i + 900]
+        m = ",".join("?" * len(ch))
+        rows = db.q(f"SELECT id FROM listings WHERE source_id IN ({m}) AND origin_no!='' AND status!='deleted'", ch)
+        ids = [r["id"] for r in rows]
+        if ids:
+            with db.tx() as c:
+                c.execute(f"UPDATE listings SET detail_push=? WHERE id IN ({','.join('?' * len(ids))})", (now, *ids))
+        out += ids
+    return out
+
+
+def push_details(db, lids=None, store_id=None, progress=None, should_stop=None):
+    """'네이버 상세 바꾸기 대기'인 판매 중 복사본의 상세만 네이버에서 바꾼다 (상품번호·리뷰·판매 기록 그대로).
+    상세는 등록 때와 똑같이 만든다: 스토어 상단·하단 템플릿, 상세 이미지는 네이버 주소로 올림(이미 올린 것은 다시 씀), 옵션표 그림.
+    지금 등록·최신화 중인 것은 건너뛰고 대기로 남김. 실패하면 대기로 남아 [네이버 반영 다시 시도]로 다시."""
+    w, a = "l.detail_push IS NOT NULL AND l.origin_no!='' AND l.status NOT IN ('queued','running','deleted')", []
+    if lids:
+        lids = [int(x) for x in lids]
+        w += f" AND l.id IN ({','.join('?' * len(lids))})"
+        a += lids
+    if store_id:
+        w += " AND l.store_id=?"
+        a.append(int(store_id))
+    rows = db.q(f"""SELECT l.id, l.store_id, l.source_id, l.name, l.price, l.round, l.seller_code, l.origin_no, l.registered_at
+        FROM listings l WHERE {w} ORDER BY l.store_id, l.id""", a)
+    out = {"ok": 0, "fail": 0, "errors": []}
+    if not rows:
+        out["message"] = "바꿀 상세가 없습니다 (지금 등록 중인 것은 끝난 뒤 [네이버 반영 다시 시도])"
+        return out
+    cfg = config.load()
+    categories = naver.cached_categories() or {}
+    helper = Runner(db)   # 등록에 쓰는 이미지 올리기·옵션표 그림을 그대로 씀 (실행 상태와는 따로)
+    cache = naver.image_cache(cfg)
+    clients, tpl = {}, {}
+    with ThreadPoolExecutor(IMAGE_DOWNLOAD_THREADS) as pool:
+        for n, t in enumerate(rows, 1):
+            if should_stop and should_stop():
+                break
+            lid = t["id"]
+            try:
+                store = db.store(t["store_id"], with_secret=True)
+                if not store:
+                    raise naver.ApiError("스토어가 없습니다")
+                if t["store_id"] not in clients:
+                    clients[t["store_id"]] = naver.make_client(store)
+                client = clients[t["store_id"]]
+                row = db.source_row(t["source_id"])
+                if row is None:
+                    raise naver.ApiError("원본이 없습니다")
+                cat_id, _ = convert.find_category(row.get("카테고리"), categories, cfg)
+                if t["store_id"] not in tpl:
+                    tpl[t["store_id"]] = templates.html(db, client, store, None)
+                st = {**store, "_tpl_top": tpl[t["store_id"]][0], "_tpl_bottom": tpl[t["store_id"]][1]}
+                kw = dict(name=t["name"], price=t["price"], importer=convert.importer_for(store, cfg),
+                          as_phone=store.get("as_phone") or cfg.get("as_phone"), seller_code=t["seller_code"] or seller_code(cfg, store, t), store=st)
+                label = (t["name"] or "")[:40]
+                details = convert.detail_images_to_upload(row, cfg)
+                url_map, _, _ = helper._images(client, pool, cache, DETAIL_SCOPE, details, False, lid, label, None)
+                boxes = convert.option_boxes(row, cfg, store)
+                if boxes:
+                    kw["opt_urls"] = helper._option_images(client, cache, boxes, convert.option_look(cfg, store), lid, label, None)
+                body = convert.build_body(row, cfg, cat_id or "0", url_map, **kw)
+                client.update_detail(t["origin_no"], body["originProduct"]["detailContent"])
+                db.set_listing(lid, None, detail_push=None, message="원본 상세 고침 → 네이버 상세 바꿈 (상품번호 그대로)")
+                out["ok"] += 1
+            except Exception as e:  # noqa: BLE001 - 이 건만 실패, 대기로 남김
+                db.set_listing(lid, None, message=f"네이버 상세 바꾸기 실패 — 복사본 화면 [네이버 반영 다시 시도]로 다시: {e}"[:600])
+                out["fail"] += 1
+                if len(out["errors"]) < 5:
+                    out["errors"].append(str(e)[:80])
+            if progress:
+                progress(n, len(rows), f"네이버 상세 바꾸는 중 {n:,}/{len(rows):,}")
+    out["message"] = f"네이버 상세 바꿈 {out['ok']:,}건 (상품번호·리뷰 그대로)" + (
+        f" · 실패 {out['fail']:,}건 — 네이버 반영 대기로 남음 ([네이버 반영 다시 시도])" if out["fail"] else "")
+    return out

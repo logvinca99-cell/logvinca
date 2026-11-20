@@ -171,6 +171,7 @@ App.page("inventory", {
         "|",
         { id: "edit", label: "일괄 수정", title: "판매자코드 비우기, 재고수(상품·옵션 모두) 바꾸기" },
         { id: "tags", label: "출처 태그 달기·빼기", title: "고른 원본에 어디서·언제 가져왔는지 태그를 달거나 뺌" },
+        { id: "clean", label: "상세 정리로 보내기", title: "고른 원본의 상세를 상세 정리에서 정리(공통 이미지·전화번호·상세 편집) → [원본에 반영]하면 원본 상세만 바뀌고 판매 중 복사본은 네이버 상세만 바꿈" },
         "|",
         { id: "eyeon", label: "검수 완료로 표시", title: "고른 원본을 눈검수 없이 검수 완료로 (새로 올릴 수 있게)" },
         { id: "eyeoff", label: "검수 완료 풀기" },
@@ -187,6 +188,7 @@ App.page("inventory", {
         if (id === "ctx") App.ctxStart(this.target()); if (id === "copy") this.copyModal(); if (id === "delete") this.remove(); if (id === "edit") this.editModal();
         if (id === "category") App.pickCategory({ target: this.target(), what: `고른 원본 ${num(this.selAll ? this.total : this.sel.size)}개`, after: () => this.load() });
         if (id === "tags") this.tagModal();
+        if (id === "clean") App.sendToClean(this.target(), `고른 원본 ${num(this.targetCount())}개`);
         if (id === "eyeon" || id === "eyeoff") App.eyeSet(this.target(), id === "eyeon", `고른 원본 ${num(this.targetCount())}개`, () => this.load());
         if (id === "chem") App.yes("생활화학 판정", CHEM_JUDGE_TXT, { label: "판정 시작" }).then((ok) => ok && App.startTask(App.api("/api/chem/judge", { json: this.target() })));
         if (id === "chemset") App.chemSet(this.target(), `고른 원본 ${num(this.targetCount())}개`, () => this.load());
@@ -641,7 +643,7 @@ App.page("inventory", {
 
 
 /* 원본 상세·옵션 고치기 (원본 상세 창). 상품명·기준 가격은 여기서 안 바꿈. 아직 안 올린 복사본은 올릴 때,
-   판매 중 복사본은 다음 최신화·다시 올리기 때 반영 (네이버에 바로 보내지 않음). 마지막 수정은 되돌릴 수 있음. */
+   판매 중 복사본: 상세는 네이버 상세만 바로 바꿈(지우지 않음), 옵션은 다음 최신화·다시 올리기 때. 마지막 수정은 되돌릴 수 있음. */
 App.editContent = async function (sid, after) {
   let d;
   try { d = await this.api(`/api/sources/${sid}/content`); } catch (e) { return this.toast(e.message, true); }
@@ -659,7 +661,7 @@ App.editContent = async function (sid, after) {
     body: (b) => {
       b.innerHTML = `<div class="notice info">원본 <b>${esc(d.name)}</b>의 상세페이지와 옵션을 고칩니다. 상품명·기준 가격은 여기서 바꾸지 않습니다
           (기준 가격은 [기준 가격 수정]). 아직 안 올린 복사본은 올릴 때 새 내용으로 올라가고,
-          ${d.n_live ? `<b>판매 중 복사본 ${num(d.n_live)}건은 지금 네이버에 보내지 않고 다음 최신화·다시 올리기 때</b> 반영됩니다.` : "판매 중 복사본은 없습니다."}
+          ${d.n_live ? `판매 중 복사본 ${num(d.n_live)}건: <b>상세를 고치면 네이버 상세만 바로 바꿉니다</b>(지우지 않음 — 상품번호·리뷰 그대로), 옵션은 다음 최신화·다시 올리기 때 반영됩니다.` : "판매 중 복사본은 없습니다."}
           고치기 전 내용은 남겨 두어 <b>[마지막 수정 되돌리기]</b>로 돌릴 수 있습니다.</div>
         <div class="se-tabs"><button type="button" class="on" data-se="detail">상세페이지</button><button type="button" data-se="opt">옵션 (${num(o.rows.length)}개)</button></div>
         <div data-sec="detail">
@@ -707,7 +709,7 @@ App.editContent = async function (sid, after) {
           const rows = $$(".se-opt", b);
           const parts = [html !== d.detail ? `상세페이지 바뀜 (글자 ${num(d.detail.length)} → ${num(html.length)})` : "상세페이지 그대로"];
           if (o.editable) parts.push(`옵션 ${num(o.rows.length)}개 → ${num(rows.filter((tr) => $(".se-n1", tr).value.trim()).length)}개`);
-          return parts.join(" · ") + "<br>" + (d.n_live ? `판매 중 복사본 ${num(d.n_live)}건은 지금 바뀌지 않고, 다음 최신화·다시 올리기 때 새 상세·옵션으로 올라갑니다 (잠긴 상품은 최신화를 하지 않으므로 그대로).` : "아직 안 올린 복사본은 올릴 때 새 상세·옵션으로 올라갑니다.");
+          return parts.join(" · ") + "<br>" + (d.n_live ? `판매 중 복사본 ${num(d.n_live)}건: 상세는 네이버 상세만 바로 바꾸고(지우지 않음, 잠긴 상품 포함), 옵션은 다음 최신화·다시 올리기 때 반영.` : "아직 안 올린 복사본은 올릴 때 새 상세·옵션으로 올라갑니다.");
         },
         validate: (b) => (!$("#se-html", b).value.trim() ? "상세페이지가 비었습니다." : ""),
         onClick: async (b) => {
@@ -718,7 +720,8 @@ App.editContent = async function (sid, after) {
                 price: +$(".se-price", tr).value || 0, usable: $(".se-use", tr).checked })) };
           }
           const r = await this.api(`/api/sources/${sid}/content`, { json: body });
-          this.toast(r.changed ? `${r.what} 고쳤습니다` + (r.warnings?.length ? ` · ${r.warnings.join(" · ")}` : "") : "바뀐 것이 없습니다", !!r.warnings?.length);
+          this.toast(r.changed ? `${r.what} 고쳤습니다` + (r.detail_push ? ` · 판매 중 ${num(r.detail_push)}건 네이버 상세 바꾸는 중${r.detail_queued ? " (다른 반영 작업이 끝난 뒤 복사본 화면 [네이버 반영 다시 시도])" : ""}` : "")
+            + (r.warnings?.length ? ` · ${r.warnings.join(" · ")}` : "") : "바뀐 것이 없습니다", !!r.warnings?.length);
           if (r.changed && after) after();
         } },
     ],

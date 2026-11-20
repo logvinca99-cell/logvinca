@@ -13,6 +13,8 @@ function cleanSafe(html) {   // 미리보기에 넣기 전: 스크립트·이벤
 
 App.page("clean", {
   bid: null,
+  isSrc: false,   // 업스타 원본에서 가져온 묶음 (상세만 정리 → 원본에 반영)
+  ol(o) { return this.isSrc ? `${o}번` : `${o}행`; },
 
   async mount(el) {
     el.innerHTML = `<div class="page">
@@ -33,7 +35,7 @@ App.page("clean", {
     </div>`;
     $("#cl-file").addEventListener("change", (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) this.upload(f); });
     App.bindTagFields("cl");
-    $("#cl-batch").addEventListener("change", (e) => { this.bid = +e.target.value || null; this.renderSteps(); this.refresh(); });
+    $("#cl-batch").addEventListener("change", (e) => { this.bid = +e.target.value || null; this.isSrc = ((this.batchList || []).find((b) => b.id === this.bid) || {}).kind === "sources"; this.renderSteps(); this.refresh(); });
     $("#cl-sum").addEventListener("click", (e) => { if (e.target.closest("[data-filter=deleted]")) this.showDeleted(); });
     this.onDone = (t) => {
       if (t.kind === "clean_import" && t.result?.batch_id) { this.bid = t.result.batch_id; this.loadBatches().then(() => { this.renderSteps(); this.refresh(); }); }
@@ -41,6 +43,7 @@ App.page("clean", {
       if (t.kind === "clean_send") this.refresh();
     };
     App.on("task-done", this.onDone);
+    if (App._cleanBid) { this.bid = App._cleanBid; App._cleanBid = null; }   // 원본·복사본 화면에서 [상세 정리로 보내기]
     await this.loadBatches();
     this.renderSteps();
     await this.refresh();
@@ -51,6 +54,8 @@ App.page("clean", {
   async loadBatches() {
     const bs = await App.api("/api/clean/batches");
     if (!this.bid && bs.length) this.bid = bs[0].id;
+    this.isSrc = (bs.find((b) => b.id === this.bid) || {}).kind === "sources";
+    this.batchList = bs;
     $("#cl-batch").innerHTML = bs.length ? bs.map((b) => `<option value="${b.id}" ${b.id === this.bid ? "selected" : ""}>#${b.id} ${esc(b.file_name)} · ${when(b.created_at)} · 정리 중 ${num(b.new)}</option>`).join("")
       : '<option value="">정리함이 비었습니다 — 엑셀을 올리세요</option>';
   },
@@ -69,7 +74,10 @@ App.page("clean", {
     if (!this.bid) { $("#cl-sum").innerHTML = ""; return; }
     const b = await App.api(`/api/clean/${this.bid}`);
     this.counts = b.counts;
-    $("#cl-sum").innerHTML = tilesHtml([
+    $("#cl-sum").innerHTML = tilesHtml(this.isSrc ? [
+      { key: "new", label: "정리 중 (원본에 반영할 것)", dot: "var(--info)" }, { key: "edited", label: "고친 상품", dot: "var(--accent)" },
+      { key: "deleted", label: "뺌 (눌러서 되살리기)", dot: "var(--muted)" }, { key: "sent", label: "원본에 반영함", dot: "var(--ok)" },
+    ] : [
       { key: "new", label: "정리 중 (원본으로 넣을 것)", dot: "var(--info)" }, { key: "hold", label: "생활화학 보류", dot: "var(--err)" },
       { key: "edited", label: "고친 상품", dot: "var(--accent)" }, { key: "deleted", label: "지움 (눌러서 되살리기)", dot: "var(--muted)" },
       { key: "sent", label: "원본으로 넣음", dot: "var(--ok)" },
@@ -81,7 +89,7 @@ App.page("clean", {
   /* 이 묶음의 출처 태그 (원본으로 넣을 때 붙음) */
   async loadTags() {
     const box = $("#cl-btags");
-    if (!this.bid) { box.innerHTML = ""; return; }
+    if (!this.bid || this.isSrc) { box.innerHTML = ""; return; }   // 원본에서 가져온 묶음은 출처 태그를 바꾸지 않음
     const t = await App.api(`/api/clean/${this.bid}/tags`);
     const st = t.stores.filter((s) => s.store);
     const noUrl = t.stores.find((s) => !s.store)?.count || 0;
@@ -111,6 +119,9 @@ App.page("clean", {
     const step = (n, title, inner, note = "") => `<section class="card pad cl-step"><div class="sec-head"><h2><span class="cl-n">${n}</span> ${title}</h2>
       ${note ? `<span class="muted small">${note}</span>` : ""}</div>${inner}</section>`;
     box.innerHTML = [
+      ...(this.isSrc ? [`<div class="notice" style="margin-bottom:12px"><b>업스타 원본에서 가져온 묶음</b>입니다 — 상세만 정리합니다.
+        다 고쳤으면 맨 아래 <b>[원본에 반영]</b>: 원본 상세만 바뀌고(상품명·가격·옵션·카테고리 그대로, 원본 상세 창에서 되돌리기 가능),
+        아직 안 올린 복사본은 올릴 때 새 상세로, <b>판매 중 복사본은 네이버 상세만 바꿉니다</b>(지우지 않음 — 상품번호·리뷰 그대로).</div>`] : []),
       step(2, "공통 이미지 찾기·제거", `<div class="cl-row">몇 개 이상 상품에 공통이면 보여 줄까요? <input id="cl-min" type="number" min="2" value="10" style="width:80px">
         <button class="btn" id="cl-common-go">공통 이미지 찾기</button></div><div id="cl-common"></div>
         <details class="small" id="cl-rules-box"><summary>다음에도 자동으로 빼는 이미지 (기억한 것)</summary><div id="cl-rules"></div></details>`,
@@ -118,7 +129,7 @@ App.page("clean", {
       step(3, "전화번호 찾기·제거", `<div class="cl-row"><button class="btn" id="cl-phone-go">전화번호 찾기</button>
         <span class="small muted">상세 글자·옵션명·상품명에서 찾음 (이미지 주소 속 숫자는 빼고, <b>사진 속 번호는 못 찾음</b>) · <span class="ph red">빨강</span> = 010형(기본 선택) · <span class="ph yellow">노랑</span> = 의심(치수·날짜일 수 있어 직접 확인)</span></div>
         <div id="cl-phone"></div>`),
-      step(4, "상세 미리보기 · 이미지/글자 편집", `<div class="cl-row">행 번호 <input id="cl-ord" type="number" min="2" value="2" style="width:90px" title="제목=1행, 첫 상품=2행">
+      step(4, "상세 미리보기 · 이미지/글자 편집", `<div class="cl-row">${this.isSrc ? "번호" : "행 번호"} <input id="cl-ord" type="number" min="${this.isSrc ? 1 : 2}" value="${this.isSrc ? 1 : 2}" style="width:90px" title="${this.isSrc ? "이 묶음 안 순서 (1번부터)" : "제목=1행, 첫 상품=2행"}">
         <button class="btn" id="cl-ed-go">미리보기</button><button class="btn sm" id="cl-ed-prev">‹ 이전</button><button class="btn sm" id="cl-ed-next">다음 ›</button>
         <span id="cl-ed-info" class="small"></span></div>
         <p class="small muted" style="margin:4px 0">이미지: <b>클릭 → 선택(빨간 테두리) → Delete·Backspace로 삭제</b> · 글자: <b>클릭해서 바로 고치기</b> · 되돌리기 <b>Ctrl+Z</b> · 다 고쳤으면 [이 상품에 반영]</p>
@@ -127,37 +138,42 @@ App.page("clean", {
           <button class="btn" id="cl-ed-revert">처음 상세로 되돌리기</button><button class="btn danger" id="cl-ed-del">이 상품 지우기</button></div>`),
       step(5, "잘린·빈 상세 확인·삭제", `<div class="cl-row"><button class="btn" id="cl-broken-go">찾기</button>
         <span class="small muted">① 엑셀 칸 글자수 한도(32,767자)에 걸려 중간에 잘린 상세 ② 완전히 빈 상세</span></div><div id="cl-broken"></div>`),
-      step(6, "빈 칸 상품 확인·삭제", `<div class="cl-row">검사할 칸:
+      this.isSrc ? "" : step(6, "빈 칸 상품 확인·삭제", `<div class="cl-row">검사할 칸:
         ${["상품명", "판매가", "상세설명", "썸네일", "카테고리"].map((c, i) => `<label class="check"><input type="checkbox" data-mcol="${c}" ${i < 3 ? "checked" : ""}><span>${c}</span></label>`).join("")}
         <button class="btn" id="cl-miss-go">찾기</button></div><div id="cl-miss"></div>`),
-      step(7, "카테고리 검사·수정 · 생활화학 판정", `<div class="cl-row"><button class="btn" id="cl-cat-go">카테고리 검사</button>
+      this.isSrc ? "" : step(7, "카테고리 검사·수정 · 생활화학 판정", `<div class="cl-row"><button class="btn" id="cl-cat-go">카테고리 검사</button>
         <button class="btn primary" id="cl-chem-go">생활화학 판정</button>
         <span class="small muted">최신 네이버 카테고리 목록과 대조 (형식 이상·폐지/오타·중간 분류) · 생활화학/살생물제 인증 대상 카테고리면 물건→'인증 대상 아님', 화학제품·애매→보류 (애매하면 AI)</span></div>
         <div id="cl-cat"></div><div id="cl-hold"></div>`),
-      step(8, "원본 상품으로 넣기 · 새 엑셀로 저장", `<div class="cl-row"><button class="btn primary big" id="cl-send">원본 상품으로 넣기 (정리 중 <span id="cl-send-n">-</span>개)</button>
+      this.isSrc ? step(6, "원본에 반영 (상세만)", `<div class="cl-row"><button class="btn primary big" id="cl-apply">원본에 반영 (정리 중 <span id="cl-send-n">-</span>개)</button></div>
+        <p class="small muted" style="margin:6px 0 0">상세(상세설명)만 원본에 덮어씁니다 — 상품명·가격·옵션·카테고리는 그대로. 바뀐 것 없는 상품·지금 등록 중인 원본은 건너뜁니다(등록 중은 끝난 뒤 다시 누르면 반영).
+          판매 중 복사본(잠긴 것 포함)은 이어서 네이버 상세만 바꾸고, 실패하면 복사본 화면 '네이버 반영 대기'로 남습니다.</p>`)
+      : step(8, "원본 상품으로 넣기 · 새 엑셀로 저장", `<div class="cl-row"><button class="btn primary big" id="cl-send">원본 상품으로 넣기 (정리 중 <span id="cl-send-n">-</span>개)</button>
         <a class="btn" id="cl-export" href="/api/clean/${this.bid}/export" title="이 묶음의 정리 중·보류 상품을 올린 엑셀과 같은 열로 받습니다 (지운 상품 제외)">⬇ 엑셀 받기 — 이 묶음의 정리 중·보류 상품 (원래이름_수정.xlsx)</a></div>
         <p class="small muted" style="margin:6px 0 0">생활화학 보류·지운 상품은 넣지 않습니다. 상품명이 완전히 같은 원본이 이미 있으면 넣지 않습니다(덮어쓰지 않음 — 정리함에 남음). </p>`),
     ].join("");
     this.bind();
     this.loadRules();
-    this.loadHold();
+    if (!this.isSrc) this.loadHold();
   },
 
   bind() {
     $("#cl-common-go").addEventListener("click", () => this.findCommon());
     $("#cl-phone-go").addEventListener("click", () => this.findPhones());
-    $("#cl-ed-go").addEventListener("click", () => this.openEditor(+$("#cl-ord").value || 2));
+    const first = this.isSrc ? 1 : 2;
+    $("#cl-ed-go").addEventListener("click", () => this.openEditor(+$("#cl-ord").value || first));
     $("#cl-ed-prev").addEventListener("click", () => this.ed?.prev && this.openEditor(this.ed.prev));
     $("#cl-ed-next").addEventListener("click", () => this.ed?.next && this.openEditor(this.ed.next));
-    $("#cl-ord").addEventListener("keydown", (e) => { if (e.key === "Enter") this.openEditor(+e.target.value || 2); });
+    $("#cl-ord").addEventListener("keydown", (e) => { if (e.key === "Enter") this.openEditor(+e.target.value || first); });
     $("#cl-ed-save").addEventListener("click", () => this.saveEditor());
     $("#cl-ed-revert").addEventListener("click", () => this.revertEditor());
     $("#cl-ed-del").addEventListener("click", async () => { if (this.ed && await App.yes("정리함에서 지우기", "이 상품을 정리함에서 지울까요? (위 '지움'에서 되살릴 수 있음)", { label: "지우기", danger: true })) { await this.del([this.ed.id]); this.ed.next ? this.openEditor(this.ed.next) : null; } });
     $("#cl-broken-go").addEventListener("click", () => this.findBroken());
-    $("#cl-miss-go").addEventListener("click", () => this.findMissing());
-    $("#cl-cat-go").addEventListener("click", () => this.checkCats());
-    $("#cl-chem-go").addEventListener("click", async () => { if (await App.yes("생활화학 판정", CHEM_JUDGE_TXT, { label: "판정 시작" })) App.startTask(App.api(`/api/clean/${this.bid}/chem`, { json: {} })); });
-    $("#cl-send").addEventListener("click", async () => {
+    $("#cl-miss-go")?.addEventListener("click", () => this.findMissing());
+    $("#cl-cat-go")?.addEventListener("click", () => this.checkCats());
+    $("#cl-apply")?.addEventListener("click", () => this.applySources());
+    $("#cl-chem-go")?.addEventListener("click", async () => { if (await App.yes("생활화학 판정", CHEM_JUDGE_TXT, { label: "판정 시작" })) App.startTask(App.api(`/api/clean/${this.bid}/chem`, { json: {} })); });
+    $("#cl-send")?.addEventListener("click", async () => {
       if (!this.counts?.new) return App.toast("정리 중인 상품이 없습니다.", true);
       if (!await App.yes("원본 상품으로 넣기", `정리 중인 ${num(this.counts.new)}개를 원본 상품으로 넣을까요?${this.counts.hold ? `\n생활화학 보류 ${num(this.counts.hold)}개는 넣지 않습니다.` : ""}`, { label: "넣기" })) return;
       await App.startTask(App.api(`/api/clean/${this.bid}/send`, { json: {} }));
@@ -167,6 +183,24 @@ App.page("clean", {
       const o = e.target.closest("[data-ord]");
       if (o && !e.target.closest("input")) { e.preventDefault(); this.openEditor(+o.dataset.ord); $("#cl-frame").scrollIntoView({ behavior: "smooth", block: "center" }); }
     });
+  },
+
+  /* 원본에서 가져온 묶음: 원본에 반영 (상세만) → 판매 중 복사본은 네이버 상세만 바꿈 */
+  async applySources() {
+    if (!this.counts?.new) return App.toast("반영할 상품이 없습니다 (정리 중인 상품만).", true);
+    let p;
+    try { p = await App.api(`/api/clean/${this.bid}/apply_preview`, { json: {} }); } catch (e) { return App.toast(e.message, true); }
+    if (!p.changed) return App.toast(`원본과 상세가 다른 상품이 없습니다 (바뀐 것 없음 ${num(p.same)}${p.busy ? ` · 등록 중 ${num(p.busy)}` : ""}).`, true);
+    const ok = await App.ask({
+      title: "원본에 반영 (상세만)",
+      body: `<b>원본 ${num(p.changed)}개</b>의 상세를 정리한 상세로 바꿉니다 (상품명·가격·옵션·카테고리 그대로, 원본 상세 창에서 되돌리기 가능).
+        <ul class="small" style="margin:6px 0 0;padding-left:18px">
+          <li>판매 중 복사본 <b>${num(p.live)}건</b>: 네이버 <b>상세만</b> 바로 바꿈 (지우지 않음 — 상품번호·리뷰·판매 기록 그대로)</li>
+          <li>아직 안 올린 복사본 ${num(p.unsent)}건: 올릴 때 새 상세로</li>
+          ${p.same ? `<li class="muted">바뀐 것 없는 ${num(p.same)}개는 건너뜀</li>` : ""}${p.busy ? `<li class="c-err">지금 등록 중인 원본 ${num(p.busy)}개는 건너뜀 (끝난 뒤 다시 누르면 반영)</li>` : ""}${p.gone ? `<li class="muted">원본이 없어진 ${num(p.gone)}개는 건너뜀</li>` : ""}</ul>`,
+      label: "원본에 반영", confirm: `원본 ${num(p.changed)}개 상세 반영 · 판매 중 ${num(p.live)}건 네이버 상세만 바꿈`, run: () => true,
+    });
+    if (ok) await App.startTask(App.api(`/api/clean/${this.bid}/apply`, { json: {} }));
   },
 
   async del(ids) {
@@ -182,7 +216,7 @@ App.page("clean", {
     const d = await App.api(`/api/clean/${this.bid}/items?status=deleted&size=500`);
     App.openModal({
       title: `지운 상품 ${num(d.total)}개`, wide: true,
-      body: d.rows.length ? `<div class="cl-list">${d.rows.map((r) => `<label class="check"><input type="checkbox" data-rs="${r.id}"><span>${r.ord}행 · ${esc(r.name)}</span></label>`).join("")}</div>` : '<p class="muted">없음</p>',
+      body: d.rows.length ? `<div class="cl-list">${d.rows.map((r) => `<label class="check"><input type="checkbox" data-rs="${r.id}"><span>${this.ol(r.ord)} · ${esc(r.name)}</span></label>`).join("")}</div>` : '<p class="muted">없음</p>',
       buttons: [{ label: "닫기" }, { label: "고른 것 되살리기", primary: true, onClick: async () => {
         const ids = $$("[data-rs]:checked").map((x) => +x.dataset.rs);
         if (!ids.length) return true;
@@ -201,7 +235,7 @@ App.page("clean", {
     if (!d.images.length) { box.innerHTML = `<p class="muted small">상품 ${num(d.total)}개 중 ${num(+$("#cl-min").value || 10)}개 이상에 공통인 이미지가 없습니다.</p>`; return; }
     box.innerHTML = `<p class="small">상품 ${num(d.total)}개 중 공통 이미지 ${num(d.images.length)}종${d.more ? ` (더 있음 ${num(d.more)})` : ""} — 지울 것을 고르세요.</p>
       <div class="cl-imgs">${d.images.map((x) => `<label class="cl-img"><input type="checkbox" data-src="${esc(x.src)}">
-        <img src="${esc(x.src)}" loading="lazy" onerror="onImgError(this)"><span><b>${num(x.count)}개</b> 상품 · ${x.rows.map((o) => `<a href="#" data-ord="${o}">${o}행</a>`).join(" ")}${x.remembered ? ' <span class="flag">기억함</span>' : ""}</span></label>`).join("")}</div>
+        <img src="${esc(x.src)}" loading="lazy" onerror="onImgError(this)"><span><b>${num(x.count)}개</b> 상품 · ${x.rows.map((o) => `<a href="#" data-ord="${o}">${this.ol(o)}</a>`).join(" ")}${x.remembered ? ' <span class="flag">기억함</span>' : ""}</span></label>`).join("")}</div>
       <div class="cl-row" style="margin-top:8px"><button class="btn sm" data-all-img="1">전부 선택</button><button class="btn sm" data-all-img="0">전부 해제</button>
         <label class="check"><input type="checkbox" id="cl-remember" checked><span>다음에 올리는 엑셀에서도 자동으로 빼기</span></label>
         <button class="btn primary" id="cl-common-del">고른 이미지 지우기</button></div>`;
@@ -234,7 +268,7 @@ App.page("clean", {
     if (!rows.length) { box.innerHTML = '<p class="muted small">찾은 전화번호가 없습니다.</p>'; return; }
     const n = rows.reduce((a, r) => a + r.hits.length, 0);
     box.innerHTML = `<p class="small">상품 ${num(rows.length)}개에서 ${num(n)}개 찾음</p>
-      <table class="grid"><thead><tr><th class="w-num">행</th><th>상품명</th><th>찾은 번호</th></tr></thead><tbody>
+      <table class="grid"><thead><tr><th class="w-num">${this.isSrc ? "번호" : "행"}</th><th>상품명</th><th>찾은 번호</th></tr></thead><tbody>
       ${rows.map((r) => `<tr><td class="num"><a href="#" data-ord="${r.ord}">${r.ord}</a></td><td class="small">${esc(r.name)}</td>
         <td>${r.hits.map((h) => `<label class="ph ${h.kind}"><input type="checkbox" data-ph="${r.id}" data-t="${esc(h.text)}" ${h.kind === "red" ? "checked" : ""}> ${esc(h.text)} <span class="muted">${esc(h.where)}</span></label>`).join(" ")}</td></tr>`).join("")}
       </tbody></table>
@@ -261,7 +295,7 @@ App.page("clean", {
     this.ed = it;
     $("#cl-ord").value = it.ord;
     const r = it.row;
-    $("#cl-ed-info").innerHTML = `<b>${it.ord}행</b> · ${esc(it.name)} · ${num(it.price)}원 · <span class="badge ${{ new: "s-planned", hold: "s-fail", deleted: "s-deleted", sent: "s-success" }[it.status]}">${{ new: "정리 중", hold: "생활화학 보류", deleted: "지움", sent: "원본으로 넣음" }[it.status]}</span>${it.edited ? ' <span class="flag">고침</span>' : ""}`;
+    $("#cl-ed-info").innerHTML = `<b>${this.ol(it.ord)}</b>${this.isSrc && it.source_id ? ` · 원본 #${it.source_id}` : ""} · ${esc(it.name)} · ${num(it.price)}원 · <span class="badge ${{ new: "s-planned", hold: "s-fail", deleted: "s-deleted", sent: "s-success" }[it.status]}">${{ new: "정리 중", hold: "생활화학 보류", deleted: this.isSrc ? "뺌" : "지움", sent: this.isSrc ? "원본에 반영함" : "원본으로 넣음" }[it.status]}</span>${it.edited ? ' <span class="flag">고침</span>' : ""}`;
     $("#cl-ed-revert").disabled = !it.has_orig;
     const fr = $("#cl-frame");
     fr.onload = () => this.armEditor(fr);
@@ -308,7 +342,7 @@ App.page("clean", {
     doc.querySelectorAll("[class='']").forEach((x) => x.removeAttribute("class"));
     try {
       const r = await App.api(`/api/clean/item/${this.ed.id}/detail`, { json: { html: doc.body.innerHTML } });
-      App.toast(`${this.ed.ord}행 상세를 반영했습니다 (이미지 ${num(r.images)}장)`);
+      App.toast(`${this.ol(this.ed.ord)} 상세를 반영했습니다 (이미지 ${num(r.images)}장)`);
       this.refresh();
       this.openEditor(this.ed.ord);
     } catch (e) { App.toast(e.message, true); }
@@ -325,7 +359,7 @@ App.page("clean", {
   // ⑤ 잘린·빈 상세 · ⑥ 빈 칸
   listHtml(rows, what, extra) {
     return rows.length ? `<div class="cl-list">${rows.map((r) => `<label class="check"><input type="checkbox" data-pick="${r.id}" checked>
-      <span><a href="#" data-ord="${r.ord}">${r.ord}행</a> · ${esc(r.name)} ${extra ? `<span class="muted small">${extra(r)}</span>` : ""}</span></label>`).join("")}</div>`
+      <span><a href="#" data-ord="${r.ord}">${this.ol(r.ord)}</a> · ${esc(r.name)} ${extra ? `<span class="muted small">${extra(r)}</span>` : ""}</span></label>`).join("")}</div>`
       : `<p class="muted small">${what} 없음</p>`;
   },
 

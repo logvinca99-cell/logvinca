@@ -439,6 +439,16 @@ class Client:
             raise ApiError(f"상품명 바꾸기 실패: {explain_error(r)}")
         return True
 
+    def update_detail(self, origin_no, html, on_wait=None):
+        """판매 중 상품의 상세페이지만 바꾸기 (지우지 않음 → 상품번호·리뷰·판매 기록 그대로)."""
+        body = self._get_origin(origin_no, on_wait=on_wait)
+        o = body.get("originProduct") or {}
+        o["detailContent"] = str(html)
+        r = self._put(origin_no, body, on_wait)
+        if r.status_code != 200:
+            raise ApiError(f"상세 바꾸기 실패: {explain_error(r)}")
+        return True
+
     def _put_origin(self, origin_no, body, on_wait=None):
         r = self._put(origin_no, body, on_wait)
         if r.status_code != 200:
@@ -627,6 +637,23 @@ class FakeClient:
         if random.random() < 0.03:
             raise ApiError("가격 바꾸기 실패: 500 시연용 실패")
         return convert.display_prices(final, pct, unit)[0]
+
+    _details = {}   # 시연: 상세를 바꾼 상품 {상품번호: 상세 HTML}
+
+    def update_detail(self, origin_no, html, on_wait=None):
+        """시연: 상세만 바꾸기 (가끔 실패, UPLOADER_FAKE_DETAIL_FAIL=1이면 늘 실패). 바꾼 상세는 데이터 폴더 fake_details.json에도 남김."""
+        time.sleep(random.uniform(0.05, 0.2))
+        if os.environ.get("UPLOADER_FAKE_DETAIL_FAIL") == "1" or random.random() < 0.03:
+            raise ApiError("상세 바꾸기 실패: 500 시연용 실패")
+        FakeClient._details[str(origin_no)] = str(html)
+        try:
+            from . import config
+            p = os.path.join(config.DATA_DIR, "fake_details.json")
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(FakeClient._details, f, ensure_ascii=False)
+        except Exception:  # noqa: BLE001 - 시연 기록만
+            pass
+        return True
 
     def update_name(self, origin_no, name, on_wait=None):
         """시연: 상품명만 바꾸기 (가끔 실패)."""

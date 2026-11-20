@@ -59,7 +59,9 @@ CREATE TABLE IF NOT EXISTS clean_rule (
 """
 
 
-NEW_COLUMNS = {"clean_batch": [("tags", "TEXT NOT NULL DEFAULT ''"), ("store_tag", "INTEGER NOT NULL DEFAULT 1")]}
+NEW_COLUMNS = {"clean_batch": [("tags", "TEXT NOT NULL DEFAULT ''"), ("store_tag", "INTEGER NOT NULL DEFAULT 1"),
+                               # excel: 셀업 엑셀을 올림(→ 원본 상품으로 넣기) · sources: 업스타 원본에서 가져옴(→ 원본에 반영, 상세만)
+                               ("kind", "TEXT NOT NULL DEFAULT 'excel'")]}
 
 
 def ensure(db):
@@ -408,8 +410,13 @@ def delete_rules(db, ids):
 
 # ───────────────────────── ③ 전화번호
 
+def _kind(db, bid):
+    return (db.one("SELECT kind FROM clean_batch WHERE id=?", (bid,)) or {}).get("kind") or "excel"
+
+
 def find_phones(db, bid):
     out = []
+    detail_only = _kind(db, bid) == "sources"   # 원본에서 가져온 묶음은 상세만 원본에 반영 → 상세 글자만 찾음
     for r in _rows(db, bid):
         row = unpack(r["row"])
         hits = []
@@ -417,9 +424,10 @@ def find_phones(db, bid):
         for k, p in enumerate(parts):
             if k % 2 == 0 and p:
                 hits += [{"text": t, "kind": kind, "where": "상세"} for t, kind in find_phones_in(p)]
-        for c, key in option_names(row):
-            hits += [{"text": t, "kind": kind, "where": "옵션"} for t, kind in find_phones_in(str(c[key]))]
-        hits += [{"text": t, "kind": kind, "where": "상품명"} for t, kind in find_phones_in(str(row.get("상품명") or ""))]
+        if not detail_only:
+            for c, key in option_names(row):
+                hits += [{"text": t, "kind": kind, "where": "옵션"} for t, kind in find_phones_in(str(c[key]))]
+            hits += [{"text": t, "kind": kind, "where": "상품명"} for t, kind in find_phones_in(str(row.get("상품명") or ""))]
         if hits:
             out.append({"id": r["id"], "ord": r["ord"], "name": r["name"], "hits": hits})
     return out
@@ -612,6 +620,8 @@ def to_sources(db, bid, ids=None, progress=None, should_stop=None):
     (덮어쓰지 않음 — 그 상품은 정리함에 그대로 남음, 엑셀 불러오기와 같음).
     생활화학 판정 '물건'은 원본에도 남겨 올릴 때 '인증 대상 아님'으로."""
     from . import inventory
+    if _kind(db, bid) == "sources":
+        raise ValueError("업스타 원본에서 가져온 묶음은 [원본에 반영]으로 원본 상세를 바꿉니다 (새 원본으로 넣지 않음).")
     if ids:
         rows = db.q(f"SELECT id, row, chem FROM clean_item WHERE status='new' AND batch_id=? AND id IN ({','.join('?' * len(ids))}) ORDER BY ord",
                     [bid, *[int(i) for i in ids]])
@@ -634,6 +644,124 @@ def to_sources(db, bid, ids=None, progress=None, should_stop=None):
                 tools += 1
                 c.execute("UPDATE sources SET chem_judge='tool', chem_reason='상세 정리에서 판정' WHERE id=?", (sid,))
     st["chem_tool"] = tools
+    return st
+
+
+# ───────────────────────── 업스타 원본에서 가져와 상세만 정리 → 원본에 반영
+
+def from_sources(db, sids):
+    """고른 원본을 정리함 새 묶음으로 (업스타 원본에서 가져옴). 항목 = 원본 데이터 복사 + 원본 번호.
+    원본의 가격·판매자코드·브랜드 등은 건드리지 않는다(자동 고침 없음). '다음에도 빼기'로 기억한 공통 이미지는 뺌(처음 상세는 남겨 되돌릴 수 있음).
+    → {batch_id, total, rule_imgs}"""
+    sids = sorted({int(s) for s in sids})
+    if not sids:
+        raise ValueError("고른 원본이 없습니다.")
+    rule_srcs = [r["value"] for r in rules(db) if r["kind"] == "image"]
+    now = time.time()
+    rows = []
+    for i in range(0, len(sids), 900):
+        ch = sids[i:i + 900]
+        rows += db.q(f"SELECT id, name, data FROM sources WHERE id IN ({','.join('?' * len(ch))}) ORDER BY id", ch)
+    if not rows:
+        raise ValueError("고른 원본이 없습니다 (그새 지워졌을 수 있음).")
+    bid = db.x("INSERT INTO clean_batch(created_at, file_name, kind, store_tag) VALUES(?,?,?,0)",
+               (now, f"업스타 원본에서 가져옴 · {len(rows):,}개", "sources"))
+    cols, n_rule = [], 0
+    with db.tx() as c:
+        for k, s in enumerate(rows, 1):
+            row = unpack(s["data"])
+            for key in row:
+                if key not in cols:
+                    cols.append(key)
+            orig = None
+            if rule_srcs:
+                html, n = remove_images(row.get("상세설명") or "", rule_srcs)
+                if n:
+                    orig, n_rule = row.get("상세설명") or "", n_rule + n
+                    row = {**row, "상세설명": html}
+            c.execute("""INSERT INTO clean_item(batch_id, ord, name, price, thumb, category, row, orig_detail, edited, source_id, updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)""", (bid, k, str(s["name"] or ""), convert.to_int(row.get("판매가")),
+                                                 (convert.thumbnails(row) or [""])[0], str(row.get("카테고리") or ""), pack(row),
+                                                 pack(orig) if orig is not None else None, int(orig is not None), s["id"], now))
+    note = "원본 상세만 정리 → [원본에 반영]" + (f" · 기억한 공통 이미지 뺌 {n_rule:,}장" if n_rule else "")
+    db.x("UPDATE clean_batch SET columns=?, total=?, note=? WHERE id=?", (json.dumps(cols, ensure_ascii=False), len(rows), note, bid))
+    return {"batch_id": bid, "total": len(rows), "rule_imgs": n_rule}
+
+
+def _apply_targets(db, bid, ids=None):
+    w, a = "batch_id=? AND status IN ('new','hold') AND source_id IS NOT NULL", [bid]
+    if ids:
+        w += f" AND id IN ({','.join('?' * len(ids))})"
+        a += [int(i) for i in ids]
+    return db.q(f"SELECT id, source_id, row FROM clean_item WHERE {w} ORDER BY ord", a)
+
+
+def apply_preview(db, bid, ids=None):
+    """[원본에 반영] 2차 확인용: 바뀐 원본 수·같은 것·등록 중·없어진 원본, 판매 중 복사본 수(네이버 상세만 바꿈)."""
+    st = {"items": 0, "changed": 0, "same": 0, "busy": 0, "gone": 0, "live": 0, "unsent": 0}
+    for r in _apply_targets(db, bid, ids):
+        st["items"] += 1
+        s = db.one("SELECT data FROM sources WHERE id=?", (r["source_id"],))
+        if not s:
+            st["gone"] += 1
+            continue
+        if str(unpack(r["row"]).get("상세설명") or "") == str(unpack(s["data"]).get("상세설명") or ""):
+            st["same"] += 1
+            continue
+        if db.one("SELECT 1 FROM listings WHERE source_id=? AND status IN ('queued','running')", (r["source_id"],)):
+            st["busy"] += 1
+            continue
+        st["changed"] += 1
+        st["live"] += db.one("SELECT COUNT(*) AS n FROM listings WHERE source_id=? AND origin_no!='' AND status!='deleted'", (r["source_id"],))["n"]
+        st["unsent"] += db.one("SELECT COUNT(*) AS n FROM listings WHERE source_id=? AND origin_no=''", (r["source_id"],))["n"]
+    return st
+
+
+def apply_to_sources(db, bid, ids=None, progress=None, should_stop=None):
+    """원본에서 가져온 묶음 → 원본에 반영: 상세(상세설명)만 원본에 덮어씀 (상품명·가격·옵션·카테고리 그대로).
+    원본 상세 고치기와 같은 수정 기록을 남겨 원본 상세 창 [마지막 수정 되돌리기]로 되돌릴 수 있다.
+    바뀐 것 없는 항목·지금 등록 중인 원본·없어진 원본은 건너뜀(등록 중은 정리함에 남아 나중에 다시 반영).
+    판매 중 복사본(잠긴 것 포함)은 '네이버 상세 바꾸기 대기' → 이어서 상세만 바꿈. → 결과 + detail_push(복사본 번호들)"""
+    from . import engine, srcedit
+    if _kind(db, bid) != "sources":
+        raise ValueError("업스타 원본에서 가져온 묶음만 원본에 반영할 수 있습니다.")
+    rows = _apply_targets(db, bid, ids)
+    if not rows:
+        raise ValueError("반영할 상품이 없습니다 (지운 상품·이미 반영한 상품은 빼고).")
+    st = {"applied": 0, "same": 0, "busy": 0, "gone": 0, "busy_ids": []}
+    changed_sids = []
+    now = time.time()
+    for k, r in enumerate(rows, 1):
+        if should_stop and should_stop():
+            break
+        s = db.one("SELECT data FROM sources WHERE id=?", (r["source_id"],))
+        if not s:
+            st["gone"] += 1
+            continue
+        new = str(unpack(r["row"]).get("상세설명") or "")
+        cur_row = unpack(s["data"])
+        if new == str(cur_row.get("상세설명") or ""):
+            st["same"] += 1
+            db.x("UPDATE clean_item SET status='sent', updated_at=? WHERE id=?", (now, r["id"]))
+            continue
+        if db.one("SELECT 1 FROM listings WHERE source_id=? AND status IN ('queued','running')", (r["source_id"],)):
+            st["busy"] += 1
+            if len(st["busy_ids"]) < 50:
+                st["busy_ids"].append(r["source_id"])
+            continue
+        if not new.strip():
+            st["empty"] = st.get("empty", 0) + 1   # 빈 상세로는 덮어쓰지 않음 (정리함에 남음)
+            continue
+        before = {"상세설명": cur_row.get("상세설명"), "옵션상품": cur_row.get("옵션상품")}
+        srcedit._write(db, r["source_id"], {**cur_row, "상세설명": new}, "상세(상세 정리)", before, f"상세 정리 묶음 #{bid}에서 반영")
+        db.x("UPDATE clean_item SET status='sent', updated_at=? WHERE id=?", (now, r["id"]))
+        changed_sids.append(r["source_id"])
+        st["applied"] += 1
+        if progress and (k % 20 == 0 or k == len(rows)):
+            progress(k, len(rows), f"원본에 반영 {k:,}/{len(rows):,}")
+    lids = engine.mark_detail_push(db, changed_sids) if changed_sids else []
+    st["detail_push"] = lids
+    st["live"] = len(lids)
     return st
 
 

@@ -201,6 +201,7 @@ ACTIONS = {
     "run_control": ("복사·등록", None),   # 제목은 action으로
     "settings_reapply": ("설정", "설정을 기존 상품에 다시 적용"),
     "names_import": ("상품명", "상품명 파일 가져오기"),
+    "clean_from_sources": ("상세 정리", lambda b, r: ("상세 정리로 보내기 (업스타 원본에서)", r.get("total"), f"묶음 #{r.get('batch_id', '')}")),
     "clean_items_delete": ("상세 정리", lambda b, r: ("정리함에서 지움", r.get("count"), "")),
     "clean_items_restore": ("상세 정리", lambda b, r: ("정리함에서 되살림", r.get("count"), "")),
     "clean_common_remove": ("상세 정리", lambda b, r: ("공통 이미지 지움" + (" (다음에도 빼기)" if b.get("remember") else ""), r.get("items"),

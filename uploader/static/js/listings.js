@@ -170,11 +170,11 @@ App.page("listings", {
     App.api(`/api/listings/push_pending?store_id=${this.f.store_id}`).then((p) => {   // 네이버 반영 대기 (가격·상품명 바꾸기를 못 보낸 것)
       const box = $("#l-push");
       if (!box) return;
-      const n = (p.price || 0) + (p.name || 0);
-      box.innerHTML = n ? `<div class="notice warn" style="margin-bottom:10px">네이버 반영 대기 <b>${num(n)}</b>건 (가격 ${num(p.price)} · 상품명 ${num(p.name)}) —
-        실패했거나 아직 못 보낸 가격·상품명 바꾸기입니다. <button class="btn tiny primary" id="l-push-go">네이버 반영 다시 시도</button></div>` : "";
+      const n = (p.price || 0) + (p.name || 0) + (p.detail || 0);
+      box.innerHTML = n ? `<div class="notice warn" style="margin-bottom:10px">네이버 반영 대기 <b>${num(n)}</b>건 (가격 ${num(p.price)} · 상품명 ${num(p.name)} · 상세 ${num(p.detail || 0)}) —
+        실패했거나 아직 못 보낸 가격·상품명·상세 바꾸기입니다(상품은 지우지 않음). <button class="btn tiny primary" id="l-push-go">네이버 반영 다시 시도</button></div>` : "";
       $("#l-push-go")?.addEventListener("click", async () => {
-        if (!await App.yes("네이버 반영 다시 시도", `대기 중인 ${num(n)}건의 네이버 가격·상품명을 다시 보냅니다 (상품은 지우지 않음).`, { label: "다시 보내기" })) return;
+        if (!await App.yes("네이버 반영 다시 시도", `대기 중인 ${num(n)}건의 네이버 가격·상품명·상세를 다시 보냅니다 (상품은 지우지 않음).`, { label: "다시 보내기" })) return;
         App.startTask(App.api("/api/listings/push_retry", { json: { store_id: +this.f.store_id } }));
       });
     }).catch(() => {});
@@ -256,6 +256,7 @@ App.page("listings", {
         { id: "unlock", label: "잠금 풀기" },
         { id: "category", label: "카테고리 바꾸기", title: "고른 복사본의 원본 카테고리를 직접 정함 (인증 때문에 안 올라가는 카테고리 등) — 그 원본의 다른 스토어 복사본도 같이" },
         { id: "chem", label: "생활화학 판정", title: "고른 복사본의 원본을 판정: 물건이면 '인증 대상 아님'으로 다시 등록 대기, 화학제품이면 보류 (애매하면 AI)" },
+        { id: "clean", label: "상세 정리로 보내기", title: "고른 복사본의 원본 상세를 상세 정리에서 정리 → [원본에 반영]하면 원본 상세가 바뀌고 판매 중 복사본은 네이버 상세만 바꿈 (지우지 않음)" },
         { id: "resetround", label: "회차 초기화", title: "지난 회차 기록을 지우고 1회차로 (다시 다 올릴 때) · 판매 중·내린 건은 다음에 다시 올릴 때 1회차로" },
         "|",
         { id: "move", label: "다른 스토어로 보내기", title: "아직 안 올린·내린 복사본을 다른 스토어로 옮김 (이 스토어에서는 사라짐) — 받는 스토어 남은 자리만큼" },
@@ -280,6 +281,7 @@ App.page("listings", {
 
   async action(id) {
     if (id === "rename") this.renameModal();
+    if (id === "clean") App.sendToClean({ listing_filter: this.target() }, `고른 복사본 ${num(this.selAll ? this.total : this.sel.size)}건의 원본`);
     if (id === "export") {   // 고른 것이 있으면 그것만, 없으면 지금 보이는 조건 전체
       const q = this.sel.size && !this.selAll ? { store_id: this.f.store_id, ids: [...this.sel].join(",") } : this.query();
       window.location.href = `/api/listings/export.xlsx?${new URLSearchParams(q)}`;
@@ -783,7 +785,7 @@ App.page("listings", {
       try {
         const r = await App.api("/api/listings/schedule", { json: { ...this.target(), op, now } });
         const skip = r.skipped_sold ? ` 잠긴 ${num(r.skipped_sold)}건(판매 이력·직접 잠금)은 뺐습니다.` : "";
-        if (!r.scheduled) App.toast((op === "reupload" ? "판매 중이거나 내린 건이 없어 걸 일이 없습니다." : `판매 중인 건이 없어 걸 일이 없습니다.${op === "refresh" ? " 내린 건은 '다시 올리기'를 쓰세요." : ""}`) + skip, true);
+        if (!r.scheduled) App.toast((op === "reupload" ? "네이버에 올라가 있거나 내린 건이 없어 걸 일이 없습니다." : `네이버에 올라가 있는 건(판매 중·실패·대기)이 없어 걸 일이 없습니다.${op === "refresh" ? " 내린 건은 '다시 올리기'를 쓰세요." : ""}`) + skip, true);
         else if (r.started) { App.toast(`${num(r.scheduled)}건 ${name}를 시작했습니다.` + skip); App.run = await App.api("/api/run"); this.renderRun(App.run); App.renderSideRun(); }
         else if (r.busy) App.toast(`${num(r.scheduled)}건을 대기에 넣었습니다. 지금 다른 작업이 돌고 있어, 끝난 뒤 시작하세요.` + skip);
         else if (r.error) App.toast(`대기에 넣었지만 시작하지 못했습니다: ${r.error}`, true);

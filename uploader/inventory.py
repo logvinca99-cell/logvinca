@@ -1526,8 +1526,12 @@ def reset_rounds(db, ids):
 def schedule_op(db, f, op):
     """올라가 있는 건에 할 일을 건다. op: refresh(최신화: 오래된 상품 지우고 다시, 설정에 따라 새 이름)
     / reupload(다시 올리기: 문제가 있어 지우고 같은 내용으로 다시, 내린 것도) / delete(내리기).
-    판매 이력이 있는 건은 건너뛴다. (예약한 수, 판매 이력으로 건너뛴 수, 예약한 복사본 번호들)"""
-    where, args = listing_where({**f, "status": "live"})
+    판매 이력이 있는 건은 건너뛴다. (예약한 수, 판매 이력으로 건너뛴 수, 예약한 복사본 번호들)
+    대상: 네이버에 올라가 있는 건 — 판매 중뿐 아니라 실패(예: 판매 이력 확인 전이라 못 지운 내리기)·대기도
+    (다시 누르면 다시 시도, 대기 중이던 다른 작업은 새로 고른 작업으로). 처리 중·내린 건은 뺌."""
+    where, args = listing_where(f)   # 화면 거르기 조건(예: '실패'만)은 그대로 — 그중 올라가 있는 것만
+    cond = "l.origin_no!='' AND l.status IN ('success','fail','planned')"
+    where = (where + f" AND {cond}") if where else f" WHERE {cond}"
     rows = db.q(f"SELECT l.id, l.source_id, l.locked FROM listings l JOIN sources s ON s.id=l.source_id{where}", args)
     # 잠긴 복사본(판매 이력 또는 직접 잠금)은 지우지 않는다.
     ids = [r["id"] for r in rows if not r["locked"]]
