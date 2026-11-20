@@ -27,7 +27,7 @@
 ## 결과물 (`output/`, 모두 PNG, 가로 1000px)
 | 파일 | 내용 |
 |---|---|
-| `about_top.png` | 상단: 로고 + 옵션 확인 + 약 2주 띠 (1000 × 602) |
+| `about_top.png` | 상단: 로고 + 옵션 확인 큰 문구 + 약 2주 안내 (1000 × 676) |
 | `about_bottom_01.png` | 표지 + 배송 |
 | `about_bottom_02.png` | 착불 배송비 + 상품 안내 |
 | `about_bottom_03.png` | 교환·반품 |
