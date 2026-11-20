@@ -121,7 +121,7 @@ def create_app(db=None):
 
     @app.after_request
     def log_action(resp):
-        """성공한 요청(복사본 삭제·대기에 넣기·카테고리 저장 …)을 작업 기록에 한 줄 (작업을 시작한 요청은 작업 쪽에서)."""
+        """성공한 요청(복사본 삭제·최신화 시작·카테고리 저장 …)을 작업 기록에 한 줄 (작업을 시작한 요청은 작업 쪽에서)."""
         if request.method in ("POST", "PUT", "DELETE") and resp.status_code < 400 and request.endpoint:
             try:
                 b = request.get_json(silent=True) or {k: v for k, v in request.form.items()}
@@ -437,6 +437,58 @@ def create_app(db=None):
     def clean_apply_preview(bid):
         return jsonify(clean.apply_preview(db, bid, body().get("ids")))
 
+    # ── 네이버 반영(가격·상품명·상세) 작업: 하나씩 돌고, 끝날 때 남은 대기를 이어 보냄. 이미 돌고 있으면 끝난 뒤 이어서.
+    push_wait = {"on": False}
+    push_lock = threading.Lock()
+
+    def _pending_push_ids():
+        return {r["id"] for r in db.q("""SELECT id FROM listings WHERE origin_no!='' AND status NOT IN ('queued','running','deleted')
+            AND (price_push IS NOT NULL OR name_push IS NOT NULL OR detail_push IS NOT NULL)""")}
+
+    def _push(title, fn):
+        """fn(progress, should_stop) → 결과. (작업 번호, 이어서 보낼 예정인가)"""
+        def job(progress=None, should_stop=None):
+            res = fn(progress=progress, should_stop=should_stop) or {}
+            tried = set()
+            for _ in range(5):   # 그새 들어온 대기 (끝까지 실패하는 건은 한 번만 더)
+                if should_stop and should_stop():
+                    break
+                pend = _pending_push_ids()
+                if not (pend - tried):
+                    break
+                tried |= pend
+                r2 = bulkedit.push_all(db, None, progress=progress, should_stop=should_stop)
+                res["message"] = (res.get("message") or "") + f" · 이어서: {r2['message']}"
+            return res
+        try:
+            return tasks.start("baseprice", title, job), False
+        except RuntimeError:
+            with push_lock:
+                if push_wait["on"]:
+                    return None, True
+                push_wait["on"] = True
+
+            def later():   # 돌고 있는 반영이 끝나면 이어서 (대기에 남은 것 전부)
+                try:
+                    for _ in range(1200):
+                        time.sleep(1)
+                        if not any(t["kind"] == "baseprice" and t["status"] == "running" for t in tasks.list()):
+                            break
+                    with push_lock:
+                        push_wait["on"] = False
+                    if _pending_push_ids():
+                        _push("네이버 반영 이어 보내기 (가격·상품명·상세)", lambda **kw: bulkedit.push_all(db, None, **kw))
+                except Exception:  # noqa: BLE001
+                    with push_lock:
+                        push_wait["on"] = False
+            threading.Thread(target=later, daemon=True).start()
+            return None, True
+
+    def _push_after_run():
+        if _pending_push_ids():
+            _push("네이버 반영 이어 보내기 (가격·상품명·상세)", lambda **kw: bulkedit.push_all(db, None, **kw))
+    runner.after_run = _push_after_run
+
     @app.post("/api/clean/<int:bid>/apply")
     def clean_apply(bid):
         """원본에 반영(상세만) → 판매 중 복사본은 이어서 네이버 상세만 바꿈 (지우지 않음)."""
@@ -509,7 +561,7 @@ def create_app(db=None):
     @app.post("/api/chem/delete")
     def chem_delete():
         """원본·복사본 모두 삭제: 안 올라간 것은 바로 휴지통, 판매 중인 복사본은 네이버에서 내린 뒤 원본도 휴지통 (판매 이력·잠금은 남김).
-        등록이 도는 중이면 지금 처리 중인 것은 건드리지 않고, 내리기는 대기에 넣는다(끝난 뒤 시작에서)."""
+        등록이 도는 중이면 지금 처리 중인 것은 건드리지 않고, 내리기는 그 스토어 차례에 함께 붙는다."""
         b = body()
         ids = _ctx_sources(b)
         if not ids:
@@ -518,8 +570,8 @@ def create_app(db=None):
         out = chem.delete_sources_everywhere(db, ids)
         out.update(trash_from=t0, trash_to=_trash_top())
         drop = out.pop("drop_scheduled")
-        out.update(dropping=len(drop), started=False, queued=bool(drop) and runner.state["running"], drop_ids=drop)
-        if drop and b.get("now", True) and not runner.state["running"]:
+        out.update(dropping=len(drop), started=False, queued=False, drop_ids=drop)
+        if drop and b.get("now", True):   # 등록이 돌고 있으면 그 스토어 차례에 합류 (눈검수는 now=false로 미뤘다가 commit)
             try:
                 runner.start({"ids": drop, "kinds": ["delete"]})
                 out["started"] = True
@@ -930,8 +982,8 @@ def create_app(db=None):
     @app.post("/api/adopt/start")
     def adopt_start():
         b = body()
-        if runner.state["running"]:
-            return fail("등록이 진행 중일 때는 가져올 수 없습니다 (처리 중인 복사본과 겹치지 않게). 등록이 끝난 뒤에 다시 시도하세요.")
+        if runner.store_busy(b.get("store_id")):
+            return fail("이 스토어가 지금 등록·최신화 중입니다 (처리 중인 복사본과 겹치지 않게). 이 스토어가 끝난 뒤에 다시 시도하세요. 다른 스토어는 상관없습니다.")
         try:
             return jsonify({"task": adopt.start(db, tasks, b.get("token"), b.get("store_id"), b)})
         except (ValueError, RuntimeError) as e:
@@ -947,8 +999,9 @@ def create_app(db=None):
     @app.post("/api/adopt/<int:rid>/undo")
     def adopt_undo(rid):
         """가져오기 되돌리기: 이 프로그램에서만 뺌 (네이버 상품은 그대로)."""
-        if runner.state["running"] or _adopt_running():
-            return fail("등록이나 판매 중 상품 연결가 진행 중일 때는 되돌릴 수 없습니다. 끝난 뒤에 다시 시도하세요.")
+        r_ = db.one("SELECT store_id FROM adopt_run WHERE id=?", (rid,)) or {}
+        if runner.store_busy(r_.get("store_id")) or _adopt_running():
+            return fail("이 스토어가 지금 등록 중이거나 판매 중 상품 연결이 진행 중이라 되돌릴 수 없습니다. 끝난 뒤에 다시 시도하세요.")
         try:
             return jsonify(adopt.undo_run(db, rid))
         except ValueError as e:
@@ -999,11 +1052,8 @@ def create_app(db=None):
         st = baseprice.apply(db, items, str(b.get("how") or ""))
         out = {"sources": st["sources"], "pending": st["pending"], "live": len(st["live"]), "task": None}
         if st["live"]:
-            try:
-                out["task"] = tasks.start("baseprice", f"네이버 가격 바꾸기 · {len(st['live']):,}건",
-                                          lambda **kw: baseprice.push_live(db, st["live"], **kw))
-            except RuntimeError:
-                out["queued"] = True   # 지금 도는 가격 바꾸기가 끝나면서 이어서 보냄 (못 보낸 것은 대기에 남아 [다시 시도])
+            out["task"], out["queued"] = _push(f"네이버 가격 바꾸기 · {len(st['live']):,}건",
+                                               lambda **kw: baseprice.push_live(db, st["live"], **kw))   # 돌고 있으면 끝난 뒤 이어서
         return jsonify(out)
 
     # ── 복사본 일괄 수정 (한 스토어: 새 손님 가격·새 상품명) · 네이버 반영 대기 다시 보내기
@@ -1055,12 +1105,9 @@ def create_app(db=None):
         out = bulkedit.apply(db, v[0], f"복사본 일괄 수정 · {v[0].get('store', '')} · {v[0].get('file', '')}")
         out["task"] = None
         if out["price_live"] or out["name_live"]:
-            try:
-                ids = out["price_live"]
-                out["task"] = tasks.start("baseprice", f"네이버 반영 (가격·상품명) · {v[0].get('store', '')}",
-                                          lambda **kw: bulkedit.push_all(db, ids, **kw))
-            except RuntimeError:
-                out["queued"] = True
+            ids = out["price_live"]
+            out["task"], out["queued"] = _push(f"네이버 반영 (가격·상품명) · {v[0].get('store', '')}",
+                                               lambda **kw: bulkedit.push_all(db, ids, **kw))
         out["price_live"] = len(out["price_live"])
         return jsonify(out)
 
@@ -1080,11 +1127,8 @@ def create_app(db=None):
             return fail(str(e))
         out = {"mode": st["mode"], "count": st["count"], "sources": st["sources"], "live": len(st["live"]), "task": None}
         if st["live"]:
-            try:
-                out["task"] = tasks.start("baseprice", f"네이버 가격 바꾸기 · {len(st['live']):,}건",
-                                          lambda **kw: baseprice.push_live(db, st["live"], **kw))
-            except RuntimeError:
-                out["queued"] = True   # 도는 가격 바꾸기가 끝나면서 이어서 보냄 (못 보낸 것은 [네이버 반영 다시 시도])
+            out["task"], out["queued"] = _push(f"네이버 가격 바꾸기 · {len(st['live']):,}건",
+                                               lambda **kw: baseprice.push_live(db, st["live"], **kw))   # 돌고 있으면 끝난 뒤 이어서
         return jsonify(out)
 
     @app.get("/api/listings/push_pending")
@@ -1125,11 +1169,8 @@ def create_app(db=None):
     @app.post("/api/listings/push_retry")
     def listings_push_retry():
         sid = body().get("store_id")
-        try:
-            return jsonify({"task": tasks.start("baseprice", "네이버 반영 다시 시도 (가격·상품명·상세)",
-                                                lambda **kw: bulkedit.push_all(db, None, store_id=sid, **kw))})
-        except RuntimeError as e:
-            return fail(str(e))
+        tid, later = _push("네이버 반영 다시 시도 (가격·상품명·상세)", lambda **kw: bulkedit.push_all(db, None, store_id=sid, **kw))
+        return jsonify({"task": tid, "queued": later})
 
     # ── 원본 상세·옵션 고치기 (원본 상세 창)
 
@@ -1153,12 +1194,9 @@ def create_app(db=None):
         """판매 중 복사본 상세를 네이버에서 바로 바꾸기 (작업으로). 다른 반영 작업이 돌고 있으면 대기로 남김."""
         if not lids:
             return {"detail_push": 0}
-        try:
-            tid = tasks.start("baseprice", f"네이버 상품 정보 바꾸기(상세·브랜드·제조사·모델명) · {len(lids):,}건",
-                              lambda **kw: engine.push_details(db, lids, **kw))
-            return {"detail_push": len(lids), "detail_task": tid}
-        except RuntimeError:
-            return {"detail_push": len(lids), "detail_queued": True}
+        tid, later = _push(f"네이버 상품 정보 바꾸기(상세·브랜드·제조사·모델명) · {len(lids):,}건",
+                           lambda **kw: engine.push_details(db, lids, **kw))
+        return {"detail_push": len(lids), "detail_task": tid, "detail_queued": later}
 
     @app.post("/api/sources/<int:sid>/content_undo")
     def source_content_undo(sid):
@@ -1442,8 +1480,6 @@ def create_app(db=None):
             return fail("대상 상품이 없습니다." + (" (검수 완료한 원본이 없습니다 — 눈검수를 하거나 '검수 완료로 표시')" if b.get("reviewed_only") else ""))
         if not store_ids:
             return fail("스토어를 하나 이상 골라 주세요.")
-        if runner.state["running"]:
-            return fail("등록이 진행 중일 때는 계획을 만들 수 없습니다. 끝난 뒤에 다시 시도하세요.")
         mode = "spread" if b.get("mode") == "spread" else "all"
         per = max(1, int(b.get("per_product") or 1))
         seed = b.get("seed")   # 미리보기와 같은 배정이 나오게
@@ -1621,9 +1657,7 @@ def create_app(db=None):
     def sources_delete():
         """원본을 휴지통으로. keep_naver: 판매 중인 복사본이 있어도 이 프로그램에서만 뺌 (네이버 상품은 그대로 — 내리지 않음).
         listing_filter: 복사본 화면에서 고른 복사본의 원본."""
-        if runner.state["running"]:
-            return fail("등록이 진행 중일 때는 지울 수 없습니다. 끝난 뒤에 다시 시도하세요.")
-        b = body()
+        b = body()   # 등록 중에도 됨: 지금 처리 중인 복사본이 있는 원본은 trash 쪽에서 빼고 수를 알림(skipped_live)
         ids = _ctx_sources(b) if "listing_filter" in b else inventory.source_ids(db, _filter_from(b))
         if not ids:
             return fail("고른 원본이 없습니다.")
@@ -1793,9 +1827,7 @@ def create_app(db=None):
             f"SELECT id FROM listings WHERE id IN ({','.join('?' * len(ids[i:i + 900]))}) AND op='delete' AND status='planned'", ids[i:i + 900])]
         if not live:
             return jsonify({"started": False, "count": 0})
-        if runner.state["running"]:
-            return jsonify({"started": False, "queued": True, "count": len(live)})
-        try:
+        try:   # 등록이 돌고 있으면 그 스토어 차례에 합류
             runner.start({"ids": live, "kinds": ["delete"]})
         except (RuntimeError, naver.ApiError) as e:
             return jsonify({"started": False, "count": len(live), "error": str(e)})
@@ -1893,8 +1925,6 @@ def create_app(db=None):
 
     @app.post("/api/listings/reset_round")
     def listings_reset_round():
-        if runner.state["running"]:
-            return fail("등록이 진행 중일 때는 회차를 바꿀 수 없습니다. 끝난 뒤에 다시 시도하세요.")
         b = body()
         if b.get("all"):
             ids = [r["id"] for r in db.q("SELECT id FROM listings")]
@@ -1904,7 +1934,16 @@ def create_app(db=None):
             ids = inventory.listing_ids(db, f)
         if not ids:
             return fail("고른 복사본이 없습니다.")
-        return jsonify({"count": inventory.reset_rounds(db, ids)})
+        ids, busy = _not_busy(ids)
+        return jsonify({"count": inventory.reset_rounds(db, ids) if ids else 0, "busy": busy})
+
+    def _not_busy(ids):
+        """지금 등록·최신화로 처리 중(queued·running)인 복사본은 빼기 → (남은 번호들, 뺀 수)"""
+        busy = set()
+        for i in range(0, len(ids), 900):
+            ch = ids[i:i + 900]
+            busy |= {r["id"] for r in db.q(f"SELECT id FROM listings WHERE id IN ({','.join('?' * len(ch))}) AND status IN ('queued','running')", ch)}
+        return [i for i in ids if i not in busy], len(busy)
 
     @app.get("/api/trash")
     def trash_list():
@@ -1924,8 +1963,8 @@ def create_app(db=None):
 
     @app.post("/api/trash/restore")
     def trash_restore():
-        if runner.state["running"] or _adopt_running():
-            return fail("등록이나 판매 중 상품 연결가 진행 중일 때는 되살릴 수 없습니다.")
+        if _adopt_running():
+            return fail("판매 중 상품 연결이 진행 중일 때는 되살릴 수 없습니다. 끝난 뒤에 다시 시도하세요.")
         ids = _trash_ids(body())
         if not ids:
             return fail("고른 항목이 없습니다.")
@@ -2005,21 +2044,18 @@ def create_app(db=None):
         op = b.get("op")
         if op not in ("refresh", "delete", "reupload"):
             return fail("알 수 없는 작업입니다.")
-        if runner.state["running"]:
-            return fail("등록이 끝난 뒤에 예약할 수 있습니다.")
         f = _filter_from(b)
         f.pop("op", None)  # 'op'는 여기서 거르기 조건이 아니라 걸 작업
         n, skipped, ids = inventory.schedule_op(db, f, op)
         out = {"scheduled": n, "skipped_sold": skipped, "started": False}
-        if b.get("now") and ids:   # '바로 하기': 방금 건 것만 바로 처리 (다른 대기 건은 그대로)
-            if runner.snapshot().get("running"):
-                out["busy"] = True
-            else:
-                try:
-                    runner.start({"ids": ids, "kinds": [op]})
-                    out["started"] = True
-                except (RuntimeError, naver.ApiError) as e:
-                    out["error"] = str(e)
+        if ids:   # 늘 바로: 방금 건 것만 처리 — 등록이 돌고 있으면 다른 스토어는 함께, 같은 스토어는 그 차례 뒤에 붙음
+            try:
+                r_ = runner.start({"ids": ids, "kinds": [op]})
+                out["started"] = True
+                if isinstance(r_, dict):
+                    out.update(joined=r_.get("joined", 0), behind=r_.get("behind", 0))
+            except (RuntimeError, naver.ApiError) as e:
+                out["error"] = str(e)
         return jsonify(out)
 
     # ── 판매 이력
@@ -2514,9 +2550,7 @@ def create_app(db=None):
     def cancel():
         f = _filter_from(body())
         where, args = inventory.listing_where(f)
-        if runner.state["running"]:
-            return fail("등록이 끝난 뒤에 취소할 수 있습니다.")
-        ids = inventory.listing_ids(db, f)
+        ids = inventory.listing_ids(db, f)   # 대기·실패만 취소 (지금 처리 중인 건은 cancel_listings가 건드리지 않음)
         if not ids:
             return jsonify({"cancelled": 0})
         n = 0
@@ -2578,10 +2612,13 @@ def create_app(db=None):
     def run_start():
         b = body()
         try:
-            runner.start({**_filter_from(b), "limit": b.get("limit")})
+            r_ = runner.start({**_filter_from(b), "limit": b.get("limit")})
         except (RuntimeError, naver.ApiError) as e:
             return fail(str(e))
-        return jsonify(runner.snapshot())
+        snap = runner.snapshot()
+        if isinstance(r_, dict):
+            snap.update(joined=r_.get("joined", 0), behind=r_.get("behind", 0), added=True)
+        return jsonify(snap)
 
     @app.get("/api/run")
     def run_state():
@@ -2591,7 +2628,11 @@ def create_app(db=None):
     def run_control(action):
         if action not in ("pause", "resume", "stop"):
             return fail("알 수 없는 명령입니다.", 404)
-        getattr(runner, action)()
+        sid = body().get("store_id")
+        if sid:
+            getattr(runner, f"{action}_store")(int(sid))   # 이 스토어만
+        else:
+            getattr(runner, action)()   # 모든 스토어
         return jsonify(runner.snapshot())
 
     @app.get("/api/runs")

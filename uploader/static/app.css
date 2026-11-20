@@ -968,3 +968,10 @@ body.eye-open .tasks { display: none; }
 .cl-edge-img.tpl { cursor: default; opacity: .55; border-style: dashed; border-color: var(--line); }
 .cl-edge-img i { position: absolute; left: 2px; bottom: 2px; font-size: 10px; font-style: normal; background: rgba(0,0,0,.6); color: #fff; padding: 0 3px; border-radius: 3px; }
 @media (max-width: 700px) { .cl-edge-img { width: 70px; height: 54px; } }
+
+/* 복사본 화면: 다른 스토어 진행 한 줄 · 사이드 진행 스토어별 칩 */
+.run-others { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: -4px 0 10px; padding: 6px 10px; border-radius: 8px; background: var(--panel-2, rgba(0,0,0,.03)); }
+.run-others .ro-chip { border: 1px solid var(--line); background: var(--panel, #fff); border-radius: 999px; padding: 2px 10px; font-size: 12px; cursor: pointer; max-width: 100%; }
+.run-others .ro-all { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+.sr-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.sr-chip { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); text-decoration: none; color: inherit; white-space: nowrap; }

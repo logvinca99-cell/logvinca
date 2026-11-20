@@ -134,15 +134,28 @@ class Runner:
 
     # ── 조작
 
+    after_run = None    # web이 정함: 실행이 끝나면 (네이버 반영 대기 이어 보내기)
+
+    def _after(self):
+        try:
+            self.after_run()
+        except Exception:  # noqa: BLE001
+            pass
+
     busy_check = None   # web이 정함: 지금 등록을 시작하면 안 되는 이유 (예: 판매 중 상품 연결 진행 중) 또는 None
 
     def start(self, f):
         why = self.busy_check() if self.busy_check else None
         if why:
             raise RuntimeError(why)
+        for _ in range(100):   # 실행이 막 끝나는 중이면 끝날 때까지 잠깐 기다렸다가 새로 시작
+            with self.lock:
+                if not (self.state["running"] and (getattr(self, "_closing", False) or not getattr(self, "_ctx", None))):
+                    break
+            time.sleep(0.1)
         with self.lock:
             if self.state["running"]:
-                return self._add(f)   # 다른 스토어면 지금 실행에 더해 함께 돌림 (스토어마다 계정·API 키가 따로)
+                return self._add(f)   # 지금 실행에 더함: 다른 스토어는 함께, 같은 스토어는 그 스토어 차례 뒤에 붙음
             self._name_ctx = {}   # 최신화 새 이름용 스토어 정보 (실행마다 새로 읽음)
             self._tpl_cache = {}  # 스토어 템플릿 상단·하단 HTML (실행마다 새로 만듦)
             cfg = config.load()
@@ -175,7 +188,8 @@ class Runner:
             self._orig_fail = {t["id"] for t in targets if t["status"] == "fail"}
             self.state.update(running=True, started_at=time.time())
             self.state["stores"] = {sid: {"name": stores[sid][0]["name"], "total": len(v), "done": 0, "ok": 0,
-                                          "fail": 0, "skipped": 0, "status": "대기"} for sid, v in by_store.items()}
+                                          "fail": 0, "skipped": 0, "status": "대기", "paused": False, "stopping": False}
+                                    for sid, v in by_store.items()}
             self.pause_ev.clear()
             self.stop_ev.clear()
             self.log.clear()
@@ -198,7 +212,8 @@ class Runner:
         return targets, {k: v for k, v in nb.items() if k in by_store}
 
     def _add(self, f):
-        """실행 중 [시작]: 지금 처리하고 있지 않은 스토어의 건을 같은 실행에 더한다 (self.lock 안에서 부름)."""
+        """실행 중 [시작]·최신화·내리기: 같은 실행에 더한다 (self.lock 안에서 부름).
+        다른 스토어는 바로 함께 돌고, 이미 도는 스토어는 그 스토어 차례 뒤에 붙는다 (같은 스토어 안은 순서대로)."""
         ctx = getattr(self, "_ctx", None)
         if not ctx or getattr(self, "_closing", False) or self.state.get("stopping"):
             raise RuntimeError("등록이 끝나는 중입니다. 잠시 뒤 다시 시작하세요.")
@@ -206,18 +221,15 @@ class Runner:
         targets = listing_targets(self.db, f)
         if f.get("limit"):
             targets = targets[:int(f["limit"])]
-        busy = {sid for sid, s in self.state["stores"].items() if s.get("status") not in ("끝", "중단")}
-        mine = [t for t in targets if t["store_id"] in busy]
-        targets = [t for t in targets if t["store_id"] not in busy]
         if not targets:
-            if mine:
-                raise RuntimeError("이 스토어는 지금 등록 중입니다. 끝난 뒤에 다시 시작하세요.")
             raise RuntimeError("처리할 건이 없습니다. (고른 범위·종류 안의 대기·실패 건만 처리합니다)")
         by_store = collections.defaultdict(list)
         for t in targets:
             by_store[t["store_id"]].append(t)
         new_stores = {}
         for sid in by_store:
+            if sid in ctx["stores"]:
+                continue
             s = self.db.store(sid, with_secret=True)
             phone = (s.get("as_phone") or cfg.get("as_phone") or "").strip()
             if not phone:
@@ -227,21 +239,68 @@ class Runner:
         if not targets:
             raise RuntimeError("처리할 건이 없습니다. (그새 다른 작업이 바꿈)")
         self._orig_fail |= {t["id"] for t in targets if t["status"] == "fail"}
+        joined, behind = [], []
         for sid, v in by_store.items():
-            ctx["stores"][sid] = new_stores[sid]
-            ctx["by_store"][sid] = v
-            self.state["stores"][sid] = {"name": new_stores[sid][0]["name"], "total": len(v), "done": 0, "ok": 0,
-                                         "fail": 0, "skipped": 0, "status": "대기"}
+            if sid in new_stores:
+                ctx["stores"][sid] = new_stores[sid]
+            ctx["all"].setdefault(sid, []).extend(v)
+            ss = self.state["stores"].get(sid)
+            if sid in ctx["active"]:   # 이 스토어가 도는 중 → 그 차례 뒤에 붙음
+                ctx["pending"].setdefault(sid, []).extend(v)
+                ss["total"] += len(v)
+                behind.append(sid)
+                continue
+            ctx["pending"][sid] = list(v)
+            ctx["active"].add(sid)
+            if ss:   # 이 실행에서 끝났던 스토어 — 다시 돎 (센 수는 이어서)
+                ss.update(total=ss["total"] + len(v), status="대기", paused=False, stopping=False)
+            else:
+                self.state["stores"][sid] = {"name": ctx["stores"][sid][0]["name"], "total": len(v), "done": 0, "ok": 0,
+                                             "fail": 0, "skipped": 0, "status": "대기", "paused": False, "stopping": False}
             ctx["store_q"].put(sid)
+            joined.append(sid)
         self.state["total"] += len(targets)
-        self._log("info", f"{len(targets):,}건 더함 · " + ", ".join(new_stores[s][0]["name"] for s in by_store) + " (함께 등록)")
+        nm = lambda k: ctx["stores"][k][0]["name"]  # noqa: E731
+        if joined:
+            self._log("info", f"함께 처리 · " + ", ".join(nm(k) for k in joined))
+        for k in behind:
+            self._log("info", f"{len(by_store[k]):,}건을 이 스토어 차례 뒤에 붙임", nm(k))
         alive = sum(1 for t in ctx["lanes"] if t.is_alive())
-        for _ in range(max(0, min(ctx["parallel"] - alive, len(by_store)))):
+        for _ in range(max(0, min(ctx["parallel"] - alive, len(joined)))):
             ctx["spawn"]()
-        return self.snapshot_unlocked()
+        return {**self.snapshot_unlocked(), "joined": len(joined), "behind": len(behind), "count": len(targets)}
 
     def snapshot_unlocked(self):
         return {"running": True, "total": self.state["total"], "added": True}
+
+    def store_busy(self, sid):
+        """이 스토어가 지금 실행에서 처리 중(또는 차례를 기다리는 중)인가."""
+        if not sid:
+            return False
+        with self.lock:
+            ctx = getattr(self, "_ctx", None)
+            return bool(self.state["running"] and ctx and int(sid) in ctx["active"])
+
+    def _store_ctl(self, sid, **kw):
+        with self.lock:
+            ss = self.state["stores"].get(int(sid))
+            if not self.state["running"] or not ss:
+                return False
+            ss.update(kw)
+            return True
+
+    def pause_store(self, sid):
+        if self._store_ctl(sid, paused=True):
+            self._log("info", "이 스토어 일시정지. 지금 처리 중인 건까지만 마칩니다.", self.state["stores"][int(sid)]["name"])
+
+    def resume_store(self, sid):
+        if self._store_ctl(sid, paused=False):
+            self._log("info", "이 스토어 계속합니다.", self.state["stores"][int(sid)]["name"])
+
+    def stop_store(self, sid):
+        """이 스토어만 중단: 지금 처리 중인 건까지만 마치고, 남은 건은 원래 상태(대기·실패)로."""
+        if self._store_ctl(sid, stopping=True, paused=False):
+            self._log("info", "이 스토어 중단. 지금 처리 중인 건까지만 마칩니다.", self.state["stores"][int(sid)]["name"])
 
     def pause(self):
         with self.lock:
@@ -309,12 +368,13 @@ class Runner:
                 lanes = []
 
                 def spawn():
-                    t = threading.Thread(target=self._lane, daemon=True, args=(cfg, stores, by_store, store_q, categories, pool, cache))
+                    t = threading.Thread(target=self._lane, daemon=True, args=(cfg, stores, store_q, categories, pool, cache))
                     lanes.append(t)
                     t.start()
                 with self.lock:   # 실행 중 [시작]으로 스토어를 더할 수 있게 (같은 줄·같은 이미지 묶음 공유)
-                    self._ctx = {"cfg": cfg, "stores": stores, "by_store": by_store, "store_q": store_q,
-                                 "lanes": lanes, "spawn": spawn, "parallel": parallel}
+                    self._ctx = {"cfg": cfg, "stores": stores, "store_q": store_q, "lanes": lanes, "spawn": spawn,
+                                 "parallel": parallel, "pending": {k: list(v) for k, v in by_store.items()},
+                                 "active": set(by_store), "all": {k: list(v) for k, v in by_store.items()}}
                     for _ in range(min(parallel, len(by_store))):
                         spawn()
                 while True:   # 모든 줄(스토어 차례)이 끝날 때까지 — 도중에 더한 스토어도
@@ -334,7 +394,10 @@ class Runner:
             # 중단·오류로 남은 건은 원래 상태로 (실패였던 건은 실패로 — 안내 글 그대로)
             with self.lock:
                 self._closing = True
+                ctx_ = self._ctx
                 self._ctx = None
+            if ctx_:
+                by_store = ctx_["all"]
             of = sorted(getattr(self, "_orig_fail", set()))
             for i in range(0, len(of), 900):
                 ch = of[i:i + 900]
@@ -367,72 +430,108 @@ class Runner:
                                + f" · 새 이미지 {s['images']:,}장", str(s.get("error") or "")[:500], act))
                 except Exception:  # noqa: BLE001
                     pass
+                if self.after_run:
+                    threading.Thread(target=self._after, daemon=True).start()
                 self._log("ok" if not s["fail"] else "info",
                           f"끝: 성공 {s['ok']:,}건, 실패 {s['fail']:,}건"
                           + (f", 판매 이력으로 건너뜀 {s['skipped']:,}건" if s["skipped"] else "")
                           + f", 새로 올린 이미지 {s['images']:,}장")
 
-    def _lane(self, cfg, stores, by_store, store_q, categories, pool, cache):
-        """스토어 하나씩 맡아 끝까지 등록하고 다음 스토어로."""
+    def _lane(self, cfg, stores, store_q, categories, pool, cache):
+        """스토어 하나씩 맡아 끝까지 처리하고 다음 스토어로. 처리하는 동안 그 스토어에 붙은 건은 이어서 (차례 뒤에)."""
         while not self.stop_ev.is_set():
             try:
                 sid = store_q.get_nowait()
             except queue.Empty:
                 return
-            store, client = stores[sid]
-            q = queue.Queue()
-            for t in by_store[sid]:
-                q.put(t)
-            # 지우는 일(최신화·내리기)이 있으면 먼저 이 스토어의 주문을 가져와 판매 이력을 최신으로 만든다.
-            sales_ok = True
-            if any(t["op"] in ("refresh", "delete", "reupload") and t["origin_no"] for t in by_store[sid]):
+            store0, client = stores[sid]
+            synced = False
+            while True:
                 with self.lock:
-                    self.state["stores"][sid]["status"] = "판매 이력 확인 중"
-                try:
-                    # 처음이면 최근 며칠만 (요청 수·시간당 한도를 아끼려고, 설정 orders_refresh_days 기본 7일)
-                    r = orders.sync_store(self.db, self.db.store(sid), client, days=int(cfg.get("orders_refresh_days") or 7))
-                    if r["new"]:
-                        self._log("info", f"새 주문 {r['new']}건을 가져왔습니다", store["name"])
-                except Exception as e:  # noqa: BLE001
-                    sales_ok = False
-                    self._log("err", f"주문을 가져오지 못해 이 스토어의 최신화·내리기는 하지 않습니다: {e}", store["name"])
-            # 최신화가 있으면 네이버 상태(판매중지·판매금지·스토어에서 지움)를 먼저 확인한다 — 그런 상품은 다시 올리지 않게.
-            # 이때 네이버 손님 가격도 읽어 nv_price에 적는다 (업스타 가격은 바꾸지 않음 — 다르면 '가격 확인 필요')
-            nv_ok = True
-            if any(t["op"] in ("refresh", "reupload") and t["origin_no"] for t in by_store[sid]):
+                    ctx = self._ctx
+                    batch = ctx["pending"].pop(sid, []) if ctx else []
+                    ss = self.state["stores"][sid]
+                    stopped = self.stop_ev.is_set() or ss.get("stopping")
+                    if not batch or stopped:
+                        if ctx:
+                            ctx["active"].discard(sid)
+                        ss["status"] = "중단" if stopped and ss["done"] < ss["total"] else "끝"
+                        rest = batch
+                        break
+                rest = []
+                store = self._prepare_batch(cfg, sid, store0, client, batch, synced)
+                synced = synced or store.get("_synced")
                 with self.lock:
-                    self.state["stores"][sid]["status"] = "네이버 상태 확인 중"
-                try:
-                    res = nvstate.check_store(self.db, sid, client, should_stop=self.stop_ev.is_set)
-                    self._log("info", "네이버 상태 · " + nvstate.summary(res), store["name"])
-                except Exception as e:  # noqa: BLE001
-                    nv_ok = False
-                    self._log("err", f"네이버 상태를 확인하지 못해 이 스토어의 최신화·다시 올리기는 하지 않습니다: {e}", store["name"])
-            store = {**store, "_sales_ok": sales_ok, "_nv_ok": nv_ok}
-            with self.lock:
-                self.state["stores"][sid]["status"] = "처리 중"
-            workers = max(1, min(int(cfg.get("workers_per_store") or 1), 8))
-            ths = [threading.Thread(target=self._worker, daemon=True,
-                                    args=(cfg, store, client, categories, q, pool, cache)) for _ in range(workers)]
-            for t in ths:
-                t.start()
-            for t in ths:
-                t.join()
-            with self.lock:
-                ss = self.state["stores"][sid]
-                ss["status"] = "중단" if self.stop_ev.is_set() and ss["done"] < ss["total"] else "끝"
+                    self.state["stores"][sid]["status"] = "처리 중"
+                q = queue.Queue()
+                for t in batch:
+                    q.put(t)
+                workers = max(1, min(int(cfg.get("workers_per_store") or 1), 8))
+                ths = [threading.Thread(target=self._worker, daemon=True,
+                                        args=(cfg, store, client, categories, q, pool, cache)) for _ in range(workers)]
+                for t in ths:
+                    t.start()
+                for t in ths:
+                    t.join()
+                left = []
+                while not q.empty():
+                    left.append(q.get_nowait())
+                if left:   # 중단으로 남은 건 → 원래 상태로
+                    self._unqueue([t["id"] for t in left])
+            if rest:
+                self._unqueue([t["id"] for t in rest])
 
-    def _wait_if_paused(self):
-        while self.pause_ev.is_set() and not self.stop_ev.is_set():
+    def _unqueue(self, ids):
+        """처리하지 않은 건을 원래 상태로 (실패였던 건은 실패, 나머지는 대기)."""
+        of = getattr(self, "_orig_fail", set())
+        for i in range(0, len(ids), 900):
+            ch = ids[i:i + 900]
+            m = ",".join("?" * len(ch))
+            fails = [x for x in ch if x in of]
+            if fails:
+                self.db.x(f"UPDATE listings SET status='fail' WHERE status='queued' AND id IN ({','.join('?' * len(fails))})", fails)
+            self.db.x(f"UPDATE listings SET status='planned' WHERE status='queued' AND id IN ({m})", ch)
+
+    def _prepare_batch(self, cfg, sid, store, client, batch, synced):
+        """지우는 일(최신화·내리기)이 있으면 먼저 이 스토어의 주문을 가져와 판매 이력을 최신으로,
+        최신화가 있으면 네이버 상태(판매중지·판매금지·스토어에서 지움)를 먼저 확인 — 차례 뒤에 붙은 묶음에도."""
+        sales_ok = nv_ok = True
+        if any(t["op"] in ("refresh", "delete", "reupload") and t["origin_no"] for t in batch):
+            with self.lock:
+                self.state["stores"][sid]["status"] = "판매 이력 확인 중"
+            try:
+                # 처음이면 최근 며칠만 (요청 수·시간당 한도를 아끼려고, 설정 orders_refresh_days 기본 7일)
+                r = orders.sync_store(self.db, self.db.store(sid), client, days=int(cfg.get("orders_refresh_days") or 7))
+                if r["new"]:
+                    self._log("info", f"새 주문 {r['new']}건을 가져왔습니다", store["name"])
+            except Exception as e:  # noqa: BLE001
+                sales_ok = False
+                self._log("err", f"주문을 가져오지 못해 이 스토어의 최신화·내리기는 하지 않습니다: {e}", store["name"])
+        # 이때 네이버 손님 가격도 읽어 nv_price에 적는다 (업스타 가격은 바꾸지 않음 — 다르면 '가격 확인 필요')
+        if any(t["op"] in ("refresh", "reupload") and t["origin_no"] for t in batch) and not synced:
+            with self.lock:
+                self.state["stores"][sid]["status"] = "네이버 상태 확인 중"
+            try:
+                res = nvstate.check_store(self.db, sid, client, should_stop=self.stop_ev.is_set)
+                self._log("info", "네이버 상태 · " + nvstate.summary(res), store["name"])
+                synced = True
+            except Exception as e:  # noqa: BLE001
+                nv_ok = False
+                self._log("err", f"네이버 상태를 확인하지 못해 이 스토어의 최신화·다시 올리기는 하지 않습니다: {e}", store["name"])
+        return {**store, "_sales_ok": sales_ok, "_nv_ok": nv_ok, "_synced": synced}
+
+    def _wait_if_paused(self, sid=None):
+        ss = self.state["stores"].get(sid) if sid is not None else None
+        while (self.pause_ev.is_set() or (ss and ss.get("paused"))) and not self.stop_ev.is_set() and not (ss and ss.get("stopping")):
             time.sleep(0.3)
-        if self.stop_ev.is_set():
+        if self.stop_ev.is_set() or (ss and ss.get("stopping")):
             raise Stopped
 
     def _worker(self, cfg, store, client, categories, q, pool, cache):
         delay = float(cfg.get("delay_sec") or 0)
         while True:
             try:
-                self._wait_if_paused()
+                self._wait_if_paused(store["id"])
                 t = q.get_nowait()
             except (Stopped, queue.Empty):
                 return
@@ -473,6 +572,19 @@ class Runner:
         lid, sid, op = t["id"], store["id"], t["op"]
         label = f"[{store['name']}] {t['name']}"
         t0 = time.time()
+        # 보험: 처리 직전에 이 복사본이 정말 이 스토어 것이고 아직 이 실행이 맡은 건인지 다시 확인 (다르면 손대지 않음)
+        cur0 = self.db.one("SELECT store_id, status FROM listings WHERE id=?", (lid,))
+        if not cur0 or cur0["store_id"] != sid or cur0["status"] != "queued":
+            why = ("없어짐" if not cur0 else f"다른 스토어 복사본(#{cur0['store_id']})" if cur0["store_id"] != sid
+                   else f"상태가 바뀜({cur0['status']})")
+            self._log("err", f"건너뜀 · {t['name'][:40]} · {why} — 이 스토어로 처리하지 않음", store["name"])
+            try:
+                activity.add(self.db, "복사·등록", "guard", f"처리 직전 확인으로 건너뜀 · #{lid} · {why}", count=1, status="done",
+                             store=store["name"])
+            except Exception:  # noqa: BLE001
+                pass
+            self._count(sid, lid, None)
+            return
         self.db.set_listing(lid, "running", stage="준비")
         self._stage(lid, label, "준비")
         on_wait = lambda m: self._stage(lid, label, m)  # noqa: E731
@@ -849,6 +961,9 @@ def push_details(db, lids=None, store_id=None, progress=None, should_stop=None):
             if should_stop and should_stop():
                 break
             lid = t["id"]
+            cur = db.one("SELECT store_id, status, origin_no FROM listings WHERE id=?", (lid,))
+            if not cur or cur["store_id"] != t["store_id"] or cur["origin_no"] != t["origin_no"] or cur["status"] in ("queued", "running", "deleted"):
+                continue   # 보험: 그새 다른 스토어로 옮겨졌거나 처리 중·내림 → 이 스토어로 보내지 않음
             try:
                 store = db.store(t["store_id"], with_secret=True)
                 if not store:

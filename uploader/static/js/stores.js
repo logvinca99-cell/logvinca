@@ -498,14 +498,13 @@ App.page("stores", {
       ]);
       return { all: all.total, open: open.total };
     };
-    const go = async (b, now) => {
+    const go = async (b) => {
       const days = $("#rf-days", b).value;
       try {
-        const r = await App.api("/api/listings/schedule", { json: { store_id: s.id, op: "refresh", now, ...(days ? { age_days: days } : {}) } });
+        const r = await App.api("/api/listings/schedule", { json: { store_id: s.id, op: "refresh", ...(days ? { age_days: days } : {}) } });
         if (!r.scheduled) { App.toast("최신화할 건이 없습니다."); return; }
-        if (r.started) { App.run = await App.api("/api/run"); App.toast(`${s.name}: ${num(r.scheduled)}건 최신화를 시작했습니다 (이 건들만).`); }
-        else if (r.busy) App.toast(`${num(r.scheduled)}건을 대기에 넣었습니다. 지금 다른 작업이 진행 중이라, 끝난 뒤 복사본 화면에서 시작하세요.`);
-        else App.toast(`${num(r.scheduled)}건을 대기에 넣었습니다. 복사본 화면 시작에서 '최신화'를 골라 처리하세요.`);
+        if (r.started) { App.run = await App.api("/api/run"); App.toast(`${s.name}: ${num(r.scheduled)}건 최신화를 시작했습니다` + (r.behind ? " — 이 스토어가 처리 중이라 그 차례 뒤에 붙였습니다." : r.joined ? " — 다른 스토어와 함께 처리합니다." : ".")); }
+        else if (r.error) App.toast(`시작하지 못했습니다 (다시 누르면 다시 시도): ${r.error}`, true);
         App.go(`#listings?store_id=${s.id}`);
       } catch (e) { App.toast(e.message, true); return false; }
     };
@@ -517,7 +516,7 @@ App.page("stores", {
           <option value="30">올린 지 30일 넘은 것</option><option value="60">60일 넘은 것</option>
           <option value="90">90일 넘은 것</option><option value="7">7일 넘은 것</option><option value="">판매 중 전체</option></select></label>
         <div class="plan-sum" id="rf-sum">세는 중…</div>`,
-      buttons: [{ label: "취소" }, { label: "대기에 넣기", onClick: (b) => go(b, false) }, { label: "바로 하기", primary: true, onClick: (b) => go(b, true) }],
+      buttons: [{ label: "취소" }, { label: "최신화 시작", primary: true, onClick: (b) => go(b) }],
     });
     const upd = async () => {
       const days = $("#rf-days").value;

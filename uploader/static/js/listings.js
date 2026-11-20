@@ -56,7 +56,8 @@ App.page("listings", {
           <label class="btn" title="아바닛 등 주문 수집 웹에서 내려받은 주문 파일"><input type="file" id="l-sales-file" accept=".xlsx,.xlsm,.csv" hidden>판매 이력 파일 가져오기</label>
           <a class="btn" href="#orders" title="판매자센터 주문을 가져오고 기간·스토어별로 보기">판매 현황</a>
         </div></header>
-      <div class="card run" id="l-run"></div>
+      <div class="card run" id="l-run"><div id="l-run-main"></div></div>
+      <div class="run-others" id="l-run-others" hidden></div>
       <div id="l-sales"></div>
       <div id="l-push"></div>
       <div id="l-pchk"></div>
@@ -191,7 +192,8 @@ App.page("listings", {
       : `<tr class="empty-row"><td colspan="7">${this.counts.all_ ? "조건에 맞는 건이 없습니다."
         : '이 스토어에 복사본이 없습니다. <a href="#inventory">원본 상품</a>에서 원본을 고르고 <b>다른 스토어로 복사</b>를 누르세요.'}</td></tr>`;
     this.renderBar();
-    if (!App.run?.running) this.renderIdle();
+    if (!this._mine(App.run)) this.renderIdle();
+    this.renderOthers(App.run);
   },
 
   /* 가격 확인 필요: 네이버 가격 ≠ 업스타 가격인 판매 중 복사본을 골라 (가) 업스타 가격으로 / (나) 네이버 가격을 새 기준 가격으로 */
@@ -247,9 +249,9 @@ App.page("listings", {
       actions: [
         { id: "rename", label: "상품명 바꾸기", primary: true, title: "아직 안 올린 복사본의 상품명을 AI 키워드·AI로 짓기·셔플로 바꿈" },
         "|",
-        { id: "refresh", label: "최신화", title: "판매 중인 건을 네이버에서 지우고 같은 내용으로 다시 올림 (회차 +1) · 바로 하기 또는 대기에 넣기" },
+        { id: "refresh", label: "최신화", title: "판매 중인 건을 네이버에서 지우고 같은 내용으로 다시 올림 (회차 +1) · 누르면 바로 시작 (다른 스토어가 돌고 있어도 함께)" },
         { id: "reupload", label: "다시 올리기", title: "문제가 있어 지우고 같은 내용(같은 상품명)으로 다시 올림 · 판매 중인 건은 지우고 다시, 내린 건은 그냥 다시 · 최신화와 따로 기록" },
-        { id: "delete", label: "내리기", title: "판매 중인 건을 네이버에서 지움 · 바로 하기 또는 대기에 넣기" },
+        { id: "delete", label: "내리기", title: "판매 중인 건을 네이버에서 지움 · 누르면 바로 시작 (다른 스토어가 돌고 있어도 함께)" },
         { id: "cancel", label: "대기·실패 취소", danger: true, title: "아직 처리 안 된 대기·실패 할 일을 취소" },
         "|",
         { id: "lock", label: "잠금", title: "판매 이력과 상관없이 지우지 못하게 잠금" },
@@ -277,7 +279,7 @@ App.page("listings", {
       onAction: (id) => this.action(id),
     });
     App.pagerBar($("#l-pager"), this.pagerOpts());
-    if (this.runRange === "sel" && !App.run?.running && $("#l-run")) this.renderIdle();   // 고른 수가 바뀌면 시작 범위도
+    if (this.runRange === "sel" && !this._mine(App.run) && $("#l-run")) this.renderIdle();   // 고른 수가 바뀌면 시작 범위도
   },
 
   async action(id) {
@@ -791,14 +793,14 @@ App.page("listings", {
         try {
           const r = await App.api("/api/listings/info_push", { json: target });
           if (r.detail_task) App.toast(`네이버 상품 정보 바꾸기 ${num(r.count)}건을 시작했습니다 (오른쪽 아래 진행).`);
-          else App.toast(`${num(r.count)}건을 네이버 반영 대기에 넣었습니다 — 다른 반영 작업이 끝난 뒤 [네이버 반영 다시 시도].`);
+          else App.toast(`${num(r.count)}건 — 지금 다른 네이버 반영이 돌고 있어 끝나는 대로 이어서 보냅니다.`);
           this.sel.clear(); this.selAll = false; this.load();
         } catch (e) { App.toast(e.message, true); return false; }
       },
     });
   },
 
-  /* 최신화·내리기: 바로 하기(방금 고른 것만 지금 처리) 또는 대기에 넣기(나중에 시작에서 처리) */
+  /* 최신화·내리기·다시 올리기: 늘 바로 — 다른 스토어가 돌고 있으면 함께, 이 스토어가 돌고 있으면 그 차례 뒤에 붙음 */
   schedule(op) {
     const name = OP[op];
     const label = {
@@ -807,15 +809,16 @@ App.page("listings", {
       delete: "<b>내리기</b>: 판매 중인 상품을 네이버에서 지웁니다",
     }[op];
     const n = this.selAll ? this.total : this.sel.size;
-    const go = async (now) => {
+    const go = async () => {
       try {
-        const r = await App.api("/api/listings/schedule", { json: { ...this.target(), op, now } });
+        const r = await App.api("/api/listings/schedule", { json: { ...this.target(), op } });
         const skip = r.skipped_sold ? ` 잠긴 ${num(r.skipped_sold)}건(판매 이력·직접 잠금)은 뺐습니다.` : "";
         if (!r.scheduled) App.toast((op === "reupload" ? "네이버에 올라가 있거나 내린 건이 없어 걸 일이 없습니다." : `네이버에 올라가 있는 건(판매 중·실패·대기)이 없어 걸 일이 없습니다.${op === "refresh" ? " 내린 건은 '다시 올리기'를 쓰세요." : ""}`) + skip, true);
-        else if (r.started) { App.toast(`${num(r.scheduled)}건 ${name}를 시작했습니다.` + skip); App.run = await App.api("/api/run"); this.renderRun(App.run); App.renderSideRun(); }
-        else if (r.busy) App.toast(`${num(r.scheduled)}건을 대기에 넣었습니다. 지금 다른 작업이 돌고 있어, 끝난 뒤 시작하세요.` + skip);
-        else if (r.error) App.toast(`대기에 넣었지만 시작하지 못했습니다: ${r.error}`, true);
-        else App.toast(`${num(r.scheduled)}건을 대기에 넣었습니다. 위 시작에서 '${name}'를 골라 처리하세요.` + skip);
+        else if (r.started) {
+          App.toast(`${num(r.scheduled)}건 ${name}를 시작했습니다` + (r.behind ? " — 이 스토어가 처리 중이라 그 차례 뒤에 붙였습니다." : r.joined ? " — 다른 스토어와 함께 처리합니다." : ".") + skip);
+          App.run = await App.api("/api/run"); this.renderRun(App.run); App.renderSideRun();
+        }
+        else if (r.error) App.toast(`시작하지 못했습니다 (복사본에는 ${name} 할 일로 남음 — 다시 누르면 다시 시도): ${r.error}`, true);
         this.sel.clear(); this.selAll = false; this.estKey = "";
         this.load();
       } catch (e) { App.toast(e.message, true); }
@@ -823,17 +826,45 @@ App.page("listings", {
     App.openModal({
       title: `${num(n)}건 ${name}`,
       body: `<p>${label}.</p>
-        <p class="muted small">잠긴 건(판매 이력·직접 잠금)은 빠지고, 지우기 직전에 이 스토어 주문을 한 번 더 확인합니다. 지난 회차 기록에 '${name}'로 남습니다.</p>
-        <ul class="muted small"><li><b>바로 하기</b>: 방금 고른 것만 지금 처리합니다 (다른 대기 건은 건드리지 않음).</li>
-        <li><b>대기에 넣기</b>: 걸어만 두고, 나중에 위 시작에서 '${name}'를 골라 처리합니다.</li></ul>`,
-      buttons: [{ label: "취소" }, { label: "대기에 넣기", onClick: () => go(false) }, { label: "바로 하기", primary: true, onClick: () => go(true) }],
+        <p class="muted small">잠긴 건(판매 이력·직접 잠금)은 빠지고, 지우기 직전에 이 스토어 주문을 한 번 더 확인합니다. 지난 회차 기록에 '${name}'로 남습니다.
+          누르면 바로 시작합니다 — 다른 스토어가 등록 중이면 함께, 이 스토어가 처리 중이면 그 차례 뒤에 붙습니다.</p>`,
+      buttons: [{ label: "취소" }, { label: `${name} 시작`, primary: true, onClick: () => go() }],
     });
   },
 
   // ── 실행 패널
 
+  /* 지금 보는 스토어가 실행에서 처리 중인가 (스토어를 안 골랐으면 실행 전체) */
+  _mine(r) {
+    if (!r?.running) return null;
+    const sid = +this.f.store_id;
+    if (!sid) return { all: true };
+    return (r.stores || []).find((s) => s.id === sid && !["끝", "중단"].includes(s.status)) || null;
+  },
+
+  /* 다른 스토어 진행: 작은 한 줄 (누르면 그 스토어 화면) + 모든 스토어 일시정지·중단 */
+  renderOthers(r) {
+    const el = $("#l-run-others");
+    if (!el) return;
+    const sid = +this.f.store_id;
+    const others = r?.running && sid ? (r.stores || []).filter((s) => s.id !== sid && !["끝", "중단"].includes(s.status)) : [];
+    el.hidden = !others.length;
+    if (!others.length) return;
+    el.innerHTML = `<span class="muted small">다른 스토어:</span> ${others.map((s) => `<button type="button" class="ro-chip" data-goto="${s.id}" title="${esc(s.name)} 화면으로">
+        ${esc(s.name)} <b>${num(s.done)}/${num(s.total)}</b>${s.paused ? " · 일시정지" : s.status !== "처리 중" ? ` · ${esc(s.status)}` : ""}</button>`).join("")}
+      <span class="ro-all"><button type="button" class="link-btn small" data-all="${r.paused ? "resume" : "pause"}">${r.paused ? "모든 스토어 계속" : "모든 스토어 일시정지"}</button>
+      <button type="button" class="link-btn small c-err" data-all="stop">모든 스토어 중단</button></span>`;
+    $$("[data-goto]", el).forEach((b) => b.addEventListener("click", () => App.go(`#listings?store_id=${b.dataset.goto}`)));
+    $$("[data-all]", el).forEach((b) => b.addEventListener("click", async () => {
+      const a = b.dataset.all;
+      if (a === "stop" && !await App.yes("모든 스토어 중단", "모든 스토어의 등록·최신화·내리기를 중단합니다. 처리 중인 건까지만 마치고, 남은 건은 원래 상태(등록 대기·실패)로 돌아갑니다.", { label: "모두 중단", danger: true })) return;
+      App.run = await App.api(`/api/run/${a}`, { json: {} }); this.renderRun(App.run); App.renderSideRun();
+    }));
+  },
+
   renderIdle() {
-    const box = $("#l-run");
+    const box = $("#l-run-main");
+    if (!box) return;
     const c = this.counts;
     const range = this.runRange || "store";
     const kinds = this.runKinds ||= new Set(RUN_KINDS.map((k) => k[0]));
@@ -869,7 +900,7 @@ App.page("listings", {
     this.estKey = key;
     App.api("/api/run/estimate", { json: this.runScope() }).then((e) => {
       this.est = e;
-      if (!App.run?.running && $("#l-run")) this.renderIdle();
+      if (!this._mine(App.run) && $("#l-run")) this.renderIdle();
     }).catch(() => {});
   },
 
@@ -931,86 +962,94 @@ App.page("listings", {
     if (!await App.yes(limit ? "1건만 시험" : "시작", `${where}에서 ${num(n)}건을 처리합니다.\n(${what})` + (limit ? "\n\n고른 종류에 '내리기'가 있으면 그 1건은 네이버에서 내려갑니다." : ""), { label: limit ? "1건 처리" : "시작" })) return;
     try {
       App.run = await App.api("/api/run", { json: { ...scope, limit: limit || null } });
+      if (App.run.behind) App.toast("이 스토어가 처리 중이라 그 차례 뒤에 붙였습니다.");
+      else if (App.run.joined) App.toast("다른 스토어가 처리 중이라 함께 시작했습니다.");
       this.renderRun(App.run);
       App.renderSideRun();
     } catch (e) { App.toast(e.message, true); }
   },
 
   renderRun(r) {
-    if (!r?.running) {
+    this.renderOthers(r);
+    const mine = this._mine(r);
+    if (!mine) {   // 이 스토어는 쉬는 중 → 시작 창 (시작이 곧 합류)
       if (this._live) { this._live = false; this.renderIdle(); }
-      this.renderLog(r);
       return;
     }
-    const box = $("#l-run");
-    if (!this._live) {
-      this._live = true;
+    const all = !!mine.all;
+    const box = $("#l-run-main");
+    if (!box) return;
+    if (this._live !== (all ? "all" : mine.id)) {
+      this._live = all ? "all" : mine.id;
       box.innerHTML = `<div class="run-top">
           <div class="run-count"><b id="r-done">0</b><span> / <span id="r-total">0</span></span></div>
           <div class="run-meta">
             <div><span class="muted">성공</span><b class="c-ok" id="r-ok">0</b></div>
             <div><span class="muted">실패</span><b class="c-err" id="r-fail">0</b></div>
             <div><span class="muted">잠금으로 건너뜀</span><b id="r-skip">0</b></div>
-            <div><span class="muted">속도</span><b id="r-rate">-</b></div>
-            <div><span class="muted">남은 시간</span><b id="r-eta">-</b></div>
-            <div><span class="muted">새로 올린 이미지</span><b id="r-img">0</b></div>
+            ${all ? `<div><span class="muted">속도</span><b id="r-rate">-</b></div><div><span class="muted">남은 시간</span><b id="r-eta">-</b></div>` : ""}
           </div>
-          <div class="run-ctl"><button class="btn primary" id="r-join" hidden title="다른 스토어가 등록 중이어도 이 스토어를 같은 실행에 더해 함께 올림 (스토어마다 계정이 따로라 서로 겹치지 않음)">이 스토어도 함께 시작</button>
-            <button class="btn" id="r-pause">일시정지</button><button class="btn danger" id="r-stop">중단</button></div>
+          <div class="run-ctl"><button class="btn" id="r-pause">일시정지</button><button class="btn danger" id="r-stop">중단</button></div>
         </div>
         <div class="bar"><div class="bar-ok" id="r-bar-ok"></div><div class="bar-err" id="r-bar-err"></div></div>
         <div class="run-state" id="r-state"></div>
-        <div class="store-chips" id="r-stores"></div>
+        ${all ? '<div class="store-chips" id="r-stores"></div>' : ""}
         <ul class="current" id="r-current"></ul>
-        <details class="log" open><summary>작업 기록 <span class="muted" id="r-logn"></span></summary><ol id="r-log"></ol></details>`;
-      $("#r-join").addEventListener("click", async () => {
-        try { this.est = await App.api("/api/run/estimate", { json: this.runScope() }); } catch (e) { /* 아래 확인 창에서 0건으로 */ }
-        this.start();
-      });
+        <details class="log"><summary>자세히 · 작업 기록 <span class="muted" id="r-logn"></span></summary><ol id="r-log"></ol></details>`;
+      const body = () => (this._mine(App.run)?.all ? {} : { store_id: +this.f.store_id });
       $("#r-pause").addEventListener("click", async () => {
-        App.run = await App.api(`/api/run/${App.run?.paused ? "resume" : "pause"}`, { method: "POST" }); this.renderRun(App.run);
+        const m = this._mine(App.run);
+        const paused = m?.all ? App.run?.paused : m?.paused;
+        App.run = await App.api(`/api/run/${paused ? "resume" : "pause"}`, { json: body() }); this.renderRun(App.run); App.renderSideRun();
       });
       $("#r-stop").addEventListener("click", async () => {
-        if (!await App.yes("등록 중단", "등록을 중단할까요? 처리 중인 건까지만 마치고 멈춥니다. 남은 건은 대기로 돌아갑니다.", { label: "중단", danger: true })) return;
-        App.run = await App.api("/api/run/stop", { method: "POST" }); this.renderRun(App.run);
+        const m = this._mine(App.run);
+        const what = m?.all ? "모든 스토어" : `이 스토어(${m?.name || ""})`;
+        if (!await App.yes(`${what} 중단`, `${what}의 등록·최신화·내리기를 중단할까요? 처리 중인 건까지만 마치고 멈춥니다. 남은 건은 원래 상태(등록 대기·실패)로 돌아갑니다.${m?.all ? "" : " 다른 스토어는 계속합니다."}`, { label: "중단", danger: true })) return;
+        App.run = await App.api("/api/run/stop", { json: body() }); this.renderRun(App.run); App.renderSideRun();
       });
       clearInterval(this.timer);
       this.timer = setInterval(() => { if (App.run?.running) this.load(); }, 4000);
     }
-    const mine = (r.stores || []).find((s) => s.id === +this.f.store_id);
-    $("#r-join").hidden = !!(mine && !["끝", "중단"].includes(mine.status));   // 이 스토어가 지금 실행에 없으면 함께 시작 가능
-    $("#r-done").textContent = num(r.done);
-    $("#r-total").textContent = num(r.total);
-    $("#r-ok").textContent = num(r.ok);
-    $("#r-fail").textContent = num(r.fail);
-    $("#r-skip").textContent = num(r.skipped || 0);
-    $("#r-rate").textContent = r.rate_per_min ? `분당 ${num(Math.round(r.rate_per_min))}건` : "재는 중";
-    $("#r-eta").textContent = r.paused ? "일시정지" : r.eta != null ? dur(r.eta) : "재는 중";
-    $("#r-img").textContent = num(r.images) + (r.images_reused ? ` (+${num(r.images_reused)} 재사용)` : "");
-    $("#r-bar-ok").style.width = (r.total ? (r.ok / r.total) * 100 : 0) + "%";
-    $("#r-bar-err").style.width = (r.total ? (r.fail / r.total) * 100 : 0) + "%";
-    $("#r-pause").textContent = r.paused ? "▶ 계속" : "일시정지";
-    $("#r-pause").disabled = $("#r-stop").disabled = r.stopping;
-    $("#r-state").textContent = r.stopping ? "중단하는 중… 처리 중인 건까지만 마칩니다."
-      : r.paused ? "일시정지됨" : `등록 중 · ${dur(r.elapsed)} 지남`;
-    $("#r-stores").innerHTML = r.stores.map((s) => {
-      const p = s.total ? (s.done / s.total) * 100 : 0;
-      return `<div class="chip-store ${s.status === "등록 중" ? "on" : s.status === "끝" ? "done" : ""}" title="${esc(s.name)}: ${s.status}">
+    const m = all ? r : mine;
+    const paused = all ? r.paused : mine.paused || r.paused;
+    const stopping = all ? r.stopping : mine.stopping || r.stopping;
+    $("#r-done").textContent = num(m.done);
+    $("#r-total").textContent = num(m.total);
+    $("#r-ok").textContent = num(m.ok);
+    $("#r-fail").textContent = num(m.fail);
+    $("#r-skip").textContent = num(m.skipped || 0);
+    if (all) {
+      $("#r-rate").textContent = r.rate_per_min ? `분당 ${num(Math.round(r.rate_per_min))}건` : "재는 중";
+      $("#r-eta").textContent = r.paused ? "일시정지" : r.eta != null ? dur(r.eta) : "재는 중";
+    }
+    $("#r-bar-ok").style.width = (m.total ? (m.ok / m.total) * 100 : 0) + "%";
+    $("#r-bar-err").style.width = (m.total ? (m.fail / m.total) * 100 : 0) + "%";
+    $("#r-pause").textContent = paused ? "▶ 계속" : all ? "모두 일시정지" : "이 스토어 일시정지";
+    $("#r-stop").textContent = all ? "모두 중단" : "이 스토어 중단";
+    $("#r-pause").disabled = $("#r-stop").disabled = !!stopping;
+    $("#r-state").textContent = stopping ? "중단하는 중… 처리 중인 건까지만 마칩니다."
+      : paused ? "일시정지됨" : all ? `처리 중 · ${dur(r.elapsed)} 지남` : `이 스토어: ${mine.status}`;
+    if (all) {
+      $("#r-stores").innerHTML = r.stores.map((s) => `<div class="chip-store ${s.status === "처리 중" ? "on" : s.status === "끝" ? "done" : ""}" title="${esc(s.name)}: ${s.status}">
         <div class="cs-top"><span>${esc(s.name)}</span><span>${num(s.done)}/${num(s.total)}</span></div>
         <div class="bar thin"><div class="bar-ok" style="width:${s.total ? (s.ok / s.total) * 100 : 0}%"></div>
-        <div class="bar-err" style="width:${s.total ? (s.fail / s.total) * 100 : 0}%"></div></div></div>`;
-    }).join("");
-    $("#r-current").innerHTML = r.current.slice(0, 8).map((c) =>
-      `<li><span class="spin"></span><span class="c-name">${esc(c.name)}</span><span class="c-stage">${esc(c.stage)}</span></li>`).join("")
-      + (r.current.length > 8 ? `<li class="muted small">외 ${r.current.length - 8}건 처리 중</li>` : "");
-    this.renderLog(r);
+        <div class="bar-err" style="width:${s.total ? (s.fail / s.total) * 100 : 0}%"></div></div></div>`).join("");
+    }
+    const pre = all ? "" : `[${mine.name}]`;
+    const cur = r.current.filter((c) => !pre || String(c.name).startsWith(pre));
+    $("#r-current").innerHTML = cur.slice(0, 8).map((c) =>
+      `<li><span class="spin"></span><span class="c-name">${esc(all ? c.name : String(c.name).slice(pre.length).trim())}</span><span class="c-stage">${esc(c.stage)}</span></li>`).join("")
+      + (cur.length > 8 ? `<li class="muted small">외 ${cur.length - 8}건 처리 중</li>` : "");
+    this.renderLog(r, all ? null : mine.name);
   },
 
-  renderLog(r) {
+  renderLog(r, store) {
     const ol = $("#r-log");
     if (!ol || !r) return;
-    $("#r-logn").textContent = r.log.length ? `(${r.log.length})` : "";
-    ol.innerHTML = r.log.slice().reverse().map((l) => `<li class="l-${l.level}"><time>${new Date(l.t * 1000)
+    const log = store ? r.log.filter((l) => !l.store || l.store === store) : r.log;
+    $("#r-logn").textContent = log.length ? `(${log.length})` : "";
+    ol.innerHTML = log.slice().reverse().map((l) => `<li class="l-${l.level}"><time>${new Date(l.t * 1000)
       .toLocaleTimeString("ko-KR", { hour12: false })}</time>${l.store ? `<span class="muted">${esc(l.store)}</span>` : ""}<span>${esc(l.msg)}</span></li>`).join("");
   },
 

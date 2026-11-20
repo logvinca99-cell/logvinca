@@ -233,6 +233,9 @@ def push_names(db, store_id=None, progress=None, should_stop=None):
     for n, r in enumerate(rows, 1):
         if should_stop and should_stop():
             break
+        cur = db.one("SELECT store_id, status, origin_no FROM listings WHERE id=?", (r["id"],))
+        if not cur or cur["store_id"] != r["store_id"] or cur["origin_no"] != r["origin_no"] or cur["status"] in ("queued", "running", "deleted"):
+            continue   # 보험: 그새 다른 스토어로 옮겨졌거나 처리 중·내림 → 이 스토어로 보내지 않음
         nm = db.one("SELECT id, name FROM names WHERE id=?", (r["name_push"],))
         if not nm:
             db.set_listing(r["id"], None, name_push=None)

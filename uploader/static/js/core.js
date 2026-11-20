@@ -679,11 +679,10 @@ const App = {
     const r = this.run, el = $("#side-run");
     if (!r?.running) { el.hidden = true; return; }
     el.hidden = false;
-    const p = r.total ? (r.done / r.total) * 100 : 0;
-    el.innerHTML = `<a href="#listings"><div class="sr-top"><span class="spin"></span>
-      <b>${r.paused ? "일시정지" : "등록 중"}</b><span>${num(r.done)}/${num(r.total)}</span></div>
-      <div class="bar thin"><div class="bar-ok" style="width:${p}%"></div></div>
-      <div class="muted small">남은 시간 ${r.eta != null ? dur(r.eta) : "재는 중"}</div></a>`;
+    const live = (r.stores || []).filter((s) => !["끝", "중단"].includes(s.status));
+    el.innerHTML = `<div class="sr-top"><span class="spin"></span><b>${r.paused ? "일시정지" : `처리 중 ${num(live.length)}곳`}</b>
+      <span class="muted small">남은 ${r.eta != null ? dur(r.eta) : "재는 중"}</span></div>
+      <div class="sr-chips">${live.map((s) => `<a class="sr-chip" href="#listings?store_id=${s.id}" title="${esc(s.name)}: ${esc(s.status)}">${esc(s.name)} <b>${num(s.done)}/${num(s.total)}</b>${s.paused ? " ⏸" : ""}</a>`).join("")}</div>`;
   },
 
   async pollRun() {
@@ -1126,9 +1125,9 @@ const App = {
           <span class="muted small" style="display:block">원본 ${num(pe.sources)}개와 그 원본의 <b>모든 스토어 복사본</b>을 지웁니다.</span></span></label>
         <div id="del-all-on"><ul>
           <li>네이버에 안 올라간 원본 <b>${num(pe.now)}개</b> → 바로 휴지통 (복사본·이름 후보·AI 키워드 함께)</li>
-          ${pe.drop_listings ? `<li>판매 중인 복사본 <b>${num(pe.drop_listings)}건</b>(원본 ${num(pe.drop_sources)}개, 다른 스토어 포함) → <b>${wait ? "내리기 대기에 넣고" : now ? "네이버에서 바로 내린 뒤" : "'이 쪽 완료·다음'(또는 닫기) 때 네이버에서 내린 뒤"}</b> 원본도 휴지통</li>` : ""}
+          ${pe.drop_listings ? `<li>판매 중인 복사본 <b>${num(pe.drop_listings)}건</b>(원본 ${num(pe.drop_sources)}개, 다른 스토어 포함) → <b>${now ? "네이버에서 바로 내린 뒤" : "'이 쪽 완료·다음'(또는 닫기) 때 네이버에서 내린 뒤"}</b> 원본도 휴지통</li>` : ""}
           ${pe.kept_sold ? `<li>판매 이력·잠금이 있는 원본 <b>${num(pe.kept_sold)}개</b> → 원본과 잠긴 복사본은 남기고, 잠기지 않은 복사본만 내리거나 휴지통으로</li>` : ""}</ul>
-          ${wait && pe.drop_listings ? '<p class="small c-warn">지금 등록이 도는 중이라 내리기는 대기에 넣습니다. 등록이 끝난 뒤 시작에서 \'내리기\'를 실행하세요.</p>' : ""}
+          ${wait && pe.drop_listings && now ? '<p class="small muted">지금 등록이 도는 중이면 내리기는 그 스토어 차례에 함께 붙어 처리됩니다.</p>' : ""}
           <p class="small muted">휴지통에서 되살릴 수 있지만, 네이버에서 내린 상품은 다시 올려야 합니다.</p></div>
         <div id="del-all-off" hidden><p>고른 복사본 <b>${num(pc.copies)}건</b>만 휴지통으로 옮깁니다. 붙어 있던 상품명은 원본의 안 쓴 후보로 돌아가고 원본은 남습니다.</p>
           <p class="small muted">네이버에 올라가 있거나 처리 중인 복사본은 지우지 않습니다(먼저 '내리기') — 아래를 켜면 판매 중인 것도 이 프로그램에서만 뺍니다.</p></div>

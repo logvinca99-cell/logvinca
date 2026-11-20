@@ -1,7 +1,7 @@
 """작업 기록: 프로그램에서 실행한 일을 언제·무엇을·몇 건·결과로 남긴다 (프로그램을 껐다 켜도 남음).
 
 - 오래 걸리는 작업(tasks): 시작할 때 '진행 중'으로 넣고 끝나면 결과·걸린 시간을 채운다.
-- 바로 끝나는 작업(복사본 삭제, 대기에 넣기, 카테고리 맞추기 저장 …): 요청이 성공하면 한 줄.
+- 바로 끝나는 작업(복사본 삭제, 최신화·내리기 시작, 카테고리 맞추기 저장 …): 요청이 성공하면 한 줄.
 - 설정·스토어 템플릿 변경: 무엇이 무엇에서 무엇으로 바뀌었는지 (키·비밀번호 값은 남기지 않음).
 """
 
@@ -121,7 +121,7 @@ def _schedule(b, r):
     n = r.get("count", r.get("scheduled"))
     if n is None and isinstance(r.get("ids"), list):
         n = len(r["ids"])
-    return f"{op} {'바로 하기' if b.get('now') else '대기에 넣기'}", n, r.get("message") or ""
+    return f"{op} 시작" + (" (그 스토어 차례 뒤에 붙음)" if r.get("behind") else " (다른 스토어와 함께)" if r.get("joined") else ""), n, r.get("message") or ""
 
 
 def _count_of(r, *keys):
