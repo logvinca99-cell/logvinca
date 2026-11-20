@@ -254,6 +254,15 @@ def importer_for(store, cfg):
     return cfg.get("importer") or REF
 
 
+def info_fields(row, cfg):
+    """(모델명, 브랜드, 제조사). info_force(기본 켬)면 엑셀 값과 상관없이 셋 다 '상세페이지 참조'
+    (상세 정리·판매 중 상품 연결이 원본에 넣는 값과 같은 결과). 끄면 엑셀 값 (비면 모델명·제조사는 '상세페이지 참조')."""
+    if cfg.get("info_force", True):
+        return REF, REF, REF
+    brand = row.get("브랜드") or ""
+    return row.get("모델명") or REF, brand, row.get("제조사") or brand or REF
+
+
 def origin_info(text, cfg, importer=None):
     """원산지 → 네이버 원산지 정보.
     origin_force(기본 켬)면 엑셀 값과 상관없이 설정의 원산지(기본 중국)로 등록한다.
@@ -782,9 +791,7 @@ def build_body(row, cfg, category_id, url_map=None, name=None, price=None, as_ph
     delivery_fee = {"deliveryFeeType": "FREE"} if fee == 0 else {
         "deliveryFeeType": "PAID", "baseFee": fee, "deliveryFeePayType": "PREPAID"}
 
-    model = row.get("모델명") or REF
-    brand = row.get("브랜드") or ""
-    maker = row.get("제조사") or brand or REF
+    model, brand, maker = info_fields(row, cfg)
     phone = as_phone or cfg.get("as_phone") or ""
 
     detail = {

@@ -256,6 +256,7 @@ App.page("listings", {
         { id: "unlock", label: "잠금 풀기" },
         { id: "category", label: "카테고리 바꾸기", title: "고른 복사본의 원본 카테고리를 직접 정함 (인증 때문에 안 올라가는 카테고리 등) — 그 원본의 다른 스토어 복사본도 같이" },
         { id: "chem", label: "생활화학 판정", title: "고른 복사본의 원본을 판정: 물건이면 '인증 대상 아님'으로 다시 등록 대기, 화학제품이면 보류 (애매하면 AI)" },
+        { id: "infopush", label: "네이버 상품 정보 바꾸기", title: "고른 판매 중 복사본의 상세·브랜드·제조사·모델명을 지금 원본·설정 기준으로 네이버에서 바꿈 (지우지 않음 → 상품번호·리뷰 그대로, 잠긴 것 포함)" },
         { id: "clean", label: "상세 정리로 보내기", title: "고른 복사본의 원본 상세를 상세 정리에서 정리 → [원본에 반영]하면 원본 상세가 바뀌고 판매 중 복사본은 네이버 상세만 바꿈 (지우지 않음)" },
         { id: "resetround", label: "회차 초기화", title: "지난 회차 기록을 지우고 1회차로 (다시 다 올릴 때) · 판매 중·내린 건은 다음에 다시 올릴 때 1회차로" },
         "|",
@@ -281,6 +282,7 @@ App.page("listings", {
 
   async action(id) {
     if (id === "rename") this.renameModal();
+    if (id === "infopush") this.infoPush();
     if (id === "clean") App.sendToClean({ listing_filter: this.target() }, `고른 복사본 ${num(this.selAll ? this.total : this.sel.size)}건의 원본`);
     if (id === "export") {   // 고른 것이 있으면 그것만, 없으면 지금 보이는 조건 전체
       const q = this.sel.size && !this.selAll ? { store_id: this.f.store_id, ids: [...this.sel].join(",") } : this.query();
@@ -770,6 +772,30 @@ App.page("listings", {
   renameReopen(t, meta) {
     this._rn = { title: meta?.title || "상품명 바꾸기 · 결과", target: {}, n: 0, opt: meta?.opt || { method: "ctx" } };
     this._rnResult(t.result || {});
+  },
+
+  /* 네이버 상품 정보 바꾸기: 판매 중 복사본의 상세·브랜드·제조사·모델명만 (지우지 않음) */
+  async infoPush() {
+    const target = this.target();
+    let p;
+    try { p = await App.api("/api/listings/info_preview", { json: target }); } catch (e) { return App.toast(e.message, true); }
+    if (!p.live) return App.toast("바꿀 판매 중 복사본이 없습니다 (아직 안 올린 것·내린 것·지금 등록 중인 것은 빠짐).", true);
+    const rule = p.info_force ? "브랜드·제조사·모델명은 '상세페이지 참조'" : "브랜드·제조사·모델명은 원본 엑셀 값";
+    App.ask({
+      title: "네이버 상품 정보 바꾸기",
+      body: `판매 중 복사본 <b>${num(p.live)}건</b>${p.locked ? ` (잠긴 ${num(p.locked)}건 포함 — 지우지 않으니까)` : ""}의 <b>상세·브랜드·제조사·모델명</b>을 지금 원본·설정 기준으로 네이버에서 바꿉니다 (${rule}).
+        <br>지우지 않으므로 <b>상품번호·리뷰·판매 기록은 그대로</b>입니다. 실패한 것은 '네이버 반영 대기'로 남아 [네이버 반영 다시 시도]로 다시 보냅니다.`
+        + (p.busy || p.other ? `<br><span class="muted small">빠짐: ${p.busy ? `지금 등록 중 ${num(p.busy)}건` : ""}${p.busy && p.other ? " · " : ""}${p.other ? `안 올린·내린 ${num(p.other)}건` : ""}</span>` : ""),
+      label: "바꾸기", confirm: `판매 중 ${num(p.live)}건의 상세·브랜드·제조사·모델명을 네이버에서 바꿉니다 (상품번호 그대로).`,
+      run: async () => {
+        try {
+          const r = await App.api("/api/listings/info_push", { json: target });
+          if (r.detail_task) App.toast(`네이버 상품 정보 바꾸기 ${num(r.count)}건을 시작했습니다 (오른쪽 아래 진행).`);
+          else App.toast(`${num(r.count)}건을 네이버 반영 대기에 넣었습니다 — 다른 반영 작업이 끝난 뒤 [네이버 반영 다시 시도].`);
+          this.sel.clear(); this.selAll = false; this.load();
+        } catch (e) { App.toast(e.message, true); return false; }
+      },
+    });
   },
 
   /* 최신화·내리기: 바로 하기(방금 고른 것만 지금 처리) 또는 대기에 넣기(나중에 시작에서 처리) */

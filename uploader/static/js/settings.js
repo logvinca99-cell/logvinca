@@ -11,6 +11,7 @@ const SETTING_SECTIONS = [
     ["as_phone", "A/S 전화번호", "text", { req: true, hint: "스토어에 A/S 전화가 없으면 이 값" }],
     ["as_guide", "A/S 안내"],
     ["origin_force", "원산지를 엑셀과 상관없이 일괄 지정 (아래 나라로)", "check"],
+    ["info_force", "브랜드·제조사·모델명은 늘 '상세페이지 참조'로 올리기", "check", { hint: "끄면 원본 엑셀 값 그대로. 판매 중 상품은 복사본 화면 [네이버 상품 정보 바꾸기]나 다음 최신화 때 바뀜" }],
     ["origin_country", "일괄 원산지", "text", { hint: "아래 원산지 코드에 있는 이름 (기본 중국 = 수입산 > 아시아 > 중국)" }],
     ["importer_template", "수입사 (스토어별)", "text", { hint: "{store} 자리에 스토어 이름이 들어감. 예: {store}협력사 → 가나스토어협력사" }],
     ["origin_codes", "원산지 코드", "json", { hint: "이름: 네이버 원산지 코드" }],

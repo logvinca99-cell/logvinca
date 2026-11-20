@@ -779,6 +779,22 @@ def detail_pending_count(db, store_id=None):
     return db.one(f"SELECT COUNT(*) AS n FROM listings WHERE {w}", a)["n"]
 
 
+def mark_info_push(db, lids):
+    """고른 복사본 중 판매 중(잠긴 것 포함, 등록 중 제외)에 '네이버 상품 정보 바꾸기 대기'. → 건 복사본 번호들"""
+    out, now = [], time.time()
+    lids = [int(x) for x in lids]
+    for i in range(0, len(lids), 900):
+        ch = lids[i:i + 900]
+        rows = db.q(f"""SELECT id FROM listings WHERE id IN ({','.join('?' * len(ch))}) AND origin_no!=''
+            AND status NOT IN ('queued','running','deleted')""", ch)
+        ids = [r["id"] for r in rows]
+        if ids:
+            with db.tx() as c:
+                c.execute(f"UPDATE listings SET detail_push=? WHERE id IN ({','.join('?' * len(ids))})", (now, *ids))
+        out += ids
+    return out
+
+
 def mark_detail_push(db, sids):
     """원본 상세를 고쳤을 때: 그 원본의 판매 중 복사본(잠긴 것 포함 — 지우지 않으니까)에 '네이버 상세 바꾸기 대기'. → 건 복사본 번호들"""
     sids = [int(s) for s in sids]
@@ -846,16 +862,19 @@ def push_details(db, lids=None, store_id=None, progress=None, should_stop=None):
                 if boxes:
                     kw["opt_urls"] = helper._option_images(client, cache, boxes, convert.option_look(cfg, store), lid, label, None)
                 body = convert.build_body(row, cfg, cat_id or "0", url_map, **kw)
-                client.update_detail(t["origin_no"], body["originProduct"]["detailContent"])
-                db.set_listing(lid, None, detail_push=None, message="원본 상세 고침 → 네이버 상세 바꿈 (상품번호 그대로)")
+                ns = (body["originProduct"].get("detailAttribute") or {}).get("naverShoppingSearchInfo") or {}
+                model, brand, maker = convert.info_fields(row, cfg)
+                info = {"model": ns.get("modelName") or model, "brand": ns.get("brandName") or brand, "maker": ns.get("manufacturerName") or maker}
+                client.update_detail(t["origin_no"], body["originProduct"]["detailContent"], info=info)
+                db.set_listing(lid, None, detail_push=None, message="네이버 상품 정보 바꿈 (상세·브랜드·제조사·모델명, 상품번호 그대로)")
                 out["ok"] += 1
             except Exception as e:  # noqa: BLE001 - 이 건만 실패, 대기로 남김
-                db.set_listing(lid, None, message=f"네이버 상세 바꾸기 실패 — 복사본 화면 [네이버 반영 다시 시도]로 다시: {e}"[:600])
+                db.set_listing(lid, None, message=f"네이버 상품 정보(상세·브랜드·제조사·모델명) 바꾸기 실패 — 복사본 화면 [네이버 반영 다시 시도]로 다시: {e}"[:600])
                 out["fail"] += 1
                 if len(out["errors"]) < 5:
                     out["errors"].append(str(e)[:80])
             if progress:
                 progress(n, len(rows), f"네이버 상세 바꾸는 중 {n:,}/{len(rows):,}")
-    out["message"] = f"네이버 상세 바꿈 {out['ok']:,}건 (상품번호·리뷰 그대로)" + (
+    out["message"] = f"네이버 상품 정보(상세·브랜드·제조사·모델명) 바꿈 {out['ok']:,}건 (상품번호·리뷰 그대로)" + (
         f" · 실패 {out['fail']:,}건 — 네이버 반영 대기로 남음 ([네이버 반영 다시 시도])" if out["fail"] else "")
     return out

@@ -24,6 +24,8 @@ DEFAULTS = {
     "importer": "상세페이지 참조",
     # 원산지: 기본은 엑셀 값과 상관없이 일괄로 origin_country(중국)로 등록, 수입사는 스토어별 '{store}협력사'
     "origin_force": True,
+    # 브랜드·제조사·모델명: 기본은 엑셀 값과 상관없이 '상세페이지 참조'로 등록 (상세 정리·판매 중 상품 연결이 넣는 값과 같음)
+    "info_force": True,
     "origin_country": "중국",
     "importer_template": "{store}협력사",
     "origin_default": "중국",          # origin_force를 끄고 엑셀 원산지가 비었을 때

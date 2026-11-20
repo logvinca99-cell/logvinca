@@ -1076,6 +1076,35 @@ def create_app(db=None):
         return jsonify({"price": baseprice.pending_count(db, sid), "name": bulkedit.name_pending_count(db, sid),
                         "detail": engine.detail_pending_count(db, sid)})
 
+    @app.post("/api/listings/info_preview")
+    def listings_info_preview():
+        """[네이버 상품 정보 바꾸기] 대상: 고른 복사본 중 판매 중(잠긴 것 포함)·등록 중·안 올린 것 수."""
+        f = _filter_from(body())
+        f.pop("op", None)
+        ids = inventory.listing_ids(db, f)
+        n = {"live": 0, "busy": 0, "other": 0, "locked": 0}
+        for i in range(0, len(ids), 900):
+            ch = ids[i:i + 900]
+            for r in db.q(f"SELECT origin_no, status, locked FROM listings WHERE id IN ({','.join('?' * len(ch))})", ch):
+                if not r["origin_no"] or r["status"] == "deleted":
+                    n["other"] += 1
+                elif r["status"] in ("queued", "running"):
+                    n["busy"] += 1
+                else:
+                    n["live"] += 1
+                    n["locked"] += int(bool(r["locked"]))
+        return jsonify({**n, "info_force": bool(config.load().get("info_force", True))})
+
+    @app.post("/api/listings/info_push")
+    def listings_info_push():
+        """고른 판매 중 복사본의 상세·브랜드·제조사·모델명을 지금 원본·설정 기준으로 네이버에서 바꾸기 (지우지 않음 → 상품번호·리뷰 그대로)."""
+        f = _filter_from(body())
+        f.pop("op", None)
+        lids = engine.mark_info_push(db, inventory.listing_ids(db, f))
+        if not lids:
+            return fail("바꿀 판매 중 복사본이 없습니다 (아직 안 올린 것·내린 것·지금 등록 중인 것은 빠짐).")
+        return jsonify({"count": len(lids), **_start_detail_push(lids)})
+
     @app.post("/api/listings/push_retry")
     def listings_push_retry():
         sid = body().get("store_id")
@@ -1108,7 +1137,7 @@ def create_app(db=None):
         if not lids:
             return {"detail_push": 0}
         try:
-            tid = tasks.start("baseprice", f"네이버 상세 바꾸기 · {len(lids):,}건",
+            tid = tasks.start("baseprice", f"네이버 상품 정보 바꾸기(상세·브랜드·제조사·모델명) · {len(lids):,}건",
                               lambda **kw: engine.push_details(db, lids, **kw))
             return {"detail_push": len(lids), "detail_task": tid}
         except RuntimeError:
