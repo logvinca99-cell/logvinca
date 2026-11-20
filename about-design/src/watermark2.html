@@ -1,0 +1,44 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>에이바우트 워터마크 시안</title>
+<link rel="stylesheet" href="style.css">
+<style>
+ html,body{background:transparent}
+ body{width:260px;line-height:1}
+ .wrap{display:inline-block;padding:8px}
+ .a{font-family:"Inst";font-style:italic;letter-spacing:0;line-height:1}
+ .a i{color:var(--mark)}
+ .n{font-weight:900;letter-spacing:-.05em;white-space:nowrap}
+ .ring{box-shadow:0 0 0 3px #fff}
+
+ /* 1 말풍선 */
+ #w1 .s{display:inline-flex;align-items:center;gap:7px;background:var(--plum);color:#fff;padding:5px 15px 9px 13px;border-radius:26px;border-bottom-right-radius:5px}
+ #w1 .a{font-size:42px} #w1 .n{font-size:29px;padding-top:5px}
+
+ /* 2 티켓 */
+ #w2 .s{display:inline-grid;grid-template-columns:auto auto;background:#fff;border:3px solid var(--plum);border-radius:12px;overflow:hidden}
+ #w2 .l{background:var(--plum);color:#fff;padding:1px 9px 8px 10px}
+ #w2 .a{font-size:42px}
+ #w2 .r{border-left:3px dashed var(--plum);margin-left:-3px;padding:0 13px;display:grid;place-items:center;background:#fff}
+ #w2 .n{font-size:28px;color:var(--ink)}
+
+ /* 3 노란 테이프 */
+ #w3{padding:14px 8px}
+ #w3 .s{display:inline-flex;align-items:baseline;gap:8px;background:var(--mark);color:var(--ink);padding:5px 12px 8px;transform:rotate(-4deg);border:3px solid var(--ink)}
+ #w3 .a{font-size:31px} #w3 .n{font-size:23px}
+
+ /* 4 먹색 캡슐 */
+ #w4 .s{display:inline-flex;align-items:center;gap:9px;background:var(--ink);color:#fff;padding:6px 18px 6px 6px;border-radius:999px}
+ #w4 .d{width:44px;height:44px;border-radius:50%;background:var(--mark);color:var(--ink);display:grid;place-items:center;padding-bottom:7px}
+ #w4 .a{font-size:42px} #w4 .n{font-size:29px} #w4 .n i{font-style:normal;color:var(--mark)}
+
+ /* 5 둥근 도장 */
+ #w5 .s{width:200px;height:200px;border-radius:50%;background:var(--plum);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative}
+ #w5 .s::before{content:"";position:absolute;inset:9px;border-radius:50%;border:3px dashed var(--mark)}
+ #w5 .a{font-size:112px;margin:-22px 0 -4px} #w5 .n{font-size:26px}
+ #w5 .a.e{font-size:28px;color:var(--mark);margin:0 0 2px}
+</style></head><body>
+<div class="wrap" id="w1"><div class="s ring"><span class="a">a<i>.</i></span><span class="n">에이바우트</span></div></div><br>
+<div class="wrap" id="w2"><div class="s ring"><div class="l"><span class="a">a<i>.</i></span></div><div class="r"><span class="n">에이바우트</span></div></div></div><br>
+<div class="wrap" id="w3"><div class="s"><span class="a">about.</span><span class="n">에이바우트</span></div></div><br>
+<div class="wrap" id="w4"><div class="s ring"><span class="d"><span class="a">a</span></span><span class="n">에이바우트<i>.</i></span></div></div><br>
+<div class="wrap" id="w5"><div class="s ring"><span class="a e">about</span><span class="a">a<i>.</i></span><span class="n">에이바우트</span></div></div>
+</body></html>

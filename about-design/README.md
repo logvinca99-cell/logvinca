@@ -35,6 +35,8 @@
 | `about_bottom_04.png` | 주문 취소 + 개인정보 제3자 제공 동의 |
 | `about_bottom_05.png` | 문의 (문자 말풍선 + 번호) |
 | `about_watermark.png` / `about_watermark_white.png` | 워터마크 (투명) |
+| `about_wm_1_bubble` ~ `about_wm_5_seal` | 딱지형 워터마크 시안 5종 (말풍선 / 티켓 / 노란 테이프 / 먹색 캡슐 / 둥근 도장), 투명 PNG 약 500px |
+| `about_wm_preview.png` | 위 5종을 썸네일 우측 하단에 넣어 본 미리보기 |
 | `about_profile.png`, `about_banner.png`, `about_brand_guide.png` | 프로필, 배너, 브랜드 가이드 |
 
 ## 다시 만들기
