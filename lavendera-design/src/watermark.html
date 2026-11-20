@@ -1,0 +1,55 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>라벤더라 워터마크</title>
+<style>
+@font-face{font-family:"LSerif";font-weight:400;src:url("../fonts/NotoSerif-Latin-400.ttf")}
+@font-face{font-family:"LSerif";font-weight:500;src:url("../fonts/NotoSerif-Latin-500.ttf")}
+:root{--bg:#251D31;--lav:#C3B2D6;--txt:#F2EEF7;--sub:#A294B5}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{background:transparent}
+body{width:280px;line-height:1;-webkit-font-smoothing:antialiased}
+.wrap{display:inline-block;padding:7px}
+.ring{box-shadow:0 0 0 3px #fff}
+.sp{display:block}
+.sp *{fill:none;stroke:var(--lav);stroke-width:4;stroke-linecap:round;stroke-linejoin:round}
+.word{font-family:"LSerif";font-weight:500;color:var(--txt);letter-spacing:.24em;white-space:nowrap}
+
+/* 1 둥근 배지: 라벤더 + 아래 글자 */
+#v1 .s{width:210px;height:210px;border-radius:50%;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center}
+#v1 .sp{width:62px;height:106px;margin-top:2px} #v1 .word{font-size:16px;letter-spacing:.2em;margin-top:12px;padding-left:.2em}
+
+/* 2 가로 캡슐 */
+#v2 .s{display:inline-flex;align-items:center;gap:14px;background:var(--bg);border-radius:999px;padding:12px 30px 12px 22px}
+#v2 .sp{width:26px;height:44px} #v2 .word{font-size:25px}
+
+/* 3 아치형 태그 (위가 둥근 세로 카드) */
+#v3 .s{width:150px;height:216px;border-radius:75px 75px 18px 18px;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center}
+#v3 .sp{width:52px;height:88px} #v3 .word{font-size:15px;margin-top:14px;padding-left:.24em}
+#v3 .ln{width:56px;height:1px;background:var(--sub);margin-top:10px}
+
+/* 4 연보라 바탕 반전 캡슐 */
+#v4 .s{display:inline-flex;align-items:center;gap:14px;background:var(--lav);border-radius:999px;padding:12px 30px 12px 22px}
+#v4 .sp *{stroke:var(--bg)} #v4 .sp{width:26px;height:44px} #v4 .word{font-size:25px;color:var(--bg)}
+
+/* 5 둥근 배지: 라벤더만 (글자 없음) */
+#v5 .s{width:200px;height:200px;border-radius:50%;background:var(--bg);display:grid;place-items:center;position:relative}
+#v5 .s::after{content:"";position:absolute;inset:10px;border-radius:50%;border:1.5px solid var(--sub)}
+#v5 .sp{width:68px;height:116px}
+</style></head><body>
+<svg width="0" height="0" style="position:absolute"><defs>
+ <g id="sprig">
+  <ellipse cx="60" cy="16" rx="8.5" ry="11.5"/>
+  <ellipse cx="46" cy="32" rx="8.5" ry="11.5" transform="rotate(-18 46 32)"/><ellipse cx="74" cy="32" rx="8.5" ry="11.5" transform="rotate(18 74 32)"/>
+  <ellipse cx="60" cy="44" rx="8.5" ry="11.5"/>
+  <ellipse cx="44" cy="58" rx="8.5" ry="11.5" transform="rotate(-14 44 58)"/><ellipse cx="76" cy="58" rx="8.5" ry="11.5" transform="rotate(14 76 58)"/>
+  <ellipse cx="60" cy="72" rx="8.5" ry="11.5"/>
+  <ellipse cx="45" cy="86" rx="8.5" ry="11.5" transform="rotate(-10 45 86)"/><ellipse cx="75" cy="86" rx="8.5" ry="11.5" transform="rotate(10 75 86)"/>
+  <path d="M60 84 V196"/>
+  <path d="M60 162 Q 34 160 20 136 L 44 136 Q 57 143 60 162"/>
+  <path d="M60 162 Q 86 160 100 136 L 76 136 Q 63 143 60 162"/>
+ </g></defs></svg>
+
+<div class="wrap" id="v1"><div class="s ring"><svg class="sp" viewBox="10 2 100 196"><use href="#sprig"/></svg><span class="word">LAVENDERA</span></div></div><br>
+<div class="wrap" id="v2"><div class="s ring"><svg class="sp" viewBox="10 2 100 196"><use href="#sprig"/></svg><span class="word">LAVENDERA</span></div></div><br>
+<div class="wrap" id="v3"><div class="s ring"><svg class="sp" viewBox="10 2 100 196"><use href="#sprig"/></svg><span class="ln"></span><span class="word">LAVENDERA</span></div></div><br>
+<div class="wrap" id="v4"><div class="s ring"><svg class="sp" viewBox="10 2 100 196"><use href="#sprig"/></svg><span class="word">LAVENDERA</span></div></div><br>
+<div class="wrap" id="v5"><div class="s ring"><svg class="sp" viewBox="10 2 100 196"><use href="#sprig"/></svg></div></div>
+</body></html>
