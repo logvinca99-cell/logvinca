@@ -1056,6 +1056,57 @@ def create_app(db=None):
                                                lambda **kw: baseprice.push_live(db, st["live"], **kw))   # 돌고 있으면 끝난 뒤 이어서
         return jsonify(out)
 
+    # ── 가격 수정 (복사본·원본 화면에서 고른 것): 직접 입력 / n원 / n% 올리기·내리기 → 기준 가격 변경
+
+    def _price_ids(b):
+        level = "listing" if b.get("level") == "listing" else "source"
+        if level == "listing":
+            f = _filter_from(b.get("target") or {})
+            f.pop("op", None)
+            return level, inventory.listing_ids(db, f)
+        return level, _ctx_sources(b.get("target") or {})
+
+    @app.post("/api/price/preview")
+    def price_preview():
+        b = body()
+        level, ids = _price_ids(b)
+        if not ids:
+            return fail("고른 것이 없습니다.")
+        mode = b.get("mode") if b.get("mode") in ("set", "won", "pct") else "won"
+        if mode == "set" and not b.get("prices"):   # 직접 입력 칸을 그리려고 지금 가격만 (최대 300개)
+            if len(ids) > 300:
+                return jsonify({"too_many": len(ids)})
+            pv = baseprice.bulk_plan(db, level, ids, "set", prices={i: 0 for i in ids})
+            return jsonify({"rows": [{k: x.get(k) for k in ("id", "name", "store", "old", "source_id")} for x in pv["items"]], "count": len(ids)})
+        try:
+            value = float(b.get("value") or 0)
+        except ValueError:
+            return fail("숫자를 넣어 주세요.")
+        if mode != "set" and value <= 0:
+            return fail("올리거나 내릴 값을 넣어 주세요.")
+        pv = baseprice.bulk_plan(db, level, ids, mode, value, b.get("dir") or "up", b.get("prices"))
+        pv["items"] = pv["items"][:500]
+        return jsonify({**pv, "count": len(ids)})
+
+    @app.post("/api/price/apply")
+    def price_apply():
+        b = body()
+        level, ids = _price_ids(b)
+        mode = b.get("mode") if b.get("mode") in ("set", "won", "pct") else "won"
+        pv = baseprice.bulk_plan(db, level, ids, mode, float(b.get("value") or 0), b.get("dir") or "up", b.get("prices"))
+        items = [{"source_id": x["source_id"], "price": x["new_base"],
+                  "memo": f"{'복사본' if level == 'listing' else '원본'} 가격 수정 {x['old']:,} → {x['new']:,}"} for x in pv["items"] if x.get("new_base")]
+        if not items:
+            return fail("바꿀 것이 없습니다.")
+        how = {"set": "직접 입력", "won": f"{float(b.get('value') or 0):,.0f}원 {'올리기' if b.get('dir') == 'up' else '내리기'}",
+               "pct": f"{float(b.get('value') or 0):g}% {'올리기' if b.get('dir') == 'up' else '내리기'}"}[mode]
+        st = baseprice.apply(db, items, f"{'복사본' if level == 'listing' else '원본'} 가격 수정 · {how}")
+        out = {"sources": st["sources"], "pending": st["pending"], "live": len(st["live"]), "skipped": pv["skipped"], "task": None}
+        if st["live"]:
+            out["task"], out["queued"] = _push(f"네이버 가격 바꾸기 · {len(st['live']):,}건",
+                                               lambda **kw: baseprice.push_live(db, st["live"], **kw))
+        return jsonify(out)
+
     # ── 복사본 일괄 수정 (한 스토어: 새 손님 가격·새 상품명) · 네이버 반영 대기 다시 보내기
 
     bulk_hold = {}   # 미리보기 토큰 → (결과, 때)

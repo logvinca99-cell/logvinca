@@ -178,6 +178,77 @@ def apply(db, items, how=""):
     return st
 
 
+BIG_WARN = 0.3   # 30% 넘게 바뀌면 미리보기에서 표시
+BIG_STOP = 0.8   # 80% 넘게 바뀌면(또는 0원 이하) 막음 (잘못 친 숫자 막기)
+
+
+def _calc(old, mode, value, direction, unit):
+    """old → 새 값. mode set(그 값으로)·won(n원)·pct(n%), direction up·down. 올리기는 100원 올림, 내리기는 100원 내림."""
+    v = float(value or 0)
+    if mode == "set":
+        return convert.round_up(int(v), unit)
+    sign = 1 if direction == "up" else -1
+    new = old + sign * v if mode == "won" else old * (1 + sign * v / 100)
+    new = int(new + (0.999999 if sign > 0 else 0))
+    return convert.round_up(new, unit) if sign > 0 else (new // unit) * unit
+
+
+def bulk_plan(db, level, ids, mode, value=0, direction="up", prices=None):
+    """가격 수정 미리보기: level listing(복사본 — 그 스토어 손님 가격 기준, 기준 가격은 거꾸로 계산)·source(원본 — 기준 가격 기준).
+    prices: 직접 입력 {번호: 새 값}. 같은 원본을 둘 이상 고르면 원본은 하나라 처음 것만 (나머지는 '같은 원본이라 뺌').
+    → {items: [...], ok, skipped, examples, others, warn}"""
+    cfg = config.load()
+    unit = max(1, convert.to_int(cfg.get("price_round"), 100))
+    stores = {x["id"]: x for x in db.stores()}
+    prices = {int(k): v for k, v in (prices or {}).items()}
+    ids = [int(i) for i in ids]
+    rows = []
+    for i in range(0, len(ids), 900):
+        ch = ids[i:i + 900]
+        m = ",".join("?" * len(ch))
+        if level == "listing":
+            rows += db.q(f"""SELECT l.id, l.store_id, l.source_id, l.name, s.price AS base FROM listings l JOIN sources s ON s.id=l.source_id
+                WHERE l.id IN ({m}) ORDER BY l.id""", ch)
+        else:
+            rows += db.q(f"SELECT id, id AS source_id, name, price AS base FROM sources WHERE id IN ({m}) ORDER BY id", ch)
+    seen, items = set(), []
+    n_other = 0
+    for r in rows:
+        st = stores.get(r.get("store_id")) or {}
+        old = convert.store_price(r["base"], cfg, st) if level == "listing" else int(r["base"])
+        it = {"id": r["id"], "source_id": r["source_id"], "name": r["name"], "store": st.get("name", ""), "old": old, "old_base": r["base"]}
+        if r["source_id"] in seen:
+            it["why"] = "같은 원본이라 뺌 (원본 기준 가격은 하나 — 처음 고른 복사본 기준으로 바뀜)"
+            items.append(it)
+            continue
+        if mode == "set":
+            if r["id"] not in prices:
+                continue
+            new = _calc(old, "set", prices[r["id"]], "up", unit)
+        else:
+            new = _calc(old, mode, value, direction, unit)
+        it["new"] = new
+        if new <= 0:
+            it["why"] = "0원 이하가 됨"
+        elif old and abs(new - old) / old > BIG_STOP:
+            it["why"] = f"변화가 너무 큼 ({(new - old) / old * 100:+.0f}%) — 숫자를 확인하세요"
+        elif new == old:
+            it["why"] = "바뀌지 않음"
+        if not it.get("why"):
+            it["new_base"] = convert.base_for(new, cfg, st) if level == "listing" else new
+            it["big"] = bool(old and abs(new - old) / old > BIG_WARN)
+            it["others"] = db.one("SELECT COUNT(*) AS n FROM listings WHERE source_id=?" + (" AND id!=?" if level == "listing" else ""),
+                                  (r["source_id"], r["id"]) if level == "listing" else (r["source_id"],))["n"]
+            n_other += it["others"]
+            seen.add(r["source_id"])
+        items.append(it)
+    ok = [x for x in items if x.get("new_base")]
+    return {"items": items, "ok": len(ok), "skipped": len(items) - len(ok), "others": n_other,
+            "big": sum(1 for x in ok if x.get("big")), "examples": ok[:5],
+            "live": db.one(f"""SELECT COUNT(*) AS n FROM listings WHERE origin_no!='' AND status!='deleted' AND source_id IN
+                ({','.join('?' * len(ok)) or 'NULL'})""", [x["source_id"] for x in ok])["n"] if ok and len(ok) < 900 else None}
+
+
 def pending_count(db, store_id=None):
     w, a = "price_push IS NOT NULL AND origin_no!='' AND status!='deleted'", []
     if store_id:

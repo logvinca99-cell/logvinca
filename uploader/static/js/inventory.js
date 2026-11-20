@@ -169,6 +169,7 @@ App.page("inventory", {
         { id: "ctx", label: "AI 키워드 받기", title: "고른 원본마다 AI에게 키워드를 한 번 받아 빈 후보상품명 칸 수만큼 ai상품명(A·B)을 만듦 — 칸이 다 찬 원본은 뺌 (실행 전에 비용 안내)" },
         { id: "copy", label: "다른 스토어로 복사", primary: true },
         "|",
+        { id: "price", label: "가격 수정", title: "고른 원본의 기준 가격을 직접 입력 / n원 / n% 올리기·내리기 → 모든 스토어 복사본 같이, 판매 중은 네이버 가격만 바로" },
         { id: "edit", label: "일괄 수정", title: "판매자코드 비우기, 재고수(상품·옵션 모두) 바꾸기" },
         { id: "tags", label: "출처 태그 달기·빼기", title: "고른 원본에 어디서·언제 가져왔는지 태그를 달거나 뺌" },
         { id: "clean", label: "상세 정리로 보내기", title: "고른 원본의 상세를 상세 정리에서 정리(공통 이미지·전화번호·상세 편집) → [원본에 반영]하면 원본 상세만 바뀌고 판매 중 복사본은 네이버 상세만 바꿈" },
@@ -188,6 +189,7 @@ App.page("inventory", {
         if (id === "ctx") App.ctxStart(this.target()); if (id === "copy") this.copyModal(); if (id === "delete") this.remove(); if (id === "edit") this.editModal();
         if (id === "category") App.pickCategory({ target: this.target(), what: `고른 원본 ${num(this.selAll ? this.total : this.sel.size)}개`, after: () => this.load() });
         if (id === "tags") this.tagModal();
+        if (id === "price") App.priceEdit({ level: "source", target: this.target(), n: this.targetCount(), what: `고른 원본 ${num(this.targetCount())}개`, after: () => this.load() });
         if (id === "clean") App.sendToClean(this.target(), `고른 원본 ${num(this.targetCount())}개`);
         if (id === "eyeon" || id === "eyeoff") App.eyeSet(this.target(), id === "eyeon", `고른 원본 ${num(this.targetCount())}개`, () => this.load());
         if (id === "chem") App.yes("생활화학 판정", CHEM_JUDGE_TXT, { label: "판정 시작" }).then((ok) => ok && App.startTask(App.api("/api/chem/judge", { json: this.target() })));

@@ -258,6 +258,7 @@ App.page("listings", {
         { id: "unlock", label: "잠금 풀기" },
         { id: "category", label: "카테고리 바꾸기", title: "고른 복사본의 원본 카테고리를 직접 정함 (인증 때문에 안 올라가는 카테고리 등) — 그 원본의 다른 스토어 복사본도 같이" },
         { id: "chem", label: "생활화학 판정", title: "고른 복사본의 원본을 판정: 물건이면 '인증 대상 아님'으로 다시 등록 대기, 화학제품이면 보류 (애매하면 AI)" },
+        { id: "price", label: "가격 수정", title: "고른 복사본의 그 스토어 손님 가격을 직접 입력 / n원 / n% 올리기·내리기 → 원본 기준 가격이 바뀌어 다른 스토어도 같이, 판매 중은 네이버 가격만 바로" },
         { id: "infopush", label: "네이버 상품 정보 바꾸기", title: "고른 판매 중 복사본의 상세·브랜드·제조사·모델명을 지금 원본·설정 기준으로 네이버에서 바꿈 (지우지 않음 → 상품번호·리뷰 그대로, 잠긴 것 포함)" },
         { id: "clean", label: "상세 정리로 보내기", title: "고른 복사본의 원본 상세를 상세 정리에서 정리 → [원본에 반영]하면 원본 상세가 바뀌고 판매 중 복사본은 네이버 상세만 바꿈 (지우지 않음)" },
         { id: "resetround", label: "회차 초기화", title: "지난 회차 기록을 지우고 1회차로 (다시 다 올릴 때) · 판매 중·내린 건은 다음에 다시 올릴 때 1회차로" },
@@ -285,6 +286,7 @@ App.page("listings", {
   async action(id) {
     if (id === "rename") this.renameModal();
     if (id === "infopush") this.infoPush();
+    if (id === "price") App.priceEdit({ level: "listing", target: this.target(), n: this.selAll ? this.total : this.sel.size, after: () => { this.estKey = ""; this.load(); } });
     if (id === "clean") App.sendToClean({ listing_filter: this.target() }, `고른 복사본 ${num(this.selAll ? this.total : this.sel.size)}건의 원본`);
     if (id === "export") {   // 고른 것이 있으면 그것만, 없으면 지금 보이는 조건 전체
       const q = this.sel.size && !this.selAll ? { store_id: this.f.store_id, ids: [...this.sel].join(",") } : this.query();
@@ -1123,7 +1125,7 @@ App.page("listings", {
               <dt>원본 번호</dt><dd>#${l.source_id}</dd>
               <dt>카테고리</dt><dd>${esc(l.category)}${l.category_fixed ? ` <span class="flag">직접 정함</span> <span class="muted small">(엑셀: ${esc(l.category_excel)})</span>` : ""}
                 <button class="btn sm d-cat">바꾸기</button></dd>
-              <dt>손님 가격</dt><dd>손님 가격 <b>${num(l.final)}원</b> <span class="muted">(기준 가격 ${num(l.source_price)}원)</span>
+              <dt>손님 가격</dt><dd>손님 가격 <b>${num(l.final)}원</b> <span class="muted">(기준 가격 ${num(l.source_price)}원)</span> <button class="btn sm" id="d-price" type="button">가격 수정</button>
                 ${l.off ? `<br><span class="muted">네이버 판매가 ${num(l.shown)}원 · 즉시할인 ${num(l.off)}원 (할인율 ${(l.off / l.shown * 100).toFixed(1)}% — 손님 가격을 그대로 두고 ${l.disc_pct}%에 가깝게)</span>` : ""}
 </dd>
               <dt>다른 스토어</dt><dd>${l.siblings.length ? l.siblings.map((x) => `<div><button class="go-store" data-go="${x.id}">→ ${esc(x.store_name)}</button> ${esc(x.name)} <span class="muted">(${STATUS[x.status] || x.status})</span></div>`).join("") : "같은 원본이 다른 스토어에는 없음"}</dd></dl>`
@@ -1151,6 +1153,8 @@ App.page("listings", {
           $("#d-rename", b)?.addEventListener("click", () => this.renameModal([id]));
           $(".d-chem", b)?.addEventListener("click", async () => { if (await App.yes("생활화학 판정", CHEM_JUDGE_TXT, { label: "판정 시작" })) App.startTask(App.api("/api/chem/judge", { json: { ids: [l.source_id] } })); });
           $$("[data-go]", b).forEach((x) => x.addEventListener("click", () => { App.closeDrawer(); this.goto(+x.dataset.go); }));
+          $("#d-price", b)?.addEventListener("click", () => App.priceEdit({ level: "listing", target: { ids: [id] }, n: 1, what: `이 복사본 (${l.store_name || ""})`,
+            after: () => { if ($("#l-rows")) this.load(); this.openListing(id); } }));
           $("#d-lock", b)?.addEventListener("click", async () => {
             const r = await this.lock(!l.manual_lock, [id]);
             if (r) { if ($("#l-rows")) this.load(); this.openListing(id); }
@@ -1176,7 +1180,7 @@ App.page("listings", {
             <pre class="json">${esc(JSON.stringify(body, null, 2))}</pre>`;
         } },
       ],
-      foot: ["planned", "fail"].includes(l.status) && !App.run?.running
+      foot: ["planned", "fail"].includes(l.status)
         ? `<span class="muted"></span><button class="btn primary" id="d-run">이 건만 지금 처리</button>` : "",
     });
     $("#d-run")?.addEventListener("click", async () => {

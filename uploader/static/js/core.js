@@ -780,6 +780,86 @@ const App = {
     this._onClose = null;
     if (f) { try { f(); } catch (e) { /* 창 마무리 */ } }
   },
+  /* 가격 수정: level listing(복사본 — 그 스토어 손님 가격 기준) / source(원본 — 기준 가격 기준).
+     방법: 직접 입력 · n원 올리기/내리기 · n% 올리기/내리기 → 미리보기 → 확인 → 기준 가격 변경 (다른 스토어 따라감, 판매 중은 네이버 가격 바로) */
+  priceEdit({ level, target, n, what, after }) {
+    const isL = level === "listing";
+    const unitTxt = isL ? "손님 가격(그 스토어)" : "기준 가격";
+    let pv = null, rows = null;
+    const params = (b) => {
+      const mode = $("input[name=pe-mode]:checked", b).value;
+      const o = { level, target, mode };
+      if (mode === "set") {
+        o.prices = {};
+        $$("[data-pe-id]", b).forEach((x) => { if (String(x.value).trim() !== "" && +x.value !== +x.dataset.old) o.prices[x.dataset.peId] = +x.value; });
+      } else { o.value = +$("#pe-val", b).value; o.dir = $("#pe-dir", b).value; }
+      return o;
+    };
+    const renderPv = (b) => {
+      const box = $("#pe-out", b);
+      if (!pv) { box.innerHTML = ""; return; }
+      box.innerHTML = `<div class="notice ${pv.ok ? "info" : "warn"}" style="margin-top:8px">바뀌는 ${isL ? "복사본" : "원본"} <b>${num(pv.ok)}</b>개${pv.skipped ? ` · 빠짐 ${num(pv.skipped)}개` : ""}${pv.big ? ` · <b class="c-warn">30% 넘게 바뀜 ${num(pv.big)}개</b>` : ""}
+          ${pv.others ? `<br>기준 가격이 바뀌어 <b>다른 스토어 복사본 ${num(pv.others)}건도 같이</b> 바뀝니다.` : ""}${pv.live != null && pv.live ? ` 판매 중 ${num(pv.live)}건은 지우지 않고 네이버 가격만 바로 바꿉니다.` : ""}</div>
+        ${pv.items.length ? `<div class="tbl-wrap" style="max-height:260px"><table class="tbl small"><thead><tr><th>${isL ? "복사본" : "원본"}</th><th class="r">${unitTxt}</th><th></th></tr></thead><tbody>
+          ${pv.items.slice(0, 50).map((x) => `<tr><td>${isL ? `${esc(x.store)} · ` : ""}${esc((x.name || "").slice(0, 34))}</td>
+            <td class="r nowrap">${num(x.old)}${x.new != null ? ` → <b>${num(x.new)}</b>` : ""}${x.big ? ' <span class="c-warn">!</span>' : ""}</td>
+            <td class="small">${x.why ? `<span class="c-err">${esc(x.why)}</span>` : x.others ? `<span class="muted">다른 스토어 ${num(x.others)}건도</span>` : ""}</td></tr>`).join("")}
+          ${pv.items.length > 50 ? `<tr><td colspan="3" class="muted">외 ${num(pv.items.length - 50)}개</td></tr>` : ""}</tbody></table></div>` : ""}`;
+    };
+    const run = async (b) => {
+      try { pv = await this.api("/api/price/preview", { json: params(b) }); } catch (e) { pv = null; this.toast(e.message, true); }
+      renderPv(b);
+    };
+    this.openModal({
+      title: `가격 수정 · ${what || `${num(n)}개`}`, wide: true,
+      body: (b) => {
+        b.innerHTML = `<p class="small muted" style="margin:0 0 8px">${isL ? "고른 복사본의 <b>그 스토어 손님 가격</b>을 기준으로 바꾸고, 원본 기준 가격은 그 스토어 가격 차이 %로 거꾸로 계산합니다."
+            : "고른 원본의 <b>기준 가격</b>을 바꿉니다."} 그 원본의 <b>모든 스토어 복사본이 같이</b> 바뀌고, 판매 중인 것은 지우지 않고 네이버 가격만 바로 바꿉니다. 100원 단위(올리기는 올림, 내리기는 내림).</p>
+          <div class="radio-cards">
+            <label><input type="radio" name="pe-mode" value="won" checked><div><b>n원 올리기·내리기</b></div></label>
+            <label><input type="radio" name="pe-mode" value="pct"><div><b>n% 올리기·내리기</b></div></label>
+            <label><input type="radio" name="pe-mode" value="set"><div><b>직접 입력</b> <span class="muted small">(${num(n)}개${n > 300 ? " — 300개 넘으면 n원·n%만" : ""})</span></div></label>
+          </div>
+          <div class="cl-row" id="pe-bulk" style="margin-top:8px"><select id="pe-dir" class="sel"><option value="up">올리기</option><option value="down">내리기</option></select>
+            <input id="pe-val" type="number" min="0" step="any" placeholder="예) 1000" style="width:140px"> <span id="pe-unit">원</span>
+            <button class="btn sm" id="pe-go" type="button">미리보기</button></div>
+          <div id="pe-set" hidden></div><div id="pe-out"></div>`;
+        const sync = async () => {
+          const mode = $("input[name=pe-mode]:checked", b).value;
+          $("#pe-bulk", b).hidden = mode === "set";
+          $("#pe-unit", b).textContent = mode === "pct" ? "%" : "원";
+          $("#pe-set", b).hidden = mode !== "set";
+          pv = null; renderPv(b);
+          if (mode === "set" && !rows) {
+            $("#pe-set", b).innerHTML = '<p class="muted small"><span class="spin"></span> 지금 가격 읽는 중…</p>';
+            try {
+              const r = await this.api("/api/price/preview", { json: { level, target, mode: "set" } });
+              if (r.too_many) { $("#pe-set", b).innerHTML = `<p class="c-err small">고른 것이 ${num(r.too_many)}개라 직접 입력은 못 합니다 — n원·n%로 바꾸거나 엑셀 일괄 수정을 쓰세요.</p>`; return; }
+              rows = r.rows;
+              $("#pe-set", b).innerHTML = `<div class="tbl-wrap" style="max-height:300px;margin-top:8px"><table class="tbl small"><thead><tr><th>${isL ? "복사본" : "원본"}</th><th class="r">지금 ${unitTxt}</th><th class="r">새 ${unitTxt}</th></tr></thead><tbody>
+                ${rows.map((x) => `<tr><td>${isL ? `${esc(x.store)} · ` : ""}${esc((x.name || "").slice(0, 40))}</td><td class="r">${num(x.old)}</td>
+                  <td class="r"><input type="number" min="0" step="100" data-pe-id="${x.id}" data-old="${x.old}" value="${x.old}" style="width:110px"></td></tr>`).join("")}</tbody></table></div>
+                <button class="btn sm" id="pe-go2" type="button" style="margin-top:6px">미리보기</button>`;
+              $("#pe-go2", b).addEventListener("click", () => run(b));
+            } catch (e) { $("#pe-set", b).innerHTML = `<p class="c-err small">${esc(e.message)}</p>`; }
+          }
+        };
+        $$("input[name=pe-mode]", b).forEach((x) => x.addEventListener("change", sync));
+        $("#pe-go", b).addEventListener("click", () => run(b));
+        $("#pe-val", b).addEventListener("keydown", (e) => { if (e.key === "Enter") run(b); });
+      },
+      buttons: [{ label: "취소" }, { label: "가격 바꾸기", primary: true,
+        get confirm() { return pv ? `${isL ? "복사본" : "원본"} ${num(pv.ok)}개의 가격을 바꿉니다${pv.others ? ` — 다른 스토어 복사본 ${num(pv.others)}건도 같이` : ""}. 판매 중인 것은 네이버 가격만 바로 바꿉니다.${pv.big ? ` (30% 넘게 바뀌는 것 ${num(pv.big)}개)` : ""}` : ""; },
+        validate: () => (!pv ? "먼저 [미리보기]로 확인하세요." : !pv.ok ? "바뀌는 것이 없습니다." : ""),
+        onClick: async (b) => {
+          const r = await this.api("/api/price/apply", { json: params(b) });
+          this.toast(`가격 수정: 원본 ${num(r.sources)}개 기준 가격 바꿈` + (r.live ? ` · 판매 중 ${num(r.live)}건 네이버 가격 ${r.queued ? "바꾸기 — 다른 반영이 끝나는 대로 이어서" : "바꾸는 중"}` : "") + (r.skipped ? ` · 빠짐 ${num(r.skipped)}개` : ""));
+          if (r.task) { this.taskSeen[r.task] = "running"; this.refreshState(); }
+          if (after) after(r);
+        } }],
+    });
+  },
+
   /* 브라우저 기본 확인창 대신: 무엇이 되는지 창으로 보여 주고 2차 확인 → true / false */
   yes(title, text, { label = "확인", danger = false } = {}) {
     return this.ask({ title, body: esc(String(text)).replace(/\n/g, "<br>"), label, danger, run: () => true });
