@@ -37,6 +37,8 @@
 | `about_watermark.png` / `about_watermark_white.png` | 워터마크 (투명) |
 | `about_wm_1_bubble` ~ `about_wm_5_seal` | 딱지형 워터마크 시안 5종 (말풍선 / 티켓 / 노란 테이프 / 먹색 캡슐 / 둥근 도장), 투명 PNG 약 500px |
 | `about_wm_preview.png` | 위 5종을 썸네일 우측 하단에 넣어 본 미리보기 |
+| `about_wm_round_1_plum` ~ `about_wm_round_6_icon` | 원형 워터마크 시안 6종 (보라 / 검정 / 노랑 / 흰 바탕 / 위아래 나눔 / a.만), 투명 PNG 497px |
+| `about_wm_round_preview.png` | 원형 6종을 썸네일 우측 하단에 15% 크기로 넣어 본 미리보기 |
 | `about_profile.png`, `about_banner.png`, `about_brand_guide.png` | 프로필, 배너, 브랜드 가이드 |
 
 ## 다시 만들기

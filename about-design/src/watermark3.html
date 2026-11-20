@@ -1,0 +1,35 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>에이바우트 원형 워터마크 시안</title>
+<link rel="stylesheet" href="style.css">
+<style>
+ html,body{background:transparent}
+ body{width:260px;line-height:1}
+ .wrap{display:inline-block;padding:8px}
+ .s{width:200px;height:200px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;position:relative}
+ .ring{box-shadow:0 0 0 3px #fff}
+ .a{font-family:"Inst";font-style:italic;letter-spacing:0;line-height:1;font-size:118px;margin:-30px 0 -2px}
+ .n{font-weight:900;letter-spacing:-.05em;white-space:nowrap;font-size:27px}
+
+ /* 1 보라 단색 */
+ #r1 .s{background:var(--plum);color:#fff} #r1 .a i{color:var(--mark)}
+ /* 2 먹색 + 노란 a */
+ #r2 .s{background:var(--ink);color:#fff} #r2 .a{color:var(--mark)} #r2 .a i{color:#fff}
+ /* 3 노랑 + 검은 테두리 */
+ #r3 .s{background:var(--mark);color:var(--ink);border:5px solid var(--ink)} #r3 .a i{color:var(--plum)}
+ /* 4 흰 바탕 + 보라 테두리 */
+ #r4 .s{background:#fff;color:var(--ink);border:7px solid var(--plum)} #r4 .a{color:var(--plum)} #r4 .a i{color:var(--mark);-webkit-text-stroke:0}
+ /* 5 위아래 나눔 */
+ #r5 .s{background:#fff;justify-content:flex-start}
+ #r5 .top{width:100%;height:128px;background:var(--plum);color:#fff;display:flex;align-items:center;justify-content:center}
+ #r5 .a{font-size:112px;margin:6px 0 0} #r5 .a i{color:var(--mark)}
+ #r5 .n{color:var(--ink);font-size:26px;margin-top:14px}
+ #r5 .s{box-shadow:0 0 0 3px #fff, 0 0 0 6px var(--plum)}
+ /* 6 글자 없이 a. 만 */
+ #r6 .s{background:var(--plum);color:#fff} #r6 .a{font-size:176px;margin:-44px 0 0 8px} #r6 .a i{color:var(--mark)}
+</style></head><body>
+<div class="wrap" id="r1"><div class="s ring"><span class="a">a<i>.</i></span><span class="n">에이바우트</span></div></div><br>
+<div class="wrap" id="r2"><div class="s ring"><span class="a">a<i>.</i></span><span class="n">에이바우트</span></div></div><br>
+<div class="wrap" id="r3"><div class="s"><span class="a">a<i>.</i></span><span class="n">에이바우트</span></div></div><br>
+<div class="wrap" id="r4"><div class="s"><span class="a">a<i>.</i></span><span class="n">에이바우트</span></div></div><br>
+<div class="wrap" id="r5"><div class="s"><div class="top"><span class="a">a<i>.</i></span></div><span class="n">에이바우트</span></div></div><br>
+<div class="wrap" id="r6"><div class="s ring"><span class="a">a<i>.</i></span></div></div>
+</body></html>
