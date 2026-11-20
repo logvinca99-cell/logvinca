@@ -122,10 +122,14 @@ App.page("clean", {
       ...(this.isSrc ? [`<div class="notice" style="margin-bottom:12px"><b>업스타 원본에서 가져온 묶음</b>입니다 — 상세만 정리합니다.
         다 고쳤으면 맨 아래 <b>[원본에 반영]</b>: 원본 상세만 바뀌고(상품명·가격·옵션·카테고리 그대로, 원본 상세 창에서 되돌리기 가능),
         아직 안 올린 복사본은 올릴 때 새 상세로, <b>판매 중 복사본은 네이버 상세만 바꿉니다</b>(지우지 않음 — 상품번호·리뷰 그대로).</div>`] : []),
-      step(2, "공통 이미지 찾기·제거", `<div class="cl-row">몇 개 이상 상품에 공통이면 보여 줄까요? <input id="cl-min" type="number" min="2" value="10" style="width:80px">
-        <button class="btn" id="cl-common-go">공통 이미지 찾기</button></div><div id="cl-common"></div>
+      step(2, "공통 이미지 찾기·제거", `<div class="cl-row">몇 개 이상 상품에 공통이면 보여 줄까요? <input id="cl-min" type="number" min="2" value="2" style="width:70px">
+        <label class="check" title="주소가 달라도 같은 그림이면 한 묶음으로 (상세 이미지를 내려받아 비교 — 한 번 받은 것은 다시 받지 않음)"><input type="checkbox" id="cl-hash" checked><span>그림으로도 비교</span></label>
+        <select id="cl-scope" class="sel" title="비교할 자리"><option value="edge">상하단 자리만 (위 3장·아래 3장, 빠름)</option><option value="all">전체 이미지 (느림)</option></select>
+        <button class="btn" id="cl-common-go">공통 이미지 찾기</button>
+        <button class="btn" id="cl-edge-go" title="상품마다 맨 위 3장·맨 아래 3장을 모아 보고 눈으로 골라 지우기">상하단 자리 모아 보기</button></div>
+        <div id="cl-common"></div>
         <details class="small" id="cl-rules-box"><summary>다음에도 자동으로 빼는 이미지 (기억한 것)</summary><div id="cl-rules"></div></details>`,
-        "여러 상품에 똑같이 들어간 이미지(상단·하단 공지 배너 등)"),
+        "여러 상품에 똑같이 들어간 이미지(다른 스토어 상단·하단 배너 등) — 주소가 달라도 같은 그림이면 묶음. 내 스토어 템플릿 이미지는 고를 수 없음"),
       step(3, "전화번호 찾기·제거", `<div class="cl-row"><button class="btn" id="cl-phone-go">전화번호 찾기</button>
         <span class="small muted">상세 글자·옵션명·상품명에서 찾음 (이미지 주소 속 숫자는 빼고, <b>사진 속 번호는 못 찾음</b>) · <span class="ph red">빨강</span> = 010형(기본 선택) · <span class="ph yellow">노랑</span> = 의심(치수·날짜일 수 있어 직접 확인)</span></div>
         <div id="cl-phone"></div>`),
@@ -158,7 +162,8 @@ App.page("clean", {
   },
 
   bind() {
-    $("#cl-common-go").addEventListener("click", () => this.findCommon());
+    $("#cl-common-go").addEventListener("click", () => this.findCommon(true));
+    $("#cl-edge-go").addEventListener("click", () => this.edgeView(1));
     $("#cl-phone-go").addEventListener("click", () => this.findPhones());
     const first = this.isSrc ? 1 : 2;
     $("#cl-ed-go").addEventListener("click", () => this.openEditor(+$("#cl-ord").value || first));
@@ -228,26 +233,95 @@ App.page("clean", {
     });
   },
 
-  // ② 공통 이미지
-  async findCommon() {
-    const d = await App.api(`/api/clean/${this.bid}/common`, { json: { min: +$("#cl-min").value || 10 } });
+  // ② 공통 이미지: 주소 열쇠(쿼리만 다른 것 같이) + 그림 비교(주소가 달라도 같은 그림)로 묶음
+  async _hashFirst(scope) {
+    const r = await App.api(`/api/clean/${this.bid}/hash`, { json: { scope } });
+    if (!r.task) return;
+    App.taskSeen[r.task] = "running";
+    App.refreshState();
+    $("#cl-common").innerHTML = '<p class="small muted">그림 비교용으로 이미지를 받는 중입니다… (한 번 받은 이미지는 다시 받지 않음 · 오른쪽 아래에서 진행 상황)</p>';
+    await new Promise((res) => {
+      const h = (t) => { if (t.id === r.task || t.kind === "clean_hash") { App.off("task-done", h); res(); } };
+      App.on("task-done", h);
+    });
+  },
+  async findCommon(fresh = false) {
+    const scope = $("#cl-scope")?.value || "edge";
+    const min = +$("#cl-min").value || 2;
+    try {
+      if (fresh && $("#cl-hash")?.checked) await this._hashFirst(scope);
+    } catch (e) { App.toast(e.message, true); }
+    const d = await App.api(`/api/clean/${this.bid}/common`, { json: { min, scope } });
     const box = $("#cl-common");
-    if (!d.images.length) { box.innerHTML = `<p class="muted small">상품 ${num(d.total)}개 중 ${num(+$("#cl-min").value || 10)}개 이상에 공통인 이미지가 없습니다.</p>`; return; }
-    box.innerHTML = `<p class="small">상품 ${num(d.total)}개 중 공통 이미지 ${num(d.images.length)}종${d.more ? ` (더 있음 ${num(d.more)})` : ""} — 지울 것을 고르세요.</p>
-      <div class="cl-imgs">${d.images.map((x) => `<label class="cl-img"><input type="checkbox" data-src="${esc(x.src)}">
-        <img src="${esc(x.src)}" loading="lazy" onerror="onImgError(this)"><span><b>${num(x.count)}개</b> 상품 · ${x.rows.map((o) => `<a href="#" data-ord="${o}">${this.ol(o)}</a>`).join(" ")}${x.remembered ? ' <span class="flag">기억함</span>' : ""}</span></label>`).join("")}</div>
+    const hinfo = d.hashed ? `<span class="muted small">그림 비교: 이미지 ${num(d.hashed.keys)}종 중 ${num(d.hashed.hashed)}종 받음</span>` : "";
+    if (!d.images.length) { box.innerHTML = `<p class="muted small">상품 ${num(d.total)}개 중 ${num(min)}개 이상에 공통인 이미지가 없습니다. ${hinfo}<br>눈으로 보이는데 안 잡히면 <b>[상하단 자리 모아 보기]</b>에서 직접 고르세요.</p>`; return; }
+    this._groups = new Map(d.images.map((x) => [String(x.id), x]));
+    box.innerHTML = `<p class="small">상품 ${num(d.total)}개 중 공통 이미지 ${num(d.images.length)}묶음${d.more ? ` (더 있음 ${num(d.more)})` : ""} — 지울 것을 고르세요. ${hinfo}</p>
+      <div class="cl-imgs">${d.images.map((x) => `<label class="cl-img ${x.template ? "tpl" : ""}" ${x.template ? 'title="내 스토어 템플릿 이미지 — 지우지 않습니다"' : ""}>
+        ${x.template ? "" : `<input type="checkbox" data-grp="${esc(String(x.id))}">`}
+        <img src="${esc(x.src)}" loading="lazy" referrerpolicy="no-referrer" onerror="onImgError(this)"><span><b>${num(x.count)}개</b> 상품 · ${esc(x.pos)}
+        ${x.n_urls > 1 ? `<span class="flag" title="주소가 다른 같은 그림 ${x.n_urls}개를 한 묶음으로">주소 ${num(x.n_urls)}개</span>` : ""}
+        ${x.template ? '<span class="flag">내 템플릿 이미지</span>' : ""}${x.remembered ? ' <span class="flag">기억함</span>' : ""}<br>
+        ${x.rows.map((o) => `<a href="#" data-ord="${o}">${this.ol(o)}</a>`).join(" ")}</span></label>`).join("")}</div>
       <div class="cl-row" style="margin-top:8px"><button class="btn sm" data-all-img="1">전부 선택</button><button class="btn sm" data-all-img="0">전부 해제</button>
-        <label class="check"><input type="checkbox" id="cl-remember" checked><span>다음에 올리는 엑셀에서도 자동으로 빼기</span></label>
+        <label class="check"><input type="checkbox" id="cl-remember" checked><span>다음에도 자동으로 빼기 (수집 상품 넣기·등록할 때도)</span></label>
         <button class="btn primary" id="cl-common-del">고른 이미지 지우기</button></div>`;
-    $$("[data-all-img]", box).forEach((b) => b.addEventListener("click", () => $$("[data-src]", box).forEach((c) => { c.checked = b.dataset.allImg === "1"; })));
+    $$("[data-all-img]", box).forEach((b) => b.addEventListener("click", () => $$("[data-grp]", box).forEach((c) => { c.checked = b.dataset.allImg === "1"; })));
     $("#cl-common-del").addEventListener("click", async () => {
-      const srcs = $$("[data-src]:checked", box).map((c) => c.dataset.src);
-      if (!srcs.length) return App.toast("지울 이미지를 골라 주세요.", true);
-      if (!await App.yes("공통 이미지 지우기", `고른 이미지 ${num(srcs.length)}종을 정리함 상품 상세에서 지웁니다.` + ($("#cl-remember").checked ? "\n다음에 올리는 엑셀에서도 자동으로 뺍니다." : ""), { label: "지우기", danger: true })) return;
+      const keys = $$("[data-grp]:checked", box).flatMap((c) => this._groups.get(c.dataset.grp)?.keys || []);
+      const n = $$("[data-grp]:checked", box).length;
+      if (!keys.length) return App.toast("지울 이미지를 골라 주세요.", true);
+      if (!await App.yes("공통 이미지 지우기", `고른 이미지 ${num(n)}묶음(주소 ${num(keys.length)}개)을 정리함 상품 상세에서 지웁니다.` + ($("#cl-remember").checked ? "\n다음에도 자동으로 뺍니다(수집 상품 넣기·등록할 때도)." : ""), { label: "지우기", danger: true })) return;
       try {
-        const r = await App.api(`/api/clean/${this.bid}/common/remove`, { json: { srcs, remember: $("#cl-remember").checked } });
-        App.toast(`상품 ${num(r.items)}개에서 이미지 ${num(r.images)}장을 지웠습니다` + (r.remembered ? ` · ${num(r.remembered)}종은 다음에도 자동으로 뺌` : ""));
+        const r = await App.api(`/api/clean/${this.bid}/common/remove`, { json: { keys, remember: $("#cl-remember").checked } });
+        App.toast(`상품 ${num(r.items)}개에서 이미지 ${num(r.images)}장을 지웠습니다` + (r.remembered ? ` · ${num(r.remembered)}종은 다음에도 자동으로 뺌` : "") + (r.template_skipped ? ` · 내 템플릿 이미지 ${num(r.template_skipped)}종은 뺐음` : ""));
         this.refresh(); this.findCommon(); this.loadRules();
+      } catch (e) { App.toast(e.message, true); }
+    });
+  },
+
+  /* 상하단 자리 모아 보기: 상품마다 맨 위 3장·맨 아래 3장 — 눌러서 고르고 지우기 */
+  async edgeView(page = 1) {
+    const box = $("#cl-common");
+    let d;
+    try { d = await App.api(`/api/clean/${this.bid}/edges?page=${page}&size=40`); } catch (e) { return App.toast(e.message, true); }
+    this._edgePick = this._edgePick || new Set();
+    const pages = Math.max(1, Math.ceil(d.total / d.size));
+    const cell = (x) => x.template
+      ? `<span class="cl-edge-img tpl" title="내 스토어 템플릿 이미지 — 지우지 않습니다"><img src="${esc(x.src)}" loading="lazy" referrerpolicy="no-referrer" onerror="onImgError(this)"><i>내 템플릿</i></span>`
+      : `<button type="button" class="cl-edge-img ${this._edgePick.has(x.src) ? "on" : ""}" data-esrc="${esc(x.src)}" title="눌러서 고르기${x.remembered ? " · 기억한 배너" : ""}"><img src="${esc(x.src)}" loading="lazy" referrerpolicy="no-referrer" onerror="onImgError(this)">${x.remembered ? "<i>기억함</i>" : ""}</button>`;
+    box.innerHTML = `<p class="small">상품 ${num(d.total)}개 · 맨 위 3장 | 맨 아래 3장 — 다른 스토어 배너·전화번호 그림을 눌러 고르세요 (빨간 테두리).</p>
+      <div class="cl-edges">${d.items.map((it) => `<div class="cl-edge-row"><a href="#" data-ord="${it.ord}" class="cl-edge-no">${this.ol(it.ord)}</a>
+        <div class="cl-edge-set">${it.top.map(cell).join("") || '<span class="muted small">이미지 없음</span>'}</div><span class="cl-edge-sep">|</span>
+        <div class="cl-edge-set">${it.bottom.map(cell).join("")}</div></div>`).join("")}</div>
+      <div class="cl-row" style="margin-top:8px">
+        <button class="btn sm" data-epg="${page - 1}" ${page <= 1 ? "disabled" : ""}>‹ 이전</button><span class="small">${num(page)} / ${num(pages)} 쪽</span>
+        <button class="btn sm" data-epg="${page + 1}" ${page >= pages ? "disabled" : ""}>다음 ›</button>
+        <span class="small">고른 이미지 <b id="cl-epick-n">${num(this._edgePick.size)}</b>장</span>
+        <label class="check" title="고른 것과 같은 그림(주소가 달라도)을 이 묶음 전체에서 같이 지움 — 그림 비교로 받아 둔 이미지만"><input type="checkbox" id="cl-eexp" checked><span>같은 그림 묶음까지</span></label>
+        <label class="check"><input type="checkbox" id="cl-erem" checked><span>다음에도 자동으로 빼기</span></label>
+        <button class="btn sm" id="cl-eclear">고른 것 풀기</button>
+        <button class="btn primary" id="cl-edel">고른 이미지 지우기</button>
+        <button class="btn sm" id="cl-eback">공통 이미지 목록으로</button></div>`;
+    $$("[data-esrc]", box).forEach((b) => b.addEventListener("click", () => {
+      const v = b.dataset.esrc;
+      if (this._edgePick.has(v)) this._edgePick.delete(v); else this._edgePick.add(v);
+      $$(`[data-esrc="${CSS.escape(v)}"]`, box).forEach((x) => x.classList.toggle("on", this._edgePick.has(v)));
+      $("#cl-epick-n").textContent = num(this._edgePick.size);
+    }));
+    $$("[data-epg]", box).forEach((b) => b.addEventListener("click", () => this.edgeView(+b.dataset.epg)));
+    $("#cl-eclear").addEventListener("click", () => { this._edgePick.clear(); this.edgeView(page); });
+    $("#cl-eback").addEventListener("click", () => this.findCommon());
+    $("#cl-edel").addEventListener("click", async () => {
+      const srcs = [...this._edgePick];
+      if (!srcs.length) return App.toast("지울 이미지를 눌러 고르세요.", true);
+      const exp = $("#cl-eexp").checked, rem = $("#cl-erem").checked;
+      if (!await App.yes("고른 이미지 지우기", `고른 이미지 ${num(srcs.length)}장` + (exp ? "과 같은 그림" : "") + "을 정리함 상품 상세에서 지웁니다." + (rem ? "\n다음에도 자동으로 뺍니다(수집 상품 넣기·등록할 때도)." : ""), { label: "지우기", danger: true })) return;
+      try {
+        const r = await App.api(`/api/clean/${this.bid}/common/remove`, { json: { srcs, expand: exp, remember: rem } });
+        App.toast(`상품 ${num(r.items)}개에서 이미지 ${num(r.images)}장을 지웠습니다` + (r.remembered ? ` · ${num(r.remembered)}종은 다음에도 자동으로 뺌` : "") + (r.template_skipped ? ` · 내 템플릿 이미지 ${num(r.template_skipped)}종은 뺐음` : ""));
+        this._edgePick.clear();
+        this.refresh(); this.loadRules(); this.edgeView(page);
       } catch (e) { App.toast(e.message, true); }
     });
   },

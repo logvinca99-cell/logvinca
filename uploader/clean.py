@@ -12,7 +12,7 @@ import os
 import re
 import time
 
-from . import config, convert, excel, srctags
+from . import banner, config, convert, excel, srctags
 from .db import pack, unpack
 
 REFER = "상세페이지 참조"
@@ -72,6 +72,7 @@ def ensure(db):
             for name, decl in cols:
                 if name not in have:
                     c.execute(f"ALTER TABLE {t} ADD COLUMN {name} {decl}")
+    banner.ensure(db)   # 그림 해시 캐시·기억 규칙 열쇠
 
 
 # ───────────────────────── 이미지·글자 다루기
@@ -90,16 +91,15 @@ def img_srcs(html):
 
 
 def remove_images(html, srcs):
-    """상세에서 이 주소의 이미지를 뺀다 (이미지 하나만 감싸던 빈 칸도 같이). (새 HTML, 뺀 수)"""
-    html, n = str(html or ""), 0
-    for src in srcs:
-        e = re.escape(src)
-        img = rf"""<img\b[^>]*\bsrc\s*=\s*["']{e}["'][^>]*>"""
-        pad = r"(?:\s|<br\s*/?>|&nbsp;)*"
-        html, k1 = re.subn(rf"<(div|p|a|span|center)\b[^>]*>{pad}{img}{pad}</\1>", "", html, flags=re.I)
-        html, k2 = re.subn(img, "", html, flags=re.I)
-        n += k1 + k2
-    return html, n
+    """상세에서 이 이미지들을 뺀다 — 주소 열쇠 기준(스킴·쿼리만 다른 변형도 같이), 이미지 하나만 감싸던 칸·비게 된 칸도.
+    srcs 대신 기억 규칙 함수(banner.Remover)를 주면 그것으로. (새 HTML, 뺀 수)"""
+    if callable(srcs):
+        return srcs(html)
+    keys = {banner.url_key(s) for s in srcs or () if s}
+    keys.discard("")
+    if not keys:
+        return str(html or ""), 0
+    return banner.remove_where(html, lambda s: banner.url_key(s) in keys)
 
 
 def _texts(html):
@@ -180,7 +180,7 @@ def import_excel(db, path, filename, opts=None, progress=None, should_stop=None)
     """셀업 엑셀 → 정리함 새 묶음. 원본 상품에는 아직 안 들어감."""
     opts = opts or {}
     total_hint = excel.count_rows(path, filename)
-    rule_srcs = [r["value"] for r in rules(db) if r["kind"] == "image"]
+    rule_srcs = banner.Remover(db)   # 기억한 배너 (주소 열쇠 + 받아 둔 그림 해시, 내 템플릿 이미지는 절대 안 뺌)
     now = time.time()
     bid = db.x("INSERT INTO clean_batch(created_at, file_name, tags, store_tag) VALUES(?,?,?,?)",
                (now, filename, srctags.join(srctags.parse(opts.get("tags"))), int(opts.get("store_tag", True))))
@@ -228,7 +228,7 @@ def import_excel(db, path, filename, opts=None, progress=None, should_stop=None)
                 progress(n, total_hint, f"{n:,}개 읽음")
     if batch:
         flush()
-    if st["rule_imgs"] and rule_srcs:
+    if st["rule_imgs"]:
         db.x("UPDATE clean_rule SET hits=hits+1")
     note = f"가격 한 칸으로 {st['price']:,} · 상품코드 비움 {st['code']:,}" + (f" · 기억한 공통 이미지 뺌 {st['rule_imgs']:,}장" if st["rule_imgs"] else "")
     db.x("UPDATE clean_batch SET columns=?, total=?, note=? WHERE id=?", (json.dumps(cols, ensure_ascii=False), st["total"], note, bid))
@@ -369,38 +369,160 @@ def restore_items(db, ids):
 
 # ───────────────────────── ② 공통 이미지
 
-def common_images(db, bid, min_count=10, limit=120):
-    counts, sample = {}, {}
-    total = 0
+def _batch_images(db, bid, scope="edge"):
+    """묶음의 상품마다 [(주소, 위치)] — scope edge: 위 3장·아래 3장, all: 전부. 위치: 상단/하단/가운데."""
+    out = []
     for r in _rows(db, bid):
-        total += 1
-        for s in set(img_srcs(unpack(r["row"]).get("상세설명"))):
-            counts[s] = counts.get(s, 0) + 1
-            sample.setdefault(s, []).append(r["ord"])
-    known = {r["value"] for r in rules(db)}
-    out = [{"src": s, "count": n, "rows": sample[s][:5], "remembered": s in known}
-           for s, n in sorted(counts.items(), key=lambda x: -x[1]) if n >= max(2, int(min_count or 2))]
-    return {"total": total, "images": out[:limit], "more": max(0, len(out) - limit)}
+        srcs = img_srcs(unpack(r["row"]).get("상세설명"))
+        n = len(srcs)
+        items = []
+        for j, src in enumerate(srcs):
+            pos = "상단" if j < banner.EDGE_N else "하단" if j >= n - banner.EDGE_N else "가운데"
+            if scope == "edge" and pos == "가운데":
+                continue
+            items.append((src, pos))
+        out.append((r, items))
+    return out
 
 
-def remove_common(db, bid, srcs, remember=False):
-    srcs = [s for s in dict.fromkeys(str(x).strip() for x in srcs) if s]
-    if not srcs:
+def hash_images(db, bid, scope="edge", progress=None, should_stop=None):
+    """그림 비교용으로 묶음 상세의 이미지(상하단 자리 또는 전부)를 내려받아 그림 해시를 캐시에 남긴다."""
+    srcs = [src for _, items in _batch_images(db, bid, scope) for src, _ in items]
+    st = banner.fetch_hashes(db, srcs, progress, should_stop)
+    banner.refresh_rule_hashes(db)
+    return {**st, "scope": scope}
+
+
+def hashed_ratio(db, bid, scope="edge"):
+    keys = {banner.url_key(src) for _, items in _batch_images(db, bid, scope) for src, _ in items}
+    keys.discard("")
+    done = 0
+    k = list(keys)
+    for i in range(0, len(k), 500):
+        ch = k[i:i + 500]
+        done += db.one(f"SELECT COUNT(*) AS n FROM img_hash WHERE key IN ({','.join('?' * len(ch))})", ch)["n"]
+    return {"keys": len(keys), "hashed": done}
+
+
+def common_images(db, bid, min_count=2, limit=150, scope="edge"):
+    """같은 이미지 묶음(주소 열쇠 + 받아 둔 그림 해시로 같은 그림끼리) 중 min_count개 이상 상품에 든 것.
+    → {total, images:[{id, src 대표, srcs 묶인 주소들, n_urls, count 상품 수, pos, rows, remembered, template}], more, hashed}"""
+    data = _batch_images(db, bid, scope)
+    key_src, key_pos = {}, {}
+    for _, items in data:
+        for src, pos in items:
+            k = banner.url_key(src)
+            if not k:
+                continue
+            key_src.setdefault(k, []).append(src)
+            key_pos.setdefault(k, []).append(pos)
+    hashes = banner.cached(db, key_src)
+    grp = banner.group_keys(list(key_src), hashes)
+    marks = banner.template_marks(db)
+    rule_keys = {r["key"] for r in db.q("SELECT key FROM clean_rule WHERE kind='image'")}
+    rule_hashes = [r["hash"] for r in db.q("SELECT hash FROM clean_rule WHERE kind='image' AND hash!=''")]
+    groups = {}
+    for r, items in data:
+        seen = set()
+        for src, pos in items:
+            k = banner.url_key(src)
+            if not k:
+                continue
+            g = grp[k]
+            x = groups.setdefault(g, {"keys": set(), "srcs": {}, "items": set(), "rows": [], "pos": []})
+            x["keys"].add(k)
+            x["srcs"].setdefault(src, 0)
+            x["srcs"][src] += 1
+            x["pos"].append(pos)
+            if g not in seen:
+                seen.add(g)
+                x["items"].add(r["id"])
+                if len(x["rows"]) < 5:
+                    x["rows"].append(r["ord"])
+    out = []
+    for g, x in groups.items():
+        n = len(x["items"])
+        h = next((hashes[k] for k in x["keys"] if k in hashes), "")
+        remembered = bool(x["keys"] & rule_keys) or bool(h and any(banner.ham(h, rh) <= banner.HAM_MAX for rh in rule_hashes))
+        if n < max(2, int(min_count or 2)) and not remembered:
+            continue
+        tpl = any(banner.is_template(k, hashes.get(k), marks) for k in x["keys"])
+        top, bot = x["pos"].count("상단"), x["pos"].count("하단")
+        pos = "상단" if top >= bot and top else "하단" if bot else "가운데"
+        srcs = sorted(x["srcs"], key=lambda s: -x["srcs"][s])
+        out.append({"id": g, "src": srcs[0], "srcs": srcs[:200], "keys": sorted(x["keys"])[:400], "n_urls": len(x["keys"]),
+                    "count": n, "pos": pos, "rows": x["rows"], "remembered": remembered, "template": tpl, "by_hash": len(x["keys"]) > 1})
+    out.sort(key=lambda x: (x["template"], -x["count"]))
+    hr = hashed_ratio(db, bid, scope)
+    return {"total": len(data), "images": out[:limit], "more": max(0, len(out) - limit), "hashed": hr, "scope": scope}
+
+
+def _expand_keys(db, bid, keys, scope="all"):
+    """고른 열쇠들 + 이 묶음 안에서 같은 그림(받아 둔 해시)으로 묶이는 열쇠들."""
+    all_keys = {banner.url_key(src) for _, items in _batch_images(db, bid, scope) for src, _ in items}
+    all_keys.discard("")
+    all_keys |= set(keys)
+    hashes = banner.cached(db, all_keys)
+    grp = banner.group_keys(list(all_keys), hashes)
+    want = {grp[k] for k in keys if k in grp}
+    return {k for k in all_keys if grp[k] in want}
+
+
+def remove_common(db, bid, srcs=None, remember=False, keys=None, expand=False):
+    """고른 이미지(주소들 또는 열쇠들)를 묶음 상세에서 뺀다. expand: 같은 그림 묶음까지. 내 템플릿 이미지는 빼지 않음."""
+    keys = {k for k in (keys or []) if k} | {banner.url_key(s) for s in (srcs or []) if s}
+    keys.discard("")
+    if not keys:
         raise ValueError("지울 이미지를 골라 주세요.")
-    changed, n_img = [], 0
+    if expand:
+        keys = _expand_keys(db, bid, keys)
+    marks = banner.template_marks(db)
+    hashes = banner.cached(db, keys)
+    tpl = {k for k in keys if banner.is_template(k, hashes.get(k), marks)}
+    keys -= tpl
+    if not keys:
+        raise ValueError("고른 것이 모두 내 스토어 템플릿 이미지라 지우지 않습니다.")
+    changed, n_img, rep = [], 0, {}
     for r in _rows(db, bid):
         row = unpack(r["row"])
         old = row.get("상세설명") or ""
-        html, n = remove_images(old, srcs)
+        for s in img_srcs(old):
+            k = banner.url_key(s)
+            if k in keys:
+                rep.setdefault(k, s)
+        html, n = banner.remove_where(old, lambda s: banner.url_key(s) in keys)
         if n:
             n_img += n
             changed.append((r["id"], {**row, "상세설명": html}, old))
     _save_rows(db, changed)
-    if remember:
-        with db.tx() as c:
-            for s in srcs:
-                c.execute("INSERT OR IGNORE INTO clean_rule(kind, value, created_at) VALUES('image', ?, ?)", (s, time.time()))
-    return {"items": len(changed), "images": n_img, "remembered": len(srcs) if remember else 0}
+    remembered = banner.remember(db, [(rep.get(k, k), k) for k in keys]) if remember else 0
+    return {"items": len(changed), "images": n_img, "remembered": remembered, "keys": len(keys), "template_skipped": len(tpl)}
+
+
+def edges(db, bid, page=1, size=60):
+    """상하단 자리 모아 보기: 상품마다 위 3장·아래 3장. 각 이미지에 열쇠·묶음·내 템플릿 표시·기억함 표시."""
+    rows = list(_rows(db, bid))
+    total = len(rows)
+    page = max(1, int(page or 1))
+    size = max(10, min(200, int(size or 60)))
+    part = rows[(page - 1) * size: page * size]
+    marks = banner.template_marks(db)
+    rule_keys = {r["key"] for r in db.q("SELECT key FROM clean_rule WHERE kind='image'")}
+    items, keys = [], set()
+    for r in part:
+        row = unpack(r["row"])
+        top, bot = banner.edge_srcs(row.get("상세설명"))
+        items.append({"id": r["id"], "ord": r["ord"], "name": r["name"], "top": top, "bottom": bot})
+        keys |= {banner.url_key(s) for s in top + bot}
+    keys.discard("")
+    hashes = banner.cached(db, keys)
+    info = {}
+    for k in keys:
+        info[k] = {"template": banner.is_template(k, hashes.get(k), marks), "remembered": k in rule_keys, "hashed": k in hashes}
+    for it in items:
+        for part_ in ("top", "bottom"):
+            it[part_] = [{"src": s, "key": banner.url_key(s), **info.get(banner.url_key(s), {})} for s in it[part_]]
+    return {"total": total, "page": page, "size": size, "items": items}
 
 
 def delete_rules(db, ids):
@@ -656,7 +778,7 @@ def from_sources(db, sids):
     sids = sorted({int(s) for s in sids})
     if not sids:
         raise ValueError("고른 원본이 없습니다.")
-    rule_srcs = [r["value"] for r in rules(db) if r["kind"] == "image"]
+    rule_srcs = banner.Remover(db)
     now = time.time()
     rows = []
     for i in range(0, len(sids), 900):
@@ -674,8 +796,8 @@ def from_sources(db, sids):
                 if key not in cols:
                     cols.append(key)
             orig = None
-            if rule_srcs:
-                html, n = remove_images(row.get("상세설명") or "", rule_srcs)
+            if rule_srcs.active:
+                html, n = rule_srcs(row.get("상세설명") or "")
                 if n:
                     orig, n_rule = row.get("상세설명") or "", n_rule + n
                     row = {**row, "상세설명": html}

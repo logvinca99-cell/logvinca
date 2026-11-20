@@ -92,10 +92,12 @@ def common_images(rows, rule_srcs=(), min_count=COMMON_MIN, limit=300):
             counts[src] += 1
             ps = pos_sum.get(src, (0.0, 0))
             pos_sum[src] = (ps[0] + (j / last if len(srcs) > 1 else 0.0), total)
+    from . import banner
     known = set(rule_srcs or ())
+    known_keys = {banner.url_key(s) for s in known}
     out = []
     for src, n in counts.most_common():
-        if n < max(2, int(min_count or 2)) and src not in known:
+        if n < max(2, int(min_count or 2)) and src not in known and banner.url_key(src) not in known_keys:
             break
         avg = pos_sum[src][0] / n
         out.append({"src": src, "count": n, "pos": "상단" if avg < 0.3 else "하단" if avg > 0.7 else "가운데",
@@ -219,7 +221,14 @@ def run(db, run_id, store_id, path, filename, opts, progress=None, should_stop=N
         progress(0, None, "파일 읽는 중…")
     rows = [r for r in excel.iter_rows(path, filename) if r.get("상품명")]
     st["rows"] = len(rows)
-    strip = image_remover(opts.get("remove_imgs"))
+    strip0 = image_remover(opts.get("remove_imgs"))
+    from . import banner
+    rm = banner.Remover(db)   # 기억한 배너도 (주소 열쇠 + 받아 둔 그림 해시, 내 템플릿 이미지는 안 뺌)
+
+    def strip(html):
+        h, n = strip0(html)
+        h2, n2 = rm(h)
+        return h2, n + n2
 
     # ③ 판매자코드로 맞추기: 스토어에 있는 것만 원본으로 (정리: 상하단 빼기, 브랜드·제조사·모델명·원산지 '상세페이지 참조')
     #    기준 가격 = 그 스토어의 지금 손님 가격 (엑셀 판매가가 아님 — 셀업·판매자센터에서 따로 건 할인까지 반영된 값)

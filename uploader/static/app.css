@@ -954,3 +954,17 @@ body.eye-open .tasks { display: none; }
 .rn-src .rn-h { overflow-wrap: anywhere; }
 .rn-acts, .rn-bulk { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; align-items: center; }
 .rn-manual { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+
+/* 상세 정리: 상하단 자리 모아 보기 · 내 템플릿 이미지 */
+.cl-img.tpl { opacity: .55; border-style: dashed; }
+.cl-edges { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; max-height: 70vh; overflow-y: auto; }
+.cl-edge-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); min-width: 0; flex-wrap: wrap; }
+.cl-edge-no { font-size: 12px; min-width: 52px; }
+.cl-edge-set { display: flex; gap: 4px; flex-wrap: wrap; min-width: 0; }
+.cl-edge-sep { color: var(--muted); }
+.cl-edge-img { position: relative; width: 92px; height: 70px; padding: 0; border: 2px solid transparent; border-radius: 6px; background: #f3f4f6; cursor: pointer; overflow: hidden; }
+.cl-edge-img img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.cl-edge-img.on { border-color: var(--err); box-shadow: 0 0 0 1px var(--err); }
+.cl-edge-img.tpl { cursor: default; opacity: .55; border-style: dashed; border-color: var(--line); }
+.cl-edge-img i { position: absolute; left: 2px; bottom: 2px; font-size: 10px; font-style: normal; background: rgba(0,0,0,.6); color: #fff; padding: 0 3px; border-radius: 3px; }
+@media (max-width: 700px) { .cl-edge-img { width: 70px; height: 54px; } }

@@ -116,6 +116,15 @@ class Runner:
         self.log = collections.deque(maxlen=400)
         self._reset(0)
 
+    def _banner(self):
+        """기억한 배너 빼기 (1분마다 새로 읽음, 등록 중엔 새로 내려받지 않음)."""
+        from . import banner
+        b = self.__dict__.get("_banner_rm")
+        if not b or time.time() - b[0] > 60:
+            b = (time.time(), banner.Remover(self.db))
+            self.__dict__["_banner_rm"] = b
+        return b[1]
+
     def _reset(self, total):
         self.state = {
             "running": False, "paused": False, "stopping": False, "total": total, "done": 0, "ok": 0,
@@ -650,6 +659,7 @@ class Runner:
         모든 복사본 같은 규칙: 손님 가격 = 기준 가격 × (1 + 그 스토어 가격 차이 %), 옵션 추가금도 같은 %."""
         sid, lid = store["id"], t["id"]
         row = self.db.source_row(t["source_id"])
+        row, _ = self._banner().strip_row(row)   # 기억한 배너(다른 스토어 상하단)는 보낼 상세에서 뺌 — 원본은 그대로, 내 템플릿은 안 뺌
         cat_id, _ = convert.find_category(row.get("카테고리"), categories, cfg)
         if not cat_id:
             raise convert.ConvertError(f"카테고리 '{row.get('카테고리')}'를 스마트스토어에서 찾지 못했습니다.")
@@ -849,6 +859,7 @@ def push_details(db, lids=None, store_id=None, progress=None, should_stop=None):
                 row = db.source_row(t["source_id"])
                 if row is None:
                     raise naver.ApiError("원본이 없습니다")
+                row, _ = helper._banner().strip_row(row)   # 기억한 배너는 보낼 상세에서 뺌
                 cat_id, _ = convert.find_category(row.get("카테고리"), categories, cfg)
                 if t["store_id"] not in tpl:
                     tpl[t["store_id"]] = templates.html(db, client, store, None)

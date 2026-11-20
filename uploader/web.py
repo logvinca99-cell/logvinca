@@ -331,13 +331,30 @@ def create_app(db=None):
 
     @app.post("/api/clean/<int:bid>/common")
     def clean_common(bid):
-        return jsonify(clean.common_images(db, bid, int(body().get("min") or 10)))
+        b = body()
+        return jsonify(clean.common_images(db, bid, int(b.get("min") or 2), scope="all" if b.get("scope") == "all" else "edge"))
+
+    @app.post("/api/clean/<int:bid>/hash")
+    def clean_hash(bid):
+        """그림 비교용으로 상세 이미지(상하단 자리 또는 전부)를 내려받아 그림 해시를 남김 (작업)."""
+        scope = "all" if body().get("scope") == "all" else "edge"
+        try:
+            return jsonify({"task": tasks.start("clean_hash", f"상세 정리 · 그림 비교용 이미지 받기 · 묶음 #{bid}",
+                                                lambda **kw: clean.hash_images(db, bid, scope, **kw))})
+        except RuntimeError as e:
+            return fail(str(e))
+
+    @app.get("/api/clean/<int:bid>/edges")
+    def clean_edges(bid):
+        a = request.args
+        return jsonify(clean.edges(db, bid, int(a.get("page") or 1), int(a.get("size") or 60)))
 
     @app.post("/api/clean/<int:bid>/common/remove")
     def clean_common_remove(bid):
         b = body()
         try:
-            return jsonify(clean.remove_common(db, bid, b.get("srcs") or [], bool(b.get("remember"))))
+            return jsonify(clean.remove_common(db, bid, b.get("srcs") or [], bool(b.get("remember")), keys=b.get("keys") or [],
+                                               expand=bool(b.get("expand"))))
         except ValueError as e:
             return fail(str(e))
 

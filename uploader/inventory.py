@@ -198,7 +198,9 @@ def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=No
     method = method or ("ready" if ready else "collect")
     iid = db.x("""INSERT INTO imports(kind, file_name, created_at, method, file, store_name, via) VALUES('products',?,?,?,?,?,?)""",
                (file_name, now, method, file if file is not None else file_name, store_name or "", via or ""))
-    stats = {"total": 0, "added": 0, "invalid": 0, "dup": 0, "dup_rows": [], "img_skipped": 0}
+    stats = {"total": 0, "added": 0, "invalid": 0, "dup": 0, "dup_rows": [], "img_skipped": 0, "rule_imgs": 0}
+    from . import banner
+    rm = banner.Remover(db)   # 기억한 배너(다른 스토어 상하단) — 넣을 때 원본 상세에서 뺌, 내 템플릿 이미지는 안 뺌
     refs = {}
     touched = []
     batch = []
@@ -260,6 +262,9 @@ def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=No
             stats["img_skipped"] += 1
             continue
         dc.add(row, ref if line_refs else None)
+        if rm.active:
+            row, n_rm = rm.strip_row(row)
+            stats["rule_imgs"] += n_rm
         batch.append((ref, row))
         stats["total"] += 1
         if len(batch) >= CHUNK:
@@ -271,7 +276,8 @@ def import_rows(db, rows, file_name, total_hint=0, progress=None, should_stop=No
     db.recount_sources(touched)
     db.x("UPDATE imports SET total=?, added=?, updated=0, skipped=?, note=? WHERE id=?",
          (stats["total"], stats["added"], stats["invalid"],
-          f"상품명 중복이라 안 넣음 {stats['dup']}개" + (f" · 대표 이미지 겹쳐서 버림 {stats['img_skipped']}개" if stats["img_skipped"] else ""), iid))
+          f"상품명 중복이라 안 넣음 {stats['dup']}개" + (f" · 대표 이미지 겹쳐서 버림 {stats['img_skipped']}개" if stats["img_skipped"] else "")
+          + (f" · 기억한 배너 뺌 {stats['rule_imgs']}장" if stats["rule_imgs"] else ""), iid))
     stats["import_id"] = iid
     stats["refs"] = refs
     if db.one("SELECT 1 FROM dict_syn LIMIT 1"):
