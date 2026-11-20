@@ -1,0 +1,66 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>에이바우트 원형 워터마크 (대칭)</title>
+<link rel="stylesheet" href="style.css">
+<style>
+ html,body{background:transparent}
+ body{width:260px;line-height:1}
+ .wrap{display:inline-block;padding:6px}
+ svg{display:block;width:204px;height:204px}
+ .I{font-family:"Inst";font-style:italic}
+ .W{font-family:"Wanted";font-weight:900}
+ .k{font-family:"Wanted";font-weight:500}
+</style></head><body>
+<svg width="0" height="0" style="position:absolute"><defs>
+ <path id="tp" d="M 22 102 A 80 80 0 0 1 182 102"/>
+ <path id="bt" d="M 14 102 A 88 88 0 0 0 190 102"/>
+</defs></svg>
+
+<!-- 1 원이 곧 마침표: 필기체 a 한 글자, 정중앙 -->
+<div class="wrap" id="s1"><svg viewBox="0 0 204 204"><circle cx="102" cy="102" r="100" fill="#553C8B" stroke="#fff" stroke-width="3"/>
+ <text class="I ctr" font-size="150" fill="#fff">a</text></svg></div><br>
+
+<!-- 2 같은 구성 + 가는 안쪽 테 -->
+<div class="wrap" id="s2"><svg viewBox="0 0 204 204"><circle cx="102" cy="102" r="100" fill="#553C8B" stroke="#fff" stroke-width="3"/>
+ <circle cx="102" cy="102" r="88" fill="none" stroke="#FFE45C" stroke-width="2"/>
+ <text class="I ctr" font-size="132" fill="#fff">a</text></svg></div><br>
+
+<!-- 3 도형으로 그린 a: 고리 + 기둥 -->
+<div class="wrap" id="s3"><svg viewBox="0 0 204 204"><circle cx="102" cy="102" r="100" fill="#553C8B" stroke="#fff" stroke-width="3"/>
+ <g transform="translate(97,102)"><circle cx="0" cy="0" r="33" fill="none" stroke="#fff" stroke-width="20"/><rect x="33" y="-43" width="20" height="86" rx="3" fill="#fff"/></g></svg></div><br>
+
+<!-- 4 a 아래 가운데에 노란 점: 세로축 대칭 -->
+<div class="wrap" id="s4"><svg viewBox="0 0 204 204"><circle cx="102" cy="102" r="100" fill="#553C8B" stroke="#fff" stroke-width="3"/>
+ <text class="I ctr" data-cy="90" font-size="128" fill="#fff">a</text>
+ <circle cx="102" cy="160" r="9" fill="#FFE45C"/></svg></div><br>
+
+<!-- 5 영문 about 한 단어 -->
+<div class="wrap" id="s5"><svg viewBox="0 0 204 204"><circle cx="102" cy="102" r="100" fill="#553C8B" stroke="#fff" stroke-width="3"/>
+ <text class="I ctr" data-cy="98" font-size="76" fill="#fff">about</text>
+ <circle cx="102" cy="150" r="6" fill="#FFE45C"/></svg></div><br>
+
+<!-- 6 위 ABOUT / 아래 에이바우트, 가늘게 위아래 대칭 -->
+<div class="wrap" id="s6"><svg viewBox="0 0 204 204"><circle cx="102" cy="102" r="100" fill="#553C8B" stroke="#fff" stroke-width="3"/>
+ <circle cx="102" cy="102" r="62" fill="none" stroke="#FFE45C" stroke-width="1.6"/>
+ <text class="k" font-size="12" letter-spacing="9" fill="#fff"><textPath href="#tp" startOffset="50%" text-anchor="middle">ABOUT</textPath></text>
+ <text class="k" font-size="12" letter-spacing="9" fill="#fff"><textPath href="#bt" startOffset="50%" text-anchor="middle">에이바우트</textPath></text>
+ <text class="I ctr" font-size="96" fill="#fff">a</text></svg></div>
+
+<script>
+// 글자가 실제로 칠해지는 부분(잉크)을 재서 원의 정중앙에 맞춘다 (눈대중 금지)
+document.fonts.ready.then(() => {
+  const ctx = document.createElement('canvas').getContext('2d');
+  for (const el of document.querySelectorAll('.ctr')) {
+    const cy = +(el.dataset.cy || 102);
+    if (el.tagName === 'text') {
+      const cs = getComputedStyle(el);
+      ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${el.getAttribute('font-size')}px ${cs.fontFamily}`;
+      const m = ctx.measureText(el.textContent);
+      el.setAttribute('x', 102 - (m.actualBoundingBoxRight - m.actualBoundingBoxLeft) / 2);
+      el.setAttribute('y', cy + (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2);
+    } else {
+      const b = el.getBBox();
+      el.setAttribute('transform', `translate(${102 - (b.x + b.width / 2)}, ${cy - (b.y + b.height / 2)})`);
+    }
+  }
+});
+</script>
+</body></html>

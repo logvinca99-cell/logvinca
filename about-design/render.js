@@ -41,6 +41,12 @@ const jobs = [
   { file: 'watermark4.html', out: 'about_wm_circle_4_thin', width: 260, scale: 2.3, element: '#c4', transparent: true },
   { file: 'watermark4.html', out: 'about_wm_circle_5_badge', width: 260, scale: 2.3, element: '#c5', transparent: true },
   { file: 'watermark4.html', out: 'about_wm_circle_6_about', width: 260, scale: 2.3, element: '#c6', transparent: true },
+  { file: 'watermark5.html', out: 'about_wm_dot_1_a', width: 260, scale: 2.3, element: '#s1', transparent: true },
+  { file: 'watermark5.html', out: 'about_wm_dot_2_a_ring', width: 260, scale: 2.3, element: '#s2', transparent: true },
+  { file: 'watermark5.html', out: 'about_wm_dot_3_mono', width: 260, scale: 2.3, element: '#s3', transparent: true },
+  { file: 'watermark5.html', out: 'about_wm_dot_4_a_dot', width: 260, scale: 2.3, element: '#s4', transparent: true },
+  { file: 'watermark5.html', out: 'about_wm_dot_5_about', width: 260, scale: 2.3, element: '#s5', transparent: true },
+  { file: 'watermark5.html', out: 'about_wm_dot_6_both', width: 260, scale: 2.3, element: '#s6', transparent: true },
   { file: 'profile.html', out: 'about_profile', width: 1000, height: 1000, scale: 1 },
   { file: 'banner.html',  out: 'about_banner',  width: 1280, height: 480,  scale: 1 },
   { file: 'guide.html',   out: 'about_brand_guide', width: 1200, scale: 1 },
@@ -66,6 +72,7 @@ function compress(file) {
     }
     await page.goto('file://' + src);
     await page.evaluate(() => document.fonts.ready);
+    await page.waitForTimeout(150); // 글자 중앙 맞춤 스크립트가 끝나길 기다림
     // 이 작업의 이전 결과물 정리 (about_xxx.png, about_xxx_01.png, about_xxx@2x.png)
     const mine = new RegExp(`^${j.out}(_\\d+|@2x)?\\.png$`);
     for (const f of fs.readdirSync(OUT)) if (mine.test(f)) fs.unlinkSync(path.join(OUT, f));

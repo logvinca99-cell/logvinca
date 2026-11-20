@@ -41,6 +41,8 @@
 | `about_wm_round_preview.png` | 원형 6종을 썸네일 우측 하단에 15% 크기로 넣어 본 미리보기 |
 | `about_wm_circle_1_arc_bottom` ~ `about_wm_circle_6_about` | 보라 원형 워터마크, 글자 정리판 6종 (아래 둥근 글자 / 위 둥근 글자 / 위 한글+아래 영문 / 가는 글씨 / 흰 테 배지 / about.) |
 | `about_wm_circle_preview.png` | 위 6종 미리보기 |
+| `about_wm_dot_1_a` ~ `about_wm_dot_6_both` | 대칭 원형 워터마크 6종: 원 자체가 마침표, 글자는 실제 잉크 기준 정중앙 (a / a+안쪽 테 / 도형 a / a+아래 점 / about / 위아래 글자) |
+| `about_wm_dot_preview.png` | 위 6종 미리보기 |
 | `about_profile.png`, `about_banner.png`, `about_brand_guide.png` | 프로필, 배너, 브랜드 가이드 |
 
 ## 다시 만들기
