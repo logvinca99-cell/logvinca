@@ -232,7 +232,16 @@ def import_excel(db, path, filename, opts=None, progress=None, should_stop=None)
         db.x("UPDATE clean_rule SET hits=hits+1")
     note = f"가격 한 칸으로 {st['price']:,} · 상품코드 비움 {st['code']:,}" + (f" · 기억한 공통 이미지 뺌 {st['rule_imgs']:,}장" if st["rule_imgs"] else "")
     db.x("UPDATE clean_batch SET columns=?, total=?, note=? WHERE id=?", (json.dumps(cols, ensure_ascii=False), st["total"], note, bid))
+    _prefetch_batch(db, bid)
     return {**st, "batch_id": bid, "file": filename}
+
+
+def _prefetch_batch(db, bid):
+    """묶음 상세의 상하단 자리 그림 해시를 뒤에서 미리 받아 둠."""
+    try:
+        banner.prefetch_async(db, [unpack(r["row"]).get("상세설명") for r in _rows(db, bid)])
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def set_batch_tags(db, bid, tags, store_tag):
@@ -387,7 +396,10 @@ def _batch_images(db, bid, scope="edge"):
 
 def hash_images(db, bid, scope="edge", progress=None, should_stop=None):
     """그림 비교용으로 묶음 상세의 이미지(상하단 자리 또는 전부)를 내려받아 그림 해시를 캐시에 남긴다."""
-    srcs = [src for _, items in _batch_images(db, bid, scope) for src, _ in items]
+    if scope == "edge":   # 위1·아래1 먼저, 그다음 위2·아래2 …
+        srcs = banner.edge_order(unpack(r["row"]).get("상세설명") for r in _rows(db, bid))
+    else:
+        srcs = [src for _, items in _batch_images(db, bid, scope) for src, _ in items]
     st = banner.fetch_hashes(db, srcs, progress, should_stop)
     banner.refresh_rule_hashes(db)
     return {**st, "scope": scope}
@@ -807,6 +819,7 @@ def from_sources(db, sids):
                                                  pack(orig) if orig is not None else None, int(orig is not None), s["id"], now))
     note = "원본 상세만 정리 → [원본에 반영]" + (f" · 기억한 공통 이미지 뺌 {n_rule:,}장" if n_rule else "")
     db.x("UPDATE clean_batch SET columns=?, total=?, note=? WHERE id=?", (json.dumps(cols, ensure_ascii=False), len(rows), note, bid))
+    _prefetch_batch(db, bid)
     return {"batch_id": bid, "total": len(rows), "rule_imgs": n_rule}
 
 

@@ -180,7 +180,13 @@ def import_products(db, fileobj, filename, progress=None, should_stop=None, src_
                      total_hint=excel.count_rows(fileobj, filename), progress=progress, should_stop=should_stop,
                      src_tags=src_tags, store_tag=store_tag, skip_img=img_skipper(db) if skip_img_dup else None, line_refs=True,
                      ready=ready, mark_eye=mark_eye)
-    st.pop("refs", None)
+    refs = st.pop("refs", None) or {}
+    try:   # 넣은 원본의 상하단 자리 그림 해시를 뒤에서 미리 받아 둠 (상세 정리 그림 비교가 바로 나오게)
+        from . import banner
+        sids = sorted(set(refs.values()))
+        banner.prefetch_async(db, [(db.source_row(s) or {}).get("상세설명") for s in sids[:20000]])
+    except Exception:  # noqa: BLE001
+        pass
     return st
 
 

@@ -22,8 +22,10 @@ from urllib.parse import unquote, urlsplit
 
 HAM_MAX = 6          # 그림 해시 해밍 거리 이 이하면 같은 그림
 EDGE_N = 3           # 상하단 자리: 위 3장·아래 3장
-FETCH_THREADS = 6
-FETCH_TIMEOUT = 10
+FETCH_THREADS = 20
+FETCH_TIMEOUT = 5
+SAVE_EVERY = 100      # 이만큼 받을 때마다 캐시에 저장 (중지해도 받은 것은 남음)
+THUMB = "type=w100"   # 네이버(pstatic) 이미지는 작은 썸네일로 받음 — 그림 해시는 9×8로 줄여 비교하므로 정확도는 같음
 MAX_BYTES = 8 * 1024 * 1024
 
 SCHEMA = """
@@ -158,7 +160,16 @@ def _download(src):
                "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"}
     if "pstatic.net" in host or "naver" in host:
         headers["Referer"] = "https://smartstore.naver.com/"
-    r = requests.get(s, headers=headers, timeout=FETCH_TIMEOUT, stream=True)
+    r = None
+    if "pstatic.net" in host:   # 작은 썸네일 먼저 (안 되면 원래 크기)
+        try:
+            r = requests.get(s.split("?")[0] + "?" + THUMB, headers=headers, timeout=FETCH_TIMEOUT, stream=True)
+            if r.status_code >= 400 or "image" not in (r.headers.get("Content-Type") or "image"):
+                r = None
+        except Exception:  # noqa: BLE001
+            r = None
+    if r is None:
+        r = requests.get(s, headers=headers, timeout=FETCH_TIMEOUT, stream=True)
     r.raise_for_status()
     buf = io.BytesIO()
     for chunk in r.iter_content(65536):
@@ -179,7 +190,8 @@ def cached(db, keys):
 
 
 def fetch_hashes(db, srcs, progress=None, should_stop=None):
-    """주소들의 그림 해시를 받아 캐시에 넣는다 (이미 받은 것·실패한 것은 다시 받지 않음). {got, fail, cached}"""
+    """주소들의 그림 해시를 받아 캐시에 넣는다 (이미 받은 것·실패한 것은 다시 받지 않음). {got, fail, cached}
+    srcs 순서대로 받는다(앞에 둔 것 먼저 — 위1·아래1). SAVE_EVERY장마다 저장해 중지해도 받은 것은 남는다."""
     by_key = {}
     for s in srcs:
         k = url_key(s)
@@ -195,7 +207,17 @@ def fetch_hashes(db, srcs, progress=None, should_stop=None):
     if not todo:
         return st
     lock = threading.Lock()
-    rows = []
+    rows, unsaved = [], []
+
+    def save():
+        with lock:
+            batch = list(unsaved)
+            unsaved.clear()
+        if batch:
+            now_ = time.time()
+            with db.tx() as c:
+                c.executemany("INSERT OR REPLACE INTO img_hash(key, hash, w, h, fail, at) VALUES(?,?,?,?,?,?)",
+                              [(k, h, w, hh, f, now_) for k, h, w, hh, f in batch])
 
     def one(item):
         k, s = item
@@ -208,17 +230,64 @@ def fetch_hashes(db, srcs, progress=None, should_stop=None):
             res = (k, "", None, None, str(e)[:200])
         with lock:
             rows.append(res)
+            unsaved.append(res)
             st["got" if res[1] else "fail"] += 1
-            if progress and len(rows) % 10 == 0:
-                progress(len(rows), len(todo), f"그림 비교용으로 이미지 받는 중 {len(rows):,}/{len(todo):,}")
+            n_ = len(rows)
+            if progress and n_ % 10 == 0:
+                progress(n_, len(todo), f"그림 비교용으로 이미지 받는 중 {n_:,}/{len(todo):,}")
+        if n_ % SAVE_EVERY == 0:
+            save()
 
     with ThreadPoolExecutor(FETCH_THREADS) as pool:
         list(pool.map(one, todo))
-    now = time.time()
-    with db.tx() as c:
-        c.executemany("INSERT OR REPLACE INTO img_hash(key, hash, w, h, fail, at) VALUES(?,?,?,?,?,?)",
-                      [(k, h, w, hh, f, now) for k, h, w, hh, f in rows])
+    save()
     return st
+
+
+def edge_order(htmls):
+    """상세들의 상하단 자리 이미지를 받을 순서로: 위1·아래1 먼저, 그다음 위2·아래2 …"""
+    tiers = [[] for _ in range(EDGE_N)]
+    for html in htmls:
+        srcs = img_srcs(html)
+        n = len(srcs)
+        for j in range(min(EDGE_N, n)):
+            tiers[j].append(srcs[j])
+            if n - 1 - j > j:
+                tiers[j].append(srcs[n - 1 - j])
+    return [s for t in tiers for s in t]
+
+
+_pre = {"lock": threading.Lock(), "q": [], "busy": False}
+
+
+def prefetch_async(db, htmls):
+    """넣은 직후 뒤에서 상하단 자리 그림 해시를 미리 받아 둔다 (한 번에 하나씩, 겹쳐 부르면 이어서)."""
+    srcs = edge_order(list(htmls))
+    if not srcs:
+        return
+    with _pre["lock"]:
+        _pre["q"].extend(srcs)
+        if _pre["busy"]:
+            return
+        _pre["busy"] = True
+
+    def run():
+        try:
+            while True:
+                with _pre["lock"]:
+                    batch, _pre["q"] = _pre["q"], []
+                    if not batch:
+                        _pre["busy"] = False
+                        return
+                try:
+                    fetch_hashes(db, batch)
+                    refresh_rule_hashes(db)
+                except Exception:  # noqa: BLE001 - 미리 받기는 실패해도 그만
+                    pass
+        finally:
+            with _pre["lock"]:
+                _pre["busy"] = False
+    threading.Thread(target=run, daemon=True).start()
 
 
 # ───────────────────────── 묶기
