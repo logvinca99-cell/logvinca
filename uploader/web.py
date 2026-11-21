@@ -638,8 +638,8 @@ def create_app(db=None):
     @app.post("/api/settings")
     def save_settings():
         v = body()
-        ints = ("recombine_fixed_prefix", "recombine_new_min", "recombine_new_max", "max_word_repeat", "opendict_daily_limit", "kipris_limit", "kw_daily_limit", "kw_min_volume", "kw_related_max", "kw_refresh_days", "kw_max_words", "core_scan_words", "orders_auto_sync_minutes", "orders_initial_days", "mail_days", "mail_auto_minutes", "max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
-                "name_max_len", "ai_names_per_product", "ai_products_per_call", "ai_workers")
+        ints = ("recombine_fixed_prefix", "recombine_new_min", "recombine_new_max", "max_word_repeat", "opendict_daily_limit", "kipris_limit", "kw_daily_limit", "kw_min_volume", "kw_related_max", "kw_refresh_days", "kw_max_words", "core_scan_words", "mail_days", "mail_auto_minutes", "max_copies", "return_fee", "exchange_fee", "workers_per_store", "max_parallel_stores", "price_round",
+                "name_max_len", "ai_names_per_product", "ai_products_per_call", "ai_workers", "sales_valid_hours", "nv_reuse_hours")
         floats = ("wm_size_pct", "wm_opacity", "wm_margin_pct", "recombine_replace_ratio", "delay_sec", "display_discount_pct", "recombine_max_overlap", "image_cache_gb")
         for k in ints:
             if k in v:
@@ -884,8 +884,6 @@ def create_app(db=None):
         for k in ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "memo", "wm_text", "importer", "chrome_profile", "mail_to"):
             if k in v:
                 v[k] = str(v[k] or "").strip()
-        if "sales_mode" in v and v["sales_mode"] not in ("file", "api"):
-            v["sales_mode"] = "file"
         if sid:
             if not v.get("client_secret"):
                 v.pop("client_secret", None)  # 빈칸이면 기존 시크릿 유지
@@ -2001,13 +1999,27 @@ def create_app(db=None):
             return fail(f"'{st['name']}' 스토어의 API 키가 없습니다.")
 
         def job(progress=None, should_stop=None):
-            res = nvstate.check_store(db, st["id"], naver.make_client(st), progress=progress, should_stop=should_stop)
+            try:
+                res = nvstate.check_store(db, st["id"], naver.make_client(st), progress=progress, should_stop=should_stop)
+            except RuntimeError:
+                raise
+            except Exception as e:  # noqa: BLE001 - 실제 이유를 쉬운 말로 (시간당 한도 등)
+                why = f"네이버 상태 확인 실패({naver.explain(e)})"
+                db.x("UPDATE stores SET nv_check_err=? WHERE id=?", (why[:500], st["id"]))
+                raise RuntimeError(why) from None
             res["message"] = f"{st['name']} · " + nvstate.summary(res)
             return res
         try:
             return jsonify({"task": tasks.start("nvcheck", f"네이버 상태 확인 · {st['name']}", job)})
         except RuntimeError as e:
             return fail(str(e))
+
+    @app.post("/api/listings/nv_preview")
+    def listings_nv_preview():
+        """최신화·다시 올리기 창: 저장된 네이버 상태로 빠질 건수·마지막 상태 확인 시각 (네이버에 묻지 않음)."""
+        f = _filter_from(body())
+        f.pop("op", None)
+        return jsonify(inventory.nv_preview(db, f))
 
     @app.post("/api/listings/revert")
     def listings_revert():
@@ -2186,49 +2198,12 @@ def create_app(db=None):
 
     # ── 판매 이력
 
-    @app.post("/api/orders/sync")
-    def orders_sync():
-        """네이버에서 결제된 주문을 가져온다 (스토어마다 마지막으로 가져온 때부터)."""
-        ids = set(int(i) for i in body().get("store_ids") or [])
-        pairs = []
-        for s in db.stores(with_secret=True):
-            if (ids and s["id"] not in ids) or not s["enabled"]:
-                continue
-            if not s["has_keys"] and os.environ.get("UPLOADER_FAKE_API") != "1":
-                continue
-            pairs.append((s, naver.make_client(s)))
-        if not pairs:
-            return fail("주문을 가져올 스토어가 없습니다 (API 키가 있는 사용 중 스토어).")
-        try:
-            days = int(body().get("days") or config.load().get("orders_initial_days") or 0) or None
-            since = _date_ts(body().get("from"))
-            until = _date_ts(body().get("to"), end=True)
-        except (TypeError, ValueError):
-            return fail("날짜(예: 2026-01-31)나 일수를 확인해 주세요.")
-        title = f"주문 가져오기 · 스토어 {len(pairs)}곳" + (f" · {body().get('from')}~{body().get('to') or '오늘'}" if since else "")
-        try:
-            tid = tasks.start("orders", title,
-                              lambda **kw: orders.sync_stores(db, pairs, days=days, since=since, until=until, **kw))
-        except RuntimeError as e:
-            return fail(str(e))
-        return jsonify({"task": tid})
-
     @app.get("/api/stores/<int:sid>/sales")
     def store_sales(sid):
         try:
             return jsonify(orders.sales_status(db, sid))
         except ValueError as e:
             return fail(str(e), 404)
-
-    @app.post("/api/stores/<int:sid>/orders_test")
-    def store_orders_test(sid):
-        """[네이버 주문 받기 시험]: 지금 키로 최근 1일 주문 조회만 해 봄 (저장 안 함)."""
-        s = next((x for x in db.stores(with_secret=True) if x["id"] == sid), None)
-        if not s:
-            return fail("스토어를 찾지 못했습니다.", 404)
-        if not s["has_keys"] and os.environ.get("UPLOADER_FAKE_API") != "1":
-            return jsonify({"ok": False, "count": 0, "message": "이 스토어에 API 키가 없습니다 — 스토어 수정에서 애플리케이션 ID·시크릿을 넣으세요"})
-        return jsonify(orders.test_orders(s, naver.make_client(s)))
 
     @app.post("/api/stores/<int:sid>/sales_confirm")
     def store_sales_confirm(sid):
@@ -2244,14 +2219,6 @@ def create_app(db=None):
         from_ts = _date_ts(request.form.get("from")) if request.form.get("from") else None
         return file_task("orders", "판매 이력 파일 가져오기", lambda db_, fh, name, **kw: orders.import_sales_file(
             db_, fh, name, store_id=int(sid) if sid else None, from_ts=from_ts, **kw))
-
-    @app.post("/api/stores/<int:sid>/sales_mode")
-    def store_sales_mode(sid):
-        """판매 이력 확인 방법: file(파일·직접 확인, 지우기 전에 네이버 주문 안 받음) / api(지우기 전에 네이버에서 주문 받기)."""
-        try:
-            return jsonify(orders.set_sales_mode(db, sid, str(body().get("mode") or "")))
-        except ValueError as e:
-            return fail(str(e))
 
     @app.get("/api/orders/unmatched")
     def orders_unmatched():
@@ -2773,8 +2740,8 @@ def create_app(db=None):
             f["to_ts"] = _date_ts(a.get("to"), end=True)
         page, size = int(a.get("page", 0)), min(int(a.get("size", 100)), 500)
         res = orders.query_orders(db, f, page, size)
-        res["auto"] = auto
-        res["stores"] = [{"id": s["id"], "name": s["name"], "code": s["code"], "synced_to": s["orders_synced_to"],
+        chk = {r["id"]: r["sales_checked_at"] for r in db.q("SELECT id, sales_checked_at FROM stores")}
+        res["stores"] = [{"id": s["id"], "name": s["name"], "code": s["code"], "synced_to": s["orders_synced_to"], "checked_at": chk.get(s["id"]),
                           "known_from": orders.known_from(s), "has_keys": s["has_keys"]} for s in db.stores()]
         return jsonify(res)
 
@@ -2883,40 +2850,12 @@ def create_app(db=None):
     def runs():
         return jsonify(db.q("SELECT * FROM runs ORDER BY id DESC LIMIT 200"))
 
-    # ── 주문 자동 가져오기: 프로그램이 켜져 있는 동안 정해진 간격마다
+    # ── 메일함 자동 가져오기: 프로그램이 켜져 있는 동안 정해진 간격마다 (주문은 네이버에서 받지 않음 — 판매 현황 파일로)
 
     auto = {"minutes": 0, "last_at": None, "next_at": None, "last_result": "", "task": None}
 
     def auto_sync_loop():
         while True:
-            try:
-                # 자동 가져오기를 화면에서 '중단'했으면 자동 가져오기를 끈다 (설정에서 다시 켬)
-                t = next((x for x in tasks.list() if x["id"] == auto["task"]), None)
-                if t and t["status"] == "stopped":
-                    config.save({"orders_auto_sync_minutes": 0})
-                    auto.update(task=None, last_result="중단해서 자동 가져오기를 껐습니다")
-                cfg = config.load()
-                minutes = int(cfg.get("orders_auto_sync_minutes") or 0)
-                auto["minutes"] = minutes
-                now = time.time()
-                if minutes <= 0:
-                    auto["next_at"] = None
-                else:
-                    if auto["next_at"] is None:
-                        auto["next_at"] = now + 120  # 켜고 2분 뒤 첫 실행
-                    if now >= auto["next_at"]:
-                        auto["next_at"] = now + minutes * 60
-                        pairs = [(s, naver.make_client(s)) for s in db.stores(with_secret=True)
-                                 if s["enabled"] and (s["has_keys"] or os.environ.get("UPLOADER_FAKE_API") == "1")]
-                        if pairs:
-                            auto["task"] = tasks.start(
-                                "orders", f"주문 자동 가져오기 · 스토어 {len(pairs)}곳 (중단하면 자동 가져오기 꺼짐)",
-                                lambda **kw: orders.sync_stores(db, pairs, days=cfg.get("orders_initial_days"), **kw))
-                            auto["last_at"] = now
-            except RuntimeError:
-                pass  # 이미 주문 가져오기가 돌고 있음 → 다음 차례에
-            except Exception as e:  # noqa: BLE001
-                auto["last_result"] = str(e)
             try:   # 구글 메일함 자동 가져오기 (설정 간격, 0이면 끔)
                 cfg = config.load()
                 mm = int(cfg.get("mail_auto_minutes") or 0)

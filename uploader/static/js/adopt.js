@@ -179,11 +179,6 @@ App.page("adopt", {
       if (u) return this.undo(+u.dataset.undo);
       const sb = e.target.closest("[data-sales]");
       if (sb) return App.salesConfirm(+sb.dataset.sales, () => this.loadRuns());
-      const o = e.target.closest("[data-orders]");
-      if (o) {
-        if (!await App.yes("네이버에서 주문 받기", `이 스토어 주문을 ${o.dataset.from}부터 오늘까지 받습니다.\n네이버는 하루 단위로 나눠 조회해서 기간이 길면 시간이 걸립니다(뒤에서 돌아감).\n다 받으면 가져온 상품을 최신화·내리기할 수 있습니다 (팔린 상품은 잠겨서 안 지움).`, { label: "받기" })) return;
-        App.startTask(App.api("/api/orders/sync", { json: { from: o.dataset.from, store_ids: [+o.dataset.orders] } }));
-      }
     };
     if (!rs.length) { box.innerHTML = '<p class="muted">아직 가져온 기록이 없습니다.</p>'; return; }
     const st = (s) => Object.entries(s.status || {}).map(([k, v]) => `${NAVER_STATUS[k] || k} ${num(v)}`).join(" · ");

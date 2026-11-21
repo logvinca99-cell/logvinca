@@ -45,16 +45,12 @@ DEFAULTS = {
     # 스토어에 등록하는 판매자 관리코드. {store}=스토어 코드, {source}=원본 번호, {round}=회차
     "seller_code_format": "{store}-{source:07d}-{round}",
 
-    # ── 주문(판매 이력): 판매자센터 주문을 커머스API로 가져온다
-    # 프로그램이 켜져 있는 동안 이 간격(분)마다 모든 스토어 주문을 가져옴 (0이면 끔)
-    "orders_auto_sync_minutes": 0,   # 0 = 끔. 최신화·내리기 전에는 늘 그 스토어 주문을 먼저 가져옴
-    "orders_auto_off_v1": True,
     "price_exact_v1": True,
     "ctx_mode_v2": True,
-    # 처음 가져올 때 며칠 전부터
-    "orders_initial_days": 30,
-    "sales_valid_hours": 24,     # 판매 이력 확인(파일 방식)이 유효한 시간 — 마지막 확인이 이보다 오래면 최신화·내리기 전에 다시 확인하라고 막음
-    "orders_refresh_days": 7,    # 최신화·내리기 전 주문 확인: 그 스토어를 처음 확인할 때 며칠 전부터 (그 뒤엔 마지막 확인부터)
+    # ── 주문(판매 이력): 판매 현황 파일·직접 확인으로만 (네이버에서 주문을 받지 않음)
+    # [최신화]·[다시 올리기] 전 자동 네이버 상태 확인: 마지막 확인이 이 시간(시간)보다 오래됐을 때만 스토어마다 한 번 (그 안이면 적어 둔 상태를 씀)
+    "nv_reuse_hours": 6,
+    "sales_valid_hours": 24,     # 판매 이력 확인이 유효한 시간 — 마지막 확인이 이보다 오래면 최신화·내리기 전에 다시 확인하라고 막음
     # 판매 이력이 있는 복사본은 자동으로 잠금 (최신화·내리기로 지우지 않음)
     "lock_sold": True,
     # 취소·반품만 있는 복사본도 잠글지 (끄면 실제 판매가 1건이라도 있어야 잠금)
@@ -201,7 +197,7 @@ def migrate_legacy_data():
     return LEGACY_DATA_DIR
 
 
-REMOVED_KEYS = ("refresh_new_name", "ctx_names_per_source", "phone_view", "phone_key", "price_jitter_pct", "price_jitter_min", "price_jitter_max", "use_original_name", "bait_enabled", "bait_pct",
+REMOVED_KEYS = ("orders_auto_sync_minutes", "orders_auto_off_v1", "orders_initial_days", "orders_refresh_days", "refresh_new_name", "ctx_names_per_source", "phone_view", "phone_key", "price_jitter_pct", "price_jitter_min", "price_jitter_max", "use_original_name", "bait_enabled", "bait_pct",
                 "bait_price_pct", "bait_ratio")
 
 
@@ -216,8 +212,6 @@ def load():
             saved.pop("use_category_words", None)  # 이 버전부터 상품명에 카테고리를 쓰지 않음 (예전 설정도 끔)
         if "ctx_mode_v2" not in saved:
             saved["ctx_mode"] = "instant"   # 키워드 받기 기본을 즉시로 (예전 기본 일괄은 결과가 늦게 와 헷갈림) — 설정에서 바꿈
-        if "orders_auto_off_v1" not in saved:
-            saved["orders_auto_sync_minutes"] = 0   # 주문은 다른 프로그램으로 봄 → 자동 가져오기 끔 (최신화·내리기 전에만 가져옴)
         for k in REMOVED_KEYS:   # 없앤 기능의 예전 설정
             saved.pop(k, None)
         cfg.update(saved)

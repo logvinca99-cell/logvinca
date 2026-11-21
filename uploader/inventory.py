@@ -1535,6 +1535,32 @@ def reset_rounds(db, ids):
     return n
 
 
+def nv_preview(db, f):
+    """최신화·다시 올리기 창 안내: 걸릴 대상(올라가 있는 건, 잠금 제외) 중 저장된 네이버 상태로 빠질 수·모르는 수·마지막 확인 시각.
+    네이버에 묻지 않는다 — 사장님이 누른 [네이버 상태 확인] 결과(nv_status·nv_at)만 본다."""
+    from . import nvstate
+    where, args = listing_where(f)
+    cond = "l.origin_no!='' AND l.status IN ('success','fail','planned') AND l.locked=0"
+    where = (where + f" AND {cond}") if where else f" WHERE {cond}"
+    ok = ",".join("'" + x + "'" for x in nvstate.REFRESH_OK)
+    r = db.one(f"""SELECT COUNT(*) AS n, SUM(l.nv_at IS NULL OR l.nv_status='') AS unknown,
+        SUM(l.nv_status!='' AND l.nv_status!='GONE' AND l.nv_status NOT IN ({ok})) AS nonsale,
+        SUM(l.nv_status='GONE') AS gone, MAX(l.nv_at) AS last_at, MIN(l.nv_at) AS first_at
+        FROM listings l JOIN sources s ON s.id=l.source_id{where}""", args) or {}
+    out = {"total": r.get("n") or 0, "unknown": r.get("unknown") or 0, "nonsale": r.get("nonsale") or 0, "gone": r.get("gone") or 0,
+           "last_at": r.get("last_at"), "first_at": r.get("first_at"), "last_ago": nvstate.ago(r.get("last_at"))}
+    # 스토어마다: 이번에 자동으로 확인할지(재사용 시간 지남), 마지막 확인, 지난 자동 확인 실패 이유
+    cfg = config.load()
+    sids = [x["store_id"] for x in db.q(f"SELECT DISTINCT l.store_id FROM listings l JOIN sources s ON s.id=l.source_id{where}", args)]
+    st = []
+    for sid in sids[:60]:
+        need, at, hours = nvstate.due(db, sid, cfg)
+        e = (db.one("SELECT name, nv_check_err FROM stores WHERE id=?", (sid,)) or {})
+        st.append({"store_id": sid, "name": e.get("name") or "", "will_check": need, "checked_at": at, "ago": nvstate.ago(at), "err": e.get("nv_check_err") or ""})
+    out["stores"], out["reuse_hours"] = st, max(0.0, float(cfg.get("nv_reuse_hours") if cfg.get("nv_reuse_hours") is not None else 6))
+    return out
+
+
 def schedule_op(db, f, op):
     """올라가 있는 건에 할 일을 건다. op: refresh(최신화: 오래된 상품 지우고 다시, 설정에 따라 새 이름)
     / reupload(다시 올리기: 문제가 있어 지우고 같은 내용으로 다시, 내린 것도) / delete(내리기).

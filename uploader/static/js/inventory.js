@@ -156,7 +156,7 @@ App.page("inventory", {
 
   pagerOpts() {
     return { page: this.page, size: this.size, total: this.total,
-      onPage: (p) => { this.page = p; this.load(); window.scrollTo(0, 0); },
+      onPage: (p) => { this.page = p; this.load(); },
       onSize: (n) => { this.size = n; App.savePageSize("inventory", n); this.page = 0; this.load(); } };
   },
 

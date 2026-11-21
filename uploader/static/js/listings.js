@@ -54,8 +54,8 @@ App.page("listings", {
           <button class="btn primary" id="l-eye" title="썸네일만 그리드로 보며 이상한 상품을 골라 지우기">눈검수</button>
           <button class="btn" id="l-bulk" title="이 스토어 복사본의 손님 가격·상품명을 엑셀로 한꺼번에 고치기 (판매 중이면 지우지 않고 네이버 값만 바꿈)">일괄 수정 (엑셀)</button>
           <button class="btn" id="l-nv" title="네이버 상품 목록을 받아 판매 중 복사본마다 판매 중·품절·판매중지·판매금지·스토어에 없음을 표시 (최신화 직전에도 자동으로 확인)">네이버 상태 확인</button>
-          <button class="btn" id="l-sales" title="이 스토어 판매 이력 확인: 판매자센터 주문 파일 넣기 · 파일 없이 직접 잠그고 확인 완료 · 네이버에서 주문 받기(시험 포함)">판매 이력 확인</button>
-          <a class="btn" href="#orders" title="판매자센터 주문을 가져오고 기간·스토어별로 보기">판매 현황</a>
+          <button class="btn" id="l-sales" title="이 스토어 판매 이력 확인: 판매 현황 파일 넣기 · 파일 없이 직접 잠그고 확인 완료">판매 이력 확인</button>
+          <a class="btn" href="#orders" title="넣은 판매 이력(주문)을 기간·스토어별로 보기">판매 현황</a>
         </div></header>
       <div class="card run" id="l-run"><div id="l-run-main"></div></div>
       <div class="run-others" id="l-run-others" hidden></div>
@@ -258,7 +258,7 @@ App.page("listings", {
 
   pagerOpts() {
     return { page: this.page, size: this.size, total: this.total, unit: "건",
-      onPage: (p) => { this.page = p; this.load(); window.scrollTo(0, 0); },
+      onPage: (p) => { this.page = p; this.load(); },
       onSize: (n) => { this.size = n; App.savePageSize("listings", n); this.page = 0; this.load(); } };
   },
 
@@ -878,10 +878,12 @@ App.page("listings", {
     App.openModal({
       title: `${num(n)}건 ${name}`,
       body: `<p>${label}.</p>
-        <p class="muted small">잠긴 건(판매 이력·직접 잠금)은 빠지고, 지우기 직전에 이 스토어 주문을 한 번 더 확인합니다. 지난 회차 기록에 '${name}'로 남습니다.
-          누르면 바로 시작합니다 — 다른 스토어가 등록 중이면 함께, 이 스토어가 처리 중이면 그 차례 뒤에 붙습니다.</p>`,
-      buttons: [{ label: "취소" }, { label: `${name} 시작`, primary: true, onClick: () => go() }],
+        <p class="muted small">잠긴 건(판매 이력·직접 잠금)은 빠지고, 판매 이력 확인(판매 현황 파일·확인 완료)이 유효 시간 안일 때만 지웁니다. 지난 회차 기록에 '${name}'로 남습니다.
+          누르면 바로 시작합니다 — 다른 스토어가 등록 중이면 함께, 이 스토어가 처리 중이면 그 차례 뒤에 붙습니다.</p>
+        ${op === "delete" ? "" : '<div class="notice" id="sch-nv">네이버 상태 확인 기록을 보는 중…</div>'}`,
+      buttons: [{ label: "취소" }, { label: `${name} 시작`, primary: true, confirm: () => $("#sch-nv")?.innerText || "", onClick: () => go() }],
     });
+    if (op !== "delete") App.nvNote($("#sch-nv"), this.target());
   },
 
   // ── 실행 패널

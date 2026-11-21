@@ -17,9 +17,7 @@ App.page("orders", {
     el.innerHTML = `<div class="page">
       <header class="page-head"><h1>판매 현황</h1>
         <div class="head-actions">
-          <label class="btn ghost" title="아바닛 등 다른 곳에서 내려받은 주문 파일"><input type="file" id="o-file" accept=".xlsx,.xlsm,.csv" hidden>주문 파일 가져오기</label>
-          <button class="btn" id="o-range">기간 지정해서 가져오기…</button>
-          <button class="btn primary" id="o-sync">지금 가져오기</button>
+          <label class="btn primary" title="판매자센터 등에서 내려받은 판매 현황(주문) 파일"><input type="file" id="o-file" accept=".xlsx,.xlsm,.csv" hidden>판매 현황 파일 넣기</label>
         </div></header>
       <div class="sync-info card" id="o-auto"></div>
       <div class="toolbar"><div class="filters">
@@ -126,13 +124,10 @@ App.page("orders", {
       ["취소·반품", s.canceled, "var(--warn)"], ["못 맞춘 주문", s.unmatched, "var(--err)"],
     ].map(([l, n, c]) => `<div class="tile static" style="--dot:${c}"><div class="t-label">${l}</div><div class="t-num">${num(n)}</div></div>`).join("");
 
-    const a = res.auto;
-    const synced = res.stores.filter((x) => x.synced_to).map((x) => x.synced_to);
-    const never = res.stores.filter((x) => !x.synced_to && x.has_keys).length;
-    $("#o-auto").innerHTML = `<div><b>${a.minutes ? `자동 가져오기 ${a.minutes}분마다` : "자동 가져오기 꺼짐"}</b>
-        ${a.minutes && a.next_at ? ` · 다음 ${when(a.next_at)}` : ""} <span class="muted">(설정에서 바꿈 · 프로그램이 켜져 있을 때만)</span></div>
-      <div class="muted small">판매자센터의 주문을 커머스API로 가져옵니다. ${synced.length
-        ? `가장 오래 전에 가져온 스토어: ${when(Math.min(...synced))}` : "아직 가져온 적 없음"}${never ? ` · 한 번도 안 가져온 스토어 ${never}곳` : ""}
+    const chk = res.stores.filter((x) => x.checked_at).map((x) => x.checked_at);
+    const never = res.stores.filter((x) => !x.checked_at).length;
+    $("#o-auto").innerHTML = `<div><b>판매 이력은 판매 현황 파일·[판매 이력 확인 완료]로만 확인합니다</b> <span class="muted">(네이버에서 주문을 받지 않음)</span></div>
+      <div class="muted small">${chk.length ? `가장 오래 전에 확인한 스토어: ${when(Math.min(...chk))}` : "아직 확인한 스토어 없음"}${never ? ` · 한 번도 확인 안 한 스토어 ${never}곳` : ""}
         · 판매 이력이 있는 복사본은 최신화·내리기에서 빠집니다.</div>`;
 
     $("#o-rows").innerHTML = res.rows.length ? res.rows.map((o) => `<tr data-lid="${o.listing_id || ""}"${o.ignored ? ' style="opacity:.55"' : ""}>
@@ -144,7 +139,7 @@ App.page("orders", {
       <td><span class="badge ${["CANCELED", "RETURNED", "CANCELED_BY_NOPAYMENT"].includes(o.status) ? "s-delete" : "s-success"}">${esc(o.status_ko || "-")}</span>${o.ignored ? ' <span class="badge" style="opacity:.6" title="이 복사본에서 판매 이력 무시 — 판매 수·잠금에서 뺌">무시함</span>' : ""}</td>
       <td>${o.listing_id ? `<span class="link-btn">복사본 보기</span><div class="p-sub">원본 #${o.source_id}</div>`
         : `<span class="c-err small">못 맞춤</span><div class="p-sub">이 프로그램이 올린 상품이 아닐 수 있음</div>`}</td></tr>`).join("")
-      : `<tr class="empty-row"><td colspan="6">이 기간에 주문이 없습니다. 오른쪽 위 <b>지금 가져오기</b>를 누르세요.</td></tr>`;
+      : `<tr class="empty-row"><td colspan="6">이 기간에 주문이 없습니다. 오른쪽 위 <b>판매 현황 파일 넣기</b>로 넣으세요.</td></tr>`;
     App.pager($("#o-pager"), { page: this.page, size: this.size, total: res.total, onPage: (p) => { this.page = p; this.load(); } });
 
     const max = Math.max(1, ...res.by_store.map((x) => x.orders));
@@ -164,22 +159,7 @@ App.page("orders", {
     $("#o-matched").addEventListener("change", (e) => { this.f.matched = e.target.value; reload(); });
     let t;
     onTyped($("#o-q"), (v) => { this.f.q = v.trim(); reload(); });
-    $("#o-sync").addEventListener("click", () => App.startTask(App.api("/api/orders/sync", { json: this.f.store_id ? { store_ids: [+this.f.store_id] } : {} })));
     $("#o-file").addEventListener("change", (e) => { if (e.target.files[0]) App.upload("/api/orders/import", e.target.files[0]); e.target.value = ""; });
-    $("#o-range").addEventListener("click", () => App.openModal({
-      title: "기간 지정해서 주문 가져오기",
-      body: `<p class="muted small">고른 기간의 주문을 판매자센터(커머스API)에서 다시 가져옵니다. 이미 있는 주문은 상태만 최신으로 바뀝니다.
-        네이버는 하루 단위로 나눠 조회해서 기간이 길면 시간이 걸립니다.</p>
-        <div class="two"><label class="field">시작일<input type="date" id="r-from" value="${dayStr(90)}"></label>
-        <label class="field">종료일<input type="date" id="r-to" value="${dayStr(0)}"></label></div>
-        <label class="field">스토어<select id="r-store"><option value="">모든 스토어</option>${App.stores.map((s) =>
-          `<option value="${s.id}">${esc(s.code)} ${esc(s.name)}</option>`).join("")}</select></label>`,
-      buttons: [{ label: "취소" }, { label: "가져오기", primary: true, onClick: async (b) => {
-        const st = $("#r-store", b).value;
-        return !!(await App.startTask(App.api("/api/orders/sync", { json: {
-          from: $("#r-from", b).value, to: $("#r-to", b).value, ...(st ? { store_ids: [+st] } : {}) } })));
-      } }],
-    }));
     $("#o-rows").addEventListener("click", (e) => {
       const tr = e.target.closest("tr[data-lid]");
       if (tr?.dataset.lid) App.pages.listings.openListing(+tr.dataset.lid);

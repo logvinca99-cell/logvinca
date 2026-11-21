@@ -99,7 +99,6 @@ App.page("stores", {
       <div class="store-acts"><button class="btn sm" data-act="edit" data-id="${s.id}">수정</button>
         <button class="btn sm" data-act="tpl" data-id="${s.id}">템플릿</button>
         <button class="btn sm" data-act="test" data-id="${s.id}">연결 확인</button>
-        <button class="btn sm" data-act="ordtest" data-id="${s.id}" title="이 스토어 키로 네이버 주문(최근 1일)을 조회만 해 봄 — 최신화·내리기 전 주문 받기가 되는지 확인">주문 받기 시험</button>
         <button class="btn sm" data-act="refresh" data-id="${s.id}" ${s.n_live ? "" : "disabled"}>최신화</button></div>
     </div>`;
   },
@@ -112,14 +111,6 @@ App.page("stores", {
       if (b.dataset.act === "edit") this.edit(s);
       if (b.dataset.act === "tpl") this.template(s);
       if (b.dataset.act === "test") this.test(s, b);
-      if (b.dataset.act === "ordtest") {
-        b.disabled = true;
-        try {
-          const r = await App.api(`/api/stores/${s.id}/orders_test`, { json: {} });
-          App.toast(`${s.name} · 주문 받기 시험: ${r.message}`, !r.ok);
-        } catch (err) { App.toast(err.message, true); }
-        b.disabled = false;
-      }
       if (b.dataset.act === "refresh") this.refresh(s);
       if (b.dataset.act === "region") {
         try {
@@ -569,9 +560,6 @@ App.page("stores", {
           <span class="cp-row"><select name="chrome_profile" id="s-cp"><option value="">정하지 않음 (지금 브라우저로 열기)</option>
             ${s.chrome_profile ? `<option value="${esc(s.chrome_profile)}" selected>${esc(s.chrome_profile)}</option>` : ""}</select>
             <span class="muted small" id="s-cp-note">크롬 프로필 불러오는 중…</span></span></label>
-        <label class="field">판매 이력 확인 방법 <span class="muted">(최신화·내리기로 지우기 전에 팔린 상품을 어떻게 확인할지)</span>
-          <select name="sales_mode"><option value="file" ${(s.sales_mode || "file") === "file" ? "selected" : ""}>판매 현황 파일·직접 확인 (지우기 전에 네이버 주문을 받지 않음 — 마지막 확인이 유효 시간 안이어야 지움)</option>
-            <option value="api" ${s.sales_mode === "api" ? "selected" : ""}>네이버 주문 받기 (지우기 전에 커머스API로 주문을 받음 — 시간당 한도를 씀)</option></select></label>
         <label class="field">받는 메일 주소 <span class="muted">(메일함에서 이 스토어 메일을 구분 · 예: me+redcoco@gmail.com · 비우면 메일 안의 스토어 이름으로)</span><input name="mail_to" value="${esc(s.mail_to || "")}"></label>
         <label class="field">메모 <span class="muted">(스토어 카드에서도 바로 적을 수 있음)</span><textarea name="memo" rows="4">${esc(s.memo || "")}</textarea></label>
         <label class="check"><input type="checkbox" name="enabled" ${s.enabled ? "checked" : ""}> 사용 (끄면 새 계획에서 빠짐)</label>
@@ -625,17 +613,19 @@ App.page("stores", {
     App.openModal({
       title: `${s.name} 최신화`,
       body: `<p class="muted small">이 스토어의 판매 중 복사본을 네이버에서 지우고 같은 내용으로 다시 올립니다. 회차가 1 오르고 관리코드 끝 숫자가 바뀝니다.
-        <b>잠긴 복사본(판매 이력·직접 잠금)은 빠집니다.</b> 실행 직전에 이 스토어 주문을 한 번 더 가져와 확인합니다.</p>
+        <b>잠긴 복사본(판매 이력·직접 잠금)은 빠집니다.</b> 판매 이력 확인(판매 현황 파일·확인 완료)이 유효 시간 안이어야 지웁니다.</p>
         <label class="field">대상<select id="rf-days">
           <option value="30">올린 지 30일 넘은 것</option><option value="60">60일 넘은 것</option>
           <option value="90">90일 넘은 것</option><option value="7">7일 넘은 것</option><option value="">판매 중 전체</option></select></label>
-        <div class="plan-sum" id="rf-sum">세는 중…</div>`,
+        <div class="plan-sum" id="rf-sum">세는 중…</div>
+        <div class="notice" id="rf-nv" style="margin-top:8px">네이버 상태 확인 기록을 보는 중…</div>`,
       buttons: [{ label: "취소" }, { label: "최신화 시작", primary: true, onClick: (b) => go(b) }],
     });
     const upd = async () => {
       const days = $("#rf-days").value;
       const c = await count(days);
       $("#rf-sum").innerHTML = `최신화 <b>${num(c.open)}건</b>` + (c.all - c.open ? ` · 잠금으로 빠지는 것 ${num(c.all - c.open)}건` : "");
+      App.nvNote($("#rf-nv"), { store_id: s.id, status: "live", ...(days ? { age_days: days } : {}) });
     };
     $("#rf-days").addEventListener("change", upd);
     upd();

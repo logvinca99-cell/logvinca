@@ -1221,3 +1221,12 @@ h2, .sec-title { font-size: var(--h2); font-weight: 700; letter-spacing: -.01em;
   .nav-tools .nav-tool { padding: 4px 2px 3px; font-size: 10.5px; }
   .nav-tools .nav-tool svg { width: 16px; height: 16px; }
 }
+
+/* 왼쪽 메뉴 스토어 카드 상태: 크기·글자는 그대로, 배경·띠로만 (진행 중 = 옅은 초록, 실패 = 왼쪽 빨간 띠, 지금 스토어 = 진한 테두리) */
+.ns-item.run { background: var(--ok-soft); border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
+.ns-item.run:hover { background: var(--ok-soft); }
+.ns-item.fail { box-shadow: inset 3px 0 0 var(--err); }
+.ns-item.on { background: var(--panel); border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.ns-item.on .ns-name { color: var(--accent-strong); font-weight: 700; }
+.ns-item.on.fail { box-shadow: 0 0 0 1px var(--accent) inset, inset 3px 0 0 var(--err); }
+.ns-item.on.run { background: var(--ok-soft); }

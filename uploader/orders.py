@@ -1,4 +1,4 @@
-"""판매 이력: 네이버 주문 가져오기, 주문 파일(아바닛 등) 가져오기, 복사본과 맞추기.
+"""판매 이력: 판매 현황(주문) 파일(판매자센터·아바닛 등) 넣기, 직접 확인, 복사본과 맞추기. 네이버에서 주문을 받지 않는다.
 
 판매 이력이 있는 복사본(sold_count > 0)은 최신화·내리기로 지우지 않는다.
 
@@ -18,8 +18,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 from . import excel, naver
 
-INITIAL_DAYS = 30
-SYNC_PARALLEL = 8   # 주문 가져오기를 동시에 돌릴 스토어 수
 
 # 네이버 상품주문 상태 → 화면 글자
 STATUS_KO = {
@@ -153,81 +151,6 @@ def rematch(db):
     return len(touched)
 
 
-# ───────────────────────── 네이버 주문 가져오기
-
-def sync_store(db, store, client, days=None, since=None, until=None, should_stop=None):
-    """스토어 하나의 주문(상태가 바뀐 것 모두)을 가져온다.
-
-    기간을 안 주면: 마지막으로 가져온 때부터 지금까지 (처음이면 days일 전부터) → 이어 받기 표시를 옮긴다.
-    기간을 주면(since~until): 그 기간만 다시 가져온다 (지난 주문 채우기). 이어 받기 표시는 그대로.
-    """
-    now = time.time()
-    incremental = since is None
-    if incremental:
-        # 경계에서 빠지는 주문이 없도록 10분 겹쳐서 가져온다 (같은 주문은 한 번만 저장됨)
-        last = store.get("orders_synced_to")
-        since = (last - 600) if last else now - (days or INITIAL_DAYS) * 86400
-    until = min(until or now, now)
-    if os.environ.get("UPLOADER_FAKE_API") == "1":
-        if os.environ.get("UPLOADER_FAKE_ORDERS_FAIL"):   # 시험용: 주문 받기 실패 흉내
-            raise RuntimeError(os.environ["UPLOADER_FAKE_ORDERS_FAIL"])
-        orders = _fake_orders(db, store)
-    else:
-        ids = client.changed_product_order_ids(since, until, should_stop=should_stop)
-        orders = client.product_order_details(ids) if ids else []
-    for o in orders:
-        o["store_id"] = store["id"]
-    new, matched = save_orders(db, orders, "naver", store["id"])
-    cov_from, cov_to = store.get("orders_from"), store.get("orders_synced_to")
-    if incremental:
-        db.x("UPDATE stores SET orders_synced_to=?, sales_checked_at=? WHERE id=?", (until, now, store["id"]))
-        if not last and (not cov_from or since < cov_from):   # 처음 받은 때 → 여기부터 판매 이력을 앎
-            db.x("UPDATE stores SET orders_from=? WHERE id=?", (since, store["id"]))
-    else:
-        # 기간 지정: 판매 이력을 아는 구간과 이어지면(빈틈 없음) 아는 처음 시각을 앞당긴다
-        if cov_to and until >= (cov_from or cov_to) - 600:
-            if not cov_from or since < cov_from:
-                db.x("UPDATE stores SET orders_from=? WHERE id=?", (since, store["id"]))
-        elif not cov_to and until >= now - 3600:   # 아직 이어 받기를 안 한 스토어: 오늘까지 받았으면 거기서부터 이어 받기
-            db.x("UPDATE stores SET orders_from=?, orders_synced_to=? WHERE id=?", (since, until, store["id"]))
-    return {"orders": len(orders), "new": new, "matched": matched}
-
-
-def explain_sync_error(e):
-    """주문 받기 실패를 쉬운 말로 (원래 문구는 뒤에 짧게)."""
-    raw = " ".join(str(e or "").split())
-    low = raw.lower()
-    if "quota" in low or "429" in raw:
-        why = "이 스토어 API 애플리케이션의 시간당 요청 한도를 다 씀 — 1시간쯤 뒤 다시"
-    elif "401" in raw or "unauthorized" in low or "invalid_client" in low or "토큰" in raw:
-        why = "API 키(애플리케이션 ID·시크릿)가 맞지 않거나 만료됨 — 스토어 수정에서 키 확인"
-    elif "403" in raw or "forbidden" in low or "권한" in raw or "scope" in low:
-        why = "주문 조회 권한이 없음 — 커머스API센터 애플리케이션에 '주문' API 권한을 추가"
-    elif "400" in raw and ("lastchanged" in low or "기간" in raw or "date" in low):
-        why = "조회 기간 오류 — 다시 시도 (계속되면 알려 주세요)"
-    elif any(k in low for k in ("timeout", "timed out", "connection", "resolve", "ssl", "max retries")):
-        why = "네이버에 연결하지 못함 — 인터넷 연결 확인 후 다시"
-    else:
-        why = "네이버 주문 조회 실패"
-    return f"{why} ({raw[:160]})" if raw else why
-
-
-def test_orders(store, client):
-    """[네이버 주문 받기 시험]: 지금 키로 최근 1일 주문 변경을 조회만 해 본다 (저장하지 않음). → {ok, count, message}"""
-    now = time.time()
-    try:
-        fail = os.environ.get("UPLOADER_FAKE_ORDERS_FAIL")
-        if os.environ.get("UPLOADER_FAKE_API") == "1":
-            if fail:
-                raise RuntimeError(fail)
-            n = 0
-        else:
-            n = len(client.changed_product_order_ids(now - 86400, now))
-        return {"ok": True, "count": n, "message": f"성공 — 최근 1일 주문 변경 {n}건을 조회했습니다 (이 키로 주문을 받을 수 있음)"}
-    except Exception as e:  # noqa: BLE001
-        return {"ok": False, "count": 0, "message": explain_sync_error(e)}
-
-
 def known_from(store):
     """이 스토어의 판매 이력을 빈틈없이 아는 처음 시각 (모르면 None)."""
     return store.get("orders_from") if store.get("orders_synced_to") else None
@@ -245,18 +168,18 @@ def sales_status(db, store_id):
                (kf, (kf or 0) - 3600, st["id"]))
     fb = file_breakdown(db, "(o.store_id=? OR o.listing_id IN (SELECT id FROM listings WHERE store_id=?))", (st["id"], st["id"]))
     from . import config
-    x = db.one("SELECT sales_mode, sales_checked_at FROM stores WHERE id=?", (st["id"],)) or {}
+    x = db.one("SELECT sales_checked_at FROM stores WHERE id=?", (st["id"],)) or {}
     fresh, why = sales_fresh(db, st["id"])
     return {"store_id": st["id"], "store": st["name"], "known_from": kf, "synced_to": st["orders_synced_to"],
             "adopted": a["n"] or 0, "reg_min": a["reg_min"], "need": a["need"] or 0, "locked": a["locked"] or 0, "manual": a["manual"] or 0,
             "file_orders": fb["orders"], "file_from": fb["from"], "file_to": fb["to"], "file_listings": fb["copies"],
-            "file": fb, "sales_mode": x.get("sales_mode") or "file", "checked_at": x.get("sales_checked_at"),
+            "file": fb, "checked_at": x.get("sales_checked_at"),
             "fresh": fresh, "fresh_why": why, "valid_hours": max(1, int(config.load().get("sales_valid_hours") or 24))}
 
 
 def confirm_sales(db, store_id, from_ts):
     """판매 이력을 직접 확인함 (판매자센터 주문 파일을 넣거나 직접 잠금): 이 스토어는 from_ts부터 판매 이력을 안다.
-    그 뒤로는 최신화·내리기 때마다 마지막 확인부터만 새로 받아 잠근다."""
+    마지막 확인 시각(sales_checked_at)도 지금으로 — 유효 시간 안이면 최신화·내리기를 한다."""
     st = db.one("SELECT orders_from, orders_synced_to FROM stores WHERE id=?", (int(store_id),))
     if not st:
         raise ValueError("스토어를 찾지 못했습니다.")
@@ -270,7 +193,7 @@ def confirm_sales(db, store_id, from_ts):
 
 
 def sales_fresh(db, store_id, cfg=None):
-    """파일 방식 스토어: 판매 이력을 마지막으로 확인한 지 유효 시간 안인가 → (괜찮나, 이유 문구)."""
+    """판매 이력을 마지막으로 확인한 지(판매 현황 파일·[판매 이력 확인 완료]) 유효 시간 안인가 → (괜찮나, 이유 문구)."""
     from . import config
     cfg = cfg or config.load()
     hours = max(1, int(cfg.get("sales_valid_hours") or 24))
@@ -282,13 +205,6 @@ def sales_fresh(db, store_id, cfg=None):
     if age > hours:
         return False, f"판매 이력을 마지막으로 확인한 지 {int(age)}시간 지남 (유효 {hours}시간)"
     return True, ""
-
-
-def set_sales_mode(db, store_id, mode):
-    if mode not in ("file", "api"):
-        raise ValueError("확인 방법은 file(파일·직접 확인) 또는 api(네이버 주문 받기)입니다.")
-    db.x("UPDATE stores SET sales_mode=? WHERE id=?", (mode, int(store_id)))
-    return sales_status(db, store_id)
 
 
 def file_breakdown(db, where, args):
@@ -313,50 +229,6 @@ def unmatched_orders(db, import_id=None, store_id=None, limit=300):
         FROM orders o LEFT JOIN stores st ON st.id=o.store_id WHERE o.source='file' AND o.listing_id IS NULL AND {w}
         ORDER BY o.ordered_at DESC LIMIT ?""", (*a, int(limit)))
 
-
-def sync_stores(db, stores_with_clients, progress=None, should_stop=None, days=None, since=None, until=None):
-    """여러 스토어를 동시에 가져온다 (스토어마다 API 애플리케이션이 따로라 한도도 따로). 중단하면 하던 날짜에서 바로 멈춘다."""
-    total = {"stores": 0, "orders": 0, "new": 0, "matched": 0, "errors": []}
-    lock = threading.Lock()
-    n = len(stores_with_clients)
-
-    def one(pair):
-        store, client = pair
-        if should_stop and should_stop():
-            return
-        try:
-            r = sync_store(db, store, client, days, since, until, should_stop=should_stop)
-        except Exception as e:  # noqa: BLE001 - 스토어 하나 실패는 기록하고 계속
-            r = None
-            if not (should_stop and should_stop()):
-                with lock:
-                    total["errors"].append(f"{store['name']}: {e}")
-        with lock:
-            if r:
-                for k in ("orders", "new", "matched"):
-                    total[k] += r[k]
-            total["stores"] += 1
-            if progress:
-                progress(total["stores"], n, f"{store['name']} · 새 주문 {total['new']:,}건")
-
-    with ThreadPoolExecutor(max_workers=max(1, min(SYNC_PARALLEL, n))) as ex:
-        list(ex.map(one, stores_with_clients))
-    return total
-
-
-def _fake_orders(db, store):
-    """시연 모드: 판매 중인 복사본 몇 개에 주문이 들어온 것처럼 만든다."""
-    rows = db.q("SELECT channel_no, name FROM listings WHERE store_id=? AND origin_no!=''", (store["id"],))
-    rnd = random.Random()
-    out = []
-    for r in rnd.sample(rows, min(len(rows), max(1, len(rows) // 10))) if rows else []:
-        out.append({"order_key": f"fake-{store['id']}-{r['channel_no']}-{rnd.randint(1, 10**9)}",
-                    "channel_no": r["channel_no"], "product_name": r["name"], "quantity": rnd.randint(1, 3),
-                    "status": "PAYED", "ordered_at": time.time() - rnd.randint(0, 20) * 86400})
-    return out
-
-
-# ───────────────────────── 판매 현황 (화면)
 
 def order_where(f):
     w, a = [], []

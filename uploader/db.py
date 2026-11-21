@@ -13,7 +13,7 @@ plans     한 번에 만든 등록 묶음
 runs      [등록 시작]을 누를 때마다 한 줄
 images    원본 이미지 주소 → 네이버 이미지 주소. scope는 스토어 번호 (상세 이미지는 0: 모든 스토어 공용)
 imports   엑셀 불러오기 기록
-orders    판매 이력 (네이버 주문 가져오기 / 주문 파일 가져오기). 복사본(listing)과 맞춰 sold_count를 센다.
+orders    판매 이력 (판매 현황 파일 넣기 — 예전 네이버 주문 기록 포함). 복사본(listing)과 맞춰 sold_count를 센다.
 잠금      listings.locked=1이면 최신화·내리기로 지우지 않는다.
           locked = 직접 잠금(manual_lock) 또는 (설정 lock_sold이고 실제 판매 > 0)
           실제 판매 = 취소·반품을 뺀 주문 (설정 lock_canceled_too면 취소·반품만 있어도 잠금)
@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS stores (
     capacity INTEGER NOT NULL DEFAULT 10000,
     naver_count INTEGER,             -- 마지막 확인 때 네이버에 있던 상품 수
     naver_count_at REAL,
-    orders_synced_to REAL,               -- 네이버 주문을 여기까지 가져왔음
+    orders_synced_to REAL,               -- 판매 이력을 여기까지 앎 (파일·확인 완료)
     enabled INTEGER NOT NULL DEFAULT 1,
     memo TEXT NOT NULL DEFAULT '',
     importer TEXT NOT NULL DEFAULT '',      -- 원산지 수입사 (비우면 설정 틀 '{store}협력사')
@@ -304,11 +304,11 @@ class DB:
                    # 워터마크 스토어별 덮어쓰기 (비우면 설정 공통값): 위치(9곳·custom), 직접 위치 가운데 점 x·y %, 크기 %, 투명도 0~1, 여백 %
                    ("wm_pos", "TEXT NOT NULL DEFAULT ''"), ("wm_x", "REAL"), ("wm_y", "REAL"), ("wm_size", "REAL"),
                    ("wm_opacity", "REAL"), ("wm_margin", "REAL"),
-                   # 판매 이력 확인 방법: file(판매 현황 파일·직접 확인 — 지우기 전에 네이버 주문을 받지 않음) / api(지우기 전에 네이버에서 주문 받기)
-                   ("sales_mode", "TEXT NOT NULL DEFAULT 'file'"),
-                   # 판매 이력을 마지막으로 확인한 때 (파일 넣음·[판매 이력 확인 완료]·네이버 주문 받기 성공) — 파일 방식은 이게 유효 시간 안이어야 지움
+                   # 네이버 상태 확인(스토어 상품 목록)을 마지막으로 끝낸 때, 마지막 자동 확인 실패 이유('' = 실패 없음)
+                   ("nv_checked_at", "REAL"), ("nv_check_err", "TEXT NOT NULL DEFAULT ''"),
+                   # 판매 이력을 마지막으로 확인한 때 (판매 현황 파일 넣음·[판매 이력 확인 완료]) — 이게 유효 시간 안이어야 지움
                    ("sales_checked_at", "REAL"),
-                   # 네이버 주문을 빈틈없이 받아 둔 처음 시각 (여기부터 orders_synced_to까지는 판매 이력을 다 앎)
+                   # 판매 이력을 빈틈없이 아는 처음 시각 (여기부터 orders_synced_to까지는 판매 이력을 다 앎 — 파일·확인 완료로 정함)
                    ("orders_from", "REAL"),
                    ("memo_at", "REAL"),   # 스토어 메모를 고친 때 (스토어 화면 카드에서 바로 적음)
                    ("wm_text", "TEXT NOT NULL DEFAULT ''"), ("importer", "TEXT NOT NULL DEFAULT ''"),
@@ -364,7 +364,7 @@ class DB:
 
     # 없앤 기능이 남긴 칸·기록 (가격 도둑방지 bait_*, 가격 흔들기 tpl_jitter_*·price_seed, 모바일 할인 목록)
     REMOVED_COLUMNS = {"listings": ("bait_want", "bait", "bait_state", "bait_note", "bait_restored_at", "price_fixed", "opt_fixed"),
-                       "sources": ("price_seed",), "stores": ("tpl_jitter_min", "tpl_jitter_max")}
+                       "sources": ("price_seed",), "stores": ("tpl_jitter_min", "tpl_jitter_max", "sales_mode")}
 
     def _drop_removed(self):
         have = {r[1] for r in self.c.execute("PRAGMA table_info(listings)")}

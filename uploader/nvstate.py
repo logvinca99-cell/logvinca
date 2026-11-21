@@ -3,7 +3,8 @@
 스토어 상품 목록(커머스API products/search, 한 번에 500개)을 끝까지 받아 판매 중 복사본마다
 판매 상태·전시 상태를 적는다. 네이버 손님 가격은 nv_price에만 적고 업스타 가격은 바꾸지 않는다
 (가격은 업스타 [기준 가격 수정]으로만 — 다르면 복사본 화면 '가격 확인 필요'로 알림).
-최신화 직전에 엔진이 스토어마다 한 번 하고, 복사본 화면 '네이버 상태 확인'으로 언제든 한다.
+사장님이 복사본 화면·스토어 카드의 [네이버 상태 확인]을 누를 때만 한다 — [최신화]·[다시 올리기]를 누르면 마지막 확인이 재사용 시간(기본 6시간)보다 오래된 스토어만 한 번 자동으로 하고,
+그 안이면 적어 둔 상태를 쓴다 (실패해도 막지 않고 마지막 확인 결과로 진행). 판매중지·판매금지 상품은 빼고 내리기는 확인하지 않는다.
 """
 import time
 
@@ -13,6 +14,14 @@ LABEL = {"SALE": "판매 중", "OUTOFSTOCK": "품절", "SUSPENSION": "판매중�
          "DELETE": "스토어에 없음", "GONE": "스토어에 없음"}
 # 최신화해도 되는 상태 (지우고 새로 올려도 손님이 보던 상태와 같음). 나머지는 최신화하지 않음
 REFRESH_OK = ("SALE", "OUTOFSTOCK")
+
+
+def ago(ts):
+    """마지막 상태 확인이 얼마 전인지 (없으면 '확인 안 함')."""
+    if not ts:
+        return "확인 안 함"
+    h = (time.time() - float(ts)) / 3600
+    return f"{int(h * 60)}분 전" if h < 1 else f"{int(h)}시간 전" if h < 48 else f"{int(h // 24)}일 전"
 
 
 def label(status):
@@ -64,9 +73,18 @@ def check_store(db, store_id, client, on_wait=None, progress=None, should_stop=N
             out["gone"] += st == "GONE"
             if p and p["final"] > 0:
                 c.execute("UPDATE listings SET nv_price=? WHERE id=?", (p["final"], r["id"]))   # 네이버 손님 가격 (업스타 가격은 그대로)
+    db.x("UPDATE stores SET nv_checked_at=?, nv_check_err='' WHERE id=?", (now, int(store_id)))
     from . import baseprice
     out["price_diff"] = len(baseprice.price_checks(db, store_id))
     return out
+
+
+def due(db, store_id, cfg):
+    """[최신화]·[다시 올리기] 전 자동 확인이 필요한가 (마지막 확인이 재사용 시간보다 오래됨) → (필요한가, 마지막 확인 시각, 시간)."""
+    hours = max(0.0, float(cfg.get("nv_reuse_hours") if cfg.get("nv_reuse_hours") is not None else 6))
+    st = db.one("SELECT nv_checked_at FROM stores WHERE id=?", (int(store_id),)) or {}
+    at = st.get("nv_checked_at")
+    return (not at or time.time() - float(at) > hours * 3600), at, hours
 
 
 def summary(res):

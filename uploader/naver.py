@@ -54,7 +54,7 @@ def explain_error(r):
     bad = [f"{x.get('name')}: {x.get('message')}" for x in j.get("invalidInputs") or []]
     msg = f"{r.status_code} {j.get('code', '')} {j.get('message', '')}".strip()
     if "QUOTA_LIMIT" in str(j.get("code", "")):
-        msg += " → 이 스토어 API 애플리케이션의 시간당 요청 한도를 다 썼습니다. 1시간쯤 뒤 다시 하세요 (주문 가져오기·연결 확인이 몰리면 생김)"
+        msg += " → 이 스토어 API 애플리케이션의 시간당 요청 한도를 다 썼습니다. 1시간쯤 뒤 다시 하세요 (네이버 상태 확인·등록이 몰리면 생김)"
     return msg + (" / " + " / ".join(bad) if bad else "")
 
 
@@ -222,6 +222,23 @@ def download(url, cache=None):
     if cache:
         cache.put(url, r.content, ctype)
     return r.content, ctype
+
+
+def explain(e):
+    """네이버 오류를 쉬운 말로 (원문은 뒤에 짧게). 이미 쉬운 말인 업스타 메시지는 그대로."""
+    raw = " ".join(str(e or "").split())
+    low = raw.lower()
+    if "quota" in low or "429" in raw or "요청량" in raw:
+        why = "이 스토어 API 애플리케이션의 시간당 요청 한도를 다 씀 — 1시간쯤 뒤 같은 버튼을 다시"
+    elif "401" in raw or "unauthorized" in low or "invalid_client" in low:
+        why = "API 키(애플리케이션 ID·시크릿)가 맞지 않거나 만료됨 — 스토어 수정에서 키 확인"
+    elif "403" in raw or "forbidden" in low or "scope" in low:
+        why = "이 작업 권한이 없음 — 커머스API센터 애플리케이션 권한 확인"
+    elif any(k in low for k in ("timed out", "timeout", "connectionerror", "max retries", "name resolution")):
+        why = "네이버에 연결하지 못함 — 인터넷 연결 확인 후 다시"
+    else:
+        return raw
+    return f"{why} (네이버: {raw[:200]})"
 
 
 class Client:
@@ -477,53 +494,6 @@ class Client:
         return True
 
     # ── 주문 (판매 이력)
-
-    def changed_product_order_ids(self, since_ts, until_ts, change_type=None, on_progress=None, should_stop=None):
-        """since~until 사이에 상태가 바뀐(결제·발송·취소·반품·구매확정 등) 상품주문번호들.
-        change_type을 주면 그 변경만 (예: PAYED). 네이버는 한 번에 24시간까지만 조회된다."""
-        ids, t = [], since_ts
-        while t < until_ts:
-            if should_stop and should_stop():
-                raise ApiError("중단함")
-            end = min(t + 86400 - 1, until_ts)
-            params = {"lastChangedFrom": kst_iso(t), "lastChangedTo": kst_iso(end)}
-            if change_type:
-                params["lastChangedType"] = change_type
-            while True:
-                r = self.request("GET", "/v1/pay-order/seller/product-orders/last-changed-statuses", params=params)
-                if r.status_code != 200:
-                    raise ApiError(f"주문 조회 실패: {explain_error(r)}")
-                data = (r.json() or {}).get("data") or {}
-                ids += [x["productOrderId"] for x in data.get("lastChangeStatuses") or [] if x.get("productOrderId")]
-                more = data.get("more") or {}
-                if not more.get("moreFrom"):
-                    break
-                params = {**params, "lastChangedFrom": more["moreFrom"], "moreSequence": more.get("moreSequence")}
-            t = end + 1
-            if on_progress:
-                on_progress(t)
-        return list(dict.fromkeys(ids))
-
-    def product_order_details(self, ids):
-        """상품주문번호 → [{order_key, channel_no, origin_no, seller_code, product_name, quantity, status, ordered_at}]"""
-        out = []
-        for i in range(0, len(ids), 300):
-            r = self.request("POST", "/v1/pay-order/seller/product-orders/query", json={"productOrderIds": ids[i:i + 300]})
-            if r.status_code != 200:
-                raise ApiError(f"주문 상세 조회 실패: {explain_error(r)}")
-            for d in (r.json() or {}).get("data") or []:
-                po, od = d.get("productOrder") or d, d.get("order") or {}
-                out.append({
-                    "order_key": str(po.get("productOrderId") or ""),
-                    "channel_no": str(po.get("productId") or po.get("channelProductNo") or ""),
-                    "origin_no": str(po.get("originalProductId") or po.get("originProductNo") or ""),
-                    "seller_code": str(po.get("sellerProductCode") or po.get("sellerManagementCode") or ""),
-                    "product_name": str(po.get("productName") or ""),
-                    "quantity": int(po.get("quantity") or 1),
-                    "status": str(po.get("productOrderStatus") or ""),
-                    "ordered_at": parse_time(od.get("paymentDate") or od.get("orderDate")),
-                })
-        return out
 
     def delete_product(self, origin_no, on_wait=None):
         """원상품 삭제. 지웠으면 True, 이미 없던 상품(404, 스토어에서 직접 지운 것)이면 False."""

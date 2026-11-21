@@ -493,40 +493,28 @@ class Runner:
             self.db.x(f"UPDATE listings SET status='planned' WHERE status='queued' AND id IN ({m})", ch)
 
     def _prepare_batch(self, cfg, sid, store, client, batch, synced):
-        """지우는 일(최신화·내리기)이 있으면 먼저 이 스토어의 주문을 가져와 판매 이력을 최신으로,
-        최신화가 있으면 네이버 상태(판매중지·판매금지·스토어에서 지움)를 먼저 확인 — 차례 뒤에 붙은 묶음에도."""
-        sales_ok = nv_ok = True
-        sales_err = ""
-        mode = (self.db.one("SELECT sales_mode FROM stores WHERE id=?", (sid,)) or {}).get("sales_mode") or "file"
-        if mode == "file" and any(t["op"] in ("refresh", "delete", "reupload") and t["origin_no"] for t in batch):
-            # 파일 방식: 네이버 주문을 받지 않음 — 사장님이 넣은 판매 현황 파일·[판매 이력 확인 완료]가 유효 시간 안이어야 지움
+        """지우는 일(최신화·내리기·다시 올리기)이 있으면: 사장님이 넣은 판매 현황 파일·[판매 이력 확인 완료]가 유효 시간 안인지 본다
+        (네이버에 주문은 묻지 않음). 최신화·다시 올리기가 있으면 네이버 상태(판매중지·판매금지·스토어에서 지움)를
+        마지막 확인이 재사용 시간(기본 6시간)보다 오래된 때만 스토어마다 한 번 자동으로 확인 — 실패해도 막지 않고 마지막 확인 결과로 진행."""
+        sales_ok, sales_err, nv_err = True, "", ""
+        if any(t["op"] in ("refresh", "delete", "reupload") and t["origin_no"] for t in batch):
             sales_ok, sales_err = orders.sales_fresh(self.db, sid, cfg)
             if not sales_ok:
                 self._log("err", f"{sales_err} — 이 스토어의 최신화·내리기는 하지 않습니다 (판매 현황 파일을 넣고 다시)", store["name"])
-        elif any(t["op"] in ("refresh", "delete", "reupload") and t["origin_no"] for t in batch):
-            with self.lock:
-                self.state["stores"][sid]["status"] = "판매 이력 확인 중"
-            try:
-                # 처음이면 최근 며칠만 (요청 수·시간당 한도를 아끼려고, 설정 orders_refresh_days 기본 7일)
-                r = orders.sync_store(self.db, self.db.store(sid), client, days=int(cfg.get("orders_refresh_days") or 7))
-                if r["new"]:
-                    self._log("info", f"새 주문 {r['new']}건을 가져왔습니다", store["name"])
-            except Exception as e:  # noqa: BLE001
-                sales_ok = False
-                sales_err = orders.explain_sync_error(e)
-                self._log("err", f"주문을 가져오지 못해 이 스토어의 최신화·내리기는 하지 않습니다: {e}", store["name"])
-        # 이때 네이버 손님 가격도 읽어 nv_price에 적는다 (업스타 가격은 바꾸지 않음 — 다르면 '가격 확인 필요')
-        if any(t["op"] in ("refresh", "reupload") and t["origin_no"] for t in batch) and not synced:
-            with self.lock:
-                self.state["stores"][sid]["status"] = "네이버 상태 확인 중"
-            try:
-                res = nvstate.check_store(self.db, sid, client, should_stop=self.stop_ev.is_set)
-                self._log("info", "네이버 상태 · " + nvstate.summary(res), store["name"])
-                synced = True
-            except Exception as e:  # noqa: BLE001
-                nv_ok = False
-                self._log("err", f"네이버 상태를 확인하지 못해 이 스토어의 최신화·다시 올리기는 하지 않습니다: {e}", store["name"])
-        return {**store, "_sales_ok": sales_ok, "_sales_err": sales_err, "_sales_mode": mode, "_nv_ok": nv_ok, "_synced": synced}
+        if sales_ok and not synced and any(t["op"] in ("refresh", "reupload") and t["origin_no"] for t in batch):
+            need, at, hours = nvstate.due(self.db, sid, cfg)
+            if need:
+                with self.lock:
+                    self.state["stores"][sid]["status"] = "네이버 상태 확인 중"
+                try:
+                    res = nvstate.check_store(self.db, sid, client, should_stop=self.stop_ev.is_set)
+                    self._log("info", "네이버 상태 · " + nvstate.summary(res), store["name"])
+                except Exception as e:  # noqa: BLE001 - 막지 않음: 적어 둔 상태로 진행
+                    nv_err = f"네이버 상태 확인 실패({naver.explain(e)}) — 마지막 확인 결과({nvstate.ago(at)})로 진행"
+                    self.db.x("UPDATE stores SET nv_check_err=? WHERE id=?", (nv_err[:500], sid))
+                    self._log("warn", nv_err, store["name"])
+            synced = True   # 이번 실행에서는 이 스토어를 다시 확인하지 않음 (성공·실패·재사용 모두)
+        return {**store, "_sales_ok": sales_ok, "_sales_err": sales_err, "_nv_err": nv_err, "_synced": synced}
 
     def _wait_if_paused(self, sid=None):
         ss = self.state["stores"].get(sid) if sid is not None else None
@@ -626,15 +614,9 @@ class Runner:
             if live:
                 # 판매된 상품은 지우지 않는다: 지우기 직전에 주문을 다시 받고(5분 넘게 지났으면) 잠금을 다시 확인
                 if not store.get("_sales_ok", True):
-                    if store.get("_sales_mode", "file") == "file":
-                        raise naver.ApiError(f"판매 이력 확인이 필요해 지우지 않았습니다 · {store.get('_sales_err') or ''} → 복사본 화면 위 "
-                                             "[판매 이력 확인]에서 판매 현황 파일을 넣고(또는 [판매 이력 확인 완료]) 같은 버튼을 다시 누르세요")
-                    raise naver.ApiError("네이버에서 주문(판매 이력)을 받지 못해 지우지 않았습니다 · 이유: "
-                                         + (store.get("_sales_err") or "알 수 없음")
-                                         + " → 복사본 화면 위 [판매 이력 확인] 창의 [네이버 주문 받기 시험]으로 이유를 확인하세요"
-                                         " (주문 조회 권한·시간당 한도·API 키 — 또는 그 창에서 확인 방법을 '파일'로)")
-                self._sales_recheck(sid, client)
-                lk = self.db.one("SELECT locked, lock_note, price, price_push, nv_status, del_mark FROM listings WHERE id=?", (lid,))
+                    raise naver.ApiError(f"판매 이력 확인이 필요해 지우지 않았습니다 · {store.get('_sales_err') or ''} → 복사본 화면 위 "
+                                         "[판매 이력 확인]에서 판매 현황 파일을 넣고(또는 [판매 이력 확인 완료]) 같은 버튼을 다시 누르세요")
+                lk = self.db.one("SELECT locked, lock_note, price, price_push, nv_status, nv_at, del_mark FROM listings WHERE id=?", (lid,))
                 if lk["locked"]:
                     self.db.set_listing(lid, "success", op="create", stage="",
                                         message=f"잠금이라 지우지 않음 ({lk['lock_note']})")
@@ -645,8 +627,9 @@ class Runner:
                 # 모든 상품: 그 상품이 올라간 날부터 판매 이력을 알아야 지운다
                 self._need_sales_history(sid, t)
                 if op in ("refresh", "reupload"):
-                    if not store.get("_nv_ok", True):
-                        raise naver.ApiError("네이버 상태(판매중지·판매금지)를 확인하지 못해 지우지 않았습니다. 다시 시도하세요.")
+                    # 네이버 상태: 묶음 앞에서 (재사용 시간이 지났으면) 한 번 확인해 적어 둔 값으로 — 모르면 그대로 진행
+                    if store.get("_nv_err"):
+                        notes.append(store["_nv_err"])
                     nv = lk["nv_status"]
                     if nv == "GONE" and lk["del_mark"]:
                         pass   # 지난번에 지우기를 시작한 뒤 끊김 → 이미 지워진 것: 지우기(없으면 넘어감) 뒤 등록만 이어서
@@ -658,7 +641,8 @@ class Runner:
                         self._count(sid, lid, None)
                         return
                     elif nv and nv not in nvstate.REFRESH_OK:
-                        msg = f"네이버 '{nvstate.label(nv)}' 상태라 {'최신화' if op == 'refresh' else '다시 올리기'}하지 않음"
+                        msg = (f"네이버 '{nvstate.label(nv)}' 상태라 {'최신화' if op == 'refresh' else '다시 올리기'}하지 않음"
+                               f" (마지막 상태 확인 {nvstate.ago(lk['nv_at'])})")
                         self.db.set_listing(lid, "success", op="create", stage="", message=msg)
                         self._log("info", f"건너뜀 · {t['name'][:40]} · {msg}", store["name"])
                         self._count(sid, lid, None)
@@ -715,8 +699,7 @@ class Runner:
                 notes.append("모바일에서 흐린 캡처로 보일 수 있음: " + ", ".join(iss))
 
             if live:   # 여기까지 모두 준비됨 → 이제 지우고, 지운 뒤에는 등록만
-                # 준비하는 동안 팔렸을 수 있음 → 지우기 바로 앞에서 주문·잠금을 한 번 더 확인
-                self._sales_recheck(sid, client)
+                # 준비하는 동안 판매 현황 파일로 잠겼을 수 있음 → 지우기 바로 앞에서 잠금을 한 번 더 확인
                 lk2 = self.db.one("SELECT locked, lock_note FROM listings WHERE id=?", (lid,))
                 if lk2 and lk2["locked"]:
                     self.db.set_listing(lid, "success", op="create", stage="", message=f"잠금이라 지우지 않음 ({lk2['lock_note']})")
@@ -755,32 +738,12 @@ class Runner:
             self._log("ok", f"{what} 완료 · {tn['name'][:40]} ({sec:.1f}초, 새 이미지 {n1 + n2}장)", store["name"])
             self._count(sid, lid, True)
         except Exception as e:  # noqa: BLE001 - 한 건의 실패는 기록하고 다음으로
-            msg = str(e)[:900]
+            msg = naver.explain(e)[:900]
             if deleted_now:   # 네이버에서는 이미 지워짐 → 눈에 띄게
                 msg = "네이버에서 지워짐 — 다시 등록 필요 (실패 재시도로 다시 올리세요): " + msg
             self.db.set_listing(lid, "fail", stage="", message=msg, seconds=time.time() - t0)
             self._log("err", f"실패 · {t['name'][:40]} · {msg}", store["name"])
             self._count(sid, lid, False)
-
-    def _sales_recheck(self, sid, client):
-        """지우기 직전(네이버 API 방식 스토어만): 그 스토어 주문을 마지막으로 받은 지 5분이 넘었으면 다시 받는다 (실행 중에 팔린 상품도 잠기게).
-        파일 방식 스토어는 네이버 주문을 받지 않는다 (사장님이 넣은 판매 현황 파일로 확인)."""
-        st = self.db.one("SELECT orders_synced_to, sales_mode FROM stores WHERE id=?", (sid,)) or {}
-        if (st.get("sales_mode") or "file") == "file":
-            return
-        if st.get("orders_synced_to") and time.time() - float(st["orders_synced_to"]) < 300:
-            return
-        locks = self.__dict__.setdefault("_sync_locks", {})
-        with self.lock:
-            lk = locks.setdefault(sid, threading.Lock())
-        with lk:
-            st = self.db.one("SELECT orders_synced_to FROM stores WHERE id=?", (sid,)) or {}
-            if st.get("orders_synced_to") and time.time() - float(st["orders_synced_to"]) < 300:
-                return
-            try:
-                orders.sync_store(self.db, self.db.store(sid), client, days=7)
-            except Exception as e:  # noqa: BLE001
-                raise naver.ApiError(f"지우기 전에 주문을 다시 확인하지 못해 지우지 않았습니다: {e}") from None
 
     def _prepare(self, cfg, store, categories, t):
         """올릴 내용 준비·확인 (row, 카테고리 번호, build_body 인자). 막히는 게 있으면 여기서 예외 — 최신화는 지우기 전에 부른다.
@@ -812,7 +775,7 @@ class Runner:
             have = f"지금은 {time.strftime('%Y-%m-%d', time.localtime(kf))}부터만 있음" if kf else "아직 받은 주문 없음"
             raise naver.ApiError(f"판매 이력 확인 전이라 지우지 않음 · 이 상품은 {d}에 올라갔는데 주문은 {have} → "
                                  f"복사본 화면 위 [판매 이력 확인]에서 판매자센터 주문 파일을 넣거나 팔린 것을 직접 잠근 뒤 "
-                                 f"'판매 이력 확인 완료' (또는 네이버에서 {d} ~ 오늘 주문 받기) 후 같은 버튼([내리기]/[최신화])을 다시 누르면 다시 시도합니다")
+                                 f"'판매 이력 확인 완료' 후 같은 버튼([내리기]/[최신화])을 다시 누르면 다시 시도합니다")
 
     def _count(self, sid, lid, ok):
         """ok: True 성공 / False 실패 / None 건너뜀"""

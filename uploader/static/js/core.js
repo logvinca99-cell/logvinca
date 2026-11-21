@@ -343,14 +343,14 @@ const App = {
     const q = (this._navQ || "").trim().toLowerCase();
     const runSt = Object.fromEntries(((this.run?.running && this.run.stores) || []).filter((x) => !["끝", "중단"].includes(x.status)).map((x) => [x.id, x]));
     const nRun = Object.keys(runSt).length;
-    // 작은 카드(가로 3개): 이름 한 줄 + 아주 작은 판매 수, 점(초록 = 등록 중 n/m, 빨강 = 실패) — 자세한 수는 마우스를 올리면
+    // 작은 카드(가로 3개): 이름 한 줄 — 등록 중은 옅은 초록 배경, 실패는 왼쪽 빨간 띠, 자세한 수는 마우스를 올리면
     const row = (s) => {
       const r = runSt[s.id];
       const tip = [s.name, `판매 ${num(s.live || 0)} · 대기 ${num(s.pending || 0)}${s.fail ? ` · 실패 ${num(s.fail)}` : ""}`,
         r ? `등록 중 ${num(r.done || 0)}/${num(r.total || 0)}` : ""].filter(Boolean).join("\n");
-      return `<a class="ns-item ${this._navSid === s.id ? "on" : ""} ${s.enabled === 0 ? "off" : ""}" href="#listings?store_id=${s.id}" title="${esc(tip)}">
-        <span class="ns-name">${esc(s.name)}</span>
-        <span class="ns-sub">${r ? `<i class="ns-dot run"></i><b class="ns-run">${num(r.done || 0)}/${num(r.total || 0)}</b>` : `<span>${num(s.live || 0)}</span>`}${s.fail ? '<i class="ns-dot fail"></i>' : ""}</span></a>`;
+      // 진행 중 = 옅은 초록 배경, 실패 있음 = 왼쪽 빨간 띠 (점·글자를 더하지 않아 카드 크기·이름이 그대로)
+      return `<a class="ns-item ${this._navSid === s.id ? "on" : ""} ${s.enabled === 0 ? "off" : ""} ${r ? "run" : ""} ${s.fail ? "fail" : ""}" href="#listings?store_id=${s.id}" title="${esc(tip)}">
+        <span class="ns-name">${esc(s.name)}</span></a>`;
     };
     const groups = byBusiness(list).map(([biz, ss]) => {
       const shown = q ? ss.filter((s) => String(s.name).toLowerCase().includes(q)) : ss;
@@ -528,8 +528,7 @@ const App = {
         ? `판매 이력 파일 끝: ${num(r.rows)}줄${r.already ? ` (이미 넣은 주문 ${num(r.already)}줄)` : ""} → 복사본에 맞춘 주문 ${num(r.matched)}건 (복사본 ${num(r.copies)}개`
           + (r.multi ? ` · 같은 복사본에 2건 이상 ${num(r.multi)}개` : "") + `) · 못 맞춘 주문 ${num(r.unmatched)}건` + (r.unmatched ? " (판매 현황 → 넣은 주문 파일에서 목록)" : "")
           + (r.store_id ? " · 이 스토어 판매 이력 확인 완료" : "")
-        : `주문 가져오기 끝: 스토어 ${num(r.stores)}곳 · 새 주문 ${num(r.new)}건 · 복사본과 맞춤 ${num(r.matched)}건`
-          + (r.errors?.length ? ` · 실패 ${r.errors.length}곳 (${r.errors[0]})` : ""),
+        : `판매 이력 끝`,
     }[t.kind];
     return msg ? msg() : `${t.title} 끝`;
   },
@@ -576,8 +575,28 @@ const App = {
     if (r && r.token) return this.priceWarn(url, r, extra);
     return this.startTask(Promise.resolve(r));
   },
-  /* 판매 중 상품(가져온 것·올린 것 모두)의 판매 이력 확인: 판매자센터 주문 파일을 넣거나 팔린 것을 직접 잠근 뒤 '판매 이력 확인 완료'
-     → 그 날부터 판매 이력을 아는 것으로 (그 뒤로는 최신화·내리기 때마다 마지막 확인부터만 새로 받아 잠금) */
+  /* 최신화·다시 올리기 창 안내: 저장된 [네이버 상태 확인] 결과로 빠질 건수·마지막 확인 (네이버에 묻지 않음) */
+  async nvNote(box, target) {
+    if (!box) return;
+    try {
+      const p = await this.api("/api/listings/nv_preview", { json: target });
+      if (!p.total) { box.hidden = true; return; }   // 걸 대상이 없으면 안내도 없음
+      const st = p.stores || [];
+      const will = st.filter((x) => x.will_check), errs = st.filter((x) => x.err);
+      const h = num(p.reuse_hours);
+      box.className = `notice ${errs.length ? "warn" : ""}`;
+      box.innerHTML = (will.length
+          ? `시작하면 <b>네이버 상태를 한 번 자동으로 확인</b>합니다 (${will.length === st.length ? "마지막 확인 " + esc(will[0].ago) : will.map((x) => esc(x.name)).join(", ")} — ${h}시간에 한 번) → 판매중지·판매금지 상품은 빠짐`
+          : `마지막 네이버 상태 확인 <b>${esc(st.length === 1 ? st[0].ago : p.last_ago)}</b> — ${h}시간 안이라 그 결과로 진행 (네이버에 다시 묻지 않음)`
+            + (p.nonsale ? ` · 판매중지·판매금지 등이라 <b>${num(p.nonsale)}건</b> 빠짐` : "")
+            + (p.gone ? ` · 스토어에 없음 ${num(p.gone)}건은 '내림'으로` : "")
+            + (p.unknown ? ` · 상태 모름 ${num(p.unknown)}건은 그대로 진행` : ""))
+        + (errs.length ? `<br><span class="small c-err">지난 확인 실패: ${esc(errs[0].err)}</span>` : "")
+        + `<br><span class="small">확인이 실패해도 막지 않고 마지막 확인 결과로 진행합니다.</span>`;
+    } catch (e) { box.textContent = ""; box.hidden = true; }
+  },
+  /* 판매 중 상품(가져온 것·올린 것 모두)의 판매 이력 확인: 판매 현황 파일을 넣거나 팔린 것을 직접 잠근 뒤 '판매 이력 확인 완료'
+     → 그 날부터 판매 이력을 아는 것으로 (마지막 확인이 유효 시간 안일 때만 최신화·내리기 — 네이버에서 주문을 받지 않음) */
   async salesConfirm(storeId, after) {
     let s;
     try { s = await this.api(`/api/stores/${storeId}/sales`); } catch (e) { return this.toast(e.message, true); }
@@ -587,9 +606,7 @@ const App = {
       title: `판매 이력 확인 — ${s.store}`, wide: true,
       body: `<div class="notice ${s.need ? "warn" : "ok"}">${s.need
           ? `판매 중 상품 <b>${num(s.adopted)}</b>개 중 <b>${num(s.need)}</b>개는 판매 이력 확인 전이라 <b>최신화·내리기를 하지 않습니다</b> (팔린 상품을 지우지 않게).`
-          : `판매 중 상품 <b>${num(s.adopted)}</b>개 모두 판매 이력을 확인했습니다 — ${s.sales_mode === "api"
-            ? "최신화·내리기 때마다 마지막 확인 뒤 주문만 네이버에서 새로 받아 잠급니다."
-            : `최신화·내리기는 마지막 확인이 ${num(s.valid_hours)}시간 안일 때만 합니다 (네이버 주문은 받지 않음 — 넘으면 판매 현황 파일을 다시 넣으세요).`}`}</div>
+          : `판매 중 상품 <b>${num(s.adopted)}</b>개 모두 판매 이력을 확인했습니다 — 최신화·내리기는 마지막 확인이 ${num(s.valid_hours)}시간 안일 때만 합니다 (넘으면 판매 현황 파일을 다시 넣으세요).`}</div>
         <dl class="kv" style="margin-top:10px">
           <dt>가장 먼저 올라간 상품의 날</dt><dd>${s.reg_min ? d(s.reg_min) : "-"}</dd>
           <dt>판매 이력을 아는 기간</dt><dd>${s.known_from ? `${d(s.known_from)} ~ 오늘` : "아직 없음"}</dd>
@@ -598,32 +615,20 @@ const App = {
             + 못 맞춘 주문 <b class="${s.file.unmatched ? "c-err" : ""}">${num(s.file.unmatched)}건</b>${s.file.unmatched ? ` <button type="button" class="link-btn" id="sc-unm" data-noconfirm>목록 보기</button>` : ""}
             <div id="sc-unm-box"></div>` : "없음"}</dd>
           <dt>마지막 확인</dt><dd>${s.checked_at ? `${when(s.checked_at)} (${Math.floor((Date.now() / 1000 - s.checked_at) / 3600)}시간 전)` : "아직 없음"} · 유효 ${num(s.valid_hours)}시간
-            — ${s.sales_mode === "api" ? '<span class="muted">네이버 주문 받기 방식 (지우기 전에 네이버에서 받음)</span>'
-              : s.fresh ? '<span class="c-ok">지금 최신화·내리기 가능</span>' : `<span class="c-err">${esc(s.fresh_why)} — 판매 현황 파일을 넣거나 [판매 이력 확인 완료]</span>`}</dd>
+            — ${s.fresh ? '<span class="c-ok">지금 최신화·내리기 가능</span>' : `<span class="c-err">${esc(s.fresh_why)} — 판매 현황 파일을 넣거나 [판매 이력 확인 완료]</span>`}</dd>
           <dt>잠긴 판매 중 상품</dt><dd>${num(s.locked)}개${s.manual ? ` (직접 잠금 ${num(s.manual)}개)` : ""}</dd>
         </dl>
-        <div class="cl-row" style="margin:10px 0 4px"><b class="small">이 스토어 확인 방법</b>
-          <label class="check"><input type="radio" name="sc-mode" value="file" ${s.sales_mode !== "api" ? "checked" : ""} data-noconfirm><span>판매 현황 파일·직접 확인 <span class="muted small">(지우기 전에 네이버 주문을 받지 않음)</span></span></label>
-          <label class="check"><input type="radio" name="sc-mode" value="api" ${s.sales_mode === "api" ? "checked" : ""} data-noconfirm><span>네이버 주문 받기 <span class="muted small">(지우기 전에 커머스API로 받음 · 시간당 한도 씀)</span></span></label></div>
         <p class="small" style="margin:10px 0 4px"><b>판매 이력을 확인하는 방법 (하나 또는 여럿)</b></p>
         <ol class="small" style="line-height:1.8;padding-left:18px;margin:0 0 10px">
           <li><b>판매자센터 주문 파일 넣기</b>: 판매자센터 → 주문(주문통합검색 등)에서 <b>${from} ~ 오늘</b> 주문을 엑셀로 받아 아래 <b>[판매 이력 파일 넣기]</b> — 상품번호로 맞춰 팔린 상품을 자동으로 잠급니다. 잘못 넣었으면 <a href="#orders">판매 현황 → 넣은 주문 파일</a>에서 되돌리기.</li>
           <li><b>파일 없이 직접</b>: 팔린 걸 아는 상품은 복사본 화면에서 골라 <b>[잠금]</b> → 아래 날짜를 확인하고 <b>[판매 이력 확인 완료]</b>.</li>
-          <li><b>네이버에서 주문 받기</b>: 아래 날짜부터 오늘까지 네이버 주문을 받아 잠급니다 — 먼저 <b>[네이버 주문 받기 시험]</b>으로 이 스토어 키가 주문을 받을 수 있는지 확인하세요.</li>
         </ol>
         <p class="muted small" style="margin:0 0 8px">이 창에서 <b>판매 이력 파일을 넣으면 아래 날짜부터 판매 이력 확인 완료</b>까지 한 번에 됩니다(파일 없이 확인했으면 <b>[판매 이력 확인 완료]</b>).
-          <b>파일·직접 확인 방식</b>은 최신화·내리기 전에 네이버 주문을 받지 않고, 마지막 확인이 유효 시간(설정 · 기본 24시간) 안일 때만 지웁니다 — 넘었으면 판매 현황 파일을 다시 넣으세요.
-          <b>네이버 주문 받기 방식</b>은 지울 때마다 마지막 확인 뒤 주문만 네이버에서 받아 잠급니다(받기가 안 되면 지우지 않음).</p>
+          업스타는 네이버에서 주문을 받지 않습니다 — 마지막 확인이 유효 시간(설정 · 기본 24시간) 안일 때만 최신화·내리기를 하고, 넘었으면 판매 현황 파일을 다시 넣으세요.</p>
         <div class="cl-row"><label class="field" style="margin:0">이 날부터 판매 이력을 확인함<input type="date" id="sc-from" value="${from}"></label>
-          <label class="btn"><input type="file" id="sc-file" accept=".xlsx,.xlsm,.csv" hidden>판매 이력 파일 넣기</label>
-          <button type="button" class="btn" id="sc-test" data-noconfirm>네이버 주문 받기 시험</button></div>
-        <div id="sc-test-res" class="small" style="margin-top:6px;min-height:1.4em"></div>`,
+          <label class="btn"><input type="file" id="sc-file" accept=".xlsx,.xlsm,.csv" hidden>판매 이력 파일 넣기</label></div>`,
       buttons: [
         { label: "닫기" },
-        { label: "네이버에서 주문 받기", confirm: `${esc(s.store)} 주문을 위 날짜부터 오늘까지 네이버에서 받습니다 (하루 단위로 나눠 조회 — 기간이 길면 시간이 걸림).`, onClick: async (b) => {
-          const f = $("#sc-from", b).value;
-          await this.startTask(this.api("/api/orders/sync", { json: { from: f, store_ids: [s.store_id] } }));
-        } },
         { label: "판매 이력 확인 완료", primary: true, confirm: `${esc(s.store)}: 위 날짜부터 오늘까지의 판매 이력을 확인했나요? (판매자센터 주문 파일을 넣었거나 팔린 상품을 잠금) — 확인하면 그 날 뒤에 올라간 상품은 최신화·내리기를 합니다. 잠긴 것은 지우지 않습니다.`, onClick: async (b) => {
           const f = $("#sc-from", b).value;
           try {
@@ -634,22 +639,6 @@ const App = {
         } },
       ],
     });
-    $("#sc-test").addEventListener("click", async (ev) => {
-      const box = $("#sc-test-res"), btn = ev.currentTarget;
-      btn.disabled = true;
-      box.innerHTML = '<span class="spin"></span> 최근 1일 주문을 조회해 보는 중…';
-      try {
-        const r = await this.api(`/api/stores/${s.store_id}/orders_test`, { json: {} });
-        box.innerHTML = `<span class="${r.ok ? "c-ok" : "c-err"}"><b>${r.ok ? "✔" : "✘"}</b> ${esc(r.message)}</span>`;
-      } catch (e) { box.innerHTML = `<span class="c-err">✘ ${esc(e.message)}</span>`; }
-      btn.disabled = false;
-    });
-    $$("input[name=sc-mode]").forEach((x) => x.addEventListener("change", async () => {
-      try {
-        await this.api(`/api/stores/${s.store_id}/sales_mode`, { json: { mode: x.value } });
-        this.toast(x.value === "api" ? "이 스토어는 지우기 전에 네이버에서 주문을 받습니다" : "이 스토어는 판매 현황 파일·직접 확인으로 (지우기 전에 네이버 주문을 받지 않음)");
-      } catch (e) { this.toast(e.message, true); }
-    }));
     $("#sc-unm")?.addEventListener("click", async () => {
       const box = $("#sc-unm-box");
       try {
@@ -1074,8 +1063,9 @@ const App = {
      x.confirm이 없을 때만 창 설명 첫 문장 하나. [← 돌아가기] / [확인 — 실행] */
   _confirmStep(title, x, b) {
     const txt = (el) => (el?.innerText || "").replace(/\s+/g, " ").trim();
+    const cf = typeof x.confirm === "function" ? esc(x.confirm() || "") : x.confirm;   // 함수면 그때 글자(창 안 안내 등)를 그대로
     let intro = "";
-    if (!x.confirm) {
+    if (!cf) {
       const el = [...b.querySelectorAll(".notice, p, li")].find((e) => !e.closest("table, [data-noconfirm], details") && e.offsetParent !== null
         && !e.querySelector("button, input[type=file]") && txt(e));
       const t = txt(el).split(/(?<=[.。!?])\s|(?<=다\.)\s/)[0] || "";
@@ -1098,7 +1088,7 @@ const App = {
     box.id = "m-confirm";
     box.innerHTML = `<div class="m-confirm-body">
         <div class="notice warn"><b>【${esc(x.label)}】 실행할까요?</b> <span class="muted small">${esc(title)}</span></div>
-        ${x.confirm ? `<p>${x.confirm}</p>` : intro ? `<p class="small">${esc(intro)}</p>` : ""}
+        ${cf ? `<p>${cf}</p>` : intro ? `<p class="small">${esc(intro)}</p>` : ""}
         ${picks.length ? `<div class="m-picks">${picks.slice(0, 8).map((t) => `<span class="pchip">${esc(t)}</span>`).join("")}${picks.length > 8 ? `<span class="muted small">외 ${picks.length - 8}개</span>` : ""}</div>` : ""}</div>
       <div class="m-confirm-foot"><button class="btn" data-back>← 돌아가기</button><button class="btn ${x.danger ? "danger" : "primary"}" data-go>확인 — 실행 (${esc(x.label)})</button></div>`;
     $("#m-body").hidden = true;
@@ -1224,7 +1214,23 @@ const App = {
 
   // ── 쪽 넘기기
 
-  pager(el, { page, size, total, onPage }) {
+  /* 쪽을 넘긴 뒤: 화면 맨 위가 아니라 그 목록 머리(위 고르기 막대·표 시작)가 보이게 — 이미 화면 위쪽에 보이면 그대로 */
+  toListHead(el) {
+    if (!el || !el.isConnected) return;
+    const lb = el.closest(".listbar");
+    const page = el.closest(".page") || document.body;
+    const bar = lb || page.querySelector(".listbar");
+    const head = lb ? lb.nextElementSibling : (bar && bar.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING ? bar.nextElementSibling : el.closest(".table-card, .card, section"));
+    if (!head) return;
+    const hh = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--head-h")) || 62;
+    const off = hh + (bar ? bar.offsetHeight : 0) + 8;
+    const top = head.getBoundingClientRect().top;
+    if (top >= off - 2 && top <= innerHeight * 0.6) return;   // 목록 머리가 이미 보임
+    window.scrollTo({ top: Math.max(0, top + scrollY - off), behavior: "auto" });
+  },
+
+  pager(el, { page, size, total, onPage: go0 }) {
+    const onPage = (p) => { go0(p); this.toListHead(el); };
     const pages = Math.max(1, Math.ceil(total / size));
     if (total <= size) { el.innerHTML = total ? `<span class="muted small">${num(total)}개</span>` : ""; return; }
     el.innerHTML = `<button data-p="${page - 1}" ${page <= 0 ? "disabled" : ""}>‹ 이전</button>
@@ -1466,7 +1472,9 @@ const App = {
   },
 
   /* 쪽 넘기기: 총 N개 · [100]개씩 · « ‹ [3] / 120쪽 › » */
-  pagerBar(el, { page, size, total, onPage, onSize, unit = "개" }) {
+  pagerBar(el, { page, size, total, onPage: go0, onSize: sz0, unit = "개" }) {
+    const onPage = (p) => { go0(p); this.toListHead(el); };
+    const onSize = (n) => { sz0(n); this.toListHead(el); };
     const pages = Math.max(1, Math.ceil(total / size));
     el.innerHTML = `<span>총 <b>${num(total)}</b>${unit}</span>
       <label><select data-pg="size">${[50, 100, 200, 500].map((x) => `<option value="${x}" ${x === size ? "selected" : ""}>${x}</option>`).join("")}</select> ${unit}씩 보기</label>
