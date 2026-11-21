@@ -472,6 +472,9 @@ App.page("stores", {
           <span class="cp-row"><select name="chrome_profile" id="s-cp"><option value="">정하지 않음 (지금 브라우저로 열기)</option>
             ${s.chrome_profile ? `<option value="${esc(s.chrome_profile)}" selected>${esc(s.chrome_profile)}</option>` : ""}</select>
             <span class="muted small" id="s-cp-note">크롬 프로필 불러오는 중…</span></span></label>
+        <label class="field">판매 이력 확인 방법 <span class="muted">(최신화·내리기로 지우기 전에 팔린 상품을 어떻게 확인할지)</span>
+          <select name="sales_mode"><option value="file" ${(s.sales_mode || "file") === "file" ? "selected" : ""}>판매 현황 파일·직접 확인 (지우기 전에 네이버 주문을 받지 않음 — 마지막 확인이 유효 시간 안이어야 지움)</option>
+            <option value="api" ${s.sales_mode === "api" ? "selected" : ""}>네이버 주문 받기 (지우기 전에 커머스API로 주문을 받음 — 시간당 한도를 씀)</option></select></label>
         <label class="field">받는 메일 주소 <span class="muted">(메일함에서 이 스토어 메일을 구분 · 예: me+redcoco@gmail.com · 비우면 메일 안의 스토어 이름으로)</span><input name="mail_to" value="${esc(s.mail_to || "")}"></label>
         <label class="field">메모 <span class="muted">(스토어 카드에서도 바로 적을 수 있음)</span><textarea name="memo" rows="4">${esc(s.memo || "")}</textarea></label>
         <label class="check"><input type="checkbox" name="enabled" ${s.enabled ? "checked" : ""}> 사용 (끄면 새 계획에서 빠짐)</label>

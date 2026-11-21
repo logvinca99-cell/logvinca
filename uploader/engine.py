@@ -497,7 +497,13 @@ class Runner:
         최신화가 있으면 네이버 상태(판매중지·판매금지·스토어에서 지움)를 먼저 확인 — 차례 뒤에 붙은 묶음에도."""
         sales_ok = nv_ok = True
         sales_err = ""
-        if any(t["op"] in ("refresh", "delete", "reupload") and t["origin_no"] for t in batch):
+        mode = (self.db.one("SELECT sales_mode FROM stores WHERE id=?", (sid,)) or {}).get("sales_mode") or "file"
+        if mode == "file" and any(t["op"] in ("refresh", "delete", "reupload") and t["origin_no"] for t in batch):
+            # 파일 방식: 네이버 주문을 받지 않음 — 사장님이 넣은 판매 현황 파일·[판매 이력 확인 완료]가 유효 시간 안이어야 지움
+            sales_ok, sales_err = orders.sales_fresh(self.db, sid, cfg)
+            if not sales_ok:
+                self._log("err", f"{sales_err} — 이 스토어의 최신화·내리기는 하지 않습니다 (판매 현황 파일을 넣고 다시)", store["name"])
+        elif any(t["op"] in ("refresh", "delete", "reupload") and t["origin_no"] for t in batch):
             with self.lock:
                 self.state["stores"][sid]["status"] = "판매 이력 확인 중"
             try:
@@ -520,7 +526,7 @@ class Runner:
             except Exception as e:  # noqa: BLE001
                 nv_ok = False
                 self._log("err", f"네이버 상태를 확인하지 못해 이 스토어의 최신화·다시 올리기는 하지 않습니다: {e}", store["name"])
-        return {**store, "_sales_ok": sales_ok, "_sales_err": sales_err, "_nv_ok": nv_ok, "_synced": synced}
+        return {**store, "_sales_ok": sales_ok, "_sales_err": sales_err, "_sales_mode": mode, "_nv_ok": nv_ok, "_synced": synced}
 
     def _wait_if_paused(self, sid=None):
         ss = self.state["stores"].get(sid) if sid is not None else None
@@ -620,10 +626,13 @@ class Runner:
             if live:
                 # 판매된 상품은 지우지 않는다: 지우기 직전에 주문을 다시 받고(5분 넘게 지났으면) 잠금을 다시 확인
                 if not store.get("_sales_ok", True):
+                    if store.get("_sales_mode", "file") == "file":
+                        raise naver.ApiError(f"판매 이력 확인이 필요해 지우지 않았습니다 · {store.get('_sales_err') or ''} → 복사본 화면 위 "
+                                             "[판매 이력 확인]에서 판매 현황 파일을 넣고(또는 [판매 이력 확인 완료]) 같은 버튼을 다시 누르세요")
                     raise naver.ApiError("네이버에서 주문(판매 이력)을 받지 못해 지우지 않았습니다 · 이유: "
                                          + (store.get("_sales_err") or "알 수 없음")
                                          + " → 복사본 화면 위 [판매 이력 확인] 창의 [네이버 주문 받기 시험]으로 이유를 확인하세요"
-                                         " (주문 조회 권한·시간당 한도·API 키)")
+                                         " (주문 조회 권한·시간당 한도·API 키 — 또는 그 창에서 확인 방법을 '파일'로)")
                 self._sales_recheck(sid, client)
                 lk = self.db.one("SELECT locked, lock_note, price, price_push, nv_status, del_mark FROM listings WHERE id=?", (lid,))
                 if lk["locked"]:
@@ -754,8 +763,11 @@ class Runner:
             self._count(sid, lid, False)
 
     def _sales_recheck(self, sid, client):
-        """지우기 직전: 그 스토어 주문을 마지막으로 받은 지 5분이 넘었으면 다시 받는다 (실행 중에 팔린 상품도 잠기게)."""
-        st = self.db.one("SELECT orders_synced_to FROM stores WHERE id=?", (sid,)) or {}
+        """지우기 직전(네이버 API 방식 스토어만): 그 스토어 주문을 마지막으로 받은 지 5분이 넘었으면 다시 받는다 (실행 중에 팔린 상품도 잠기게).
+        파일 방식 스토어는 네이버 주문을 받지 않는다 (사장님이 넣은 판매 현황 파일로 확인)."""
+        st = self.db.one("SELECT orders_synced_to, sales_mode FROM stores WHERE id=?", (sid,)) or {}
+        if (st.get("sales_mode") or "file") == "file":
+            return
         if st.get("orders_synced_to") and time.time() - float(st["orders_synced_to"]) < 300:
             return
         locks = self.__dict__.setdefault("_sync_locks", {})

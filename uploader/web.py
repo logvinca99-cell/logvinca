@@ -811,6 +811,8 @@ def create_app(db=None):
         for k in ("name", "code", "client_id", "client_secret", "store_url", "as_phone", "memo", "wm_text", "importer", "chrome_profile", "mail_to"):
             if k in v:
                 v[k] = str(v[k] or "").strip()
+        if "sales_mode" in v and v["sales_mode"] not in ("file", "api"):
+            v["sales_mode"] = "file"
         if sid:
             if not v.get("client_secret"):
                 v.pop("client_secret", None)  # 빈칸이면 기존 시크릿 유지
@@ -2165,7 +2167,26 @@ def create_app(db=None):
 
     @app.post("/api/orders/import")
     def orders_import():
-        return file_task("orders", "판매 이력 파일 가져오기", orders.import_sales_file)
+        sid = request.form.get("store_id")
+        from_ts = _date_ts(request.form.get("from")) if request.form.get("from") else None
+        return file_task("orders", "판매 이력 파일 가져오기", lambda db_, fh, name, **kw: orders.import_sales_file(
+            db_, fh, name, store_id=int(sid) if sid else None, from_ts=from_ts, **kw))
+
+    @app.post("/api/stores/<int:sid>/sales_mode")
+    def store_sales_mode(sid):
+        """판매 이력 확인 방법: file(파일·직접 확인, 지우기 전에 네이버 주문 안 받음) / api(지우기 전에 네이버에서 주문 받기)."""
+        try:
+            return jsonify(orders.set_sales_mode(db, sid, str(body().get("mode") or "")))
+        except ValueError as e:
+            return fail(str(e))
+
+    @app.get("/api/orders/unmatched")
+    def orders_unmatched():
+        """못 맞춘 파일 주문 목록: import_id(주문 파일) 또는 store_id."""
+        a = request.args
+        if not a.get("import_id") and not a.get("store_id"):
+            return fail("주문 파일이나 스토어를 골라 주세요.")
+        return jsonify(orders.unmatched_orders(db, a.get("import_id"), a.get("store_id")))
 
     @app.post("/api/listings/rename")
     def listings_rename():

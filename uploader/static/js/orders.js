@@ -42,7 +42,7 @@ App.page("orders", {
       </div>
       <div class="card table-card" style="margin-top:12px"><div class="sec-head pad-x"><h2>넣은 주문 파일</h2>
         <span class="muted small">잘못 넣었으면 파일째 되돌리기 — 그 파일로 들어온 주문만 지우고 판매 수·잠금을 다시 셈 (네이버에서 받은 주문은 그대로)</span></div>
-        <table class="grid"><thead><tr><th class="w-date">넣은 때</th><th>파일</th><th class="num">줄</th><th class="num">새 주문</th><th class="num">남은 주문</th><th class="num">복사본</th><th></th></tr></thead>
+        <table class="grid"><thead><tr><th class="w-date">넣은 때</th><th>파일</th><th class="num">줄</th><th class="num">새 주문</th><th class="num">남은 주문</th><th>맞춘 주문 (복사본 · 2건 이상)</th><th class="num">못 맞춘 주문</th><th></th></tr></thead>
           <tbody id="o-imports"></tbody></table></div>
     </div>`;
     $("#o-store").innerHTML += App.stores.map((s) => `<option value="${s.id}">${esc(s.code)} ${esc(s.name)}</option>`).join("");
@@ -69,11 +69,22 @@ App.page("orders", {
     box.innerHTML = rows.length ? rows.map((r) => `<tr>
         <td>${when(r.created_at)}</td>
         <td>${esc(r.file)}${r.guessed ? ' <span class="muted small">(넣은 때로 묶음)</span>' : ""}</td>
-        <td class="num">${num(r.rows)}</td><td class="num">${num(r.new)}</td><td class="num">${num(r.left)}</td><td class="num">${num(r.copies)}</td>
+        <td class="num">${num(r.rows)}</td><td class="num">${num(r.new)}</td><td class="num">${num(r.left)}</td>
+        <td>${num(r.matched_n)}건 <span class="muted small">(복사본 ${num(r.copies)}개${r.multi ? ` · 2건 이상 ${num(r.multi)}개` : ""})</span></td>
+        <td class="num">${r.unmatched ? `<button class="link-btn c-err" data-unm="${r.id}">${num(r.unmatched)}건</button>` : "0"}</td>
         <td>${r.undone_at ? `<span class="muted small">되돌림 ${when(r.undone_at)}</span>` : r.undoable
           ? `<button class="btn sm danger" data-undo="${r.id}">이 파일 되돌리기</button>` : '<span class="muted small">남은 주문 없음</span>'}</td></tr>`).join("")
-      : '<tr class="empty-row"><td colspan="7">넣은 주문 파일이 없습니다.</td></tr>';
+      : '<tr class="empty-row"><td colspan="8">넣은 주문 파일이 없습니다.</td></tr>';
     $$("[data-undo]", box).forEach((b) => b.addEventListener("click", () => this.undoImport(+b.dataset.undo)));
+    $$("[data-unm]", box).forEach((b) => b.addEventListener("click", async () => {
+      let L = [];
+      try { L = await App.api(`/api/orders/unmatched?import_id=${b.dataset.unm}`); } catch (e) { return App.toast(e.message, true); }
+      App.openModal({ title: `못 맞춘 주문 ${num(L.length)}건`, wide: true,
+        body: `<p class="small muted">업스타 복사본의 상품번호·관리코드·상품명과 맞는 게 없는 주문 — 어느 복사본도 잠그지 않습니다 (다른 프로그램으로 올린 상품·이미 지운 상품 등).</p>
+          <div class="tbl-wrap" style="max-height:60vh"><table class="tbl small"><thead><tr><th>주문일</th><th>스토어</th><th>상품번호</th><th>관리코드</th><th>상품명</th><th class="r">수량</th></tr></thead><tbody>${L.map((o) =>
+            `<tr><td>${when(o.ordered_at)}</td><td>${esc(o.store || "")}</td><td>${esc(o.channel_no || o.origin_no || "")}</td><td>${esc(o.seller_code || "")}</td><td>${esc((o.product_name || "").slice(0, 50))}</td><td class="r">${num(o.quantity)}</td></tr>`).join("")}</tbody></table></div>`,
+        buttons: [{ label: "닫기" }] });
+    }));
   },
 
   async undoImport(id) {

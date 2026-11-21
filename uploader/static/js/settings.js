@@ -94,6 +94,7 @@ const SETTING_SECTIONS = [
   { tab: "orders", title: "주문 (판매 이력)", note: "판매자센터의 주문을 커머스API로 가져옵니다. 판매 이력이 있는 복사본은 최신화·내리기에서 빠집니다.", fields: [
     ["orders_auto_sync_minutes", "자동 가져오기 간격 (분, 0이면 끔 · 프로그램이 켜져 있을 때만)", "number"],
     ["orders_initial_days", "처음 가져올 때 며칠 전부터", "number"],
+    ["sales_valid_hours", "판매 이력 확인 유효 시간 (시간 · 파일 방식 스토어: 마지막 확인이 이보다 오래면 최신화·내리기 전에 판매 현황 파일을 다시 넣으라고 막음)", "number"],
     ["lock_sold", "판매 이력이 있는 복사본은 자동으로 잠금 (최신화·내리기로 지우지 않음)", "check"],
     ["lock_canceled_too", "취소·반품만 있는 복사본도 잠금", "check"],
   ] },

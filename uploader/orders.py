@@ -70,7 +70,8 @@ def save_orders(db, orders, source, store_id=None, import_id=None):
             cur = c.execute("""INSERT OR IGNORE INTO orders(order_key, store_id, listing_id, channel_no, origin_no,
                 seller_code, product_name, quantity, status, ordered_at, source, created_at, import_id)
                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                            (o["order_key"], o.get("store_id") or store_id, lid, o.get("channel_no", ""),
+                            (o["order_key"], o.get("store_id") or store_id or o.get("_store_hint")
+                             or (c.execute("SELECT store_id FROM listings WHERE id=?", (lid,)).fetchone() or [None])[0], lid, o.get("channel_no", ""),
                              o.get("origin_no", ""), o.get("seller_code", ""), o.get("product_name", ""),
                              int(o.get("quantity") or 1), o.get("status", ""), o.get("ordered_at"), source, now, import_id))
             if cur.rowcount:
@@ -179,7 +180,7 @@ def sync_store(db, store, client, days=None, since=None, until=None, should_stop
     new, matched = save_orders(db, orders, "naver", store["id"])
     cov_from, cov_to = store.get("orders_from"), store.get("orders_synced_to")
     if incremental:
-        db.x("UPDATE stores SET orders_synced_to=? WHERE id=?", (until, store["id"]))
+        db.x("UPDATE stores SET orders_synced_to=?, sales_checked_at=? WHERE id=?", (until, now, store["id"]))
         if not last and (not cov_from or since < cov_from):   # 처음 받은 때 → 여기부터 판매 이력을 앎
             db.x("UPDATE stores SET orders_from=? WHERE id=?", (since, store["id"]))
     else:
@@ -242,11 +243,15 @@ def sales_status(db, store_id):
         SUM(? IS NULL OR registered_at IS NULL OR registered_at < ?) AS need
         FROM listings WHERE store_id=? AND origin_no!='' AND status!='deleted'""",   # 모든 판매 중 상품 (가져온 것·이 프로그램이 올린 것)
                (kf, (kf or 0) - 3600, st["id"]))
-    f = db.one("""SELECT COUNT(*) AS n, MIN(o.ordered_at) AS mn, MAX(o.ordered_at) AS mx, COUNT(DISTINCT o.listing_id) AS lst
-        FROM orders o JOIN listings l ON l.id=o.listing_id WHERE l.store_id=? AND o.source='file'""", (st["id"],))
+    fb = file_breakdown(db, "(o.store_id=? OR o.listing_id IN (SELECT id FROM listings WHERE store_id=?))", (st["id"], st["id"]))
+    from . import config
+    x = db.one("SELECT sales_mode, sales_checked_at FROM stores WHERE id=?", (st["id"],)) or {}
+    fresh, why = sales_fresh(db, st["id"])
     return {"store_id": st["id"], "store": st["name"], "known_from": kf, "synced_to": st["orders_synced_to"],
             "adopted": a["n"] or 0, "reg_min": a["reg_min"], "need": a["need"] or 0, "locked": a["locked"] or 0, "manual": a["manual"] or 0,
-            "file_orders": f["n"] or 0, "file_from": f["mn"], "file_to": f["mx"], "file_listings": f["lst"] or 0}
+            "file_orders": fb["orders"], "file_from": fb["from"], "file_to": fb["to"], "file_listings": fb["copies"],
+            "file": fb, "sales_mode": x.get("sales_mode") or "file", "checked_at": x.get("sales_checked_at"),
+            "fresh": fresh, "fresh_why": why, "valid_hours": max(1, int(config.load().get("sales_valid_hours") or 24))}
 
 
 def confirm_sales(db, store_id, from_ts):
@@ -259,8 +264,54 @@ def confirm_sales(db, store_id, from_ts):
         raise ValueError("날짜를 넣어 주세요.")
     cur = known_from(st)
     new_from = min(from_ts, cur) if cur else from_ts
-    db.x("UPDATE stores SET orders_from=?, orders_synced_to=COALESCE(orders_synced_to, ?) WHERE id=?", (new_from, time.time(), int(store_id)))
+    db.x("UPDATE stores SET orders_from=?, orders_synced_to=COALESCE(orders_synced_to, ?), sales_checked_at=? WHERE id=?",
+         (new_from, time.time(), time.time(), int(store_id)))
     return sales_status(db, store_id)
+
+
+def sales_fresh(db, store_id, cfg=None):
+    """파일 방식 스토어: 판매 이력을 마지막으로 확인한 지 유효 시간 안인가 → (괜찮나, 이유 문구)."""
+    from . import config
+    cfg = cfg or config.load()
+    hours = max(1, int(cfg.get("sales_valid_hours") or 24))
+    st = db.one("SELECT sales_checked_at FROM stores WHERE id=?", (int(store_id),)) or {}
+    at = st.get("sales_checked_at")
+    if not at:
+        return False, f"판매 이력을 아직 확인하지 않음 (유효 {hours}시간)"
+    age = (time.time() - float(at)) / 3600
+    if age > hours:
+        return False, f"판매 이력을 마지막으로 확인한 지 {int(age)}시간 지남 (유효 {hours}시간)"
+    return True, ""
+
+
+def set_sales_mode(db, store_id, mode):
+    if mode not in ("file", "api"):
+        raise ValueError("확인 방법은 file(파일·직접 확인) 또는 api(네이버 주문 받기)입니다.")
+    db.x("UPDATE stores SET sales_mode=? WHERE id=?", (mode, int(store_id)))
+    return sales_status(db, store_id)
+
+
+def file_breakdown(db, where, args):
+    """파일로 넣은 주문 나누기: 주문 n = 복사본에 맞춘 주문 a(복사본 b개, 그중 2건 이상 c개) + 못 맞춘 주문 d.
+    where는 orders(별칭 o)에 붙는 조건 (source='file'은 여기서 붙임)."""
+    w = f"o.source='file' AND {where}" if where else "o.source='file'"
+    t = db.one(f"""SELECT COUNT(*) AS n, SUM(o.listing_id IS NOT NULL) AS a, COUNT(DISTINCT o.listing_id) AS b,
+        SUM(o.listing_id IS NULL) AS d, MIN(o.ordered_at) AS mn, MAX(o.ordered_at) AS mx FROM orders o WHERE {w}""", args)
+    c = db.one(f"""SELECT COUNT(*) AS c FROM (SELECT o.listing_id FROM orders o WHERE {w} AND o.listing_id IS NOT NULL
+        GROUP BY o.listing_id HAVING COUNT(*) >= 2)""", args)["c"]
+    return {"orders": t["n"] or 0, "matched": t["a"] or 0, "copies": t["b"] or 0, "multi": c or 0, "unmatched": t["d"] or 0,
+            "from": t["mn"], "to": t["mx"]}
+
+
+def unmatched_orders(db, import_id=None, store_id=None, limit=300):
+    """못 맞춘 파일 주문 목록 (상품번호·관리코드·상품명) — 주문 파일 하나 또는 스토어."""
+    if import_id:
+        w, a = "o.import_id=?", (int(import_id),)
+    else:
+        w, a = "o.store_id=?", (int(store_id),)
+    return db.q(f"""SELECT o.rowid AS id, o.channel_no, o.origin_no, o.seller_code, o.product_name, o.quantity, o.ordered_at, st.name AS store
+        FROM orders o LEFT JOIN stores st ON st.id=o.store_id WHERE o.source='file' AND o.listing_id IS NULL AND {w}
+        ORDER BY o.ordered_at DESC LIMIT ?""", (*a, int(limit)))
 
 
 def sync_stores(db, stores_with_clients, progress=None, should_stop=None, days=None, since=None, until=None):
@@ -377,8 +428,10 @@ def _pick(cols, names):
     return None
 
 
-def import_sales_file(db, fileobj, filename, progress=None, should_stop=None):
-    """주문 수집 웹(아바닛 등)에서 내려받은 주문 엑셀/CSV를 판매 이력으로 넣는다. 파일마다 기록을 남겨 잘못 넣었으면 파일째 되돌린다."""
+def import_sales_file(db, fileobj, filename, progress=None, should_stop=None, store_id=None, from_ts=None):
+    """주문 수집 웹(아바닛 등)에서 내려받은 주문 엑셀/CSV를 판매 이력으로 넣는다. 파일마다 기록을 남겨 잘못 넣었으면 파일째 되돌린다.
+    store_id·from_ts(판매 이력 확인 창에서 넣을 때): 넣은 뒤 그 스토어는 from_ts부터 판매 이력 확인 완료로.
+    파일에 주문이 나온 스토어(맞춘 복사본의 스토어)도 '마지막 확인'을 지금으로."""
     stores = db.stores()
     colmap, batch = None, []
     stats = {"rows": 0, "new": 0, "matched": 0, "unmatched": 0}
@@ -411,6 +464,7 @@ def import_sales_file(db, fileobj, filename, progress=None, should_stop=None):
         o["channel_no"] = o["channel_no"].split(".")[0]  # 엑셀 숫자 1234.0 → 1234
         o["quantity"] = int(float(g("quantity") or 1)) if g("quantity").replace(".", "").isdigit() else 1
         o["store_id"] = store_of(g("store"))
+        o["_store_hint"] = int(store_id) if store_id else None   # 못 맞춘 주문을 어느 스토어 것으로 셀지 (이 창의 스토어, 맞추기엔 안 씀)
         o["ordered_at"] = naver.parse_time(g("ordered_at").replace(" ", "T")) if g("ordered_at") else None
         key = g("order_key")
         o["order_key"] = f"file:{key}" if key else "file:" + hashlib.sha1(repr(sorted(row.items())).encode()).hexdigest()[:20]
@@ -425,9 +479,21 @@ def import_sales_file(db, fileobj, filename, progress=None, should_stop=None):
             break
     if batch:
         flush()
-    stats["unmatched"] = stats["rows"] - stats["matched"]
     stats["columns"] = {k: v for k, v in (colmap or {}).items() if v}
     db.x("UPDATE order_imports SET rows=?, new=?, matched=? WHERE id=?", (stats["rows"], stats["new"], stats["matched"], iid))
+    # 이 파일로 들어온 주문 나누기 (이미 있던 줄은 새로 안 들어감 → 줄 수 - 새 주문 = 이미 있던 주문)
+    fb = file_breakdown(db, "o.import_id=?", (iid,))
+    stats.update(matched=fb["matched"], copies=fb["copies"], multi=fb["multi"], unmatched=fb["unmatched"], already=stats["rows"] - stats["new"])
+    now = time.time()
+    seen = {r["store_id"] for r in db.q("""SELECT DISTINCT l.store_id FROM orders o JOIN listings l ON l.id=o.listing_id
+        WHERE o.import_id=?""", (iid,))}
+    if store_id:
+        if from_ts:
+            confirm_sales(db, int(store_id), from_ts)
+        seen.add(int(store_id))
+        stats["store_id"] = int(store_id)
+    for sid in seen:
+        db.x("UPDATE stores SET sales_checked_at=? WHERE id=?", (now, sid))
     return stats
 
 
@@ -441,6 +507,8 @@ def imports_list(db, limit=100):
             SUM(CASE WHEN listing_id IS NOT NULL THEN 1 ELSE 0 END) AS matched FROM orders WHERE import_id=? AND source='file'""", (r["id"],))
         r["left"], r["copies"] = s["n"], s["copies"]
         r["undoable"] = bool(s["n"]) and not r["undone_at"]
+        fb = file_breakdown(db, "o.import_id=?", (r["id"],))
+        r["matched_n"], r["multi"], r["unmatched"] = fb["matched"], fb["multi"], fb["unmatched"]
     return rows
 
 

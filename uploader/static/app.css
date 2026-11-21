@@ -1129,9 +1129,6 @@ h2, .sec-title { font-size: var(--h2); font-weight: 700; letter-spacing: -.01em;
 /* 스토어 카드 이름: 잘리지 않게 두 줄까지 */
 .ns-name { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: keep-all; overflow-wrap: anywhere; }
 
-/* 진행 상자: 처리 중일 때만 높이 고정(흔들림 방지), 쉬는 중에는 내용 높이 — 빈 칸이 크게 남지 않게 */
-#l-run.idle { height: auto; }
-#l-run.idle .run-idle { flex: none; overflow: visible; }
 /* 비어 있는 알림 자리는 자리 차지 안 함 */
 #l-sales-warn:empty, #l-push:empty, #l-pchk:empty { display: none; }
 

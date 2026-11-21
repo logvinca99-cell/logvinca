@@ -514,7 +514,9 @@ const App = {
       mail: () => `메일함: 확인 ${num(r.checked)}통 · 새로 ${num(r.new)}통` + (r.warn ? ` · 경고·제재 ${num(r.warn)}통` : "") + (r.auth ? ` · 인증번호 ${num(r.auth)}통` : ""),
       revalidate: () => `다시 검사 끝: ${num(r.total)}개` + (r.invalid !== undefined ? ` · 오류 ${num(r.invalid)}개` : ""),
       orders: () => r.rows !== undefined
-        ? `판매 이력 파일 끝: ${num(r.rows)}줄 중 복사본과 맞춘 주문 ${num(r.matched)}건 · 못 맞춘 ${num(r.unmatched)}건`
+        ? `판매 이력 파일 끝: ${num(r.rows)}줄${r.already ? ` (이미 넣은 주문 ${num(r.already)}줄)` : ""} → 복사본에 맞춘 주문 ${num(r.matched)}건 (복사본 ${num(r.copies)}개`
+          + (r.multi ? ` · 같은 복사본에 2건 이상 ${num(r.multi)}개` : "") + `) · 못 맞춘 주문 ${num(r.unmatched)}건` + (r.unmatched ? " (판매 현황 → 넣은 주문 파일에서 목록)" : "")
+          + (r.store_id ? " · 이 스토어 판매 이력 확인 완료" : "")
         : `주문 가져오기 끝: 스토어 ${num(r.stores)}곳 · 새 주문 ${num(r.new)}건 · 복사본과 맞춤 ${num(r.matched)}건`
           + (r.errors?.length ? ` · 실패 ${r.errors.length}곳 (${r.errors[0]})` : ""),
     }[t.kind];
@@ -574,20 +576,33 @@ const App = {
       title: `판매 이력 확인 — ${s.store}`, wide: true,
       body: `<div class="notice ${s.need ? "warn" : "ok"}">${s.need
           ? `판매 중 상품 <b>${num(s.adopted)}</b>개 중 <b>${num(s.need)}</b>개는 판매 이력 확인 전이라 <b>최신화·내리기를 하지 않습니다</b> (팔린 상품을 지우지 않게).`
-          : `판매 중 상품 <b>${num(s.adopted)}</b>개 모두 판매 이력을 확인했습니다 — 최신화·내리기 때마다 마지막 확인 뒤 주문만 새로 받아 잠급니다.`}</div>
+          : `판매 중 상품 <b>${num(s.adopted)}</b>개 모두 판매 이력을 확인했습니다 — ${s.sales_mode === "api"
+            ? "최신화·내리기 때마다 마지막 확인 뒤 주문만 네이버에서 새로 받아 잠급니다."
+            : `최신화·내리기는 마지막 확인이 ${num(s.valid_hours)}시간 안일 때만 합니다 (네이버 주문은 받지 않음 — 넘으면 판매 현황 파일을 다시 넣으세요).`}`}</div>
         <dl class="kv" style="margin-top:10px">
           <dt>가장 먼저 올라간 상품의 날</dt><dd>${s.reg_min ? d(s.reg_min) : "-"}</dd>
           <dt>판매 이력을 아는 기간</dt><dd>${s.known_from ? `${d(s.known_from)} ~ 오늘` : "아직 없음"}</dd>
-          <dt>판매 이력 파일로 넣은 주문</dt><dd>${s.file_orders ? `${num(s.file_orders)}건 (${d(s.file_from)} ~ ${d(s.file_to)}) · 맞춘 복사본 ${num(s.file_listings)}개` : "없음"}</dd>
+          <dt>판매 이력 파일로 넣은 주문</dt><dd>${s.file_orders ? `<b>${num(s.file_orders)}건</b> (${d(s.file_from)} ~ ${d(s.file_to)})
+            = 복사본에 맞춘 주문 <b>${num(s.file.matched)}건</b> (복사본 ${num(s.file.copies)}개${s.file.multi ? ` · 그중 같은 복사본에 2건 이상 ${num(s.file.multi)}개` : ""})
+            + 못 맞춘 주문 <b class="${s.file.unmatched ? "c-err" : ""}">${num(s.file.unmatched)}건</b>${s.file.unmatched ? ` <button type="button" class="link-btn" id="sc-unm" data-noconfirm>목록 보기</button>` : ""}
+            <div id="sc-unm-box"></div>` : "없음"}</dd>
+          <dt>마지막 확인</dt><dd>${s.checked_at ? `${when(s.checked_at)} (${Math.floor((Date.now() / 1000 - s.checked_at) / 3600)}시간 전)` : "아직 없음"} · 유효 ${num(s.valid_hours)}시간
+            — ${s.sales_mode === "api" ? '<span class="muted">네이버 주문 받기 방식 (지우기 전에 네이버에서 받음)</span>'
+              : s.fresh ? '<span class="c-ok">지금 최신화·내리기 가능</span>' : `<span class="c-err">${esc(s.fresh_why)} — 판매 현황 파일을 넣거나 [판매 이력 확인 완료]</span>`}</dd>
           <dt>잠긴 판매 중 상품</dt><dd>${num(s.locked)}개${s.manual ? ` (직접 잠금 ${num(s.manual)}개)` : ""}</dd>
         </dl>
+        <div class="cl-row" style="margin:10px 0 4px"><b class="small">이 스토어 확인 방법</b>
+          <label class="check"><input type="radio" name="sc-mode" value="file" ${s.sales_mode !== "api" ? "checked" : ""} data-noconfirm><span>판매 현황 파일·직접 확인 <span class="muted small">(지우기 전에 네이버 주문을 받지 않음)</span></span></label>
+          <label class="check"><input type="radio" name="sc-mode" value="api" ${s.sales_mode === "api" ? "checked" : ""} data-noconfirm><span>네이버 주문 받기 <span class="muted small">(지우기 전에 커머스API로 받음 · 시간당 한도 씀)</span></span></label></div>
         <p class="small" style="margin:10px 0 4px"><b>판매 이력을 확인하는 방법 (하나 또는 여럿)</b></p>
         <ol class="small" style="line-height:1.8;padding-left:18px;margin:0 0 10px">
           <li><b>판매자센터 주문 파일 넣기</b>: 판매자센터 → 주문(주문통합검색 등)에서 <b>${from} ~ 오늘</b> 주문을 엑셀로 받아 아래 <b>[판매 이력 파일 넣기]</b> — 상품번호로 맞춰 팔린 상품을 자동으로 잠급니다. 잘못 넣었으면 <a href="#orders">판매 현황 → 넣은 주문 파일</a>에서 되돌리기.</li>
           <li><b>파일 없이 직접</b>: 팔린 걸 아는 상품은 복사본 화면에서 골라 <b>[잠금]</b> → 아래 날짜를 확인하고 <b>[판매 이력 확인 완료]</b>.</li>
           <li><b>네이버에서 주문 받기</b>: 아래 날짜부터 오늘까지 네이버 주문을 받아 잠급니다 — 먼저 <b>[네이버 주문 받기 시험]</b>으로 이 스토어 키가 주문을 받을 수 있는지 확인하세요.</li>
         </ol>
-        <p class="muted small" style="margin:0 0 8px">어느 방법이든 마지막에 <b>[판매 이력 확인 완료]</b>를 누르면 그 날부터의 판매 이력을 확인한 것으로 보고, 그 뒤로는 최신화·내리기 때마다 새 기간만 네이버에서 받아 잠급니다(이때 네이버 주문 받기가 안 되면 지우지 않습니다).</p>
+        <p class="muted small" style="margin:0 0 8px">이 창에서 <b>판매 이력 파일을 넣으면 아래 날짜부터 판매 이력 확인 완료</b>까지 한 번에 됩니다(파일 없이 확인했으면 <b>[판매 이력 확인 완료]</b>).
+          <b>파일·직접 확인 방식</b>은 최신화·내리기 전에 네이버 주문을 받지 않고, 마지막 확인이 유효 시간(설정 · 기본 24시간) 안일 때만 지웁니다 — 넘었으면 판매 현황 파일을 다시 넣으세요.
+          <b>네이버 주문 받기 방식</b>은 지울 때마다 마지막 확인 뒤 주문만 네이버에서 받아 잠급니다(받기가 안 되면 지우지 않음).</p>
         <div class="cl-row"><label class="field" style="margin:0">이 날부터 판매 이력을 확인함<input type="date" id="sc-from" value="${from}"></label>
           <label class="btn"><input type="file" id="sc-file" accept=".xlsx,.xlsm,.csv" hidden>판매 이력 파일 넣기</label>
           <button type="button" class="btn" id="sc-test" data-noconfirm>네이버 주문 받기 시험</button></div>
@@ -618,12 +633,28 @@ const App = {
       } catch (e) { box.innerHTML = `<span class="c-err">✘ ${esc(e.message)}</span>`; }
       btn.disabled = false;
     });
+    $$("input[name=sc-mode]").forEach((x) => x.addEventListener("change", async () => {
+      try {
+        await this.api(`/api/stores/${s.store_id}/sales_mode`, { json: { mode: x.value } });
+        this.toast(x.value === "api" ? "이 스토어는 지우기 전에 네이버에서 주문을 받습니다" : "이 스토어는 판매 현황 파일·직접 확인으로 (지우기 전에 네이버 주문을 받지 않음)");
+      } catch (e) { this.toast(e.message, true); }
+    }));
+    $("#sc-unm")?.addEventListener("click", async () => {
+      const box = $("#sc-unm-box");
+      try {
+        const L = await this.api(`/api/orders/unmatched?store_id=${s.store_id}`);
+        box.innerHTML = `<div class="tbl-wrap" style="max-height:200px;margin-top:6px"><table class="tbl small"><thead><tr><th>주문일</th><th>상품번호</th><th>관리코드</th><th>상품명</th><th class="r">수량</th></tr></thead><tbody>${L.map((o) =>
+          `<tr><td>${d(o.ordered_at)}</td><td>${esc(o.channel_no || o.origin_no || "")}</td><td>${esc(o.seller_code || "")}</td><td>${esc((o.product_name || "").slice(0, 40))}</td><td class="r">${num(o.quantity)}</td></tr>`).join("")}</tbody></table></div>
+          <p class="muted small">못 맞춘 주문: 업스타 복사본의 상품번호·관리코드·상품명과 맞는 게 없음 (다른 프로그램으로 올린 상품·이미 지운 상품 등) — 이 주문은 어느 복사본도 잠그지 않습니다.</p>`;
+      } catch (e) { this.toast(e.message, true); }
+    });
     $("#sc-file").addEventListener("change", (e) => {
       const f = e.target.files[0];
       if (!f) return;
+      const from = $("#sc-from").value;
       this.closeModal();
-      this.upload("/api/orders/import", f);
-      this.toast("판매 이력 파일을 넣는 중 — 끝나면 [판매 이력 확인]을 다시 눌러 '판매 이력 확인 완료'를 누르세요.");
+      this.upload("/api/orders/import", f, { store_id: String(s.store_id), from });
+      this.toast(`판매 이력 파일을 넣는 중 — 끝나면 ${s.store}는 ${from}부터 판매 이력 확인 완료로 처리됩니다.`);
     });
   },
 

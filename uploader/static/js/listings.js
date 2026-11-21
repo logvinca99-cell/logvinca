@@ -924,7 +924,6 @@ App.page("listings", {
     const nSel = this.selAll ? this.total : this.sel.size;
     const est = this.est || {};
     const n = est.count ?? 0;
-    $("#l-run")?.classList.add("idle");   // 쉬는 중: 내용 높이만큼 (처리 중일 때만 높이 고정)
     box.innerHTML = `<div class="run-idle">
         <div class="run-pick">
           <div class="seg" role="group" aria-label="처리 범위">${[["store", "이 스토어 전체"], ["sel", `고른 것만 (${num(nSel)})`], ["visible", "지금 보이는 조건만"]].map(([k, l]) =>
@@ -1035,7 +1034,6 @@ App.page("listings", {
     if (!box) return;
     if (this._live !== (all ? "all" : mine.id)) {
       this._live = all ? "all" : mine.id;
-      $("#l-run")?.classList.remove("idle");
       box.innerHTML = `<div class="run-top">
           <div class="run-count"><b id="r-done">0</b><span> / <span id="r-total">0</span></span></div>
           <div class="run-meta">

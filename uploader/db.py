@@ -263,6 +263,8 @@ class DB:
         trash.ensure(self)
         self._rename_price_terms()
         self._import_methods()
+        # 판매 이력 '마지막 확인'이 없던 예전 스토어: 이어 받기 시각으로 한 번 채움
+        self.c.execute("UPDATE stores SET sales_checked_at=orders_synced_to WHERE sales_checked_at IS NULL AND orders_synced_to IS NOT NULL")
         self._order_imports_backfill()
         self._drop_removed()
         self._busy_name_guard()
@@ -299,6 +301,10 @@ class DB:
                     # 기준 가격(기준 가격)가 어디서 왔나: file 처음 원본 파일 / adopt 판매 중 상품 연결(그 스토어 손님 가격) / manual 직접 수정
                     ("price_src", "TEXT NOT NULL DEFAULT ''"), ("price_at", "REAL")],
         "stores": [("code", "TEXT NOT NULL DEFAULT ''"), ("orders_synced_to", "REAL"),
+                   # 판매 이력 확인 방법: file(판매 현황 파일·직접 확인 — 지우기 전에 네이버 주문을 받지 않음) / api(지우기 전에 네이버에서 주문 받기)
+                   ("sales_mode", "TEXT NOT NULL DEFAULT 'file'"),
+                   # 판매 이력을 마지막으로 확인한 때 (파일 넣음·[판매 이력 확인 완료]·네이버 주문 받기 성공) — 파일 방식은 이게 유효 시간 안이어야 지움
+                   ("sales_checked_at", "REAL"),
                    # 네이버 주문을 빈틈없이 받아 둔 처음 시각 (여기부터 orders_synced_to까지는 판매 이력을 다 앎)
                    ("orders_from", "REAL"),
                    ("memo_at", "REAL"),   # 스토어 메모를 고친 때 (스토어 화면 카드에서 바로 적음)
