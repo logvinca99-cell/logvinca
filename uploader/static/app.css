@@ -975,3 +975,22 @@ body.eye-open .tasks { display: none; }
 .run-others .ro-all { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
 .sr-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .sr-chip { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); text-decoration: none; color: inherit; white-space: nowrap; }
+
+/* 복사본 화면 진행 상자: 높이 고정 — 시작·처리 중 상품이 바뀌어도 화면이 흔들리지 않게 (넘치는 것은 상자 안에서 스크롤) */
+#l-run { height: 236px; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column; }
+#l-run-main { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
+#l-run .run-idle { flex: 1; min-height: 0; overflow: auto; align-content: flex-start; }
+#l-run .run-top { flex: none; }
+#l-run .run-state { flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 1.4em; }
+#l-run .store-chips { flex: none; max-height: 54px; overflow: auto; }
+#l-run .current { flex: 1; min-height: 0; overflow: auto; align-content: start; }
+#l-run .current li { white-space: nowrap; }
+#l-run .run-foot { flex: none; }
+.run-others { min-height: 34px; box-sizing: border-box; overflow: hidden; flex-wrap: nowrap; white-space: nowrap; }
+.run-others .ro-chip { flex: none; }
+.side-run { min-width: 0; }
+.sr-chips { max-height: 72px; overflow: auto; }
+@media (max-width: 700px) {
+  #l-run { height: 380px; }
+  .run-others { overflow-x: auto; }
+}

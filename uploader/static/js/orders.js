@@ -40,6 +40,10 @@ App.page("orders", {
         <div class="card pad"><div class="sec-head"><h2>스토어별</h2><span class="muted small">이 기간·조건</span></div>
           <table class="opt-table" id="o-by-store"></table></div>
       </div>
+      <div class="card table-card" style="margin-top:12px"><div class="sec-head pad-x"><h2>넣은 주문 파일</h2>
+        <span class="muted small">잘못 넣었으면 파일째 되돌리기 — 그 파일로 들어온 주문만 지우고 판매 수·잠금을 다시 셈 (네이버에서 받은 주문은 그대로)</span></div>
+        <table class="grid"><thead><tr><th class="w-date">넣은 때</th><th>파일</th><th class="num">줄</th><th class="num">새 주문</th><th class="num">남은 주문</th><th class="num">복사본</th><th></th></tr></thead>
+          <tbody id="o-imports"></tbody></table></div>
     </div>`;
     $("#o-store").innerHTML += App.stores.map((s) => `<option value="${s.id}">${esc(s.code)} ${esc(s.name)}</option>`).join("");
     $("#o-period").value = this.f.period;
@@ -49,11 +53,48 @@ App.page("orders", {
     $("#o-to").value = this.f.to || dayStr(0);
     $("#o-custom").hidden = this.f.period !== "custom";
     this.bind();
-    this.onDone = (t) => { if (t.kind === "orders") this.load(); };
+    this.onDone = (t) => { if (t.kind === "orders") { this.load(); this.loadImports(); } };
     App.on("task-done", this.onDone);
     await this.load();
+    this.loadImports();
   },
   unmount() { App.off("task-done", this.onDone); },
+
+  /* 넣은 주문 파일 목록 + [이 파일 되돌리기] */
+  async loadImports() {
+    const box = $("#o-imports");
+    if (!box) return;
+    let rows = [];
+    try { rows = await App.api("/api/orders/imports"); } catch (e) { return; }
+    box.innerHTML = rows.length ? rows.map((r) => `<tr>
+        <td>${when(r.created_at)}</td>
+        <td>${esc(r.file)}${r.guessed ? ' <span class="muted small">(넣은 때로 묶음)</span>' : ""}</td>
+        <td class="num">${num(r.rows)}</td><td class="num">${num(r.new)}</td><td class="num">${num(r.left)}</td><td class="num">${num(r.copies)}</td>
+        <td>${r.undone_at ? `<span class="muted small">되돌림 ${when(r.undone_at)}</span>` : r.undoable
+          ? `<button class="btn sm danger" data-undo="${r.id}">이 파일 되돌리기</button>` : '<span class="muted small">남은 주문 없음</span>'}</td></tr>`).join("")
+      : '<tr class="empty-row"><td colspan="7">넣은 주문 파일이 없습니다.</td></tr>';
+    $$("[data-undo]", box).forEach((b) => b.addEventListener("click", () => this.undoImport(+b.dataset.undo)));
+  },
+
+  async undoImport(id) {
+    let pv;
+    try { pv = await App.api(`/api/orders/imports/${id}/undo_preview`); } catch (e) { return App.toast(e.message, true); }
+    App.openModal({
+      title: "주문 파일 되돌리기",
+      body: `<div class="notice warn"><b>${esc(pv.file)}</b>로 들어온 주문 <b>${num(pv.orders)}건</b>을 지웁니다.</div>
+        <ul class="small"><li>이 주문이 맞춰진 복사본 <b>${num(pv.copies)}건</b>의 판매 수·잠금을 다시 셉니다 — 다른 판매 이력·직접 잠금이 없는 <b>${num(pv.unlock)}건</b>은 잠금이 풀립니다.</li>
+          <li>네이버에서 받은 주문·다른 파일로 넣은 주문은 그대로입니다.</li>
+          ${pv.guessed ? "<li>이 기록은 예전에 넣은 주문을 넣은 때(10분 안쪽)로 묶은 것입니다 — 같은 때 넣은 다른 파일 주문이 섞였을 수 있습니다.</li>" : ""}
+          <li>되돌린 뒤 잘못 풀렸으면 맞는 주문 파일을 다시 넣으면 됩니다.</li></ul>`,
+      buttons: [{ label: "취소" }, { label: "되돌리기", danger: true,
+        confirm: `주문 ${num(pv.orders)}건을 지우고 복사본 ${num(pv.copies)}건의 판매 수·잠금을 다시 셉니다 (잠금 풀림 ${num(pv.unlock)}건).`,
+        onClick: async () => {
+          const r = await App.api(`/api/orders/imports/${id}/undo`, { json: {} });
+          App.toast(`주문 ${num(r.removed)}건 지움 · 잠금 풀림 ${num(r.unlocked)}건` + (r.still_locked ? ` · 다른 판매 이력·직접 잠금으로 아직 잠김 ${num(r.still_locked)}건` : ""));
+          this.load(); this.loadImports();
+        } }],
+    });
+  },
 
   query() {
     const q = {};
@@ -83,13 +124,13 @@ App.page("orders", {
         ? `가장 오래 전에 가져온 스토어: ${when(Math.min(...synced))}` : "아직 가져온 적 없음"}${never ? ` · 한 번도 안 가져온 스토어 ${never}곳` : ""}
         · 판매 이력이 있는 복사본은 최신화·내리기에서 빠집니다.</div>`;
 
-    $("#o-rows").innerHTML = res.rows.length ? res.rows.map((o) => `<tr data-lid="${o.listing_id || ""}">
+    $("#o-rows").innerHTML = res.rows.length ? res.rows.map((o) => `<tr data-lid="${o.listing_id || ""}"${o.ignored ? ' style="opacity:.55"' : ""}>
       <td>${o.ordered_at ? ymd(o.ordered_at) : "-"}<div class="p-sub">${o.source === "naver" ? "네이버" : "파일"}</div></td>
       <td>${o.store_name ? `<b class="code">${esc(o.store_code)}</b> ${esc(o.store_name)}` : '<span class="muted">-</span>'}</td>
       <td><div class="p-name">${esc(o.product_name || o.listing_name || "")}</div>
         <div class="p-sub">${esc(o.order_key.replace(/^file:/, ""))}${o.seller_code ? ` · ${esc(o.seller_code)}` : ""}</div></td>
       <td class="num">${num(o.quantity)}</td>
-      <td><span class="badge ${["CANCELED", "RETURNED", "CANCELED_BY_NOPAYMENT"].includes(o.status) ? "s-delete" : "s-success"}">${esc(o.status_ko || "-")}</span></td>
+      <td><span class="badge ${["CANCELED", "RETURNED", "CANCELED_BY_NOPAYMENT"].includes(o.status) ? "s-delete" : "s-success"}">${esc(o.status_ko || "-")}</span>${o.ignored ? ' <span class="badge" style="opacity:.6" title="이 복사본에서 판매 이력 무시 — 판매 수·잠금에서 뺌">무시함</span>' : ""}</td>
       <td>${o.listing_id ? `<span class="link-btn">복사본 보기</span><div class="p-sub">원본 #${o.source_id}</div>`
         : `<span class="c-err small">못 맞춤</span><div class="p-sub">이 프로그램이 올린 상품이 아닐 수 있음</div>`}</td></tr>`).join("")
       : `<tr class="empty-row"><td colspan="6">이 기간에 주문이 없습니다. 오른쪽 위 <b>지금 가져오기</b>를 누르세요.</td></tr>`;

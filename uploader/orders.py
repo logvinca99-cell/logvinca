@@ -57,8 +57,8 @@ def _match(c, o, store_id=None):
     return None
 
 
-def save_orders(db, orders, source, store_id=None):
-    """주문을 저장하고 복사본과 맞춘다. (새 주문 수, 맞춘 수)"""
+def save_orders(db, orders, source, store_id=None, import_id=None):
+    """주문을 저장하고 복사본과 맞춘다. (새 주문 수, 맞춘 수). import_id: 주문 파일 기록 (파일째 되돌리기용)"""
     now = time.time()
     new = matched = 0
     touched = set()
@@ -68,11 +68,11 @@ def save_orders(db, orders, source, store_id=None):
                 continue
             lid = _match(c, o, o.get("store_id") or store_id)
             cur = c.execute("""INSERT OR IGNORE INTO orders(order_key, store_id, listing_id, channel_no, origin_no,
-                seller_code, product_name, quantity, status, ordered_at, source, created_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                seller_code, product_name, quantity, status, ordered_at, source, created_at, import_id)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                             (o["order_key"], o.get("store_id") or store_id, lid, o.get("channel_no", ""),
                              o.get("origin_no", ""), o.get("seller_code", ""), o.get("product_name", ""),
-                             int(o.get("quantity") or 1), o.get("status", ""), o.get("ordered_at"), source, now))
+                             int(o.get("quantity") or 1), o.get("status", ""), o.get("ordered_at"), source, now, import_id))
             if cur.rowcount:
                 new += 1
             else:
@@ -106,11 +106,11 @@ def _recount(db, where, args):
     from . import config
     cfg = config.load()
     db.x(f"""UPDATE listings SET
-        sold_count=(SELECT COALESCE(SUM(quantity),0) FROM orders o WHERE o.listing_id=listings.id
+        sold_count=(SELECT COALESCE(SUM(quantity),0) FROM orders o WHERE o.listing_id=listings.id AND o.ignored=0
                     AND o.status NOT IN {_CANCEL_SQL}),
-        cancel_count=(SELECT COALESCE(SUM(quantity),0) FROM orders o WHERE o.listing_id=listings.id
+        cancel_count=(SELECT COALESCE(SUM(quantity),0) FROM orders o WHERE o.listing_id=listings.id AND o.ignored=0
                       AND o.status IN {_CANCEL_SQL}),
-        last_sold_at=(SELECT MAX(ordered_at) FROM orders o WHERE o.listing_id=listings.id){where}""", args)
+        last_sold_at=(SELECT MAX(ordered_at) FROM orders o WHERE o.listing_id=listings.id AND o.ignored=0){where}""", args)
     lock_sold = 1 if cfg.get("lock_sold", True) else 0
     canceled_too = 1 if cfg.get("lock_canceled_too") else 0
     db.x(f"""UPDATE listings SET
@@ -341,10 +341,12 @@ def _pick(cols, names):
 
 
 def import_sales_file(db, fileobj, filename, progress=None, should_stop=None):
-    """주문 수집 웹(아바닛 등)에서 내려받은 주문 엑셀/CSV를 판매 이력으로 넣는다."""
+    """주문 수집 웹(아바닛 등)에서 내려받은 주문 엑셀/CSV를 판매 이력으로 넣는다. 파일마다 기록을 남겨 잘못 넣었으면 파일째 되돌린다."""
     stores = db.stores()
     colmap, batch = None, []
     stats = {"rows": 0, "new": 0, "matched": 0, "unmatched": 0}
+    iid = db.x("INSERT INTO order_imports(file, created_at) VALUES(?,?)", (str(filename or ""), time.time()))
+    stats["import_id"] = iid
 
     def store_of(v):
         v = str(v or "").strip()
@@ -356,7 +358,7 @@ def import_sales_file(db, fileobj, filename, progress=None, should_stop=None):
         return None
 
     def flush():
-        new, matched = save_orders(db, batch, "file")
+        new, matched = save_orders(db, batch, "file", import_id=iid)
         stats["new"] += new
         stats["matched"] += matched
         batch.clear()
@@ -388,4 +390,73 @@ def import_sales_file(db, fileobj, filename, progress=None, should_stop=None):
         flush()
     stats["unmatched"] = stats["rows"] - stats["matched"]
     stats["columns"] = {k: v for k, v in (colmap or {}).items() if v}
+    db.x("UPDATE order_imports SET rows=?, new=?, matched=? WHERE id=?", (stats["rows"], stats["new"], stats["matched"], iid))
     return stats
+
+
+# ───────────────────────── 잘못 넣은 판매 이력 바로잡기
+
+def imports_list(db, limit=100):
+    """넣은 주문 파일 목록 (되돌릴 수 있는 것: 그 파일로 새로 들어온 주문이 남아 있는 것)."""
+    rows = db.q("SELECT * FROM order_imports ORDER BY id DESC LIMIT ?", (limit,))
+    for r in rows:
+        s = db.one("""SELECT COUNT(*) AS n, COUNT(DISTINCT listing_id) AS copies,
+            SUM(CASE WHEN listing_id IS NOT NULL THEN 1 ELSE 0 END) AS matched FROM orders WHERE import_id=? AND source='file'""", (r["id"],))
+        r["left"], r["copies"] = s["n"], s["copies"]
+        r["undoable"] = bool(s["n"]) and not r["undone_at"]
+    return rows
+
+
+def undo_preview(db, import_id):
+    """이 파일을 되돌리면: 지울 주문 수, 영향받는 복사본 수, 그중 잠금이 풀릴 복사본 수 (다른 판매 이력·직접 잠금이 없으면)."""
+    imp = db.one("SELECT * FROM order_imports WHERE id=?", (int(import_id),))
+    if not imp:
+        raise ValueError("그 주문 파일 기록이 없습니다.")
+    lids = [r["listing_id"] for r in db.q("SELECT DISTINCT listing_id FROM orders WHERE import_id=? AND source='file' AND listing_id IS NOT NULL",
+                                          (imp["id"],))]
+    n = db.one("SELECT COUNT(*) AS n FROM orders WHERE import_id=? AND source='file'", (imp["id"],))["n"]
+    unlock = 0
+    for i in range(0, len(lids), 900):
+        ch = lids[i:i + 900]
+        m = ",".join("?" * len(ch))
+        unlock += db.one(f"""SELECT COUNT(*) AS n FROM listings l WHERE l.id IN ({m}) AND l.locked=1 AND l.manual_lock=0
+            AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.listing_id=l.id AND o.ignored=0
+                AND (o.import_id IS NULL OR o.import_id!=?) AND o.status NOT IN {_CANCEL_SQL})""", (*ch, imp["id"]))["n"]
+    return {"id": imp["id"], "file": imp["file"], "orders": n, "copies": len(lids), "unlock": unlock, "guessed": bool(imp["guessed"])}
+
+
+def undo_import(db, import_id):
+    """주문 파일 되돌리기: 그 파일로 새로 들어온 주문(파일 주문만 — 네이버에서 받은 주문은 그대로)을 지우고 판매 수·잠금을 다시 센다."""
+    pv = undo_preview(db, import_id)
+    lids = [r["listing_id"] for r in db.q("SELECT DISTINCT listing_id FROM orders WHERE import_id=? AND source='file' AND listing_id IS NOT NULL",
+                                          (pv["id"],))]
+    with db.tx() as c:
+        c.execute("DELETE FROM orders WHERE import_id=? AND source='file'", (pv["id"],))
+        c.execute("UPDATE order_imports SET undone_at=? WHERE id=?", (time.time(), pv["id"]))
+    recount_sold(db, lids)
+    still = 0
+    for i in range(0, len(lids), 900):
+        ch = lids[i:i + 900]
+        still += db.one(f"SELECT COUNT(*) AS n FROM listings WHERE locked=1 AND id IN ({','.join('?' * len(ch))})", ch)["n"]
+    return {**pv, "removed": pv["orders"], "still_locked": still, "unlocked": max(0, len(lids) - still) if lids else 0}
+
+
+def listing_orders(db, lid):
+    """이 복사본에 맞춘 주문 (무시한 것 포함)."""
+    rows = db.q("""SELECT order_key, product_name, quantity, status, ordered_at, source, ignored, import_id FROM orders
+        WHERE listing_id=? ORDER BY COALESCE(ordered_at, created_at) DESC""", (int(lid),))
+    for r in rows:
+        r["status_ko"] = STATUS_KO.get(r["status"], r["status"])
+    return rows
+
+
+def ignore_listing_orders(db, lid, on=True):
+    """복사본 단위: 맞춘 주문을 '무시'로 표시해 판매 수·잠금에서 뺌 (on=False면 무시 풀기 — 다시 판매 이력으로 셈).
+    판매 이력 확인 기준(언제부터 주문을 아는지)은 바꾸지 않는다. → (바꾼 주문 수, 지금 잠김 여부, 잠금 이유)"""
+    lid = int(lid)
+    with db.tx() as c:
+        n = c.execute("UPDATE orders SET ignored=?, ignored_at=? WHERE listing_id=? AND ignored=?",
+                      (1 if on else 0, time.time() if on else None, lid, 0 if on else 1)).rowcount
+    recount_sold(db, [lid])
+    l = db.one("SELECT locked, lock_note FROM listings WHERE id=?", (lid,)) or {}
+    return n, bool(l.get("locked")), l.get("lock_note") or ""

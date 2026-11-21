@@ -780,11 +780,12 @@ const App = {
     this._onClose = null;
     if (f) { try { f(); } catch (e) { /* 창 마무리 */ } }
   },
-  /* 가격 수정: level listing(복사본 — 그 스토어 손님 가격 기준) / source(원본 — 기준 가격 기준).
+  /* 가격 수정: 복사본(level listing)에서 열어도 원본(source)과 같이 늘 기준 가격에 적용 (복사본이면 그 스토어 손님 가격 전→후도 작게).
      방법: 직접 입력 · n원 올리기/내리기 · n% 올리기/내리기 → 미리보기 → 확인 → 기준 가격 변경 (다른 스토어 따라감, 판매 중은 네이버 가격 바로) */
   priceEdit({ level, target, n, what, after }) {
     const isL = level === "listing";
-    const unitTxt = isL ? "손님 가격(그 스토어)" : "기준 가격";
+    const unitTxt = "기준 가격";
+    const sp = (x, k) => (isL && x[k] != null ? ` <span class="muted small" title="이 스토어 손님 가격 (스토어 가격 차이 ${x.pct >= 0 ? "+" : ""}${x.pct || 0}% 반영)">손님 ${num(x[k])}</span>` : "");
     let pv = null, rows = null;
     const params = (b) => {
       const mode = $("input[name=pe-mode]:checked", b).value;
@@ -802,7 +803,8 @@ const App = {
           ${pv.others ? `<br>기준 가격이 바뀌어 <b>다른 스토어 복사본 ${num(pv.others)}건도 같이</b> 바뀝니다.` : ""}${pv.live != null && pv.live ? ` 판매 중 ${num(pv.live)}건은 지우지 않고 네이버 가격만 바로 바꿉니다.` : ""}</div>
         ${pv.items.length ? `<div class="tbl-wrap" style="max-height:260px"><table class="tbl small"><thead><tr><th>${isL ? "복사본" : "원본"}</th><th class="r">${unitTxt}</th><th></th></tr></thead><tbody>
           ${pv.items.slice(0, 50).map((x) => `<tr><td>${isL ? `${esc(x.store)} · ` : ""}${esc((x.name || "").slice(0, 34))}</td>
-            <td class="r nowrap">${num(x.old)}${x.new != null ? ` → <b>${num(x.new)}</b>` : ""}${x.big ? ' <span class="c-warn">!</span>' : ""}</td>
+            <td class="r nowrap">${num(x.old)}${x.new != null ? ` → <b>${num(x.new)}</b>` : ""}${x.big ? ' <span class="c-warn">!</span>' : ""}
+              ${isL ? `<div class="muted small">손님 ${num(x.store_old)}${x.store_new != null ? ` → ${num(x.store_new)}` : ""}</div>` : ""}</td>
             <td class="small">${x.why ? `<span class="c-err">${esc(x.why)}</span>` : x.others ? `<span class="muted">다른 스토어 ${num(x.others)}건도</span>` : ""}</td></tr>`).join("")}
           ${pv.items.length > 50 ? `<tr><td colspan="3" class="muted">외 ${num(pv.items.length - 50)}개</td></tr>` : ""}</tbody></table></div>` : ""}`;
     };
@@ -813,8 +815,9 @@ const App = {
     this.openModal({
       title: `가격 수정 · ${what || `${num(n)}개`}`, wide: true,
       body: (b) => {
-        b.innerHTML = `<p class="small muted" style="margin:0 0 8px">${isL ? "고른 복사본의 <b>그 스토어 손님 가격</b>을 기준으로 바꾸고, 원본 기준 가격은 그 스토어 가격 차이 %로 거꾸로 계산합니다."
+        b.innerHTML = `<p class="small muted" style="margin:0 0 8px">${isL ? "고른 복사본의 원본 <b>기준 가격</b>을 바꿉니다 (입력·n원·n% 모두 기준 가격에). 스토어마다 손님 가격은 기준 가격 × (1 + 그 스토어 가격 차이 %)로 따라갑니다 — 아래 표에 이 스토어 손님 가격도 작게 보여 줍니다."
             : "고른 원본의 <b>기준 가격</b>을 바꿉니다."} 그 원본의 <b>모든 스토어 복사본이 같이</b> 바뀌고, 판매 중인 것은 지우지 않고 네이버 가격만 바로 바꿉니다. 100원 단위(올리기는 올림, 내리기는 내림).</p>
+          ${isL ? '<p class="small muted" style="margin:-4px 0 8px">※ 복사본 화면 [일괄 수정(엑셀)]의 "새 손님 가격"은 그 스토어 손님 가격을 적는 칸입니다(여기와 다름 — 여기는 기준 가격).</p>' : ""}
           <div class="radio-cards">
             <label><input type="radio" name="pe-mode" value="won" checked><div><b>n원 올리기·내리기</b></div></label>
             <label><input type="radio" name="pe-mode" value="pct"><div><b>n% 올리기·내리기</b></div></label>
@@ -837,7 +840,7 @@ const App = {
               if (r.too_many) { $("#pe-set", b).innerHTML = `<p class="c-err small">고른 것이 ${num(r.too_many)}개라 직접 입력은 못 합니다 — n원·n%로 바꾸거나 엑셀 일괄 수정을 쓰세요.</p>`; return; }
               rows = r.rows;
               $("#pe-set", b).innerHTML = `<div class="tbl-wrap" style="max-height:300px;margin-top:8px"><table class="tbl small"><thead><tr><th>${isL ? "복사본" : "원본"}</th><th class="r">지금 ${unitTxt}</th><th class="r">새 ${unitTxt}</th></tr></thead><tbody>
-                ${rows.map((x) => `<tr><td>${isL ? `${esc(x.store)} · ` : ""}${esc((x.name || "").slice(0, 40))}</td><td class="r">${num(x.old)}</td>
+                ${rows.map((x) => `<tr><td>${isL ? `${esc(x.store)} · ` : ""}${esc((x.name || "").slice(0, 40))}</td><td class="r">${num(x.old)}${sp(x, "store_old")}</td>
                   <td class="r"><input type="number" min="0" step="100" data-pe-id="${x.id}" data-old="${x.old}" value="${x.old}" style="width:110px"></td></tr>`).join("")}</tbody></table></div>
                 <button class="btn sm" id="pe-go2" type="button" style="margin-top:6px">미리보기</button>`;
               $("#pe-go2", b).addEventListener("click", () => run(b));

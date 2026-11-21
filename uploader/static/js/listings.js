@@ -186,6 +186,12 @@ App.page("listings", {
         네이버 가격이 업스타 가격(기준 가격 × 스토어 가격 차이 %)과 다릅니다. <button class="btn tiny primary" id="l-pchk-go">확인하고 맞추기</button></div>` : "";
       $("#l-pchk-go")?.addEventListener("click", () => this.priceCheck(p));
     }).catch(() => {});
+    // 목록을 다시 그려도 보고 있던 줄이 화면에서 튀지 않게: 화면 맨 위에 보이던 줄 위치를 기억했다가 되돌림
+    let anchor = null;
+    if (window.scrollY > 0) {
+      const tr = [...document.querySelectorAll("#l-rows tr[data-id]")].find((x) => x.getBoundingClientRect().top >= 0);
+      if (tr) anchor = { id: tr.dataset.id, top: tr.getBoundingClientRect().top };
+    }
     const active = this.f.eye ? `eye_${this.f.eye}` : this.f.nv === "bad" ? "nv_bad" : this.f.status;
     $("#l-tiles").innerHTML = tilesHtml(LST_TILES.filter((t) => !t.only || this.counts[t.key] || active === t.key), { ...this.counts, all: this.counts.all_ }, active);
     $("#l-rows").innerHTML = res.rows.length ? res.rows.map((l) => this.rowHtml(l)).join("")
@@ -193,6 +199,10 @@ App.page("listings", {
         : '이 스토어에 복사본이 없습니다. <a href="#inventory">원본 상품</a>에서 원본을 고르고 <b>다른 스토어로 복사</b>를 누르세요.'}</td></tr>`;
     this.renderBar();
     if (!this._mine(App.run)) this.renderIdle();
+    if (anchor) {
+      const tr = document.querySelector(`#l-rows tr[data-id="${anchor.id}"]`);
+      if (tr) { const d = tr.getBoundingClientRect().top - anchor.top; if (Math.abs(d) > 1) window.scrollBy(0, d); }
+    }
     this.renderOthers(App.run);
   },
 
@@ -423,12 +433,40 @@ App.page("listings", {
     });
   },
 
+  /* 잘못 넣은 판매 이력: 이 복사본에 맞춘 주문을 무시해 판매 수·잠금에서 뺌 (on=false면 무시 풀기 — 다시 셈) */
+  async ignoreOrders(id, on, l) {
+    let rows = [];
+    try { rows = await App.api(`/api/listings/${id}/orders`); } catch (e) { return App.toast(e.message, true); }
+    const tgt = rows.filter((o) => (on ? !o.ignored : o.ignored));
+    if (!tgt.length) return App.toast(on ? "무시할 주문이 없습니다." : "무시한 주문이 없습니다.", true);
+    App.openModal({
+      title: on ? "판매 이력 무시하고 잠금 풀기" : "판매 이력 무시 풀기",
+      body: `<div class="notice ${on ? "warn" : ""}">${on
+          ? `이 복사본(${esc(l.store_name || "")} · ${esc((l.name || "").slice(0, 30))})에 맞춘 주문 <b>${num(tgt.length)}건</b>을 <b>무시</b>합니다. 판매 수·잠금에서 빠져 <b>최신화·내리기로 네이버에서 지울 수 있게</b> 됩니다.
+             <br><b>정말 팔린 상품이면 리뷰·판매 기록이 사라질 수 있으니</b>, 잘못 넣은 판매 이력이 확실할 때만 하세요. (판매 현황 화면에서 파일째 되돌리기도 있습니다)`
+          : `무시했던 주문 <b>${num(tgt.length)}건</b>을 다시 판매 이력으로 셉니다 — 잠금이 다시 걸립니다.`}</div>
+        <div class="tbl-wrap" style="max-height:260px"><table class="opt-table"><tr><th>주문</th><th>상태</th><th>수량</th><th>결제일</th><th>가져온 곳</th></tr>
+          ${tgt.map((o) => `<tr><td>${esc(String(o.order_key).replace(/^file:/, ""))}<div class="p-sub">${esc((o.product_name || "").slice(0, 40))}</div></td>
+            <td>${esc(o.status_ko || o.status || "")}</td><td>${num(o.quantity)}</td><td>${o.ordered_at ? ymd(o.ordered_at) : "-"}</td>
+            <td>${o.source === "naver" ? "네이버 주문" : "주문 파일"}</td></tr>`).join("")}</table></div>`,
+      buttons: [{ label: "취소" }, { label: on ? "무시하고 잠금 풀기" : "무시 풀기", danger: on, primary: !on,
+        confirm: on ? `주문 ${num(tgt.length)}건을 무시해 이 복사본의 잠금을 풉니다 (판매 이력 확인 기준은 그대로).` : `주문 ${num(tgt.length)}건을 다시 판매 이력으로 셉니다.`,
+        onClick: async () => {
+          const r = await App.api(`/api/listings/${id}/ignore_orders`, { json: { on } });
+          App.toast(on ? (r.locked ? `주문 ${num(r.count)}건을 무시했지만 아직 잠겨 있습니다 (${r.lock_note})` : `주문 ${num(r.count)}건을 무시하고 잠금을 풀었습니다.`)
+            : `무시를 풀었습니다 — ${r.locked ? `다시 잠김 (${r.lock_note})` : "잠금 없음"}.`, on && r.locked);
+          if ($("#l-rows")) this.load();
+          this.openListing(id);
+        } }],
+    });
+  },
+
   async lock(on, ids) {
     if (!on && !await App.yes("직접 잠금 풀기", `${ids ? `복사본 ${num(ids.length)}건` : "고른 복사본"}의 직접 잠금을 풉니다. 풀면 최신화·내리기로 네이버에서 지울 수 있게 됩니다 (판매 이력이 있는 것은 잠금 유지).`, { label: "잠금 풀기", danger: true })) return;
     try {
       const r = await App.api("/api/listings/lock", { json: { ...(ids ? { ids } : this.target()), lock: on } });
       App.toast(on ? `${num(r.count)}건을 잠갔습니다. 최신화·내리기로 지우지 않습니다.`
-        : `${num(r.count)}건의 직접 잠금을 풀었습니다.` + (r.still_locked ? ` ${num(r.still_locked)}건은 판매 이력이 있어 잠금이 유지됩니다.` : ""));
+        : `${num(r.count)}건의 직접 잠금을 풀었습니다.` + (r.still_locked ? ` ${num(r.still_locked)}건은 판매 이력이 있어 잠금이 유지됩니다 — 잘못 넣은 판매 이력이면 판매 현황의 [이 파일 되돌리기] 또는 복사본 상세의 [판매 이력 무시하고 잠금 풀기]` : ""));
       if (!ids) { this.clearSel(); this.load(); }
       return r;
     } catch (e) { App.toast(e.message, true); }
@@ -850,8 +888,9 @@ App.page("listings", {
     if (!el) return;
     const sid = +this.f.store_id;
     const others = r?.running && sid ? (r.stores || []).filter((s) => s.id !== sid && !["끝", "중단"].includes(s.status)) : [];
-    el.hidden = !others.length;
-    if (!others.length) return;
+    // 줄은 늘 같은 자리·같은 높이 (나타났다 사라지며 화면이 흔들리지 않게)
+    el.hidden = !sid;
+    if (!others.length) { el.innerHTML = '<span class="muted small">다른 스토어: 처리 중인 곳 없음</span>'; return; }
     el.innerHTML = `<span class="muted small">다른 스토어:</span> ${others.map((s) => `<button type="button" class="ro-chip" data-goto="${s.id}" title="${esc(s.name)} 화면으로">
         ${esc(s.name)} <b>${num(s.done)}/${num(s.total)}</b>${s.paused ? " · 일시정지" : s.status !== "처리 중" ? ` · ${esc(s.status)}` : ""}</button>`).join("")}
       <span class="ro-all"><button type="button" class="link-btn small" data-all="${r.paused ? "resume" : "pause"}">${r.paused ? "모든 스토어 계속" : "모든 스토어 일시정지"}</button>
@@ -997,7 +1036,14 @@ App.page("listings", {
         <div class="run-state" id="r-state"></div>
         ${all ? '<div class="store-chips" id="r-stores"></div>' : ""}
         <ul class="current" id="r-current"></ul>
-        <details class="log"><summary>자세히 · 작업 기록 <span class="muted" id="r-logn"></span></summary><ol id="r-log"></ol></details>`;
+        <div class="run-foot"><button type="button" class="link-btn small" id="r-logbtn">자세히 · 작업 기록 보기 <span class="muted" id="r-logn"></span></button></div>`;
+      // 작업 기록은 창으로 (상자 안에서 펼치면 높이가 바뀌어 화면이 흔들림)
+      $("#r-logbtn").addEventListener("click", () => {
+        const m = this._mine(App.run);
+        App.openModal({ title: `작업 기록${m && !m.all ? ` · ${m.name}` : ""}`, wide: true,
+          body: '<div class="log"><ol id="r-log"></ol></div>', buttons: [{ label: "닫기" }] });
+        this.renderLog(App.run, m && !m.all ? m.name : null);
+      });
       const body = () => (this._mine(App.run)?.all ? {} : { store_id: +this.f.store_id });
       $("#r-pause").addEventListener("click", async () => {
         const m = this._mine(App.run);
@@ -1047,10 +1093,12 @@ App.page("listings", {
   },
 
   renderLog(r, store) {
-    const ol = $("#r-log");
-    if (!ol || !r) return;
+    if (!r) return;
     const log = store ? r.log.filter((l) => !l.store || l.store === store) : r.log;
-    $("#r-logn").textContent = log.length ? `(${log.length})` : "";
+    const n = $("#r-logn");
+    if (n) n.textContent = log.length ? `(${log.length})` : "";
+    const ol = $("#r-log");
+    if (!ol) return;
     ol.innerHTML = log.slice().reverse().map((l) => `<li class="l-${l.level}"><time>${new Date(l.t * 1000)
       .toLocaleTimeString("ko-KR", { hour12: false })}</time>${l.store ? `<span class="muted">${esc(l.store)}</span>` : ""}<span>${esc(l.msg)}</span></li>`).join("");
   },
@@ -1131,9 +1179,11 @@ App.page("listings", {
               <dt>다른 스토어</dt><dd>${l.siblings.length ? l.siblings.map((x) => `<div><button class="go-store" data-go="${x.id}">→ ${esc(x.store_name)}</button> ${esc(x.name)} <span class="muted">(${STATUS[x.status] || x.status})</span></div>`).join("") : "같은 원본이 다른 스토어에는 없음"}</dd></dl>`
             + `<div class="notice ${l.locked ? "info" : ""} lock-box"><div><b>${l.locked ? "잠금" : "잠금 아님"}</b>${l.locked ? ` · ${esc(l.lock_note)} · 최신화·내리기로 지우지 않습니다` : " · 최신화·내리기 가능"}
                 ${l.cancel_count ? `<br><span class="muted">취소·반품 ${num(l.cancel_count)}개는 판매로 세지 않음 (설정에서 바꿈)</span>` : ""}</div>
-                <button class="btn" id="d-lock">${l.manual_lock ? "직접 잠금 풀기" : "직접 잠금"}</button></div>`
+                <div class="cl-row"><button class="btn" id="d-lock">${l.manual_lock ? "직접 잠금 풀기" : "직접 잠금"}</button>
+                ${l.orders.some((o) => !o.ignored) && (l.sold_count || l.cancel_count) ? '<button class="btn danger" id="d-ignore" title="잘못 넣은 판매 이력이면: 이 복사본에 맞춘 주문을 무시해 판매 수·잠금에서 뺌 (되돌릴 수 있음)">판매 이력 무시하고 잠금 풀기</button>' : ""}
+                ${l.orders.some((o) => o.ignored) ? '<button class="btn" id="d-unignore" title="무시한 주문을 다시 판매 이력으로 셈">판매 이력 무시 풀기</button>' : ""}</div></div>`
             + (l.orders.length ? `<div><h3 class="sec-title">주문 (판매 ${num(l.sold_count)}개${l.cancel_count ? ` · 취소·반품 ${num(l.cancel_count)}개` : ""})</h3><table class="opt-table"><tr><th>주문</th><th>수량</th><th>결제일</th><th>가져온 곳</th></tr>
-              ${l.orders.map((o) => `<tr><td>${esc(o.order_key.replace(/^file:/, ""))}<div class="p-sub">${esc(o.status)}</div></td><td>${num(o.quantity)}</td><td>${ymd(o.ordered_at)}</td>
+              ${l.orders.map((o) => `<tr${o.ignored ? ' style="opacity:.55"' : ""}><td>${esc(o.order_key.replace(/^file:/, ""))}<div class="p-sub">${esc(o.status)}${o.ignored ? " · 무시함" : ""}</div></td><td>${num(o.quantity)}</td><td>${ymd(o.ordered_at)}</td>
               <td>${o.source === "naver" ? "네이버 주문" : "주문 파일"}</td></tr>`).join("")}</table></div>` : "")
             + (l.history.length ? `<div><h3 class="sec-title">지난 회차</h3><table class="opt-table"><tr><th>회차</th><th>관리코드</th><th>상품번호</th><th>올린 날</th><th>지운 날</th></tr>
               ${l.history.map((h) => `<tr><td>${h.round}</td><td>${esc(h.seller_code)}</td><td>${esc(h.channel_no)}</td><td>${ymd(h.registered_at)}</td>
@@ -1159,6 +1209,8 @@ App.page("listings", {
             const r = await this.lock(!l.manual_lock, [id]);
             if (r) { if ($("#l-rows")) this.load(); this.openListing(id); }
           });
+          $("#d-ignore", b)?.addEventListener("click", () => this.ignoreOrders(id, true, l));
+          $("#d-unignore", b)?.addEventListener("click", () => this.ignoreOrders(id, false, l));
         } },
         { key: "mobile", label: "휴대폰 미리보기", render: (b) => {
           const dc = l.body?.originProduct?.detailContent;

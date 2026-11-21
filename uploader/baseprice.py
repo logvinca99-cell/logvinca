@@ -194,7 +194,8 @@ def _calc(old, mode, value, direction, unit):
 
 
 def bulk_plan(db, level, ids, mode, value=0, direction="up", prices=None):
-    """가격 수정 미리보기: level listing(복사본 — 그 스토어 손님 가격 기준, 기준 가격은 거꾸로 계산)·source(원본 — 기준 가격 기준).
+    """가격 수정 미리보기: 복사본(level listing)에서 열어도 원본(level source)과 같이 늘 **기준 가격**에 적용한다.
+    복사본이면 그 스토어 손님 가격 전→후(가격 차이 % 반영)도 같이 보여 준다.
     prices: 직접 입력 {번호: 새 값}. 같은 원본을 둘 이상 고르면 원본은 하나라 처음 것만 (나머지는 '같은 원본이라 뺌').
     → {items: [...], ok, skipped, examples, others, warn}"""
     cfg = config.load()
@@ -215,8 +216,11 @@ def bulk_plan(db, level, ids, mode, value=0, direction="up", prices=None):
     n_other = 0
     for r in rows:
         st = stores.get(r.get("store_id")) or {}
-        old = convert.store_price(r["base"], cfg, st) if level == "listing" else int(r["base"])
+        old = int(r["base"])   # 늘 기준 가격 기준
         it = {"id": r["id"], "source_id": r["source_id"], "name": r["name"], "store": st.get("name", ""), "old": old, "old_base": r["base"]}
+        if level == "listing":
+            it["store_old"] = convert.store_price(old, cfg, st)
+            it["pct"] = float(st.get("tpl_price_pct") or 0)
         if r["source_id"] in seen:
             it["why"] = "같은 원본이라 뺌 (원본 기준 가격은 하나 — 처음 고른 복사본 기준으로 바뀜)"
             items.append(it)
@@ -235,7 +239,9 @@ def bulk_plan(db, level, ids, mode, value=0, direction="up", prices=None):
         elif new == old:
             it["why"] = "바뀌지 않음"
         if not it.get("why"):
-            it["new_base"] = convert.base_for(new, cfg, st) if level == "listing" else new
+            it["new_base"] = new
+            if level == "listing":
+                it["store_new"] = convert.store_price(new, cfg, st)
             it["big"] = bool(old and abs(new - old) / old > BIG_WARN)
             it["others"] = db.one("SELECT COUNT(*) AS n FROM listings WHERE source_id=?" + (" AND id!=?" if level == "listing" else ""),
                                   (r["source_id"], r["id"]) if level == "listing" else (r["source_id"],))["n"]

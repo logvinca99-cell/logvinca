@@ -192,6 +192,16 @@ CREATE TABLE IF NOT EXISTS orders (
     created_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS orders_listing ON orders(listing_id);
+CREATE TABLE IF NOT EXISTS order_imports (   -- 넣은 판매 이력 파일 (잘못 넣었으면 파일째 되돌리기)
+    id INTEGER PRIMARY KEY,
+    file TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL,
+    rows INTEGER NOT NULL DEFAULT 0,
+    new INTEGER NOT NULL DEFAULT 0,
+    matched INTEGER NOT NULL DEFAULT 0,
+    guessed INTEGER NOT NULL DEFAULT 0,      -- 예전에 넣어 넣은 때로 묶은 것
+    undone_at REAL
+);
 CREATE TABLE IF NOT EXISTS runs (
     id INTEGER PRIMARY KEY,
     started_at REAL NOT NULL,
@@ -253,6 +263,7 @@ class DB:
         trash.ensure(self)
         self._rename_price_terms()
         self._import_methods()
+        self._order_imports_backfill()
         self._drop_removed()
         self._busy_name_guard()
         self._orders_from_init()
@@ -310,6 +321,8 @@ class DB:
                    ("mail_to", "TEXT NOT NULL DEFAULT ''")],   # 이 스토어 메일을 받는 주소 (예: me+redcoco@gmail.com) — 메일함 스토어 구분용   # 판매자센터를 열 크롬 프로필 폴더 이름 (예: Profile 3)
         # AI 이름 A·B 양식 (만들 때 정해짐 — A는 1번째 복사본용, B는 양식이 조금 다름). 비면 만든 순서로 짐작
         "names": [("variant", "TEXT NOT NULL DEFAULT ''")],
+        # 주문 파일로 들어온 주문의 파일(order_imports) · 판매 이력 무시(복사본 잠금 풀기 — 판매 수·잠금에서 뺌, 되돌릴 수 있음)
+        "orders": [("import_id", "INTEGER"), ("ignored", "INTEGER NOT NULL DEFAULT 0"), ("ignored_at", "REAL")],
         # 원본을 넣은 방법: collect(수집 상품 넣기) · ready(이름 완성 상품 넣기) · adopt(판매 중 상품 연결), 올린 파일 이름 그대로,
         # 연결한 스토어(판매 중 상품 연결), 거쳐 온 곳(상세 정리)
         "imports": [("method", "TEXT NOT NULL DEFAULT ''"), ("file", "TEXT NOT NULL DEFAULT ''"),
@@ -382,6 +395,29 @@ class DB:
               WHEN OLD.listing_id IN {busy} AND NOT EXISTS (SELECT 1 FROM name_unlock)
               BEGIN SELECT RAISE(IGNORE); END;
             """)
+
+    def _order_imports_backfill(self):
+        """예전에 주문 파일로 넣은 주문(파일 번호 없음)을 넣은 때(10분 안쪽끼리)로 묶어 파일 기록을 한 번 만든다 — 되돌리기용."""
+        rows = self.q("SELECT order_key, created_at, listing_id FROM orders WHERE source='file' AND import_id IS NULL ORDER BY created_at")
+        if not rows:
+            return
+        groups, cur, last = [], [], None
+        for r in rows:
+            if last is not None and r["created_at"] - last > 600:
+                groups.append(cur)
+                cur = []
+            cur.append(r)
+            last = r["created_at"]
+        groups.append(cur)
+        with self.tx() as c:
+            for g in groups:
+                t = g[0]["created_at"]
+                iid = c.execute("""INSERT INTO order_imports(file, created_at, rows, new, matched, guessed) VALUES(?,?,?,?,?,1)""",
+                                (f"(예전에 넣은 주문 파일 · {time.strftime('%Y-%m-%d %H:%M', time.localtime(t))})", t, len(g), len(g),
+                                 sum(1 for x in g if x["listing_id"]))).lastrowid
+                for i in range(0, len(g), 900):
+                    ch = [x["order_key"] for x in g[i:i + 900]]
+                    c.execute(f"UPDATE orders SET import_id=? WHERE order_key IN ({','.join('?' * len(ch))})", (iid, *ch))
 
     def _import_methods(self):
         """예전 불러오기 기록에 넣은 방법·파일 이름을 한 번 채움 (기록 이름의 앞말로 구분, 이름 완성 상품은 완성 상품명으로)."""

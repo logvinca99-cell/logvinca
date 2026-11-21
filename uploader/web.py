@@ -1077,7 +1077,7 @@ def create_app(db=None):
             if len(ids) > 300:
                 return jsonify({"too_many": len(ids)})
             pv = baseprice.bulk_plan(db, level, ids, "set", prices={i: 0 for i in ids})
-            return jsonify({"rows": [{k: x.get(k) for k in ("id", "name", "store", "old", "source_id")} for x in pv["items"]], "count": len(ids)})
+            return jsonify({"rows": [{k: x.get(k) for k in ("id", "name", "store", "old", "source_id", "store_old", "pct")} for x in pv["items"]], "count": len(ids)})
         try:
             value = float(b.get("value") or 0)
         except ValueError:
@@ -1095,7 +1095,7 @@ def create_app(db=None):
         mode = b.get("mode") if b.get("mode") in ("set", "won", "pct") else "won"
         pv = baseprice.bulk_plan(db, level, ids, mode, float(b.get("value") or 0), b.get("dir") or "up", b.get("prices"))
         items = [{"source_id": x["source_id"], "price": x["new_base"],
-                  "memo": f"{'복사본' if level == 'listing' else '원본'} 가격 수정 {x['old']:,} → {x['new']:,}"} for x in pv["items"] if x.get("new_base")]
+                  "memo": f"{'복사본에서' if level == 'listing' else '원본'} 기준 가격 수정 {x['old']:,} → {x['new']:,}"} for x in pv["items"] if x.get("new_base")]
         if not items:
             return fail("바꿀 것이 없습니다.")
         how = {"set": "직접 입력", "won": f"{float(b.get('value') or 0):,.0f}원 {'올리기' if b.get('dir') == 'up' else '내리기'}",
@@ -2202,6 +2202,36 @@ def create_app(db=None):
         except ValueError as e:
             return fail(str(e))
         return jsonify({"ok": True, "name": name})
+
+    # ── 잘못 넣은 판매 이력 바로잡기 (주문 파일째 되돌리기 · 복사본 단위로 판매 이력 무시하고 잠금 풀기)
+
+    @app.get("/api/orders/imports")
+    def orders_imports():
+        return jsonify(orders.imports_list(db))
+
+    @app.get("/api/orders/imports/<int:iid>/undo_preview")
+    def orders_import_undo_preview(iid):
+        try:
+            return jsonify(orders.undo_preview(db, iid))
+        except ValueError as e:
+            return fail(str(e))
+
+    @app.post("/api/orders/imports/<int:iid>/undo")
+    def orders_import_undo(iid):
+        try:
+            return jsonify(orders.undo_import(db, iid))
+        except ValueError as e:
+            return fail(str(e))
+
+    @app.get("/api/listings/<int:lid>/orders")
+    def listing_orders(lid):
+        return jsonify(orders.listing_orders(db, lid))
+
+    @app.post("/api/listings/<int:lid>/ignore_orders")
+    def listing_ignore_orders(lid):
+        on = bool(body().get("on", True))
+        n, locked, note = orders.ignore_listing_orders(db, lid, on)
+        return jsonify({"count": n, "locked": locked, "lock_note": note, "on": on})
 
     @app.post("/api/listings/lock")
     def lock():

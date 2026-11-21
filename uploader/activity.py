@@ -161,6 +161,10 @@ ACTIONS = {
     "listing_set_name": ("상품명", lambda b, r: ("상품명 직접 고침", 1, str(r.get("name") or "")[:120])),
     "store_sales_confirm": ("주문", lambda b, r: (f"판매 이력 확인 완료 · {r.get('store', '')} · {b.get('from')}부터", r.get("adopted"),
                                                  f"확인 전 남은 가져온 상품 {r.get('need', 0)}개")),
+    "orders_import_undo": ("판매 이력", lambda b, r: (f"주문 파일 되돌리기 · {r.get('file', '')}", r.get("removed"),
+                                                   f"영향 복사본 {r.get('copies', 0)}건 · 잠금 풀림 {r.get('unlocked', 0)}건" + (f" · 아직 잠김 {r['still_locked']}건" if r.get("still_locked") else ""))),
+    "listing_ignore_orders": ("복사본", lambda b, r: (("판매 이력 무시하고 잠금 풀기" if r.get("on") else "판매 이력 무시 풀기 (다시 판매 이력으로 셈)"),
+                                                   r.get("count"), ("아직 잠김: " + r["lock_note"]) if r.get("locked") else "잠금 풀림")),
     "lock": ("복사본", lambda b, r: ("잠금" if b.get("lock") else "잠금 풀기", r.get("count"), f"아직 잠긴 것 {r['still_locked']}건" if r.get("still_locked") else "")),
     "cancel": ("복사본", lambda b, r: ("대기 취소", r.get("cancelled"), "")),
     "sources_bulk_edit": ("원본", lambda b, r: ("원본 일괄 수정" + (" · 판매자코드 비우기" if b.get("clear_seller_code") else "")
