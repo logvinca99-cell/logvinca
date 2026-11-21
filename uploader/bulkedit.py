@@ -220,13 +220,18 @@ def name_pending_count(db, store_id=None):
     return db.one(f"SELECT COUNT(*) AS n FROM listings WHERE {w}", a)["n"]
 
 
-def push_names(db, store_id=None, progress=None, should_stop=None):
+def push_names(db, store_id=None, progress=None, should_stop=None, lids=None):
     """판매 중 복사본의 네이버 상품명만 바꾸기 (지우지 않음). 성공하면 이 프로그램의 이름도 바꾸고 예전 이름은 '다 쓴 이름'으로."""
     from .inventory import release_name
+    from . import apiuse
     w, a = "l.name_push IS NOT NULL AND l.origin_no!='' AND l.status NOT IN ('queued','running','deleted')", []
     if store_id:
         w += " AND l.store_id=?"
         a.append(int(store_id))
+    if lids:
+        lids = [int(x) for x in lids]
+        w += f" AND l.id IN ({','.join('?' * len(lids))})"
+        a += lids
     rows = db.q(f"SELECT l.id, l.store_id, l.origin_no, l.name_push FROM listings l WHERE {w} ORDER BY l.id", a)
     out = {"ok": 0, "fail": 0, "errors": []}
     clients = {}
@@ -236,6 +241,9 @@ def push_names(db, store_id=None, progress=None, should_stop=None):
         cur = db.one("SELECT store_id, status, origin_no FROM listings WHERE id=?", (r["id"],))
         if not cur or cur["store_id"] != r["store_id"] or cur["origin_no"] != r["origin_no"] or cur["status"] in ("queued", "running", "deleted"):
             continue   # 보험: 그새 다른 스토어로 옮겨졌거나 처리 중·내림 → 이 스토어로 보내지 않음
+        if apiuse.until(r["store_id"]):   # 시간당 한도로 멈춘 스토어 → 보내지 않고 대기로 남김
+            out["quota"] = out.get("quota", 0) + 1
+            continue
         nm = db.one("SELECT id, name FROM names WHERE id=?", (r["name_push"],))
         if not nm:
             db.set_listing(r["id"], None, name_push=None)
@@ -251,6 +259,9 @@ def push_names(db, store_id=None, progress=None, should_stop=None):
                 c.execute("UPDATE listings SET name_id=?, name=?, name_push=NULL, ctx_wait=0, message=?, updated_at=? WHERE id=?",
                           (nm["id"], nm["name"], "일괄 수정 → 네이버 상품명 바꿈", time.time(), r["id"]))
             out["ok"] += 1
+        except apiuse.QuotaPaused as e:
+            db.set_listing(r["id"], None, message=f"네이버 상품명 바꾸기 — {e} · 대기로 남음"[:600])
+            out["quota"] = out.get("quota", 0) + 1
         except Exception as e:  # noqa: BLE001
             db.set_listing(r["id"], None, message=f"네이버 상품명 바꾸기 실패 — 복사본 화면 [네이버 반영 다시 시도]로 다시: {e}"[:600])
             out["fail"] += 1
@@ -262,17 +273,21 @@ def push_names(db, store_id=None, progress=None, should_stop=None):
 
 
 def push_all(db, price_ids=None, store_id=None, progress=None, should_stop=None):
-    """네이버 반영 대기(가격·상품명·상세)를 모두 보냄."""
+    """네이버 반영 대기(가격·상품명·상세)를 한 번 보냄 — price_ids(고른 복사본)를 주면 그것만, 없으면 대기 전부.
+    자동으로 다시 보내지 않음 (실패·한도로 남은 것은 [네이버 반영 다시 시도]로)."""
     from . import engine
     a = baseprice.push_live(db, price_ids, store_id=store_id, progress=progress, should_stop=should_stop)
-    b = push_names(db, store_id, progress=progress, should_stop=should_stop)
-    d = engine.push_details(db, store_id=store_id, progress=progress, should_stop=should_stop)
+    b = push_names(db, store_id, progress=progress, should_stop=should_stop, lids=price_ids)
+    d = engine.push_details(db, lids=price_ids, store_id=store_id, progress=progress, should_stop=should_stop)
     left = baseprice.pending_count(db, store_id) + name_pending_count(db, store_id) + engine.detail_pending_count(db, store_id)
     msg = f"네이버 가격 바꿈 {a['ok']:,}건 · 상품명 바꿈 {b['ok']:,}건" + (f" · 상세 바꿈 {d['ok']:,}건" if d["ok"] or d["fail"] else "")
     fails = a["fail"] + b["fail"] + d["fail"]
     if fails:
         msg += f" · 실패 {fails:,}건"
+    q = a.get("quota", 0) + b.get("quota", 0) + d.get("quota", 0)
+    if q:
+        msg += f" · 시간당 한도로 멈춘 스토어라 안 보낸 {q:,}건"
     if left:
-        msg += f" · 아직 대기 {left:,}건 ([네이버 반영 다시 시도])"
+        msg += f" · 아직 대기 {left:,}건 ([네이버 반영 다시 시도] — 자동으로 다시 보내지 않음)"
     return {"price_ok": a["ok"], "name_ok": b["ok"], "detail_ok": d["ok"], "fail": fails, "left": left,
             "errors": (a["errors"] + b["errors"] + d["errors"])[:5], "message": msg}

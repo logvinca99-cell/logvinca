@@ -264,11 +264,13 @@ def pending_count(db, store_id=None):
 
 
 def push_live(db, lids=None, store_id=None, progress=None, should_stop=None):
-    """판매 중 복사본의 네이버 가격만 바꾸기 (지우지 않음). 대기(price_push)에 있는 것을 보냄 — lids를 주면 그것 먼저,
-    끝나면 그새 대기에 들어온 것도 이어서. 성공하면 손님 가격을 바꾸고 대기를 지움, 실패하면 대기에 남김."""
+    """판매 중 복사본의 네이버 가격만 바꾸기 (지우지 않음). 대기(price_push)에 있는 것을 한 번만 보냄 — lids를 주면 그것만,
+    없으면([네이버 반영 다시 시도]) 대기 전부. 성공하면 손님 가격을 바꾸고 대기를 지움, 실패하면 대기에 남김(자동으로 다시 보내지 않음).
+    시간당 한도로 멈춘 스토어는 보내지 않고 대기로 남김."""
+    from . import apiuse
     cfg = config.load()
     unit = max(1, convert.to_int(cfg.get("price_round"), 100))
-    out = {"ok": 0, "fail": 0, "errors": []}
+    out = {"ok": 0, "fail": 0, "errors": [], "quota": 0}
     tried, clients, bad_store = set(), {}, {}
 
     def pending():
@@ -277,16 +279,15 @@ def push_live(db, lids=None, store_id=None, progress=None, should_stop=None):
             w += " AND store_id=?"
             a.append(int(store_id))
         ids = [r["id"] for r in db.q(f"SELECT id FROM listings WHERE {w} ORDER BY id", a) if r["id"] not in tried]
-        first = [i for i in (lids or []) if i in set(ids)]
-        return first + [i for i in ids if i not in set(first)]
+        if lids:
+            want = {int(i) for i in lids}
+            return [i for i in ids if i in want]
+        return ids
 
     total = 0
-    for rnd in range(3):   # 다 보낸 뒤 그새 들어온 대기도 (최대 세 번 훑음)
+    for rnd in range(1):   # 한 번만 (그새 들어온 대기·실패한 건을 자동으로 다시 보내지 않음)
         todo = pending()
         if not todo:
-            if rnd < 2:
-                time.sleep(1)
-                continue
             break
         total += len(todo)
         for lid in todo:
@@ -297,6 +298,9 @@ def push_live(db, lids=None, store_id=None, progress=None, should_stop=None):
             if not r or not r["price_push"] or not r["origin_no"] or r["status"] in ("queued", "running", "deleted"):
                 continue   # 그새 처리 중·내림이 됨 → 엔진이 새 가격으로 올림
             sid = r["store_id"]
+            if apiuse.until(sid):   # 시간당 한도로 멈춘 스토어 → 보내지 않음
+                out["quota"] += 1
+                continue
             try:
                 if sid in bad_store:
                     raise naver.ApiError(bad_store[sid])
@@ -315,6 +319,9 @@ def push_live(db, lids=None, store_id=None, progress=None, should_stop=None):
                 db.set_listing(lid, None, price=final, nv_price=final, sale_shown=shown, price_push=None,
                                message=f"기준 가격 수정 → 네이버 가격 바꿈 (손님 가격 {final:,}원)")
                 out["ok"] += 1
+            except apiuse.QuotaPaused as e:
+                db.set_listing(lid, None, message=f"네이버 가격 바꾸기 — {e} · 대기로 남음"[:600])
+                out["quota"] += 1
             except Exception as e:  # noqa: BLE001
                 db.set_listing(lid, None, message=f"네이버 가격 바꾸기 실패 — 복사본 화면 [가격 바꾸기 다시 시도]로 다시: {e}"[:600])
                 out["fail"] += 1
@@ -327,7 +334,8 @@ def push_live(db, lids=None, store_id=None, progress=None, should_stop=None):
     left = pending_count(db, store_id)
     out["left"] = left
     out["message"] = f"네이버 가격 바꿈 {out['ok']:,}건" + (f" · 실패 {out['fail']:,}건" if out["fail"] else "") \
-        + (f" · 아직 대기 {left:,}건 ([가격 바꾸기 다시 시도])" if left else "")
+        + (f" · 시간당 한도로 멈춘 스토어라 안 보낸 {out['quota']:,}건" if out["quota"] else "") \
+        + (f" · 아직 대기 {left:,}건 ([네이버 반영 다시 시도] — 자동으로 다시 보내지 않음)" if left else "")
     return out
 
 

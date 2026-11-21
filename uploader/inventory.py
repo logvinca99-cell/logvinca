@@ -1557,7 +1557,7 @@ def nv_preview(db, f):
         need, at, hours = nvstate.due(db, sid, cfg)
         e = (db.one("SELECT name, nv_check_err FROM stores WHERE id=?", (sid,)) or {})
         st.append({"store_id": sid, "name": e.get("name") or "", "will_check": need, "checked_at": at, "ago": nvstate.ago(at), "err": e.get("nv_check_err") or ""})
-    out["stores"], out["reuse_hours"] = st, max(0.0, float(cfg.get("nv_reuse_hours") if cfg.get("nv_reuse_hours") is not None else 6))
+    out["stores"], out["reuse_hours"] = st, max(0.0, float(cfg.get("nv_reuse_hours") if cfg.get("nv_reuse_hours") is not None else 24))
     return out
 
 
@@ -1944,7 +1944,7 @@ def store_summaries(db):
         r = rows.get(s["id"], {})
         out.append({"id": s["id"], "name": s["name"], "code": s["code"], "enabled": s["enabled"], "capacity": s["capacity"],
                     "business_name": s.get("business_name"), "store_url": s.get("store_url") or "", "ship_region": s.get("ship_region") or "",
-                    "used": s["used"], "last_at": r.get("last_at"),
+                    "used": s["used"], "last_at": r.get("last_at"), "quota_until": s.get("quota_until"), "api": s.get("api"),
                     "free": s["free"], **{k: r.get(k) or 0 for k in ("all_", "noname", "named", "pending", "p_create", "p_refresh", "p_reupload", "p_delete", "live", "fail")}})
     return out
 

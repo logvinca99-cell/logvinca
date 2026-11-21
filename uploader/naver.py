@@ -15,7 +15,8 @@ import time
 
 import requests
 
-from . import config
+from . import apiuse, config
+from .apiuse import QuotaPaused  # noqa: F401 - naver.QuotaPaused로도 씀
 
 API = "https://api.commerce.naver.com/external"
 CATEGORY_CACHE = os.path.join(config.DATA_DIR, "category_cache.json")
@@ -242,10 +243,11 @@ def explain(e):
 
 
 class Client:
-    def __init__(self, client_id, client_secret):
+    def __init__(self, client_id, client_secret, store_id=None):
         if not client_id or not client_secret:
             raise ApiError("애플리케이션 ID / 시크릿이 없습니다.")
         self.client_id, self.client_secret = client_id.strip(), client_secret.strip()
+        self.store_id = store_id   # 스토어별 사용량·한도 멈춤 (apiuse)
         self._token, self._token_until = None, 0
         self._token_lock = threading.Lock()
         self._local = threading.local()
@@ -266,6 +268,7 @@ class Client:
 
     def _issue_token(self):
         import bcrypt
+        apiuse.check(self.store_id)
         ts = str(int(time.time() * 1000))
         try:
             hashed = bcrypt.hashpw(f"{self.client_id}_{ts}".encode(), self.client_secret.encode())
@@ -278,6 +281,7 @@ class Client:
             "grant_type": "client_credentials",
             "type": "SELF",
         }, timeout=20)
+        apiuse.record(self.store_id, "토큰", r.status_code)
         if r.status_code != 200:
             hint = " → 커머스API센터에 이 PC의 IP를 등록했는지 확인하세요." if "IP" in r.text else \
                 " → 애플리케이션 ID/시크릿을 확인하세요."
@@ -287,15 +291,23 @@ class Client:
         self._token_until = time.time() + int(j.get("expires_in", 10800)) - 300
 
     def request(self, method, path, on_wait=None, **kw):
+        """한도로 멈춘 스토어면 보내지 않고 QuotaPaused. 보낸 요청은 스토어별로 셈 (apiuse).
+        시간당 한도(429 QUOTA)에 걸리면 그 스토어를 멈추고 QuotaPaused — 다음 건을 계속 보내 한도를 더 쓰지 않게."""
         r, refresh = None, False
+        kind = apiuse.kind_of(method, path)
         for attempt in range(6):
+            apiuse.check(self.store_id)
             headers = {"Authorization": f"Bearer {self._token_now(force=refresh)}"}
             r = self.s.request(method, f"{API}{path}", headers=headers, timeout=60, **kw)
+            apiuse.record(self.store_id, kind, r.status_code)
             refresh = r.status_code == 401
             if refresh:
                 continue
             if r.status_code == 429 and "QUOTA_LIMIT" in r.text:
-                return r   # 시간당 한도 초과: 몇 초 기다려서는 안 풀림 → 바로 알림
+                u = apiuse.hit_quota(self.store_id)
+                if u:
+                    raise apiuse.QuotaPaused(self.store_id, u)
+                return r   # (스토어를 모를 때) 시간당 한도 초과: 몇 초 기다려서는 안 풀림 → 바로 알림
             if r.status_code == 429 or r.status_code >= 500:
                 wait = min(2 ** attempt, 30) + random.random()
                 if on_wait:
@@ -405,8 +417,11 @@ class Client:
         return out
 
     def upload_images(self, items, on_wait=None):
-        """items: [(원본주소, 바이트, content-type)] 최대 10개 → 네이버 이미지 주소 목록."""
+        """items: [(원본주소, 바이트, content-type)] 최대 10개 → 네이버 이미지 주소 목록.
+        네이버가 받는 형식(JPG·PNG·GIF·BMP)이 아니면 JPG로 바꿔 보냄 (imgfix)."""
+        from . import imgfix
         files = []
+        items = [(u, *imgfix.normalize(d, c, u)) for u, d, c in items]
         for i, (url, data, ctype) in enumerate(items):
             ext, mime = _guess_mime(url, ctype)
             files.append(("imageFiles", (f"img{i}.{ext}", data, mime)))
@@ -551,9 +566,36 @@ class FakeClient:
         self._lock = threading.Lock()
         self.store_id = (store or {}).get("id")
 
+    def _call(self, kind):
+        """시연: 진짜 요청처럼 한도 멈춤 확인·사용량 세기. 기록 폴더 fake_quota.json {스토어 번호: 남은 요청 수}가 있으면
+        그 수를 다 쓴 다음 요청에서 한도(429 QUOTA)를 흉내 낸다 (시험용)."""
+        apiuse.check(self.store_id)
+        p = os.path.join(config.DATA_DIR, "fake_quota.json")
+        if os.path.exists(p):
+            with FakeClient._class_lock:
+                try:
+                    with open(p, encoding="utf-8") as f:
+                        q = json.load(f)
+                except ValueError:
+                    q = {}
+                k = str(self.store_id)
+                if k in q:
+                    left = int(q[k])
+                    if left <= 0:
+                        q.pop(k)
+                    else:
+                        q[k] = left - 1
+                    with open(p, "w", encoding="utf-8") as f:
+                        json.dump(q, f)
+                    if left <= 0:
+                        apiuse.record(self.store_id, kind, 429)
+                        raise apiuse.QuotaPaused(self.store_id, apiuse.hit_quota(self.store_id))
+        apiuse.record(self.store_id, kind, 200)
+
     def iter_products(self, on_wait=None, on_page=None):
         """시연: 기록 폴더의 fake_store_products.json {스토어 번호: [상품 …]} (API 모양 그대로)."""
         from . import config
+        self._call("상품 목록")
         p = os.path.join(config.DATA_DIR, "fake_store_products.json")
         items = []
         if os.path.exists(p):
@@ -586,23 +628,34 @@ class FakeClient:
             {"addressBookNo": 100003, "name": "반품 센터", "addressType": "REFUND_OR_EXCHANGE", "baseAddress": "경기도 김포시 1"}]})
 
     def product_count(self):
+        self._call("상품 목록")
         return random.randint(0, 300)
 
     def status_counts(self, on_wait=None):
+        self._call("상품 목록")
         sale, sus, oos = random.randint(0, 250), random.randint(0, 60), random.randint(0, 20)
         hidden = random.randint(0, sale)
         return {"SALE": sale, "SUSPENSION": sus, "OUTOFSTOCK": oos, "_total": sale + sus + oos,
                 "_disp_ON": sale + sus + oos - hidden, "_disp_SUSPENSION": hidden}
 
     def delete_product(self, origin_no, on_wait=None):
+        self._call("지우기")
         time.sleep(random.uniform(0.2, 0.5))
         return True
 
     def upload_images(self, items, on_wait=None):
+        """시연: 진짜처럼 네이버가 받는 형식(JPG·PNG·GIF·BMP)만 받음 — 업스타가 먼저 맞춰 보냄."""
+        from . import imgfix
+        self._call("이미지")
+        items = [(u, *imgfix.normalize(d, c, u)) for u, d, c in items]
+        for i, (u, d, c) in enumerate(items):
+            if imgfix.sniff(d) not in imgfix.OK_FORMATS:
+                raise ApiError(f"이미지 업로드 실패: 400 BAD_REQUEST 이미지 업로드중 오류가 발생하였습니다. / imageFiles[{i}]: 올바른 이미지 파일이 아닙니다.")
         time.sleep(random.uniform(0.3, 0.8))
         return [f"https://shop-phinf.pstatic.net/fake/{abs(hash(u)) % 10**9}.jpg" for u, _, _ in items]
 
     def create_product(self, body, on_wait=None):
+        self._call("등록")
         time.sleep(random.uniform(0.4, 1.0))
         op = body.get("originProduct") or {}
         if self.category_info(op.get("leafCategoryId"))["exceptionalCategories"] and not (
@@ -624,6 +677,8 @@ class FakeClient:
     def update_price(self, origin_no, final, pct, unit=100, on_wait=None):
         """시연: 가격만 바꾸기 (가끔 실패)."""
         from . import convert
+        self._call("반영")   # 읽기
+        self._call("반영")   # 고치기
         time.sleep(random.uniform(0.05, 0.2))
         if random.random() < 0.03:
             raise ApiError("가격 바꾸기 실패: 500 시연용 실패")
@@ -635,6 +690,8 @@ class FakeClient:
     def update_detail(self, origin_no, html, on_wait=None, info=None):
         """시연: 상세(+브랜드·제조사·모델명)만 바꾸기 (가끔 실패, UPLOADER_FAKE_DETAIL_FAIL=1이면 늘 실패).
         바꾼 상세는 데이터 폴더 fake_details.json, 상품 정보는 fake_infos.json에도 남김."""
+        self._call("반영")   # 읽기
+        self._call("반영")   # 고치기
         time.sleep(random.uniform(0.05, 0.2))
         if os.environ.get("UPLOADER_FAKE_DETAIL_FAIL") == "1" or random.random() < 0.03:
             raise ApiError("상품 정보 바꾸기 실패: 500 시연용 실패")
@@ -661,6 +718,8 @@ class FakeClient:
 
     def update_name(self, origin_no, name, on_wait=None):
         """시연: 상품명만 바꾸기 (가끔 실패)."""
+        self._call("반영")   # 읽기
+        self._call("반영")   # 고치기
         time.sleep(random.uniform(0.05, 0.2))
         if random.random() < 0.03:
             raise ApiError("상품명 바꾸기 실패: 500 시연용 실패")
@@ -689,12 +748,25 @@ def make_client(store):
         return FakeClient(store)
     if not store.get("client_id") or not store.get("client_secret"):
         raise ApiError(f"'{store.get('name')}' 스토어의 API 키가 없습니다. 스토어 화면에서 넣어 주세요.")
-    return Client(store["client_id"], store["client_secret"])
+    return Client(store["client_id"], store["client_secret"], store.get("id"))
+
+
+_FAKE_JPG = None
 
 
 def fake_download(url, cache=None):
+    """시연: 이 PC 안 시험 서버(127.0.0.1) 주소는 진짜로 받고, 나머지는 작은 회색 JPG."""
+    global _FAKE_JPG
+    if str(url).startswith(("http://127.0.0.1", "http://localhost")):
+        return download(url, cache)
     time.sleep(random.uniform(0.05, 0.2))
-    return b"fake", "image/jpeg"
+    if _FAKE_JPG is None:
+        import io
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", (60, 60), (201, 206, 214)).save(buf, "JPEG", quality=80)
+        _FAKE_JPG = buf.getvalue()
+    return _FAKE_JPG, "image/jpeg"
 
 
 def downloader():

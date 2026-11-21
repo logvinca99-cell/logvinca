@@ -90,6 +90,7 @@ App.page("stores", {
         <span class="region-pick" title="지금 이 스토어 출고 형태 (표시만, 누른 것을 다시 누르면 지움)">${Object.entries(REGION).map(([k, l]) =>
           `<button class="${s.ship_region === k ? "on" : ""}" data-act="region" data-v="${k}" data-id="${s.id}">${l}</button>`).join("")}</span></div>
       ${storeUsage(s, true)}
+      <div class="st-meta">${apiUseLine(s.api, s.quota_until)} <button class="link-btn small" data-act="apiuse" data-id="${s.id}">시간대별</button></div>
       <div class="st-meta">${s.naver_count_at ? `연결 확인 ${when(s.naver_count_at)}${line ? `<br>${esc(line)}` : ""}` : '<span class="c-warn">연결 확인 전 (사용량이 정확하지 않음)</span>'}</div>
       <div class="st-meta">실패 <b class="${s.n_fail ? "c-err" : ""}">${num(s.n_fail)}</b> · 판매 이력 <b>${num(s.n_sold)}</b> · 내림 ${num(s.n_deleted)}${s.n_locked ? ` · 잠금 ${num(s.n_locked)}` : ""}
         · <a href="#listings?store_id=${s.id}" class="nowrap">복사본 보기</a></div>
@@ -103,9 +104,36 @@ App.page("stores", {
     </div>`;
   },
 
+  /* 스토어 네이버 API 사용량: 시간대별 (최근 24시간) */
+  async apiUse(s) {
+    const d = await App.api(`/api/apiuse/${s.id}`);
+    const kinds = d.kinds.filter((k) => k !== "토큰");
+    const qu = d.quota_until && d.quota_until * 1000 > Date.now();
+    App.openModal({
+      title: `네이버 API 사용량 · ${s.name}`, wide: true,
+      body: `<p class="small muted" style="margin:0 0 8px">이 스토어 커머스API 애플리케이션으로 보낸 요청 수입니다(시간대별). 업스타는 시간당 한도에 걸리면 그 스토어로 1시간 동안 요청을 보내지 않고, 풀리면 남은 작업을 한 번 자동으로 이어서 합니다.
+        업스타가 거의 안 썼는데 한도에 걸리면 다른 프로그램이 같은 API 키를 쓰고 있는지 확인하세요.</p>
+        ${qu ? `<div class="notice warn" style="margin-bottom:8px">한도 걸림 · ${hhmm(d.quota_until)} 이후 자동으로 이어서 <button class="btn tiny" id="au-resume">한도가 풀렸으면 지금 이어서</button></div>` : ""}
+        <div class="tbl-wrap" style="max-height:420px"><table class="grid small"><thead><tr><th>시간대</th><th class="r">합계</th>${kinds.map((k) => `<th class="r">${esc(k)}</th>`).join("")}<th class="r">토큰</th><th class="r">한도 거절</th></tr></thead>
+        <tbody>${d.rows.length ? d.rows.map((r) => `<tr><td>${esc(r.label)}</td><td class="r"><b>${num(r.total)}</b></td>${kinds.map((k) => `<td class="r">${num(r.by[k] || 0)}</td>`).join("")}<td class="r muted">${num(r.by["토큰"] || 0)}</td><td class="r ${r.quota ? "c-err" : ""}">${num(r.quota)}</td></tr>`).join("")
+          : `<tr class="empty-row"><td colspan="${kinds.length + 4}">최근 24시간 요청이 없습니다.</td></tr>`}</tbody></table></div>`,
+      buttons: [{ label: "닫기" }],
+    });
+    $("#au-resume")?.addEventListener("click", async () => {
+      const r = await App.api(`/api/apiuse/${s.id}/resume`, { json: {} });
+      App.toast(r.resumed ? `${num(r.resumed)}건을 이어서 시작했습니다` : "이어서 할 남은 작업이 없습니다 (한도 멈춤은 풀었습니다)");
+      App.closeModal(); this.load?.();
+    });
+  },
+
   async onClick(e) {
     const b = e.target.closest("button");
     if (!b) return;
+    if (b.dataset.act === "apiuse") {
+      const s = this.rows.find((x) => x.id === +b.dataset.id);
+      if (s) this.apiUse(s);
+      return;
+    }
     if (b.dataset.act) {
       const s = this.rows.find((x) => x.id === +b.dataset.id);
       if (b.dataset.act === "edit") this.edit(s);

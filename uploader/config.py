@@ -49,7 +49,9 @@ DEFAULTS = {
     "ctx_mode_v2": True,
     # ── 주문(판매 이력): 판매 현황 파일·직접 확인으로만 (네이버에서 주문을 받지 않음)
     # [최신화]·[다시 올리기] 전 자동 네이버 상태 확인: 마지막 확인이 이 시간(시간)보다 오래됐을 때만 스토어마다 한 번 (그 안이면 적어 둔 상태를 씀)
-    "nv_reuse_hours": 6,
+    "nv_reuse_hours": 24,            # [최신화]·[다시 올리기] 전 네이버 상태 자동 확인은 스토어마다 이 시간에 한 번 (실패해도 시도한 때부터 셈)
+    "quota_auto_resume": True,       # 시간당 한도(429)에 걸려 멈춘 스토어: 한도가 풀리면 남은 작업을 한 번 자동으로 이어서
+    "detail_bad_image": "skip",      # 상세 속 이미지를 못 받거나 그림이 아니면: skip(그 한 장 빼고 올림) / fail(그 상품 실패)
     "sales_valid_hours": 24,     # 판매 이력 확인이 유효한 시간 — 마지막 확인이 이보다 오래면 최신화·내리기 전에 다시 확인하라고 막음
     # 판매 이력이 있는 복사본은 자동으로 잠금 (최신화·내리기로 지우지 않음)
     "lock_sold": True,
@@ -210,6 +212,8 @@ def load():
             saved["max_copies"] = 2   # 맥락 키워드 방식부터 원본당 최대 2곳 (예전 기본 3을 쓰던 설정도 바꿈)
         if "kipris_block_pending" not in saved:
             saved.pop("use_category_words", None)  # 이 버전부터 상품명에 카테고리를 쓰지 않음 (예전 설정도 끔)
+        if saved.get("nv_reuse_hours") == 6 and "quota_auto_resume" not in saved:
+            saved["nv_reuse_hours"] = 24   # 자동 네이버 상태 확인은 하루에 한 번이 기본 (예전 기본 6시간을 쓰던 설정도)
         if "ctx_mode_v2" not in saved:
             saved["ctx_mode"] = "instant"   # 키워드 받기 기본을 즉시로 (예전 기본 일괄은 결과가 늦게 와 헷갈림) — 설정에서 바꿈
         for k in REMOVED_KEYS:   # 없앤 기능의 예전 설정

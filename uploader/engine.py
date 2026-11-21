@@ -12,7 +12,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import activity, config, convert, naver, nvstate, optimage, orders, templates, watermark
+from . import activity, apiuse, config, convert, imgfix, naver, nvstate, optimage, orders, templates, watermark
 
 IMAGE_DOWNLOAD_THREADS = 16
 DETAIL_SCOPE = 0
@@ -114,7 +114,79 @@ class Runner:
         self.pause_ev = threading.Event()
         self.stop_ev = threading.Event()
         self.log = collections.deque(maxlen=400)
+        self._resume = {}   # 시간당 한도로 멈춘 스토어 → 한도가 풀리면 이어서 할 복사본 번호들
+        self._resume_thread = None
         self._reset(0)
+
+    # ── 시간당 한도로 멈춘 스토어: 풀리면 이어서
+
+    QUOTA_MSG = "시간당 한도 — {hm} 이후 자동으로 이어서 (그때까지 이 스토어로는 네이버에 요청을 보내지 않음)"
+
+    def _quota_hold(self, sid, lids, store_name=""):
+        """이 스토어 남은 건을 대기로 두고(처리 중이던 건 포함) 한도가 풀리면 이어서 할 일로 기억."""
+        u = apiuse.until(sid)
+        if not u:
+            return
+        msg = self.QUOTA_MSG.format(hm=apiuse.hm(u))
+        lids = [int(x) for x in lids]
+        for i in range(0, len(lids), 900):
+            ch = lids[i:i + 900]
+            m = ",".join("?" * len(ch))
+            self.db.x(f"UPDATE listings SET status='planned', stage='', message=? WHERE id IN ({m}) AND status IN ('queued','running')",
+                      (msg, *ch))
+        if lids:
+            with self.lock:
+                self._resume.setdefault(sid, set()).update(lids)
+                ss = self.state["stores"].get(sid)
+                if ss is not None:
+                    ss["quota_until"] = u
+            self._log("err", f"시간당 한도에 걸림 — 이 스토어 {len(lids):,}건은 대기로 두고 {apiuse.hm(u)} 이후 자동으로 이어서", store_name)
+        self._resume_watch()
+
+    def _resume_watch(self):
+        with self.lock:
+            if self._resume_thread and self._resume_thread.is_alive():
+                return
+            self._resume_thread = threading.Thread(target=self._resume_loop, daemon=True)
+            self._resume_thread.start()
+
+    def _resume_loop(self):
+        while True:
+            time.sleep(20)
+            with self.lock:
+                if not self._resume:
+                    self._resume_thread = None
+                    return
+                ready = [sid for sid in self._resume if not apiuse.until(sid)]
+            for sid in ready:
+                self.resume_quota(sid)
+
+    def resume_quota(self, sid):
+        """한도가 풀린 스토어의 남은 건을 한 번 이어서 (설정 quota_auto_resume). 그사이 사용자가 취소·바꾼 건은 빼고."""
+        with self.lock:
+            ids = sorted(self._resume.pop(sid, set()))
+        if not ids or not config.load().get("quota_auto_resume", True):
+            return 0
+        rows = []
+        for i in range(0, len(ids), 900):
+            ch = ids[i:i + 900]
+            rows += self.db.q(f"""SELECT id FROM listings WHERE id IN ({','.join('?' * len(ch))}) AND store_id=?
+                AND status IN ('planned','fail') AND message LIKE '%시간당 한도%'""", (*ch, sid))
+        left = [r["id"] for r in rows]
+        if not left:
+            return 0
+        try:
+            self.start({"ids": left, "kinds": list(KIND_COND)})
+            self._log("info", f"시간당 한도가 풀려 {len(left):,}건을 이어서 합니다", (self.db.store(sid) or {}).get("name", ""))
+            return len(left)
+        except Exception as e:  # noqa: BLE001 - 다음에 다시 (한 번 더만)
+            self._log("err", f"한도가 풀렸지만 이어서 하지 못함: {e}")
+            return 0
+
+    def quota_info(self):
+        """스토어별 한도 멈춤·이어서 할 건 수 (화면용)."""
+        with self.lock:
+            return {sid: {"until": apiuse.until(sid), "resume": len(v)} for sid, v in self._resume.items()}
 
     def _banner(self):
         """기억한 배너 빼기 (1분마다 새로 읽음, 등록 중엔 새로 내려받지 않음)."""
@@ -134,7 +206,7 @@ class Runner:
 
     # ── 조작
 
-    after_run = None    # web이 정함: 실행이 끝나면 (네이버 반영 대기 이어 보내기)
+    after_run = None    # (쓰지 않음 — 네이버 반영 대기는 자동으로 다시 보내지 않음. [네이버 반영 다시 시도]로만)
 
     def _after(self):
         try:
@@ -342,6 +414,7 @@ class Runner:
             s["rate_per_min"] = (s["done"] / elapsed * 60) if elapsed > 0 and s["done"] else None
             s["eta"] = ((s["total"] - s["done"]) / s["done"] * elapsed) if s["done"] and s["running"] else None
             s["log"] = list(self.log)[-150:]
+            s["quota"] = {str(k): {"until": apiuse.until(k), "resume": len(v)} for k, v in self._resume.items()}
             return s
 
     # ── 실행
@@ -459,6 +532,16 @@ class Runner:
                         rest = batch
                         break
                 rest = []
+                if apiuse.until(sid):   # 시간당 한도로 멈춘 스토어 → 보내지 않고 대기로 (풀리면 이어서)
+                    self._quota_hold(sid, [t["id"] for t in batch], store0["name"])
+                    with self.lock:
+                        ss = self.state["stores"][sid]
+                        ss["done"] += len(batch)
+                        ss["skipped"] += len(batch)
+                        self.state["done"] += len(batch)
+                        self.state["skipped"] += len(batch)
+                        ss["status"] = f"한도 걸림 · {apiuse.hm(apiuse.until(sid))} 이후 이어서"
+                    continue
                 store = self._prepare_batch(cfg, sid, store0, client, batch, synced)
                 synced = synced or store.get("_synced")
                 with self.lock:
@@ -476,6 +559,15 @@ class Runner:
                 left = []
                 while not q.empty():
                     left.append(q.get_nowait())
+                if left and apiuse.until(sid):   # 한도로 멈춤 → 남은 건은 대기로, 풀리면 이어서
+                    self._quota_hold(sid, [t["id"] for t in left], store0["name"])
+                    with self.lock:
+                        ss = self.state["stores"][sid]
+                        ss["done"] += len(left)
+                        ss["skipped"] += len(left)
+                        self.state["done"] += len(left)
+                        self.state["skipped"] += len(left)
+                    left = []
                 if left:   # 중단으로 남은 건 → 원래 상태로
                     self._unqueue([t["id"] for t in left])
             if rest:
@@ -503,7 +595,8 @@ class Runner:
                 self._log("err", f"{sales_err} — 이 스토어의 최신화·내리기는 하지 않습니다 (판매 현황 파일을 넣고 다시)", store["name"])
         if sales_ok and not synced and any(t["op"] in ("refresh", "reupload") and t["origin_no"] for t in batch):
             need, at, hours = nvstate.due(self.db, sid, cfg)
-            if need:
+            if need and not apiuse.until(sid):
+                self.db.x("UPDATE stores SET nv_tried_at=? WHERE id=?", (time.time(), sid))   # 실패해도 이 시간 안에는 다시 안 함
                 with self.lock:
                     self.state["stores"][sid]["status"] = "네이버 상태 확인 중"
                 try:
@@ -526,6 +619,8 @@ class Runner:
     def _worker(self, cfg, store, client, categories, q, pool, cache):
         delay = float(cfg.get("delay_sec") or 0)
         while True:
+            if apiuse.until(store["id"]):   # 한도로 멈춤 → 더 꺼내지 않음 (남은 건은 레인이 대기로)
+                return
             try:
                 self._wait_if_paused(store["id"])
                 t = q.get_nowait()
@@ -687,13 +782,16 @@ class Runner:
             details = convert.detail_images_to_upload(row, cfg)
             dmap, n2, failed = self._images(client, pool, cache, DETAIL_SCOPE, details, False, lid, label, on_wait)
             url_map.update(dmap)
-            if failed:
-                notes.append(f"상세 이미지 {len(failed)}장은 내려받지 못해 원래 주소로 둠")
+            if failed and cfg.get("detail_bad_image") == "fail":
+                raise naver.ApiError(f"상세 이미지 {len(failed)}장을 받지 못했거나 그림이 아님 (설정: 그 상품 실패) — 예: {failed[0]}")
             # 옵션 사진 묶음 → 2열 그림 (표·CSS 없이: 모바일에서도 선명하고 늘 2열)
             boxes = convert.option_boxes(row, cfg, store)
             if boxes:
                 kw["opt_urls"] = self._option_images(client, cache, boxes, convert.option_look(cfg, store), lid, label, on_wait)
             body = convert.build_body(row, cfg, cat_id, url_map, **kw)
+            if failed:   # 못 받거나 그림이 아닌 상세 이미지는 그 한 장만 빼고 올림 (네이버 밖 주소가 남지 않게)
+                body["originProduct"]["detailContent"] = drop_images(body["originProduct"]["detailContent"], failed)
+                notes.append(f"상세 이미지 {len(failed)}장 빼고 올림 (못 받음·그림 아님)")
             iss = convert.mobile_issues(body["originProduct"]["detailContent"])
             if iss:   # 스토어 상단·하단 HTML 등에 남은 것
                 notes.append("모바일에서 흐린 캡처로 보일 수 있음: " + ", ".join(iss))
@@ -737,6 +835,14 @@ class Runner:
             what = {"refresh": "최신화", "reupload": "다시 올리기"}.get(op, "등록")
             self._log("ok", f"{what} 완료 · {tn['name'][:40]} ({sec:.1f}초, 새 이미지 {n1 + n2}장)", store["name"])
             self._count(sid, lid, True)
+        except apiuse.QuotaPaused as e:   # 시간당 한도: 실패로 두지 않고 대기 → 한도가 풀리면 이어서
+            if deleted_now:
+                self.db.set_listing(lid, None, message="네이버에서 지워짐 — 한도가 풀리면 다시 등록")
+            self.db.set_listing(lid, "queued", stage="")
+            self._quota_hold(sid, [lid], store["name"])
+            if deleted_now:
+                self.db.set_listing(lid, None, message="네이버에서 지워짐 — " + self.QUOTA_MSG.format(hm=apiuse.hm(e.until)) + " (다시 등록)")
+            self._count(sid, lid, None)
         except Exception as e:  # noqa: BLE001 - 한 건의 실패는 기록하고 다음으로
             msg = naver.explain(e)[:900]
             if deleted_now:   # 네이버에서는 이미 지워짐 → 눈에 띄게
@@ -845,6 +951,7 @@ class Runner:
         for i, (u, fut) in enumerate(futures, 1):
             try:
                 data, ctype = fut.result()
+                data, ctype = imgfix.normalize(data, ctype, u)   # WEBP·AVIF·CMYK·너무 큰 그림 → JPG
                 if u in marked and fn:
                     try:
                         data, ctype = fn(data), "image/jpeg"
@@ -853,6 +960,8 @@ class Runner:
                 got.append((u, data, ctype))
             except Exception as e:  # noqa: BLE001
                 if required:
+                    if isinstance(e, imgfix.BadImage):
+                        raise naver.ApiError(f"대표/추가 이미지: {e}") from None
                     raise naver.ApiError(f"대표/추가 이미지를 내려받지 못했습니다: {e}")
                 failed.append(u)
             if i % 5 == 0 or i == len(need):
@@ -944,6 +1053,9 @@ def push_details(db, lids=None, store_id=None, progress=None, should_stop=None):
             cur = db.one("SELECT store_id, status, origin_no FROM listings WHERE id=?", (lid,))
             if not cur or cur["store_id"] != t["store_id"] or cur["origin_no"] != t["origin_no"] or cur["status"] in ("queued", "running", "deleted"):
                 continue   # 보험: 그새 다른 스토어로 옮겨졌거나 처리 중·내림 → 이 스토어로 보내지 않음
+            if apiuse.until(t["store_id"]):   # 시간당 한도로 멈춘 스토어 → 보내지 않고 대기로 남김
+                out["quota"] = out.get("quota", 0) + 1
+                continue
             try:
                 store = db.store(t["store_id"], with_secret=True)
                 if not store:
@@ -963,17 +1075,22 @@ def push_details(db, lids=None, store_id=None, progress=None, should_stop=None):
                           as_phone=store.get("as_phone") or cfg.get("as_phone"), seller_code=t["seller_code"] or seller_code(cfg, store, t), store=st)
                 label = (t["name"] or "")[:40]
                 details = convert.detail_images_to_upload(row, cfg)
-                url_map, _, _ = helper._images(client, pool, cache, DETAIL_SCOPE, details, False, lid, label, None)
+                url_map, _, bad = helper._images(client, pool, cache, DETAIL_SCOPE, details, False, lid, label, None)
                 boxes = convert.option_boxes(row, cfg, store)
                 if boxes:
                     kw["opt_urls"] = helper._option_images(client, cache, boxes, convert.option_look(cfg, store), lid, label, None)
                 body = convert.build_body(row, cfg, cat_id or "0", url_map, **kw)
+                if bad:
+                    body["originProduct"]["detailContent"] = drop_images(body["originProduct"]["detailContent"], bad)
                 ns = (body["originProduct"].get("detailAttribute") or {}).get("naverShoppingSearchInfo") or {}
                 model, brand, maker = convert.info_fields(row, cfg)
                 info = {"model": ns.get("modelName") or model, "brand": ns.get("brandName") or brand, "maker": ns.get("manufacturerName") or maker}
                 client.update_detail(t["origin_no"], body["originProduct"]["detailContent"], info=info)
                 db.set_listing(lid, None, detail_push=None, message="네이버 상품 정보 바꿈 (상세·브랜드·제조사·모델명, 상품번호 그대로)")
                 out["ok"] += 1
+            except apiuse.QuotaPaused as e:
+                db.set_listing(lid, None, message=f"네이버 상품 정보 바꾸기 — {e} · 대기로 남음 ([네이버 반영 다시 시도])"[:600])
+                out["quota"] = out.get("quota", 0) + 1
             except Exception as e:  # noqa: BLE001 - 이 건만 실패, 대기로 남김
                 db.set_listing(lid, None, message=f"네이버 상품 정보(상세·브랜드·제조사·모델명) 바꾸기 실패 — 복사본 화면 [네이버 반영 다시 시도]로 다시: {e}"[:600])
                 out["fail"] += 1
@@ -982,5 +1099,20 @@ def push_details(db, lids=None, store_id=None, progress=None, should_stop=None):
             if progress:
                 progress(n, len(rows), f"네이버 상세 바꾸는 중 {n:,}/{len(rows):,}")
     out["message"] = f"네이버 상품 정보(상세·브랜드·제조사·모델명) 바꿈 {out['ok']:,}건 (상품번호·리뷰 그대로)" + (
-        f" · 실패 {out['fail']:,}건 — 네이버 반영 대기로 남음 ([네이버 반영 다시 시도])" if out["fail"] else "")
+        f" · 실패 {out['fail']:,}건 — 네이버 반영 대기로 남음 ([네이버 반영 다시 시도])" if out["fail"] else "") + (
+        f" · 시간당 한도로 멈춘 스토어라 안 보낸 {out['quota']:,}건 (대기로 남음)" if out.get("quota") else "")
     return out
+
+
+def drop_images(html, srcs):
+    """상세 HTML에서 이 주소들의 이미지(빈 감싸개 포함)를 뺀다 — 못 받거나 그림이 아닌 상세 이미지."""
+    from . import clean
+    variants = set()
+    for u in srcs:
+        u = str(u)
+        variants.add(u)
+        if u.startswith("https:"):
+            variants.add(u[6:])
+        elif u.startswith("http:"):
+            variants.add(u[5:])
+    return clean.remove_images(html, sorted(variants))[0]

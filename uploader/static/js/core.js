@@ -71,6 +71,22 @@ function patchRows(tbody, rows) {
   });
 }
 
+function hhmm(ts) {
+  const d = new Date(ts * 1000), p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/* 스토어 네이버 API 사용량 한 줄 (이번 시간대) + 한도 멈춤 */
+const API_KINDS = ["등록", "지우기", "이미지", "상품 목록", "반영", "기타"];
+function apiUseLine(a, quotaUntil) {
+  a = a || { total: 0, quota: 0, by: {} };
+  const parts = API_KINDS.filter((k) => a.by && a.by[k]).map((k) => `${k} ${num(a.by[k])}`);
+  const qu = quotaUntil && quotaUntil * 1000 > Date.now();
+  return `<span class="api-use ${qu ? "quota" : ""}" title="네이버 커머스API 요청 수 (이 스토어 애플리케이션, 이번 시간대). 토큰 발급은 따로.">
+    API 이번 시간대 <b>${num(a.total || 0)}</b>번${parts.length ? ` — ${parts.join(" · ")}` : ""}${a.quota ? ` · <span class="c-err">한도 거절 ${num(a.quota)}</span>` : ""}
+    ${qu ? ` · <b class="c-err">한도 걸림 · ${hhmm(quotaUntil)} 이후 자동으로 이어서</b>` : ""}</span>`;
+}
+
 function when(ts) {
   if (!ts) return "-";
   const d = new Date(ts * 1000), p = (n) => String(n).padStart(2, "0");
@@ -346,10 +362,13 @@ const App = {
     // 작은 카드(가로 3개): 이름 한 줄 — 등록 중은 옅은 초록 배경, 실패는 왼쪽 빨간 띠, 자세한 수는 마우스를 올리면
     const row = (s) => {
       const r = runSt[s.id];
+      const qu = s.quota_until && s.quota_until * 1000 > Date.now();
       const tip = [s.name, `판매 ${num(s.live || 0)} · 대기 ${num(s.pending || 0)}${s.fail ? ` · 실패 ${num(s.fail)}` : ""}`,
-        r ? `등록 중 ${num(r.done || 0)}/${num(r.total || 0)}` : ""].filter(Boolean).join("\n");
+        r ? `등록 중 ${num(r.done || 0)}/${num(r.total || 0)}` : "",
+        qu ? `한도 걸림 · ${hhmm(s.quota_until)} 이후 이어서` : "",
+        s.api && s.api.total ? `API 이번 시간대 ${num(s.api.total)}번` : ""].filter(Boolean).join("\n");
       // 진행 중 = 옅은 초록 배경, 실패 있음 = 왼쪽 빨간 띠 (점·글자를 더하지 않아 카드 크기·이름이 그대로)
-      return `<a class="ns-item ${this._navSid === s.id ? "on" : ""} ${s.enabled === 0 ? "off" : ""} ${r ? "run" : ""} ${s.fail ? "fail" : ""}" href="#listings?store_id=${s.id}" title="${esc(tip)}">
+      return `<a class="ns-item ${this._navSid === s.id ? "on" : ""} ${s.enabled === 0 ? "off" : ""} ${r ? "run" : ""} ${s.fail ? "fail" : ""} ${qu ? "quota" : ""}" href="#listings?store_id=${s.id}" title="${esc(tip)}">
         <span class="ns-name">${esc(s.name)}</span></a>`;
     };
     const groups = byBusiness(list).map(([biz, ss]) => {

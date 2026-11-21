@@ -446,20 +446,11 @@ def create_app(db=None):
             AND (price_push IS NOT NULL OR name_push IS NOT NULL OR detail_push IS NOT NULL)""")}
 
     def _push(title, fn):
-        """fn(progress, should_stop) → 결과. (작업 번호, 이어서 보낼 예정인가)"""
+        """fn(progress, should_stop) → 결과. (작업 번호, 이어서 보낼 예정인가)
+        네이버 반영은 사장님이 누른 그 순간 한 번만 보낸다 — 실패·한도로 남은 대기는 자동으로 다시 보내지 않음
+        ([네이버 반영 다시 시도]로만). 다른 반영이 돌고 있으면 그게 끝난 뒤 이 한 번만 보냄."""
         def job(progress=None, should_stop=None):
-            res = fn(progress=progress, should_stop=should_stop) or {}
-            tried = set()
-            for _ in range(5):   # 그새 들어온 대기 (끝까지 실패하는 건은 한 번만 더)
-                if should_stop and should_stop():
-                    break
-                pend = _pending_push_ids()
-                if not (pend - tried):
-                    break
-                tried |= pend
-                r2 = bulkedit.push_all(db, None, progress=progress, should_stop=should_stop)
-                res["message"] = (res.get("message") or "") + f" · 이어서: {r2['message']}"
-            return res
+            return fn(progress=progress, should_stop=should_stop) or {}
         try:
             return tasks.start("baseprice", title, job), False
         except RuntimeError:
@@ -468,7 +459,7 @@ def create_app(db=None):
                     return None, True
                 push_wait["on"] = True
 
-            def later():   # 돌고 있는 반영이 끝나면 이어서 (대기에 남은 것 전부)
+            def later():   # 돌고 있는 반영이 끝나면 방금 누른 이것만 한 번 (대기 전부를 다시 보내지 않음)
                 try:
                     for _ in range(1200):
                         time.sleep(1)
@@ -476,18 +467,14 @@ def create_app(db=None):
                             break
                     with push_lock:
                         push_wait["on"] = False
-                    if _pending_push_ids():
-                        _push("네이버 반영 이어 보내기 (가격·상품명·상세)", lambda **kw: bulkedit.push_all(db, None, **kw))
+                    _push(title, fn)
                 except Exception:  # noqa: BLE001
                     with push_lock:
                         push_wait["on"] = False
             threading.Thread(target=later, daemon=True).start()
             return None, True
 
-    def _push_after_run():
-        if _pending_push_ids():
-            _push("네이버 반영 이어 보내기 (가격·상품명·상세)", lambda **kw: bulkedit.push_all(db, None, **kw))
-    runner.after_run = _push_after_run
+    runner.after_run = None   # 실행이 끝나도 네이버 반영 대기를 자동으로 다시 보내지 않음 (한도를 다시 다 쓰지 않게)
 
     @app.post("/api/clean/<int:bid>/apply")
     def clean_apply(bid):
@@ -2834,6 +2821,29 @@ def create_app(db=None):
     @app.get("/api/run")
     def run_state():
         return jsonify(runner.snapshot())
+
+    @app.get("/api/apiuse")
+    def api_use():
+        """스토어별 네이버 API 사용량 (이번 시간대) · 한도 멈춤."""
+        from . import apiuse
+        use = apiuse.recent(db)
+        return jsonify({"hour": time.strftime("%H시", time.localtime()),
+                        "stores": {str(s["id"]): {**(use.get(s["id"]) or {"total": 0, "quota": 0, "by": {}}),
+                                                  "quota_until": apiuse.until(s["id"])} for s in db.stores()}})
+
+    @app.get("/api/apiuse/<int:sid>")
+    def api_use_store(sid):
+        """그 스토어 시간대별 사용량 (최근 24시간)."""
+        from . import apiuse
+        return jsonify({"rows": apiuse.hourly(db, sid, 24), "quota_until": apiuse.until(sid), "kinds": list(apiuse.KINDS)})
+
+    @app.post("/api/apiuse/<int:sid>/resume")
+    def api_use_resume(sid):
+        """한도 멈춤을 지금 풀고 남은 작업 이어서 (사장님이 한도가 풀린 걸 알 때)."""
+        from . import apiuse
+        apiuse.clear(sid)
+        n = runner.resume_quota(sid)
+        return jsonify({"resumed": n})
 
     @app.post("/api/run/<action>")
     def run_control(action):

@@ -1230,3 +1230,9 @@ h2, .sec-title { font-size: var(--h2); font-weight: 700; letter-spacing: -.01em;
 .ns-item.on .ns-name { color: var(--accent-strong); font-weight: 700; }
 .ns-item.on.fail { box-shadow: 0 0 0 1px var(--accent) inset, inset 3px 0 0 var(--err); }
 .ns-item.on.run { background: var(--ok-soft); }
+
+/* 네이버 API 사용량 한 줄 · 한도 멈춤 */
+.api-use { color: var(--muted); font-size: 12px; }
+.api-use.quota { color: var(--err); }
+.ns-item.quota { box-shadow: inset 3px 0 0 var(--warn, #c77700); background: color-mix(in srgb, var(--warn, #c77700) 10%, transparent); }
+#l-api { min-height: 18px; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }

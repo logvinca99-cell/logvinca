@@ -48,7 +48,7 @@ App.page("listings", {
     el.innerHTML = `<div class="page">
       <header class="page-head">
         <div class="store-head"><div class="sh-title"><div class="muted small">복사본${store?.business_name ? ` · ${esc(store.business_name)}` : ""}</div>
-            <h1>${esc(store?.name || "스토어 없음")}</h1></div>
+            <h1>${esc(store?.name || "스토어 없음")}</h1><div class="small" id="l-api"></div></div>
           ${store ? `<a class="btn ghost sm" href="#stores?store_id=${store.id}" title="이 스토어의 키·템플릿·연결 확인·메모 (스토어 화면)">스토어 설정 ↗</a>${storeLinks(store)}` : ""}</div>
         <div class="head-actions">
           <button class="btn primary" id="l-eye" title="썸네일만 그리드로 보며 이상한 상품을 골라 지우기">눈검수</button>
@@ -178,12 +178,20 @@ App.page("listings", {
     this.total = res.total;
     if (setHtml($("#l-sales-warn"), this.counts.need_sales ? `<div class="notice warn" style="margin-bottom:10px">판매 중 상품 <b>${num(this.counts.need_sales)}</b>개는
       <b>판매 이력 확인 전</b>이라 최신화·내리기를 하지 않습니다 (팔린 상품을 지우지 않게). <button class="btn tiny primary" id="l-sales-go">판매 이력 확인</button></div>` : "")) $("#l-sales-go")?.addEventListener("click", () => App.salesConfirm(+this.f.store_id, () => this.load()));
+    if (!this._apiAt || Date.now() - this._apiAt > 15000) {   // 이 스토어 네이버 API 사용량 (이번 시간대) · 한도 멈춤
+      this._apiAt = Date.now();
+      App.api("/api/apiuse").then((u) => {
+        const a = (u.stores || {})[String(this.f.store_id)];
+        const box = $("#l-api");
+        if (box && a) setHtml(box, apiUseLine(a, a.quota_until));
+      }).catch(() => {});
+    }
     App.api(`/api/listings/push_pending?store_id=${this.f.store_id}`).then((p) => {   // 네이버 반영 대기 (가격·상품명 바꾸기를 못 보낸 것)
       const box = $("#l-push");
       if (!box) return;
       const n = (p.price || 0) + (p.name || 0) + (p.detail || 0);
       if (!setHtml(box, n ? `<div class="notice warn" style="margin-bottom:10px">네이버 반영 대기 <b>${num(n)}</b>건 (가격 ${num(p.price)} · 상품명 ${num(p.name)} · 상세 ${num(p.detail || 0)}) —
-        실패했거나 아직 못 보낸 가격·상품명·상세 바꾸기입니다(상품은 지우지 않음). <button class="btn tiny primary" id="l-push-go">네이버 반영 다시 시도</button></div>` : "")) return;
+        실패했거나 아직 못 보낸 가격·상품명·상세 바꾸기입니다(상품은 지우지 않음). <b>자동으로 다시 보내지 않습니다</b> — 필요할 때 <button class="btn tiny primary" id="l-push-go">네이버 반영 다시 시도</button></div>` : "")) return;
       $("#l-push-go")?.addEventListener("click", async () => {
         if (!await App.yes("네이버 반영 다시 시도", `대기 중인 ${num(n)}건의 네이버 가격·상품명·상세를 다시 보냅니다 (상품은 지우지 않음).`, { label: "다시 보내기" })) return;
         App.startTask(App.api("/api/listings/push_retry", { json: { store_id: +this.f.store_id } }));

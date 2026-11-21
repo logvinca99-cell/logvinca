@@ -261,6 +261,8 @@ class DB:
         activity.ensure(self)
         mail.ensure(self)
         trash.ensure(self)
+        from . import apiuse
+        apiuse.ensure(self)
         self._rename_price_terms()
         self._import_methods()
         # 판매 이력 '마지막 확인'이 없던 예전 스토어: 이어 받기 시각으로 한 번 채움
@@ -306,6 +308,8 @@ class DB:
                    ("wm_opacity", "REAL"), ("wm_margin", "REAL"),
                    # 네이버 상태 확인(스토어 상품 목록)을 마지막으로 끝낸 때, 마지막 자동 확인 실패 이유('' = 실패 없음)
                    ("nv_checked_at", "REAL"), ("nv_check_err", "TEXT NOT NULL DEFAULT ''"),
+                   # 자동 네이버 상태 확인을 마지막으로 시도한 때 (실패해도 — 이 시간 안에는 다시 안 함), 시간당 한도로 멈춘 스토어가 풀리는 때
+                   ("nv_tried_at", "REAL"), ("quota_until", "REAL"),
                    # 판매 이력을 마지막으로 확인한 때 (판매 현황 파일 넣음·[판매 이력 확인 완료]) — 이게 유효 시간 안이어야 지움
                    ("sales_checked_at", "REAL"),
                    # 판매 이력을 빈틈없이 아는 처음 시각 (여기부터 orders_synced_to까지는 판매 이력을 다 앎 — 파일·확인 완료로 정함)
@@ -702,8 +706,15 @@ class DB:
               b.name AS business_name
             FROM stores s LEFT JOIN businesses b ON b.id=s.business_id
             ORDER BY s.business_id IS NULL, b.sort, b.id, s.sort, s.id""")
+        from . import apiuse
+        try:
+            use = apiuse.recent(self)
+        except Exception:  # noqa: BLE001
+            use = {}
         for r in rows:
             r["has_keys"] = bool(r["client_id"] and r["client_secret"])
+            r["quota_until"] = apiuse.until(r["id"])   # 시간당 한도로 멈춤 (풀리는 시각, 아니면 None)
+            r["api"] = use.get(r["id"]) or {"total": 0, "quota": 0, "by": {}}
             r["code"] = r["code"] or f"S{r['id']:02d}"
             r["n_success"] = r["n_live"]
             # 사용량 = 네이버에 있는 수 + 새로 올릴 대기 수

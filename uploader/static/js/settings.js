@@ -77,6 +77,7 @@ const SETTING_SECTIONS = [
     ["reupload_detail_images", "상세페이지 이미지도 네이버 서버에 올림", "check"],
     ["keep_pstatic_detail_images", "상세 이미지가 이미 네이버 이미지 서버(pstatic.net) 주소면 그대로 둠 (시간 크게 절약)", "check"],
     ["detail_video", "상세페이지 동영상", "select", { options: [["keep", "원래 주소 그대로 둠"], ["remove", "지우고 등록"]] }],
+    ["detail_bad_image", "상세 속 이미지를 못 받거나 그림이 아닐 때 (WEBP·AVIF 등 형식은 자동으로 JPG로 바꿈)", "select", { options: [["skip", "그 한 장만 빼고 올림"], ["fail", "그 상품 실패로 둠"]] }],
     ["option_table_style", "상세 옵션표 모양 (2열 그림으로 만들어 올림 · 스토어 템플릿에서 스토어마다 따로)", "select", { options: OPT_STYLES }],
     ["option_table_color", "옵션표 강조색 (공통)", "color", { hint: "스토어 템플릿에서 스토어마다 따로 고를 수 있음" }],
     ["image_cache_gb", "이미지 보관 용량 (GB, 0이면 보관 안 함)", "number", { step: 1 }],
@@ -93,7 +94,8 @@ const SETTING_SECTIONS = [
   ] },
   { tab: "orders", title: "주문 (판매 이력)", note: "판매 이력은 판매 현황 파일·직접 확인으로만 봅니다 (네이버에서 주문을 받지 않음). 판매 이력이 있는 복사본은 최신화·내리기에서 빠집니다.", fields: [
     ["sales_valid_hours", "판매 이력 확인 유효 시간 (시간 · 마지막 확인이 이보다 오래면 최신화·내리기 전에 판매 현황 파일을 다시 넣으라고 막음)", "number"],
-    ["nv_reuse_hours", "네이버 상태 자동 확인 간격 (시간 · [최신화]·[다시 올리기] 때 마지막 확인이 이보다 오래된 스토어만 한 번 자동 확인해 판매중지·판매금지 상품을 뺌, 0이면 늘 확인)", "number"],
+    ["nv_reuse_hours", "네이버 상태 자동 확인 간격 (시간 · 기본 24 · [최신화]·[다시 올리기] 때 스토어마다 이 시간에 한 번만 자동 확인해 판매중지·판매금지 상품을 뺌 — 실패해도 시도한 때부터 셈)", "number"],
+    ["quota_auto_resume", "시간당 한도(429)에 걸려 멈춘 스토어: 한도가 풀리면(약 1시간 뒤) 남은 작업을 한 번 자동으로 이어서 (프로그램이 켜져 있을 때)", "check"],
     ["lock_sold", "판매 이력이 있는 복사본은 자동으로 잠금 (최신화·내리기로 지우지 않음)", "check"],
     ["lock_canceled_too", "취소·반품만 있는 복사본도 잠금", "check"],
   ] },
