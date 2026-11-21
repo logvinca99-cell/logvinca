@@ -1,36 +1,42 @@
 <!doctype html><html lang="ko"><head><meta charset="utf-8"><title>에이바우트 프로모션 2</title><link rel="stylesheet" href="store.css">
-<style>
-html{overflow:hidden} body.bg{position:relative}
+<style>html{overflow:hidden} body{position:relative;overflow:hidden}
 body.pc{width:1920px;height:400px} body.m{width:750px;height:600px}
-.tk{position:absolute}
-.pc .tk{left:300px;right:300px;top:40px;bottom:40px;grid-template-columns:1fr 360px}
-.m .tk{left:36px;right:36px;top:44px;bottom:44px;grid-template-columns:1fr 230px}
-.pc .nt{right:338px} .m .nt{right:248px}
-.nt.t{top:-20px} .nt.b{bottom:-20px}
-.main{display:flex;flex-direction:column;justify-content:center}
-.pc .main{padding:0 64px} .m .main{padding:0 36px}
-.lo{display:flex;align-items:center;gap:12px}
-.lo .sm{font-size:56px;color:var(--plum)} .lo .nm{font-weight:900;font-size:30px;letter-spacing:-.04em}
-.pc .h{font-size:64px;margin-top:14px} .m .h{font-size:50px;margin-top:12px}
-.cap{font-weight:700;color:var(--gray)} .pc .cap{font-size:30px} .m .cap{font-size:26px}
-.sub{font-weight:700;margin-top:14px} .pc .sub{font-size:30px} .m .sub{font-size:23px;line-height:1.35}
-.ben{list-style:none;margin-top:10px} .ben li{font-weight:700;padding:4px 0} .ben b{color:var(--plum);font-weight:900}
-.pc .ben li{font-size:32px} .m .ben li{font-size:25px}
+.pc .in{position:absolute;left:360px;right:360px;top:0;bottom:0}
+.m .in{position:absolute;left:40px;right:40px;top:0;bottom:0}
+.mascot{position:absolute}
+.cs{display:flex;align-items:center;gap:8px;font-weight:700;letter-spacing:-.02em}
+.cs svg{fill:none;stroke:currentColor;stroke-width:2.4;stroke-linejoin:round;width:22px;height:22px}
+.cs .num{letter-spacing:.02em}
+.pc .cs{font-size:21px} .pc .cs .num{font-size:24px}
+.m .cs{font-size:19px} .m .cs .num{font-size:22px}
 .pc .mbr{display:none}
-.pc .big{font-size:230px;margin-top:-30px} .m .big{font-size:180px;margin-top:-24px}
-.adp{display:block} .pc .adp{width:190px;height:190px} .m .adp{width:150px;height:150px}
-.gift{margin-top:12px;background:var(--plum);color:#fff;font-weight:900;border-radius:999px;padding:4px 18px} .pc .gift{font-size:26px} .m .gift{font-size:22px}
-.cap2{font-weight:700;color:var(--gray)} .pc .cap2{font-size:26px} .m .cap2{font-size:21px}
-.big2{color:var(--plum);margin:8px 0} .pc .big2{font-size:150px} .m .big2{font-size:118px}
-
-.main{position:relative}
-.cs{position:absolute;display:flex;align-items:center;gap:8px;color:var(--gray);font-weight:700;letter-spacing:-.02em}
-.cs svg{fill:none;stroke:var(--plum);stroke-width:2.4;stroke-linejoin:round}
-.cs b{color:var(--plum);font-weight:900}
-.cs .num{color:var(--ink);letter-spacing:.02em}
-.pc .cs{left:64px;bottom:22px;font-size:21px} .pc .cs svg{width:22px;height:22px} .pc .cs .num{font-size:24px}
-.m .cs{left:36px;bottom:26px;font-size:19px} .m .cs svg{width:20px;height:20px} .m .cs .num{font-size:22px}
-.pc .main{padding-bottom:34px} .m .main{padding-bottom:40px}
-</style></head><body class="bg __SIZE__">
-<div class="tk"><span class="nt t"></span><span class="nt b"></span><div class="main"><div class="cap">알림받기만 해도</div><div class="h k900"><span class="pl">1,000원 할인</span></div><div class="sub">+ 전기제품 구매 시<br class="mbr"> 220V 돼지코 어댑터 증정</div><div class="cs"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.8A8 8 0 1 1 21 12z"/></svg><b>문자 상담</b><span class="num">010-5934-5488</span></div></div><div class="stub"><svg class="adp" viewBox="0 0 200 200"><circle cx="100" cy="100" r="92" fill="#fff" stroke="#DCD6E6" stroke-width="6"/><circle cx="100" cy="100" r="70" fill="#F1EEF5"/><rect x="88" y="10" width="24" height="14" rx="4" fill="#C9C3D3"/><rect x="88" y="176" width="24" height="14" rx="4" fill="#C9C3D3"/><circle cx="70" cy="100" r="16" fill="#9C95A8"/><circle cx="130" cy="100" r="16" fill="#9C95A8"/><circle cx="65" cy="95" r="5" fill="#E9E5EF"/><circle cx="125" cy="95" r="5" fill="#E9E5EF"/></svg><div class="gift">사은품</div></div></div>
-</body></html>
+body{background:var(--mark)}
+.burst{position:absolute;border-radius:50%;background:#FFD21F}
+.pc .burst{width:620px;height:620px;right:180px;top:-110px} .m .burst{width:520px;height:520px;right:-170px;top:-60px}
+.txt{position:absolute;left:0}
+.pc .txt{top:40px} .m .txt{top:44px}
+.cap{font-weight:900;color:var(--ink);letter-spacing:-.03em} .pc .cap{font-size:30px} .m .cap{font-size:28px}
+.big{color:var(--ink);font-weight:900;letter-spacing:-.05em;line-height:1}
+.big .num{color:var(--plum)} .pc .big{font-size:60px;margin-top:6px} .m .big{font-size:52px;margin-top:10px}
+.pc .big .num{font-size:118px} .m .big .num{font-size:112px}
+.eq{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.pc .eq{margin-top:14px} .m .eq{margin-top:18px;width:430px}
+.chip{background:#fff;border:3px solid var(--ink);border-radius:999px;font-weight:900;letter-spacing:-.03em;color:var(--ink);white-space:nowrap}
+.chip b{color:var(--plum)}
+.pc .chip{font-size:22px;padding:5px 16px} .m .chip{font-size:20px;padding:5px 14px}
+.plus{font-weight:900;color:var(--ink)} .pc .plus{font-size:26px} .m .plus{font-size:24px}
+.gift{display:flex;align-items:center;gap:8px;font-weight:700;color:var(--ink)}
+.pc .gift{margin-top:12px;font-size:22px} .m .gift{margin-top:16px;font-size:21px}
+.gift .adp{width:34px;height:34px}
+.pc .mascot{right:40px;top:70px;width:270px;height:257px} .m .mascot{right:0;bottom:20px;width:230px;height:219px}
+.st{position:absolute;background:var(--plum);color:#fff;font-weight:900;border-radius:50%;display:flex;align-items:center;justify-content:center;text-align:center;line-height:1.1;transform:rotate(12deg);letter-spacing:-.03em}
+.pc .st{right:300px;top:46px;width:112px;height:112px;font-size:22px} .m .st{right:206px;bottom:210px;width:100px;height:100px;font-size:20px}
+</style></head><body class="__SIZE__"><span class="burst"></span><div class="in">
+ <div class="txt">
+  <div class="cap">알림받기 + 리뷰 쓰면</div>
+  <div class="big">최대 <span class="num">3,000</span>원 혜택</div>
+  <div class="eq"><span class="chip">알림받기 <b>1,000원</b> 할인</span><span class="plus">+</span><span class="chip">리뷰 최대 <b>2,000원</b> 적립</span></div>
+  <div class="gift"><svg class="adp" viewBox="0 0 200 200"><circle cx="100" cy="100" r="92" fill="#fff" stroke="#DCD6E6" stroke-width="6"/><circle cx="100" cy="100" r="70" fill="#F1EEF5"/><rect x="88" y="10" width="24" height="14" rx="4" fill="#C9C3D3"/><rect x="88" y="176" width="24" height="14" rx="4" fill="#C9C3D3"/><circle cx="70" cy="100" r="16" fill="#9C95A8"/><circle cx="130" cy="100" r="16" fill="#9C95A8"/><circle cx="65" cy="95" r="5" fill="#E9E5EF"/><circle cx="125" cy="95" r="5" fill="#E9E5EF"/></svg><span>+ 220V 돼지코 어댑터 증정</span></div>
+ </div>
+ <div class="st">최대<br>3천원</div><div class="mascot" data-pose="coupon"></div>
+</div><script src="mascot.js"></script></body></html>

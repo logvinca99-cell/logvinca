@@ -1,9 +1,15 @@
 <!doctype html><html lang="ko"><head><meta charset="utf-8"><title>에이바우트 이벤트 대표</title><link rel="stylesheet" href="store.css">
-<style>html{overflow:hidden} body{width:1080px;height:1080px;color:#fff;padding:110px 96px;position:relative}
-.cap{font-weight:700;font-size:52px;opacity:.85} .h{margin-top:18px;font-size:150px;line-height:1.05} .h span{color:var(--mark)}
-.g{position:absolute;left:96px;right:96px;bottom:110px;display:flex;align-items:center;gap:34px;background:#fff;color:var(--ink);border-radius:36px;padding:30px 40px}
-.g .adp{width:180px;height:180px;flex:none} .g p{font-weight:900;font-size:50px;letter-spacing:-.04em;line-height:1.2} .g p span{color:var(--plum)}
-</style></head><body class="bg">
-<div class="cap">알림받기만 해도</div><div class="h k900"><span>1,000원</span><br>할인</div>
-<div class="g"><svg class="adp" viewBox="0 0 200 200"><circle cx="100" cy="100" r="92" fill="#fff" stroke="#DCD6E6" stroke-width="6"/><circle cx="100" cy="100" r="70" fill="#F1EEF5"/><rect x="88" y="10" width="24" height="14" rx="4" fill="#C9C3D3"/><rect x="88" y="176" width="24" height="14" rx="4" fill="#C9C3D3"/><circle cx="70" cy="100" r="16" fill="#9C95A8"/><circle cx="130" cy="100" r="16" fill="#9C95A8"/><circle cx="65" cy="95" r="5" fill="#E9E5EF"/><circle cx="125" cy="95" r="5" fill="#E9E5EF"/></svg><p><span>+ 돼지코 어댑터</span><br>사은품 증정</p></div>
-</body></html>
+<style>html{overflow:hidden} body{width:1200px;height:675px;background:var(--plum);color:#fff;position:relative;overflow:hidden}
+.ring{position:absolute;right:-120px;top:-120px;width:620px;height:620px;border-radius:50%;background:#62479A}
+.txt{position:absolute;left:96px;top:110px}
+.cap{font-weight:900;font-size:44px;letter-spacing:-.03em}
+.big{margin-top:10px;font-weight:900;letter-spacing:-.05em;line-height:1;font-size:72px}
+.big .num{font-size:170px;color:var(--mark)}
+.big .w{color:var(--mark)}
+.gift{margin-top:30px;display:inline-flex;align-items:center;gap:14px;background:#fff;color:var(--ink);border-radius:999px;padding:10px 28px 10px 12px;font-weight:900;font-size:32px;letter-spacing:-.03em}
+.gift .adp{width:58px;height:58px}
+.mascot{position:absolute;right:90px;bottom:90px;width:330px;height:314px}
+</style></head><body class="bg"><span class="ring"></span>
+<div class="txt"><div class="cap">알림받기 + 리뷰 쓰면</div><div class="big">최대 <span class="num">3,000</span><span class="w">원</span> 혜택</div>
+<div class="gift"><svg class="adp" viewBox="0 0 200 200"><circle cx="100" cy="100" r="92" fill="#fff" stroke="#DCD6E6" stroke-width="6"/><circle cx="100" cy="100" r="70" fill="#F1EEF5"/><rect x="88" y="10" width="24" height="14" rx="4" fill="#C9C3D3"/><rect x="88" y="176" width="24" height="14" rx="4" fill="#C9C3D3"/><circle cx="70" cy="100" r="16" fill="#9C95A8"/><circle cx="130" cy="100" r="16" fill="#9C95A8"/><circle cx="65" cy="95" r="5" fill="#E9E5EF"/><circle cx="125" cy="95" r="5" fill="#E9E5EF"/></svg><span>+ 돼지코 어댑터 사은품 증정</span></div></div>
+<div class="mascot" data-pose="coupon"></div><script src="mascot.js"></script></body></html>
