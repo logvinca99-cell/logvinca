@@ -221,6 +221,8 @@ const App = {
     const page = this.pages[name] ? name : "home";
     const params = Object.fromEntries(new URLSearchParams(query || ""));
     $$(".nav-item").forEach((a) => a.classList.toggle("on", a.dataset.page === page));
+    this._navSid = page === "listings" && params.store_id ? +params.store_id : null;
+    this.renderNavStores();
     if (this.current?.unmount) this.current.unmount();
     this.closeDrawer();
     const z = $(".img-zoom"); if (z) z.hidden = true;
@@ -254,6 +256,7 @@ const App = {
       `카테고리 ${this.state.categories ? num(this.state.categories) + "개" : "아직 안 받음"}` +
       (st.trash ? `<br><a href="#trash">휴지통 ${num(st.trash)}개</a>` : "");
     this.renderTasks(this.state.tasks);
+    this.refreshNav();
     const nb = this.state.ctx?.batches?.length || 0;
     if (this._ctxBatches && !nb) this.emit("task-done", { kind: "ctxbatch", status: "done" });   // 일괄 처리가 끝나 이름이 붙음 → 화면 새로
     this._ctxBatches = nb;
@@ -263,6 +266,79 @@ const App = {
   async loadStores() {
     this.stores = await this.api("/api/stores");
     return this.stores;
+  },
+
+  // ── 왼쪽 메뉴: 복사본 아래 사업자별 스토어 (누르면 그 스토어 복사본)
+
+  /* 스토어별 수(판매 중·등록 대기·실패)는 가볍게 15초마다(작업이 끝나면 바로), 등록 중 표시는 진행 상황(1초)으로 */
+  async refreshNav(force = false) {
+    const now = Date.now();
+    if (!force && this._navAt && now - this._navAt < 15000) return;
+    this._navAt = now;
+    try {
+      this._navSum = await this.api("/api/listings/stores");
+      this.renderNavStores();
+    } catch (e) { /* 다음에 다시 */ }
+  },
+  _navLoad(key, def) {
+    try { const v = localStorage.getItem(key); return v == null ? def : JSON.parse(v); } catch (e) { return def; }
+  },
+  _navSave(key, v) {
+    try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) { /* 저장 못 해도 화면은 그대로 */ }
+  },
+  renderNavStores() {
+    const box = $("#nav-stores");
+    if (!box) return;
+    const list = this._navSum || (this.stores || []).map((s) => ({ ...s, live: 0, pending: 0, fail: 0 }));
+    if (!list.length) { box.innerHTML = ""; return; }
+    const closed = new Set(this._navLoad("nav-biz-closed", []));
+    const open = this._navLoad("nav-stores-open", !matchMedia("(max-width: 900px)").matches);
+    const q = (this._navQ || "").trim().toLowerCase();
+    const runSt = Object.fromEntries(((this.run?.running && this.run.stores) || []).filter((x) => !["끝", "중단"].includes(x.status)).map((x) => [x.id, x]));
+    const nRun = Object.keys(runSt).length;
+    const row = (s) => {
+      const r = runSt[s.id];
+      const sub = [s.live ? `판매 ${num(s.live)}` : "", s.pending ? `대기 ${num(s.pending)}` : ""].filter(Boolean).join(" · ");
+      return `<a class="ns-item ${this._navSid === s.id ? "on" : ""} ${s.enabled === 0 ? "off" : ""}" href="#listings?store_id=${s.id}" title="${esc(s.name)} 복사본">
+        <span class="ns-name">${r ? '<i class="ns-dot" title="등록 중"></i>' : ""}${esc(s.name)}</span>
+        <span class="ns-sub">${r ? `<b class="ns-run">${num(r.done || 0)}/${num(r.total || 0)}</b>${sub ? " · " : ""}` : ""}${sub || (r ? "" : '<span class="muted">비어 있음</span>')}${s.fail ? ` · <b class="c-err">실패 ${num(s.fail)}</b>` : ""}</span></a>`;
+    };
+    const groups = byBusiness(list).map(([biz, ss]) => {
+      const shown = q ? ss.filter((s) => String(s.name).toLowerCase().includes(q)) : ss;
+      if (!shown.length) return "";
+      const isClosed = !q && closed.has(biz);
+      const runIn = shown.some((s) => runSt[s.id]);
+      return `<div class="ns-biz ${isClosed ? "closed" : ""}"><button type="button" class="ns-biz-head" data-biz="${esc(biz)}" aria-expanded="${!isClosed}">
+          <span class="ns-caret">▸</span><span class="ns-biz-name">${esc(biz)}</span>${runIn ? '<i class="ns-dot"></i>' : ""}<span class="ns-cnt">${shown.length}</span></button>
+        ${isClosed ? "" : `<div class="ns-list">${shown.map(row).join("")}</div>`}</div>`;
+    }).join("");
+    box.innerHTML = `<button type="button" class="ns-top" aria-expanded="${open}"><span class="ns-caret">▸</span>스토어 ${num(list.length)}곳${nRun ? ` <span class="ns-top-run"><i class="ns-dot"></i>등록 중 ${num(nRun)}곳</span>` : ""}</button>
+      ${open ? `<div class="ns-scroll">${groups || '<p class="muted small ns-none">맞는 스토어가 없습니다</p>'}</div>
+      <input class="ns-q" id="ns-q" placeholder="스토어 찾기" value="${esc(this._navQ || "")}" autocomplete="off">` : ""}`;
+    box.classList.toggle("open", !!open);
+    $(".ns-top", box).addEventListener("click", () => { this._navSave("nav-stores-open", !open); this.renderNavStores(); });
+    $$(".ns-biz-head", box).forEach((b) => b.addEventListener("click", () => {
+      const c = new Set(this._navLoad("nav-biz-closed", []));
+      c.has(b.dataset.biz) ? c.delete(b.dataset.biz) : c.add(b.dataset.biz);
+      this._navSave("nav-biz-closed", [...c]);
+      this.renderNavStores();
+    }));
+    const qi = $("#ns-q", box);
+    if (qi) {
+      qi.addEventListener("input", () => {
+        this._navQ = qi.value;
+        const pos = qi.selectionStart;
+        this.renderNavStores();
+        const n = $("#ns-q");
+        if (n) { n.focus(); n.setSelectionRange(pos, pos); }
+      });
+      qi.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { const a = $(".ns-item", box); if (a) { this._navQ = ""; location.hash = a.getAttribute("href"); } }
+        if (e.key === "Escape") { this._navQ = ""; this.renderNavStores(); }
+      });
+    }
+    const cur = $(".ns-item.on", box);
+    if (cur && !this._navScrolled) { this._navScrolled = true; cur.scrollIntoView({ block: "nearest" }); }
   },
 
   // ── 뒤에서 도는 작업
@@ -677,6 +753,7 @@ const App = {
 
   renderSideRun() {
     const r = this.run, el = $("#side-run");
+    this.renderNavStores();
     if (!r?.running) { el.hidden = true; return; }
     el.hidden = false;
     const live = (r.stores || []).filter((s) => !["끝", "중단"].includes(s.status));
@@ -695,6 +772,7 @@ const App = {
         this.toast(`등록 끝: 성공 ${num(this.run.ok)}건, 실패 ${num(this.run.fail)}건`);
         this.emit("run-done", this.run);
         this.refreshState();
+        this.refreshNav(true);
       }
     } catch (e) { /* 서버가 꺼졌을 수 있음 */ }
     setTimeout(() => this.pollRun(), this.run?.running ? 1000 : 3000);
@@ -1399,6 +1477,8 @@ const App = {
       if (!window.open(a.href, "_blank")) this.toast("팝업이 막혔습니다. 브라우저 주소창 오른쪽에서 팝업을 허용해 주세요.", true);
     });
     await Promise.all([this.refreshState(), this.loadStores()]);
+    this.refreshNav(true);
+    this.on("task-done", () => this.refreshNav(true));
     for (const t of this.state.tasks) this.taskSeen[t.id] = t.status;
     this.route();
     this.pollRun();

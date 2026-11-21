@@ -4,7 +4,8 @@
 const ADDR_TYPE = { RELEASE: "출고지", REFUND_OR_EXCHANGE: "반품·교환지", GENERAL: "일반" };
 
 App.page("stores", {
-  async mount(el) {
+  async mount(el, params = {}) {
+    this._focus = +params.store_id || null;
     try { this.closed = new Set(JSON.parse(localStorage.getItem("biz-closed") || "[]")); } catch (e) { this.closed = new Set(); }
     el.innerHTML = `<div class="page">
       <header class="page-head"><h1>스토어</h1>
@@ -27,6 +28,10 @@ App.page("stores", {
     box.addEventListener("click", (e) => this.onClick(e));
     this.bindDrag(box);
     await this.load();
+    if (this._focus) {   // 복사본 화면 [스토어 설정 ↗]에서 왔으면 그 스토어 카드로
+      const c = $(`.st-card[data-store="${this._focus}"]`);
+      if (c) { c.classList.add("focus"); c.scrollIntoView({ block: "center" }); }
+    }
   },
 
   saveClosed() { try { localStorage.setItem("biz-closed", JSON.stringify([...this.closed])); } catch (e) { /* 무시 */ } },

@@ -36,7 +36,8 @@ App.page("listings", {
   async mount(el, params) {
     this._live = false;   // 다른 화면에 다녀오면 진행 창 틀을 다시 그림 ([중단]·[일시정지] 버튼이 사라지지 않게)
     this.el = el;
-    if (!params.store_id) return this.renderStores(el);
+    if (!params.store_id) return this.pickStore(el);
+    try { localStorage.setItem("last-store", String(params.store_id)); } catch (e) { /* 기억 못 해도 됨 */ }
     this.f = { status: "all", store_id: params.store_id, q: "", age_days: "", ...params };
     delete this.f.open;
     this.page = 0;
@@ -46,9 +47,9 @@ App.page("listings", {
     const store = App.stores.find((s) => s.id === +params.store_id);
     el.innerHTML = `<div class="page">
       <header class="page-head">
-        <div class="store-head"><h1>복사본</h1>
-          <select id="l-store" class="sel" title="다른 스토어로 바꾸기">${byBusiness(App.stores).map(([biz, ss]) => `<optgroup label="${esc(biz)}">${ss.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join("")}</optgroup>`).join("")}</select>
-          <a class="btn ghost sm" href="#listings">스토어 목록</a>${store ? storeLinks(store) : ""}</div>
+        <div class="store-head"><div class="sh-title"><div class="muted small">복사본${store?.business_name ? ` · ${esc(store.business_name)}` : ""}</div>
+            <h1>${esc(store?.name || "스토어 없음")}</h1></div>
+          ${store ? `<a class="btn ghost sm" href="#stores?store_id=${store.id}" title="이 스토어의 키·템플릿·연결 확인·메모 (스토어 화면)">스토어 설정 ↗</a>${storeLinks(store)}` : ""}</div>
         <div class="head-actions">
           <button class="btn primary" id="l-eye" title="썸네일만 그리드로 보며 이상한 상품을 골라 지우기">눈검수</button>
           <button class="btn" id="l-bulk" title="이 스토어 복사본의 손님 가격·상품명을 엑셀로 한꺼번에 고치기 (판매 중이면 지우지 않고 네이버 값만 바꿈)">일괄 수정 (엑셀)</button>
@@ -76,7 +77,6 @@ App.page("listings", {
         <div class="pg-foot"><div class="pg" id="l-pager"></div></div>
       </div>
     </div>`;
-    $("#l-store").value = String(params.store_id);
     $("#l-eye").addEventListener("click", () => Eye.open({ storeId: +this.f.store_id, storeName: store?.name || "", filter: this.query(),
       after: (r) => { if (r.deleted) this.clearSel(); this.estKey = ""; this.load(); } }));
     $("#l-nv").addEventListener("click", () => App.startTask(App.api("/api/listings/nvcheck", { json: { store_id: +this.f.store_id } })));
@@ -98,7 +98,18 @@ App.page("listings", {
     clearInterval(this.timer);
   },
 
-  /* 복사본 첫 화면: 스토어를 먼저 고른다 (한 번에 다 보이면 어느 스토어인지 헷갈려 실수하기 쉬움) */
+  /* 스토어 없이 들어오면: 마지막으로 본 스토어(없으면 첫 스토어)로. 스토어는 왼쪽 메뉴에서 고른다 */
+  pickStore(el) {
+    const ss = App.stores || [];
+    let last = null;
+    try { last = +localStorage.getItem("last-store"); } catch (e) { /* 없음 */ }
+    const s = ss.find((x) => x.id === last) || ss.find((x) => x.enabled) || ss[0];
+    if (s) { location.replace(`#listings?store_id=${s.id}`); return; }
+    el.innerHTML = `<div class="page"><header class="page-head"><h1>복사본</h1></header>
+      <p class="muted">스토어가 없습니다. <a href="#stores">스토어</a>에서 먼저 추가하세요.</p></div>`;
+  },
+
+  /* (예전) 복사본 첫 화면의 스토어 카드 — 스토어는 이제 왼쪽 메뉴에서 고름 */
   async renderStores(el) {
     const ss = await App.api("/api/listings/stores");
     const run = App.run?.running ? App.run : null;
@@ -1107,7 +1118,6 @@ App.page("listings", {
 
   bind() {
     $("#l-sales-file").addEventListener("change", (e) => { if (e.target.files[0]) App.upload("/api/orders/import", e.target.files[0]); e.target.value = ""; });
-    $("#l-store").addEventListener("change", (e) => App.go(`#listings?store_id=${e.target.value}`));
     $("#l-tiles").addEventListener("click", (e) => {
       const t = e.target.closest("[data-filter]");
       if (!t) return;
