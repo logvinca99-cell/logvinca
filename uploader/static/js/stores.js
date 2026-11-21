@@ -99,6 +99,7 @@ App.page("stores", {
       <div class="store-acts"><button class="btn sm" data-act="edit" data-id="${s.id}">수정</button>
         <button class="btn sm" data-act="tpl" data-id="${s.id}">템플릿</button>
         <button class="btn sm" data-act="test" data-id="${s.id}">연결 확인</button>
+        <button class="btn sm" data-act="ordtest" data-id="${s.id}" title="이 스토어 키로 네이버 주문(최근 1일)을 조회만 해 봄 — 최신화·내리기 전 주문 받기가 되는지 확인">주문 받기 시험</button>
         <button class="btn sm" data-act="refresh" data-id="${s.id}" ${s.n_live ? "" : "disabled"}>최신화</button></div>
     </div>`;
   },
@@ -111,6 +112,14 @@ App.page("stores", {
       if (b.dataset.act === "edit") this.edit(s);
       if (b.dataset.act === "tpl") this.template(s);
       if (b.dataset.act === "test") this.test(s, b);
+      if (b.dataset.act === "ordtest") {
+        b.disabled = true;
+        try {
+          const r = await App.api(`/api/stores/${s.id}/orders_test`, { json: {} });
+          App.toast(`${s.name} · 주문 받기 시험: ${r.message}`, !r.ok);
+        } catch (err) { App.toast(err.message, true); }
+        b.disabled = false;
+      }
       if (b.dataset.act === "refresh") this.refresh(s);
       if (b.dataset.act === "region") {
         try {

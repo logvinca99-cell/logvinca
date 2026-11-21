@@ -54,7 +54,7 @@ App.page("listings", {
           <button class="btn primary" id="l-eye" title="썸네일만 그리드로 보며 이상한 상품을 골라 지우기">눈검수</button>
           <button class="btn" id="l-bulk" title="이 스토어 복사본의 손님 가격·상품명을 엑셀로 한꺼번에 고치기 (판매 중이면 지우지 않고 네이버 값만 바꿈)">일괄 수정 (엑셀)</button>
           <button class="btn" id="l-nv" title="네이버 상품 목록을 받아 판매 중 복사본마다 판매 중·품절·판매중지·판매금지·스토어에 없음을 표시 (최신화 직전에도 자동으로 확인)">네이버 상태 확인</button>
-          <label class="btn" title="아바닛 등 주문 수집 웹에서 내려받은 주문 파일"><input type="file" id="l-sales-file" accept=".xlsx,.xlsm,.csv" hidden>판매 이력 파일 가져오기</label>
+          <button class="btn" id="l-sales" title="이 스토어 판매 이력 확인: 판매자센터 주문 파일 넣기 · 파일 없이 직접 잠그고 확인 완료 · 네이버에서 주문 받기(시험 포함)">판매 이력 확인</button>
           <a class="btn" href="#orders" title="판매자센터 주문을 가져오고 기간·스토어별로 보기">판매 현황</a>
         </div></header>
       <div class="card run" id="l-run"><div id="l-run-main"></div></div>
@@ -1118,7 +1118,7 @@ App.page("listings", {
   clearSel() { this.sel.clear(); this.selAll = false; },
 
   bind() {
-    $("#l-sales-file").addEventListener("change", (e) => { if (e.target.files[0]) App.upload("/api/orders/import", e.target.files[0]); e.target.value = ""; });
+    $("#l-sales")?.addEventListener("click", () => { if (this.f.store_id) App.salesConfirm(+this.f.store_id, () => this.load()); });
     $("#l-tiles").addEventListener("click", (e) => {
       const t = e.target.closest("[data-filter]");
       if (!t) return;

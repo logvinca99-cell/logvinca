@@ -2145,6 +2145,16 @@ def create_app(db=None):
         except ValueError as e:
             return fail(str(e), 404)
 
+    @app.post("/api/stores/<int:sid>/orders_test")
+    def store_orders_test(sid):
+        """[네이버 주문 받기 시험]: 지금 키로 최근 1일 주문 조회만 해 봄 (저장 안 함)."""
+        s = next((x for x in db.stores(with_secret=True) if x["id"] == sid), None)
+        if not s:
+            return fail("스토어를 찾지 못했습니다.", 404)
+        if not s["has_keys"] and os.environ.get("UPLOADER_FAKE_API") != "1":
+            return jsonify({"ok": False, "count": 0, "message": "이 스토어에 API 키가 없습니다 — 스토어 수정에서 애플리케이션 ID·시크릿을 넣으세요"})
+        return jsonify(orders.test_orders(s, naver.make_client(s)))
+
     @app.post("/api/stores/<int:sid>/sales_confirm")
     def store_sales_confirm(sid):
         """가져온 상품의 판매 이력을 직접 확인함 (주문 파일·직접 잠금) → 그 날부터 판매 이력을 아는 것으로."""

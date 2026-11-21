@@ -496,6 +496,7 @@ class Runner:
         """지우는 일(최신화·내리기)이 있으면 먼저 이 스토어의 주문을 가져와 판매 이력을 최신으로,
         최신화가 있으면 네이버 상태(판매중지·판매금지·스토어에서 지움)를 먼저 확인 — 차례 뒤에 붙은 묶음에도."""
         sales_ok = nv_ok = True
+        sales_err = ""
         if any(t["op"] in ("refresh", "delete", "reupload") and t["origin_no"] for t in batch):
             with self.lock:
                 self.state["stores"][sid]["status"] = "판매 이력 확인 중"
@@ -506,6 +507,7 @@ class Runner:
                     self._log("info", f"새 주문 {r['new']}건을 가져왔습니다", store["name"])
             except Exception as e:  # noqa: BLE001
                 sales_ok = False
+                sales_err = orders.explain_sync_error(e)
                 self._log("err", f"주문을 가져오지 못해 이 스토어의 최신화·내리기는 하지 않습니다: {e}", store["name"])
         # 이때 네이버 손님 가격도 읽어 nv_price에 적는다 (업스타 가격은 바꾸지 않음 — 다르면 '가격 확인 필요')
         if any(t["op"] in ("refresh", "reupload") and t["origin_no"] for t in batch) and not synced:
@@ -518,7 +520,7 @@ class Runner:
             except Exception as e:  # noqa: BLE001
                 nv_ok = False
                 self._log("err", f"네이버 상태를 확인하지 못해 이 스토어의 최신화·다시 올리기는 하지 않습니다: {e}", store["name"])
-        return {**store, "_sales_ok": sales_ok, "_nv_ok": nv_ok, "_synced": synced}
+        return {**store, "_sales_ok": sales_ok, "_sales_err": sales_err, "_nv_ok": nv_ok, "_synced": synced}
 
     def _wait_if_paused(self, sid=None):
         ss = self.state["stores"].get(sid) if sid is not None else None
@@ -618,7 +620,10 @@ class Runner:
             if live:
                 # 판매된 상품은 지우지 않는다: 지우기 직전에 주문을 다시 받고(5분 넘게 지났으면) 잠금을 다시 확인
                 if not store.get("_sales_ok", True):
-                    raise naver.ApiError("주문(판매 이력)을 확인하지 못해 지우지 않았습니다. 다시 시도하세요.")
+                    raise naver.ApiError("네이버에서 주문(판매 이력)을 받지 못해 지우지 않았습니다 · 이유: "
+                                         + (store.get("_sales_err") or "알 수 없음")
+                                         + " → 복사본 화면 위 [판매 이력 확인] 창의 [네이버 주문 받기 시험]으로 이유를 확인하세요"
+                                         " (주문 조회 권한·시간당 한도·API 키)")
                 self._sales_recheck(sid, client)
                 lk = self.db.one("SELECT locked, lock_note, price, price_push, nv_status, del_mark FROM listings WHERE id=?", (lid,))
                 if lk["locked"]:

@@ -331,12 +331,14 @@ const App = {
     const q = (this._navQ || "").trim().toLowerCase();
     const runSt = Object.fromEntries(((this.run?.running && this.run.stores) || []).filter((x) => !["끝", "중단"].includes(x.status)).map((x) => [x.id, x]));
     const nRun = Object.keys(runSt).length;
+    // 작은 카드(가로 3개): 이름 한 줄 + 아주 작은 판매 수, 점(초록 = 등록 중 n/m, 빨강 = 실패) — 자세한 수는 마우스를 올리면
     const row = (s) => {
       const r = runSt[s.id];
-      const sub = [s.live ? `판매 ${num(s.live)}` : "", s.pending ? `대기 ${num(s.pending)}` : ""].filter(Boolean).join(" · ");
-      return `<a class="ns-item ${this._navSid === s.id ? "on" : ""} ${s.enabled === 0 ? "off" : ""}" href="#listings?store_id=${s.id}" title="${esc(s.name)} 복사본">
-        <span class="ns-name">${r ? '<i class="ns-dot" title="등록 중"></i>' : ""}${esc(s.name)}</span>
-        <span class="ns-sub">${r ? `<b class="ns-run">${num(r.done || 0)}/${num(r.total || 0)}</b>${sub ? " · " : ""}` : ""}${sub || (r ? "" : '<span class="muted">비어 있음</span>')}${s.fail ? ` · <b class="c-err">실패 ${num(s.fail)}</b>` : ""}</span></a>`;
+      const tip = [s.name, `판매 ${num(s.live || 0)} · 대기 ${num(s.pending || 0)}${s.fail ? ` · 실패 ${num(s.fail)}` : ""}`,
+        r ? `등록 중 ${num(r.done || 0)}/${num(r.total || 0)}` : ""].filter(Boolean).join("\n");
+      return `<a class="ns-item ${this._navSid === s.id ? "on" : ""} ${s.enabled === 0 ? "off" : ""}" href="#listings?store_id=${s.id}" title="${esc(tip)}">
+        <span class="ns-name">${esc(s.name)}</span>
+        <span class="ns-sub">${r ? `<i class="ns-dot run"></i><b class="ns-run">${num(r.done || 0)}/${num(r.total || 0)}</b>` : `<span>${num(s.live || 0)}</span>`}${s.fail ? '<i class="ns-dot fail"></i>' : ""}</span></a>`;
     };
     const groups = byBusiness(list).map(([biz, ss]) => {
       const shown = q ? ss.filter((s) => String(s.name).toLowerCase().includes(q)) : ss;
@@ -380,10 +382,12 @@ const App = {
     }
     const cur = $(".ns-item.on", box);
     // 지금 스토어가 메뉴 목록 밖이면 그 목록 칸만 스크롤 (scrollIntoView는 화면 전체를 끌어올려 복사본 목록이 맨 위로 튐)
-    if (cur && sc && !this._navScrolled) {
+    // 스크롤하는 칸: 넓은 화면은 메뉴(nav) 전체, 좁은 화면은 스토어 목록 칸
+    const scr = sc && sc.scrollHeight > sc.clientHeight + 1 ? sc : box.closest("nav");
+    if (cur && scr && !this._navScrolled && scr.scrollHeight > scr.clientHeight + 1) {
       this._navScrolled = true;
-      const r = cur.getBoundingClientRect(), b = sc.getBoundingClientRect();
-      if (r.top < b.top || r.bottom > b.bottom) sc.scrollTop += r.top - b.top - (b.height - r.height) / 2;
+      const r = cur.getBoundingClientRect(), b = scr.getBoundingClientRect();
+      if (r.top < b.top || r.bottom > b.bottom) scr.scrollTop += r.top - b.top - (b.height - r.height) / 2;
     }
   },
 
@@ -577,13 +581,17 @@ const App = {
           <dt>판매 이력 파일로 넣은 주문</dt><dd>${s.file_orders ? `${num(s.file_orders)}건 (${d(s.file_from)} ~ ${d(s.file_to)}) · 맞춘 복사본 ${num(s.file_listings)}개` : "없음"}</dd>
           <dt>잠긴 판매 중 상품</dt><dd>${num(s.locked)}개${s.manual ? ` (직접 잠금 ${num(s.manual)}개)` : ""}</dd>
         </dl>
-        <ol class="small" style="line-height:1.8;padding-left:18px;margin:10px 0">
-          <li>판매자센터 → 주문(주문통합검색 등)에서 <b>${from} ~ 오늘</b> 주문을 엑셀로 받아 <b>[판매 이력 파일 넣기]</b> — 상품번호로 맞춰 팔린 상품을 자동으로 잠급니다.</li>
-          <li>팔린 걸 직접 아는 상품은 복사본 화면에서 골라 <b>[잠금]</b>.</li>
-          <li>다 했으면 아래 날짜를 확인하고 <b>[판매 이력 확인 완료]</b> — 이 날부터의 판매 이력은 확인한 것으로 보고, 그 뒤로는 최신화할 때마다 새 기간만 받아 잠급니다.</li>
+        <p class="small" style="margin:10px 0 4px"><b>판매 이력을 확인하는 방법 (하나 또는 여럿)</b></p>
+        <ol class="small" style="line-height:1.8;padding-left:18px;margin:0 0 10px">
+          <li><b>판매자센터 주문 파일 넣기</b>: 판매자센터 → 주문(주문통합검색 등)에서 <b>${from} ~ 오늘</b> 주문을 엑셀로 받아 아래 <b>[판매 이력 파일 넣기]</b> — 상품번호로 맞춰 팔린 상품을 자동으로 잠급니다. 잘못 넣었으면 <a href="#orders">판매 현황 → 넣은 주문 파일</a>에서 되돌리기.</li>
+          <li><b>파일 없이 직접</b>: 팔린 걸 아는 상품은 복사본 화면에서 골라 <b>[잠금]</b> → 아래 날짜를 확인하고 <b>[판매 이력 확인 완료]</b>.</li>
+          <li><b>네이버에서 주문 받기</b>: 아래 날짜부터 오늘까지 네이버 주문을 받아 잠급니다 — 먼저 <b>[네이버 주문 받기 시험]</b>으로 이 스토어 키가 주문을 받을 수 있는지 확인하세요.</li>
         </ol>
+        <p class="muted small" style="margin:0 0 8px">어느 방법이든 마지막에 <b>[판매 이력 확인 완료]</b>를 누르면 그 날부터의 판매 이력을 확인한 것으로 보고, 그 뒤로는 최신화·내리기 때마다 새 기간만 네이버에서 받아 잠급니다(이때 네이버 주문 받기가 안 되면 지우지 않습니다).</p>
         <div class="cl-row"><label class="field" style="margin:0">이 날부터 판매 이력을 확인함<input type="date" id="sc-from" value="${from}"></label>
-          <label class="btn"><input type="file" id="sc-file" accept=".xlsx,.xlsm,.csv" hidden>판매 이력 파일 넣기</label></div>`,
+          <label class="btn"><input type="file" id="sc-file" accept=".xlsx,.xlsm,.csv" hidden>판매 이력 파일 넣기</label>
+          <button type="button" class="btn" id="sc-test" data-noconfirm>네이버 주문 받기 시험</button></div>
+        <div id="sc-test-res" class="small" style="margin-top:6px;min-height:1.4em"></div>`,
       buttons: [
         { label: "닫기" },
         { label: "네이버에서 주문 받기", confirm: `${esc(s.store)} 주문을 위 날짜부터 오늘까지 네이버에서 받습니다 (하루 단위로 나눠 조회 — 기간이 길면 시간이 걸림).`, onClick: async (b) => {
@@ -599,6 +607,16 @@ const App = {
           } catch (e) { this.toast(e.message, true); return false; }
         } },
       ],
+    });
+    $("#sc-test").addEventListener("click", async (ev) => {
+      const box = $("#sc-test-res"), btn = ev.currentTarget;
+      btn.disabled = true;
+      box.innerHTML = '<span class="spin"></span> 최근 1일 주문을 조회해 보는 중…';
+      try {
+        const r = await this.api(`/api/stores/${s.store_id}/orders_test`, { json: {} });
+        box.innerHTML = `<span class="${r.ok ? "c-ok" : "c-err"}"><b>${r.ok ? "✔" : "✘"}</b> ${esc(r.message)}</span>`;
+      } catch (e) { box.innerHTML = `<span class="c-err">✘ ${esc(e.message)}</span>`; }
+      btn.disabled = false;
     });
     $("#sc-file").addEventListener("change", (e) => {
       const f = e.target.files[0];
@@ -802,10 +820,13 @@ const App = {
     this.renderNavStores();
     if (!r?.running) { el.hidden = true; return; }
     el.hidden = false;
-    const live = (r.stores || []).filter((s) => !["끝", "중단"].includes(s.status));
-    el.innerHTML = `<div class="sr-top"><span class="spin"></span><b>${r.paused ? "일시정지" : `처리 중 ${num(live.length)}곳`}</b>
+    // 지금 보고 있는 스토어를 맨 앞에 (강조), 나머지는 그 뒤에
+    const live = (r.stores || []).filter((s) => !["끝", "중단"].includes(s.status))
+      .sort((a, b) => (b.id === this._navSid) - (a.id === this._navSid));
+    const html = `<div class="sr-top"><span class="spin"></span><b>${r.paused ? "일시정지" : `처리 중 ${num(live.length)}곳`}</b>
       <span class="muted small">남은 ${r.eta != null ? dur(r.eta) : "재는 중"}</span></div>
-      <div class="sr-chips">${live.map((s) => `<a class="sr-chip" href="#listings?store_id=${s.id}" title="${esc(s.name)}: ${esc(s.status)}">${esc(s.name)} <b>${num(s.done)}/${num(s.total)}</b>${s.paused ? " ⏸" : ""}</a>`).join("")}</div>`;
+      <div class="sr-chips">${live.map((s) => `<a class="sr-chip ${s.id === this._navSid ? "cur" : ""}" href="#listings?store_id=${s.id}" title="${esc(s.name)}: ${esc(s.status)}">${esc(s.name)} <b>${num(s.done)}/${num(s.total)}</b>${s.paused ? " ⏸" : ""}</a>`).join("")}</div>`;
+    if (el._html !== html) { el._html = html; el.innerHTML = html; }
   },
 
   async pollRun() {

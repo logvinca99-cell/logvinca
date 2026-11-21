@@ -168,6 +168,8 @@ def sync_store(db, store, client, days=None, since=None, until=None, should_stop
         since = (last - 600) if last else now - (days or INITIAL_DAYS) * 86400
     until = min(until or now, now)
     if os.environ.get("UPLOADER_FAKE_API") == "1":
+        if os.environ.get("UPLOADER_FAKE_ORDERS_FAIL"):   # 시험용: 주문 받기 실패 흉내
+            raise RuntimeError(os.environ["UPLOADER_FAKE_ORDERS_FAIL"])
         orders = _fake_orders(db, store)
     else:
         ids = client.changed_product_order_ids(since, until, should_stop=should_stop)
@@ -188,6 +190,41 @@ def sync_store(db, store, client, days=None, since=None, until=None, should_stop
         elif not cov_to and until >= now - 3600:   # 아직 이어 받기를 안 한 스토어: 오늘까지 받았으면 거기서부터 이어 받기
             db.x("UPDATE stores SET orders_from=?, orders_synced_to=? WHERE id=?", (since, until, store["id"]))
     return {"orders": len(orders), "new": new, "matched": matched}
+
+
+def explain_sync_error(e):
+    """주문 받기 실패를 쉬운 말로 (원래 문구는 뒤에 짧게)."""
+    raw = " ".join(str(e or "").split())
+    low = raw.lower()
+    if "quota" in low or "429" in raw:
+        why = "이 스토어 API 애플리케이션의 시간당 요청 한도를 다 씀 — 1시간쯤 뒤 다시"
+    elif "401" in raw or "unauthorized" in low or "invalid_client" in low or "토큰" in raw:
+        why = "API 키(애플리케이션 ID·시크릿)가 맞지 않거나 만료됨 — 스토어 수정에서 키 확인"
+    elif "403" in raw or "forbidden" in low or "권한" in raw or "scope" in low:
+        why = "주문 조회 권한이 없음 — 커머스API센터 애플리케이션에 '주문' API 권한을 추가"
+    elif "400" in raw and ("lastchanged" in low or "기간" in raw or "date" in low):
+        why = "조회 기간 오류 — 다시 시도 (계속되면 알려 주세요)"
+    elif any(k in low for k in ("timeout", "timed out", "connection", "resolve", "ssl", "max retries")):
+        why = "네이버에 연결하지 못함 — 인터넷 연결 확인 후 다시"
+    else:
+        why = "네이버 주문 조회 실패"
+    return f"{why} ({raw[:160]})" if raw else why
+
+
+def test_orders(store, client):
+    """[네이버 주문 받기 시험]: 지금 키로 최근 1일 주문 변경을 조회만 해 본다 (저장하지 않음). → {ok, count, message}"""
+    now = time.time()
+    try:
+        fail = os.environ.get("UPLOADER_FAKE_ORDERS_FAIL")
+        if os.environ.get("UPLOADER_FAKE_API") == "1":
+            if fail:
+                raise RuntimeError(fail)
+            n = 0
+        else:
+            n = len(client.changed_product_order_ids(now - 86400, now))
+        return {"ok": True, "count": n, "message": f"성공 — 최근 1일 주문 변경 {n}건을 조회했습니다 (이 키로 주문을 받을 수 있음)"}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "count": 0, "message": explain_sync_error(e)}
 
 
 def known_from(store):
