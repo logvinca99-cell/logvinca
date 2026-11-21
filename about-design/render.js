@@ -55,6 +55,8 @@ const jobs = [
   { file: 'store_promo2.html', out: 'store_promo2_mobile_750x600', width: 750, height: 600, scale: 1, vars: { __SIZE__: 'm' } },
   { file: 'store_promo3.html', out: 'store_promo3_pc_1920x400', width: 1920, height: 400, scale: 1, vars: { __SIZE__: 'pc' } },
   { file: 'store_promo3.html', out: 'store_promo3_mobile_750x600', width: 750, height: 600, scale: 1, vars: { __SIZE__: 'm' } },
+  { file: 'store_free.html', out: 'store_free_pc_1280x200', width: 1280, height: 200, scale: 1, vars: { __SIZE__: 'pc' } },
+  { file: 'store_free.html', out: 'store_free_mobile_750x240', width: 750, height: 240, scale: 1, vars: { __SIZE__: 'm' } },
   { file: 'store_content_thumb.html', out: 'store_content_thumb_1080', width: 1080, height: 1080, scale: 1 },
   { file: 'store_content_main.html', out: 'store_content_main', width: 860, scale: 1000/860, split: true },
   { file: 'profile.html', out: 'about_profile', width: 1000, height: 1000, scale: 1 },
