@@ -32,7 +32,7 @@ App.page("mail", {
     $("#m-store").addEventListener("change", (e) => { f.store_id = e.target.value; f.page = 0; this.load(); });
     $("#m-handled").addEventListener("change", (e) => { f.handled = e.target.value; f.page = 0; this.load(); });
     let tq;
-    $("#m-q").addEventListener("input", (e) => { clearTimeout(tq); tq = setTimeout(() => { f.q = e.target.value.trim(); f.page = 0; this.load(); }, 300); });
+    onTyped($("#m-q"), (v) => { f.q = v.trim(); f.page = 0; this.load(); });
     $("#m-tiles").addEventListener("click", (e) => { const t = e.target.closest("[data-filter]"); if (t) { f.kind = t.dataset.filter; f.page = 0; this.load(); } });
     $("#m-fetch").addEventListener("click", () => App.startTask(App.api("/api/mails/fetch", { json: {} })));
     $("#m-box").addEventListener("change", async (e) => {

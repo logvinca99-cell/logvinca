@@ -28,6 +28,16 @@ function whyMsg(w, list) {
   return ` (${xs.map(([k, n]) => `${WHY_LABEL[k] || k} ${num(n)}`).join(" · ")}${top ? ` — 예: ${top}` : ""}${(list || []).length > 2 ? " · 전체는 작업 기록에서" : ""})${again}`;
 }
 
+/* 검색칸: 쳐 넣은 뒤 ms 동안 더 안 치면 fn(값). 칸 자체는 다시 그리지 않는 곳에서만 쓴다 (다시 그리면 한글 조합이 끊김).
+   한글은 조합 중에도 값이 바뀌므로 조합이 끝날 때(compositionend)도 한 번 더 부름 */
+function onTyped(el, fn, ms = 300) {
+  if (!el) return;
+  let t;
+  const fire = () => { clearTimeout(t); t = setTimeout(() => fn(el.value), ms); };
+  el.addEventListener("input", fire);
+  el.addEventListener("compositionend", fire);
+}
+
 /* 내용이 같으면 그대로 두고 바뀐 때만 innerHTML (주기 갱신에 화면이 다시 그려져 흔들리지 않게). 바꿨으면 true */
 function setHtml(el, html) {
   if (!el) return false;
@@ -149,7 +159,9 @@ function ymd(ts) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 /* 상세 옵션표 모양·강조색 (설정 공통값과 스토어 템플릿) */
-const OPT_STYLES = [["strong", "강조: 제목 색 띠 + 옵션 이름 굵게 + 색 테두리"], ["basic", "원본 모양: 원본과 같은 얇은 테두리·글씨 (강조 끔)"]];
+const OPT_STYLES = [["strong", "강조: 제목 색 띠 + 옵션 이름 굵게 + 색 테두리"], ["basic", "원본 모양: 원본과 같은 얇은 테두리·글씨 (강조 끔)"],
+  ["a", "A 배경판·굵은 테두리 (스토어 이름 위 띠·아래 안내)"], ["b", "B 번호 배지·색 캡션 (스토어 이름 오른쪽 위)"],
+  ["c", "C 다크 프레임 (스토어 이름 위·아래 안내)"], ["d", "D 미니멀·그림자 (스토어 이름 제목 아래)"], ["e", "E 이름 탭·안내 띠 (스토어 이름 안내 띠 안)"]];
 const OPT_COLORS = [["#1F2937", "남색"], ["#111111", "검정"], ["#1D4ED8", "파랑"], ["#0B7A5F", "초록"], ["#B4232A", "빨강"],
   ["#C2410C", "주황"], ["#6D28D9", "보라"], ["#BE185D", "분홍"], ["#7C4A1E", "갈색"]];
 /* 옵션표 미리보기 (서버 convert.naver_safe_layout과 같은 모양, 사진은 회색 칸) — 어느 모양이든 늘 2열 */
@@ -325,7 +337,7 @@ const App = {
     const box = $("#nav-stores");
     if (!box) return;
     const list = this._navSum || (this.stores || []).map((s) => ({ ...s, live: 0, pending: 0, fail: 0 }));
-    if (!list.length) { box.innerHTML = ""; box._html = ""; return; }
+    if (!list.length) { box.innerHTML = ""; box._html = ""; box.classList.remove("open"); return; }
     const closed = new Set(this._navLoad("nav-biz-closed", []));
     const open = this._navLoad("nav-stores-open", !matchMedia("(max-width: 900px)").matches);
     const q = (this._navQ || "").trim().toLowerCase();
@@ -349,16 +361,29 @@ const App = {
           <span class="ns-caret">▸</span><span class="ns-biz-name">${esc(biz)}</span>${runIn ? '<i class="ns-dot"></i>' : ""}<span class="ns-cnt">${shown.length}</span></button>
         ${isClosed ? "" : `<div class="ns-list">${shown.map(row).join("")}</div>`}</div>`;
     }).join("");
+    // 찾기 칸은 한 번만 만들고 다시 그리지 않는다 (다시 그리면 한글 조합이 끊겨 자음·모음이 따로 쳐짐)
+    let dyn = $(".ns-dyn", box), qi = $("#ns-q", box);
+    if (!dyn || !qi) {
+      box.innerHTML = '<div class="ns-dyn"></div><input class="ns-q" id="ns-q" placeholder="스토어 찾기" autocomplete="off">';
+      box._html = "";
+      dyn = $(".ns-dyn", box); qi = $("#ns-q", box);
+      onTyped(qi, (v) => { this._navQ = v; this.renderNavStores(); }, 120);
+      qi.addEventListener("keydown", (e) => {
+        if (e.isComposing) return;
+        if (e.key === "Enter") { const a = $(".ns-item", box); if (a) { this._navQ = ""; qi.value = ""; location.hash = a.getAttribute("href"); } }
+        if (e.key === "Escape") { this._navQ = ""; qi.value = ""; this.renderNavStores(); }
+      });
+    }
+    qi.hidden = !open;
     const prevScroll = $(".ns-scroll", box)?.scrollTop || 0;
     const html = `<button type="button" class="ns-top" aria-expanded="${open}"><span class="ns-caret">▸</span>스토어 ${num(list.length)}곳${nRun ? ` <span class="ns-top-run"><i class="ns-dot"></i>등록 중 ${num(nRun)}곳</span>` : ""}</button>
-      ${open ? `<div class="ns-scroll">${groups || '<p class="muted small ns-none">맞는 스토어가 없습니다</p>'}</div>
-      <input class="ns-q" id="ns-q" placeholder="스토어 찾기" value="${esc(this._navQ || "")}" autocomplete="off">` : ""}`;
+      ${open ? `<div class="ns-scroll">${groups || '<p class="muted small ns-none">맞는 스토어가 없습니다</p>'}</div>` : ""}`;
+    box.classList.toggle("open", !!open);
     if (box._html === html) return;   // 바뀐 게 없으면 그대로 (1초마다 불려도 다시 그리지 않음)
     box._html = html;
-    box.innerHTML = html;
+    dyn.innerHTML = html;
     const sc = $(".ns-scroll", box);
     if (sc) sc.scrollTop = prevScroll;
-    box.classList.toggle("open", !!open);
     $(".ns-top", box).addEventListener("click", () => { this._navSave("nav-stores-open", !open); this.renderNavStores(); });
     $$(".ns-biz-head", box).forEach((b) => b.addEventListener("click", () => {
       const c = new Set(this._navLoad("nav-biz-closed", []));
@@ -366,20 +391,6 @@ const App = {
       this._navSave("nav-biz-closed", [...c]);
       this.renderNavStores();
     }));
-    const qi = $("#ns-q", box);
-    if (qi) {
-      qi.addEventListener("input", () => {
-        this._navQ = qi.value;
-        const pos = qi.selectionStart;
-        this.renderNavStores();
-        const n = $("#ns-q");
-        if (n) { n.focus(); n.setSelectionRange(pos, pos); }
-      });
-      qi.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") { const a = $(".ns-item", box); if (a) { this._navQ = ""; location.hash = a.getAttribute("href"); } }
-        if (e.key === "Escape") { this._navQ = ""; this.renderNavStores(); }
-      });
-    }
     const cur = $(".ns-item.on", box);
     // 지금 스토어가 메뉴 목록 밖이면 그 목록 칸만 스크롤 (scrollIntoView는 화면 전체를 끌어올려 복사본 목록이 맨 위로 튐)
     // 스크롤하는 칸: 넓은 화면은 메뉴(nav) 전체, 좁은 화면은 스토어 목록 칸

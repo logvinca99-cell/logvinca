@@ -266,7 +266,7 @@ App.page("inventory", {
     });
     let timer;
     const later = (patch) => { clearTimeout(timer); timer = setTimeout(() => this.setFilter(patch), 350); };
-    $("#i-q").addEventListener("input", (e) => later({ q: e.target.value.trim() }));
+    onTyped($("#i-q"), (v) => this.setFilter({ q: v.trim() }), 350);
     $("#i-pmin").addEventListener("input", (e) => later({ price_min: e.target.value }));
     $("#i-pmax").addEventListener("input", (e) => later({ price_max: e.target.value }));
     $("#i-missing").addEventListener("change", (e) => this.setFilter({ store_missing: e.target.value }));

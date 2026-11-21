@@ -43,7 +43,7 @@ a { color: var(--info); }
 [hidden] { display: none !important; }
 
 /* ── 뼈대 */
-.app { display: grid; grid-template-columns: 248px 1fr; min-height: 100%; }
+.app { display: grid; grid-template-columns: 264px 1fr; min-height: 100%; }
 .side { background: var(--panel); border-right: 1px solid var(--line); padding: 20px 14px; display: flex; flex-direction: column; gap: 20px; position: sticky; top: 0; height: 100vh; }
 .brand { display: flex; gap: 10px; align-items: center; padding: 0 6px; }
 .brand-logo { width: 36px; height: 36px; display: block; flex: none; }
@@ -1122,9 +1122,9 @@ h2, .sec-title { font-size: var(--h2); font-weight: 700; letter-spacing: -.01em;
   /* 메뉴가 넘쳐도 칸이 줄어들며 겹치지 않게: 메뉴 항목은 줄지 않고, 스토어 목록은 정해진 높이 안에서만 스크롤 */
   .side nav > * { flex-shrink: 0; }
   /* 스토어 목록만 남는 높이에 맞춰 줄고(최소 130px) 그 안에서 스크롤 → 다른 메뉴는 늘 보임 */
-  .side nav > .nav-stores.open { flex: 0 1 auto; min-height: 150px; overflow: hidden; display: flex; flex-direction: column; }
-  .nav-stores.open > .ns-scroll { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; }
-  .nav-stores.open > :not(.ns-scroll) { flex: none; }
+  .side nav > .nav-stores.open { flex: 1 1 0; min-height: 160px; overflow: hidden; display: flex; flex-direction: column; }
+  .nav-stores.open .ns-scroll { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; }
+  .nav-stores.open > .ns-q, .nav-stores.open .ns-top { flex: none; }
 }
 /* 스토어 카드 이름: 잘리지 않게 두 줄까지 */
 .ns-name { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: keep-all; overflow-wrap: anywhere; }
@@ -1153,3 +1153,71 @@ h2, .sec-title { font-size: var(--h2); font-weight: 700; letter-spacing: -.01em;
 .wm-view img { width: 100%; height: auto; min-height: 120px; border: 1px solid var(--line); border-radius: 8px; background: #f3f4f6; touch-action: none; user-select: none; }
 .wm-view img.drag { cursor: crosshair; outline: 2px dashed var(--ok, #1f8f4e); outline-offset: 2px; }
 @media (max-width: 700px) { .wm-edit { grid-template-columns: minmax(0, 1fr); } }
+
+/* 스토어 목록: 다시 그리는 부분(.ns-dyn)은 칸 배치에 끼지 않게 — 찾기 칸은 따로 한 번만 만들어 둠 */
+.ns-dyn { display: contents; }
+.ns-q[hidden] { display: none; }
+
+/* 관리·기록·도움 메뉴는 아래 작은 타일(4열 × 2줄) — 스토어 목록이 사이드바 높이를 대부분 쓰게 */
+.nav-tools { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line-2); }
+.nav-tools .nav-tool { flex-direction: column; gap: 2px; padding: 6px 2px 5px; font-size: 11px; font-weight: 500; text-align: center; border-radius: 8px; position: relative; min-width: 0; }
+.nav-tools .nav-tool svg { width: 18px; height: 18px; margin: 0; }
+.nav-tools .nt-label { display: block; line-height: 1.2; word-break: keep-all; overflow-wrap: anywhere; }
+.nav-tools .nav-badge { position: absolute; top: 2px; right: 4px; margin: 0; }
+@media (min-width: 901px) {
+  .side nav { display: flex; flex-direction: column; }
+  .side nav > .nav-tools { flex: none; }
+}
+@media (max-width: 900px) {
+  .nav-tools { display: contents; }
+  .nav-tools .nav-tool { flex-direction: row; font-size: inherit; padding: 6px 8px; }
+  .nav-tools .nav-tool svg { width: 18px; height: 18px; }
+  .nav-tools .nav-badge { position: static; }
+}
+
+/* 스토어 카드는 한 줄로 촘촘히 (이름 + 상태 점, 수·진행은 마우스를 올리면) — 노트북 화면에서도 사업자 6~7묶음이 보이게 */
+.ns-biz { padding: 1px 3px 3px; }
+.ns-biz + .ns-biz { margin-top: 2px; }
+.ns-biz-head { padding: 1px 4px; font-size: 11px; line-height: 1.4; }
+.ns-item { flex-direction: row; align-items: center; gap: 3px; padding: 3px 4px; }
+.ns-item .ns-name { display: block; flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; -webkit-line-clamp: unset; font-size: 11px; line-height: 1.35; letter-spacing: -.02em; }
+.ns-item .ns-sub { flex: none; gap: 2px; }
+.ns-item .ns-sub > span, .ns-item .ns-sub .ns-run { display: none; }
+@media (min-width: 901px) and (max-height: 900px) {
+  .side .nav-item:not(.nav-tool) { padding: 5px 10px; }
+  .brand-logo { width: 30px; height: 30px; }
+}
+.nav-stores { margin-left: 4px; }
+.ns-list { gap: 2px; }
+
+/* 스토어 템플릿: 옵션표 모양 고르기 (작은 그림 7개) + 큰 미리보기 */
+.opt-thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); gap: 6px; }
+.opt-thumb { all: unset; cursor: pointer; display: flex; flex-direction: column; gap: 3px; align-items: center; padding: 4px; border: 2px solid var(--line-2); border-radius: 8px; background: var(--panel); min-width: 0; }
+.opt-thumb img { width: 100%; height: 96px; object-fit: cover; object-position: top; border-radius: 4px; background: var(--panel-2); display: block; }
+.opt-thumb span { font-size: 11px; color: var(--text-2); text-align: center; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.opt-thumb:hover { border-color: var(--line); }
+.opt-thumb.on { border-color: var(--accent); background: var(--accent-soft); }
+.opt-thumb.on span { color: var(--accent-strong); font-weight: 700; }
+.opt-thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.opt-prev-img { max-height: 520px; overflow-y: auto; border: 1px solid var(--line-2); border-radius: 8px; background: var(--panel-2); }
+.opt-prev-img img { width: 100%; display: block; }
+@media (min-width: 901px) and (max-height: 900px) {
+  .nav-tools { gap: 2px; margin-top: 6px; padding-top: 6px; }
+  .nav-tools .nav-tool { padding: 4px 2px 3px; font-size: 10.5px; }
+  .nav-tools .nav-tool svg { width: 16px; height: 16px; }
+  .nav-group { padding: 4px 10px 2px; }
+}
+@media (min-width: 901px) and (max-height: 800px) {
+  .brand-sub { display: none; }
+  .side { gap: 8px; }
+}
+/* 1080 높이 화면까지: 메뉴 촘촘히·아래 통계 줄 숨김 → 스토어 목록 자리 확보 (스토어 39곳이 거의 다 보이게) */
+@media (min-width: 901px) and (max-height: 1100px) {
+  .side { gap: 10px; padding-top: 14px; padding-bottom: 12px; }
+  .side .nav-item:not(.nav-tool) { padding: 6px 10px; }
+  .nav-group { padding: 4px 10px 2px; }
+  .side-stats { display: none; }
+  .nav-tools { gap: 2px; margin-top: 6px; padding-top: 6px; }
+  .nav-tools .nav-tool { padding: 4px 2px 3px; font-size: 10.5px; }
+  .nav-tools .nav-tool svg { width: 16px; height: 16px; }
+}

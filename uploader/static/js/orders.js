@@ -163,7 +163,7 @@ App.page("orders", {
     $("#o-store").addEventListener("change", (e) => { this.f.store_id = e.target.value; reload(); });
     $("#o-matched").addEventListener("change", (e) => { this.f.matched = e.target.value; reload(); });
     let t;
-    $("#o-q").addEventListener("input", (e) => { clearTimeout(t); t = setTimeout(() => { this.f.q = e.target.value.trim(); reload(); }, 300); });
+    onTyped($("#o-q"), (v) => { this.f.q = v.trim(); reload(); });
     $("#o-sync").addEventListener("click", () => App.startTask(App.api("/api/orders/sync", { json: this.f.store_id ? { store_ids: [+this.f.store_id] } : {} })));
     $("#o-file").addEventListener("change", (e) => { if (e.target.files[0]) App.upload("/api/orders/import", e.target.files[0]); e.target.value = ""; });
     $("#o-range").addEventListener("click", () => App.openModal({

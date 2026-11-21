@@ -28,7 +28,7 @@ App.page("trash", {
       if (t) { this.kind = t.dataset.filter; this.page = 0; this.clear(); this.load(); }
     });
     let timer;
-    $("#t-q").addEventListener("input", (e) => { clearTimeout(timer); timer = setTimeout(() => { this.q = e.target.value.trim(); this.page = 0; this.clear(); this.load(); }, 300); });
+    onTyped($("#t-q"), (v) => { this.q = v.trim(); this.page = 0; this.clear(); this.load(); });
     $("#t-rows").addEventListener("click", (e) => {
       const dt = e.target.closest("[data-detail]");
       if (dt) return this.detail(+dt.dataset.detail);

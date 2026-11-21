@@ -835,17 +835,17 @@ class Runner:
     def _option_images(self, client, cache, boxes, look, lid, label, on_wait):
         """옵션 사진 묶음마다 2열 그림을 그려 네이버에 올린 주소들. 같은 그림은 한 번만 올리고 모든 스토어가 같이 쓴다.
         못 만들면(옵션 사진을 못 받음, 글꼴 없음) 등록하지 않는다 — 한 줄에 하나씩 쌓이거나 흐린 상세로 올라가지 않게."""
-        style, color = look
+        style, color, sname = (tuple(look) + ("",))[:3]
         dl = naver.downloader()
         out = []
         for box in boxes:
-            k = optimage.key(box, style, color)
+            k = optimage.key(box, style, color, sname)
             keys = [f"optimg:{k}:{i}" for i in range(optimage.count(len(box["cards"])))]
             saved = self.db.image_map(DETAIL_SCOPE, keys)
             if len(saved) < len(keys):
                 self._stage(lid, label, "옵션표 그림 만드는 중")
                 try:
-                    imgs = optimage.build(box, style, color, lambda u: dl(u, cache)[0])
+                    imgs = optimage.build(box, style, color, lambda u: dl(u, cache)[0], sname)
                 except Exception as e:  # noqa: BLE001 - 사진 받기·그리기 실패는 이 건만 실패로
                     raise convert.ConvertError(f"옵션표 그림을 만들지 못했습니다 ({e}). 다시 시도해 주세요.") from None
                 need = [(kk, data) for kk, data in zip(keys, imgs) if kk not in saved]

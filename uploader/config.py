@@ -222,7 +222,7 @@ def load():
             saved.pop(k, None)
         cfg.update(saved)
     cfg["customs_tax_type"] = customs_code(cfg.get("customs_tax_type"))
-    if cfg.get("option_table_style") not in ("strong", "basic"):
+    if cfg.get("option_table_style") not in ("strong", "basic", "a", "b", "c", "d", "e"):
         cfg["option_table_style"] = "basic" if cfg.get("option_table_style") == "original" else "strong"   # 옵션표는 늘 2열 표
     return cfg
 

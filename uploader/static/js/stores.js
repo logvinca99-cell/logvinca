@@ -316,12 +316,14 @@ App.page("stores", {
           <div class="form" style="gap:8px">
             <label class="field">모양 <select id="t-optstyle"><option value="">설정 공통값 따름 (지금: ${esc(((OPT_STYLES.find(([v]) => v === cfg.option_table_style) || OPT_STYLES[0])[1]).split(":")[0].split(" (")[0])})</option>
               ${OPT_STYLES.map(([v, l]) => `<option value="${v}" ${v === t.opt_style ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+            <div class="opt-thumbs" id="t-optthumbs" role="list" aria-label="옵션표 모양 고르기">${OPT_STYLES.map(([v, l]) =>
+              `<button type="button" class="opt-thumb" data-v="${v}" role="listitem" title="${esc(l)}"><img alt="${esc(l.split(":")[0].split(" (")[0])}" loading="lazy"><span>${esc(l.split(":")[0].split(" (")[0])}</span></button>`).join("")}</div>
             <div class="field">강조색 <span class="muted" id="t-optcolor-l"></span>
               <div class="opt-sw" id="t-optsw"><button type="button" class="opt-sw-common" data-c="">공통 색</button>
                 ${OPT_COLORS.map(([c, n]) => `<button type="button" data-c="${c}" title="${n}" style="background:${c}"></button>`).join("")}
                 <label class="opt-sw-pick" title="직접 고르기"><input type="color" id="t-optpick" value="${esc(t.opt_color || cfg.option_table_color || "#1F2937")}">직접</label></div></div>
           </div>
-          <div class="field">미리보기 <span class="muted">(사진은 회색 칸)</span><div class="opt-prev" id="t-optprev"></div></div>
+          <div class="field">미리보기 <span class="muted" id="t-optprev-note">(이 스토어 상품 옵션 — 없으면 예시, 실제로 그려 본 그림)</span><div class="opt-prev opt-prev-img"><img id="t-optprev" alt="옵션표 미리보기"></div></div>
         </div>
         <h3 class="sec-title">출고지 · 반품지</h3>
         <p class="muted small">판매자센터 주소록에 등록한 주소의 번호입니다. 비우면 판매자센터의 기본 출고지·반품지로 올라갑니다. 해외 출고지는 판매자센터 주소록에 먼저 등록해 두세요.</p>
@@ -449,9 +451,23 @@ App.page("stores", {
       $$("#t-optsw button").forEach((x) => x.classList.toggle("on", (x.dataset.c || "") === optColor));
       const named = (c) => (OPT_COLORS.find(([v]) => v.toUpperCase() === c.toUpperCase()) || [, c])[1];
       $("#t-optcolor-l").textContent = optColor ? `이 스토어: ${named(optColor)}` : `공통 색 (${named(base)})`;
-      $("#t-optsw").style.opacity = style === "strong" ? "" : ".45";
-      $("#t-optprev").innerHTML = optTablePreview(style, color);
+      $("#t-optsw").style.opacity = style === "basic" ? ".45" : "";
+      const qs = (extra) => new URLSearchParams({ style, color, ...extra }).toString();
+      $$("#t-optthumbs .opt-thumb").forEach((x) => {
+        const on = x.dataset.v === style;
+        x.classList.toggle("on", on);
+        const img = $("img", x), src = `/api/stores/${s.id}/optprev.jpg?${new URLSearchParams({ style: x.dataset.v, color, small: "1" })}`;
+        if (img.getAttribute("src") !== src) img.src = src;
+      });
+      clearTimeout(this._optT);
+      this._optT = setTimeout(() => { $("#t-optprev").src = `/api/stores/${s.id}/optprev.jpg?${qs({})}`; }, 200);
     };
+    $("#t-optthumbs").addEventListener("click", (e) => {
+      const x = e.target.closest(".opt-thumb");
+      if (!x) return;
+      $("#t-optstyle").value = x.dataset.v;
+      optDraw();
+    });
     $("#t-optsw").addEventListener("click", (e) => {
       const x = e.target.closest("button[data-c]");
       if (!x) return;

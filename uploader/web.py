@@ -743,6 +743,79 @@ def create_app(db=None):
             return fail(str(e))
         return jsonify({"count": n, "category": path})
 
+    _optprev_cache = {}
+
+    def _opt_sample_box():
+        """예시 옵션 6개 (사진은 이 PC에서 그린 그림) — 스토어 템플릿 옵션표 미리보기용."""
+        import io as _io
+        from PIL import Image, ImageDraw
+        cols = [(40, 40, 46), (235, 235, 232), (140, 145, 150), (214, 196, 168), (36, 52, 92), (190, 50, 50)]
+        names = ["블랙 / 기본형", "화이트 / 기본형", "그레이 / 대형", "베이지 / 대형 + 커버", "네이비 / 특대형", "레드 / 특대형 + 바퀴"]
+        photos = {}
+        for i, c in enumerate(cols):
+            im = Image.new("RGB", (600, 600), (247, 247, 245))
+            d = ImageDraw.Draw(im)
+            d.ellipse([140, 470, 460, 520], fill=(225, 225, 222))
+            d.rounded_rectangle([170, 140, 430, 490], 40, fill=c)
+            d.rounded_rectangle([200, 100, 400, 160], 20, fill=tuple(max(0, x - 30) for x in c))
+            buf = _io.BytesIO()
+            im.save(buf, "JPEG", quality=90)
+            photos[f"sample:{i}"] = buf.getvalue()
+        return {"title": "", "cards": [[[f"sample:{i}"], n] for i, n in enumerate(names)]}, photos.__getitem__
+
+    @app.get("/api/stores/<int:sid>/optprev.jpg")
+    def store_opt_preview(sid):
+        """스토어 템플릿: 옵션표 모양 미리보기 (실제로 그려 봄). style·color가 비면 설정 공통값.
+        small=1: 예시 옵션으로 작게(모양 고르기 썸네일). 아니면 그 스토어 상품의 실제 옵션 묶음이 있으면 그것, 없으면 예시."""
+        from PIL import Image
+        import io as _io
+        cfg = config.load()
+        store = db.store(sid)
+        if not store:
+            return fail("스토어를 찾지 못했습니다.", 404)
+        a = request.args
+        style = a.get("style") or cfg.get("option_table_style") or "strong"
+        color = a.get("color") or cfg.get("option_table_color") or convert.OPTION_COLOR
+        if style not in convert.OPTION_STYLES:
+            return fail("옵션표 모양을 목록에서 골라 주세요.")
+        if not (len(color) == 7 and color[0] == "#" and all(ch in "0123456789abcdefABCDEF" for ch in color[1:])):
+            color = convert.OPTION_COLOR
+        small = a.get("small") == "1"
+        sname = store["name"] if style in optimage.NEW_STYLES else ""
+        ck = (style, color.upper(), sname, small, sid)
+        if ck in _optprev_cache:
+            return Response(_optprev_cache[ck], mimetype="image/jpeg", headers={"Cache-Control": "no-store"})
+        box, fetch = None, None
+        if not small:   # 그 스토어 복사본 중 옵션 사진 묶음이 있는 상품 (앞에서 30개만 봄)
+            look_store = {**store, "tpl_opt_style": style, "tpl_opt_color": color}
+            for r in db.q("SELECT source_id FROM listings WHERE store_id=? AND status!='deleted' ORDER BY id DESC LIMIT 30", (sid,)):
+                try:
+                    bxs = convert.option_boxes(db.source_row(r["source_id"]), cfg, look_store)
+                except Exception:  # noqa: BLE001
+                    continue
+                if bxs:
+                    box = bxs[0]
+                    dl = naver.downloader()
+                    fetch = lambda u: dl(u, naver.image_cache(cfg))[0]   # noqa: E731
+                    break
+        try:
+            if box is None:
+                raise LookupError
+            data = optimage.render(box, style, color, fetch, sname)[0]
+        except Exception:  # noqa: BLE001 - 실제 상품 사진을 못 받으면 예시로
+            box, fetch = _opt_sample_box()
+            data = optimage.render(box, style, color, fetch, sname)[0]
+        if small:
+            im = Image.open(_io.BytesIO(data))
+            im = im.resize((240, max(1, round(im.height * 240 / im.width))), Image.LANCZOS)
+            buf = _io.BytesIO()
+            im.save(buf, "JPEG", quality=85)
+            data = buf.getvalue()
+        if len(_optprev_cache) > 200:
+            _optprev_cache.clear()
+        _optprev_cache[ck] = data
+        return Response(data, mimetype="image/jpeg", headers={"Cache-Control": "no-store"})
+
     @app.get("/api/optimg/<k>/<int:i>.jpg")
     def option_image(k, i):
         """상세 옵션표 그림 미리보기 (올리기 전, 이 PC에서 그림)."""

@@ -1129,11 +1129,7 @@ App.page("listings", {
       else { this.f.status = k; this.f.eye = ""; }
       this.page = 0; this.clearSel(); this.load();
     });
-    let timer;
-    $("#l-q").addEventListener("input", (e) => {
-      clearTimeout(timer);
-      timer = setTimeout(() => { this.f.q = e.target.value.trim(); this.page = 0; this.clearSel(); this.load(); }, 300);
-    });
+    onTyped($("#l-q"), (v) => { if (v.trim() === (this.f.q || "")) return; this.f.q = v.trim(); this.page = 0; this.clearSel(); this.load(); });
     $("#l-age").addEventListener("change", (e) => { this.f.age_days = e.target.value; this.page = 0; this.clearSel(); this.load(); });
     $("#l-rows").addEventListener("click", (e) => {
       if (e.target.closest("a")) return;   // 새 상품 ↗ · 원본 ↗ 는 새 창

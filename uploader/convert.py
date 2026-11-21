@@ -493,12 +493,15 @@ def _cards(inner):
 
 
 def option_look(cfg, store=None):
-    """(옵션표 모양 strong·basic, 강조색): 스토어 템플릿 값, 없으면 설정 공통값."""
+    """(옵션표 모양, 강조색, 그림에 넣을 스토어 이름): 스토어 템플릿 값, 없으면 설정 공통값.
+    모양: strong·basic(예전 두 가지) / a~e(시안 A~E — 그 스토어 이름이 그림에 들어감, 다른 모양은 이름 '')."""
+    from . import optimage
     store = store or {}
     style = store.get("tpl_opt_style") or cfg.get("option_table_style") or "strong"
+    style = style if style in OPTION_STYLES else "strong"
     color = store.get("tpl_opt_color") or cfg.get("option_table_color")
-    return ("strong" if style == "strong" else "basic",
-            color if re.fullmatch(r"#[0-9A-Fa-f]{6}", str(color or "")) else OPTION_COLOR)
+    color = color if re.fullmatch(r"#[0-9A-Fa-f]{6}", str(color or "")) else OPTION_COLOR
+    return style, color, (str(store.get("name") or "") if style in optimage.NEW_STYLES else "")
 
 
 def _layout(html, style, color, opt_urls):
@@ -524,7 +527,7 @@ def _layout(html, style, color, opt_urls):
         # 앞에 동영상·사진·글이 있으면 한 줄 띄움 (맨 앞이면 스토어 상단과의 간격은 detail_html이 띄움)
         prev = "".join(out) + before[:cut]
         gap = SPACER if re.search(r"<(img|video|iframe)\b", prev, re.I) or _text(prev.replace("&nbsp;", " ")) else ""
-        if h and style == "strong":   # 제목은 그림의 색 띠로
+        if h and style not in ("basic",):   # 제목은 그림의 색 띠(위 머리)로
             title, before = _text(h.group(2)), before[:cut] + gap
         else:
             before = before[:cut] + gap + before[cut:]
@@ -574,7 +577,7 @@ def mobile_issues(html):
     return out
 
 
-OPTION_STYLES = ("strong", "basic")   # 예전 'original'(원본 그대로)은 basic(원본 모양)으로
+OPTION_STYLES = ("strong", "basic", "a", "b", "c", "d", "e")   # 예전 'original'(원본 그대로)은 basic(원본 모양)으로 · a~e = 시안 A~E
 
 
 PC_WIDTH = 860   # 네이버 PC 상세 폭 (스토어 상단·하단 그림도 이 폭)
@@ -643,7 +646,7 @@ def detail_source(row, cfg):
 
 def option_boxes(row, cfg, store=None):
     """올릴 때 그림으로 만들 옵션 사진 묶음들 (detail_html과 같은 순서)."""
-    style, color = option_look(cfg, store)
+    style, color, _ = option_look(cfg, store)
     return _layout(detail_source(row, cfg), style, color, None)[1]
 
 
@@ -691,7 +694,7 @@ def detail_html(row, cfg, url_map, top="", bottom="", store=None, opt_urls=None)
     """상세설명 (이미지 주소를 네이버 주소로). top/bottom: 스토어 템플릿 상단·하단 HTML을 앞뒤에 붙인다.
     방문 알림은 지우고, 옵션 사진 묶음은 어떤 경우에도 2열 그림으로 (opt_urls: 엔진이 그려 올린 주소).
     store: 스토어 템플릿의 옵션표 모양·색 (비우면 설정 공통값)."""
-    style, color = option_look(cfg, store)
+    style, color, _ = option_look(cfg, store)
     html = center_media(_layout(detail_source(row, cfg), style, color, opt_urls)[0])   # 동영상도 이미지처럼 가운데
 
     def repl(m):

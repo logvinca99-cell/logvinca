@@ -121,7 +121,7 @@ App.page("runs", {
     $("#act-grp").addEventListener("change", (e) => { f.grp = e.target.value; f.page = 0; this.loadActivity(); });
     $("#act-days").addEventListener("change", (e) => { f.days = e.target.value; f.page = 0; this.loadActivity(); });
     let tq;
-    $("#act-q").addEventListener("input", (e) => { clearTimeout(tq); tq = setTimeout(() => { f.q = e.target.value.trim(); f.page = 0; this.loadActivity(); }, 300); });
+    onTyped($("#act-q"), (v) => { f.q = v.trim(); f.page = 0; this.loadActivity(); });
     $("#act-days").value = f.days;
     $("#act-q").value = f.q;
     await this.loadActivity();
