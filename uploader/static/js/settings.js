@@ -84,11 +84,11 @@ const SETTING_SECTIONS = [
   { tab: "image", title: "워터마크 (대표 이미지)", note: "스토어마다 로고 PNG나 글자는 스토어 → 템플릿에서 정합니다. 아래 미리보기는 저장한 설정 기준입니다.", fields: [
     ["wm_enabled", "워터마크 넣기 (이후 올리는 상품부터)", "check"],
     ["wm_scope", "넣을 이미지", "select", { options: [["main", "대표 이미지만"], ["all", "대표 + 추가 이미지"]] }],
-    ["wm_position", "위치", "select", { options: [["bottom-right", "아래 오른쪽"], ["bottom-left", "아래 왼쪽"], ["top-right", "위 오른쪽"], ["top-left", "위 왼쪽"], ["bottom-center", "아래 가운데"], ["top-center", "위 가운데"]] }],
+    ["wm_position", "위치 (기본값 — 스토어 템플릿에서 스토어마다 바꿈)", "select", { options: [["bottom-right", "아래 오른쪽"], ["bottom-left", "아래 왼쪽"], ["bottom-center", "아래 가운데"], ["top-right", "위 오른쪽"], ["top-left", "위 왼쪽"], ["top-center", "위 가운데"], ["middle-left", "가운데 왼쪽"], ["middle-center", "한가운데"], ["middle-right", "가운데 오른쪽"]] }],
     ["wm_square", "직사각형 이미지", "select", { options: [["safe", "가운데 정사각형 안쪽에 넣기 (잘려도 보임)"], ["pad", "흰 여백을 붙여 정사각형으로 만든 뒤 넣기"], ["full", "이미지 전체 기준 (잘리면 안 보일 수 있음)"]] }],
-    ["wm_size_pct", "크기 (정사각형 한 변의 %)", "number", { step: 1 }],
-    ["wm_opacity", "불투명도 (0~1)", "number", { step: 0.05 }],
-    ["wm_margin_pct", "가장자리 여백 (%)", "number", { step: 1 }],
+    ["wm_size_pct", "크기 기본값 (정사각형 한 변의 %)", "number", { step: 1 }],
+    ["wm_opacity", "투명도 기본값 (0~1, 지금 0.85)", "number", { step: 0.05 }],
+    ["wm_margin_pct", "여백 기본값 (%)", "number", { step: 1 }],
     ["wm_font", "글자 워터마크 글꼴 파일 (비우면 맑은 고딕)", "text"],
   ] },
   { tab: "orders", title: "주문 (판매 이력)", note: "판매자센터의 주문을 커머스API로 가져옵니다. 판매 이력이 있는 복사본은 최신화·내리기에서 빠집니다.", fields: [

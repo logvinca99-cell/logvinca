@@ -479,7 +479,7 @@ App.page("inventory", {
         { key: "names", label: `상품명 후보 ${d.names.filter((n) => n.listing_id !== -1).length}`, render: (b) => self.renderNames(b, d) },
         { key: "detail", label: "상세페이지", render: (b) => {
           b.innerHTML = `<iframe class="preview" sandbox referrerpolicy="no-referrer"></iframe>`;
-          $("iframe", b).srcdoc = `<meta name="referrer" content="no-referrer"><style>body{margin:0}img{max-width:100%}</style>` + d.detail_html;
+          $("iframe", b).srcdoc = `<meta name="referrer" content="no-referrer"><style>body{margin:0}img{max-width:100%}video,iframe{display:block;margin:0 auto;max-width:100%}</style>` + d.detail_html;
         } },
       ],
     });
@@ -685,7 +685,7 @@ App.editContent = async function (sid, after) {
         <label class="field" style="margin-top:10px">메모 <span class="muted small">(왜 고쳤는지 — 기록에 남음)</span><input id="se-memo" placeholder="예) 품절 색상 빼기"></label>
         ${d.log.length ? `<details class="small" style="margin-top:6px"><summary>고친 기록 ${num(d.log.length)}건</summary><ul>${d.log.map((x) =>
           `<li>${when(x.at)} · ${esc(x.what)}${x.memo ? ` · ${esc(x.memo)}` : ""}</li>`).join("")}</ul></details>` : ""}`;
-      const draw = () => { $("#se-frame", b).srcdoc = `<meta name="referrer" content="no-referrer"><style>body{margin:0}img{max-width:100%}</style>` + $("#se-html", b).value; };
+      const draw = () => { $("#se-frame", b).srcdoc = `<meta name="referrer" content="no-referrer"><style>body{margin:0}img{max-width:100%}video,iframe{display:block;margin:0 auto;max-width:100%}</style>` + $("#se-html", b).value; };
       const snap = () => JSON.stringify([$("#se-html", b).value, $$(".se-opt input, [id^=se-g]", b).map((x) => (x.type === "checkbox" ? x.checked : x.value))]);
       const first = snap();
       App._dirty = () => !!$("#se-html") && snap() !== first;

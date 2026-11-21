@@ -90,4 +90,5 @@ def summary(store):
             "ship_addr": store.get("tpl_ship_addr"), "return_addr": store.get("tpl_return_addr"),
             "wm_text": store.get("wm_text") or "",
             "opt_style": {"original": "basic"}.get(store.get("tpl_opt_style") or "", store.get("tpl_opt_style") or ""),
-            "opt_color": store.get("tpl_opt_color") or ""}
+            "opt_color": store.get("tpl_opt_color") or "",
+            "wm": {k: store.get(k) for k in ("wm_pos", "wm_x", "wm_y", "wm_size", "wm_opacity", "wm_margin")}}

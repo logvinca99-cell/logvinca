@@ -375,7 +375,7 @@ App.page("clean", {
     fr.onload = () => this.armEditor(fr);
     fr.srcdoc = `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><style>
       body{margin:0;padding:8px 12px;font:15px/1.5 sans-serif;color:#111;max-width:860px} img{max-width:100%;height:auto;cursor:pointer;min-width:48px;min-height:32px;background:#f3f4f6}
-      img:hover{outline:3px dashed #f59e0b} img.cl-sel{outline:4px solid #ef4444}</style><body>${cleanSafe(r["상세설명"])}</body>`;
+      img:hover{outline:3px dashed #f59e0b} img.cl-sel{outline:4px solid #ef4444} video,iframe{display:block;margin:0 auto;max-width:100%}</style><body>${cleanSafe(r["상세설명"])}</body>`;
   },
 
   armEditor(fr) {

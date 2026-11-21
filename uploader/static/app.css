@@ -1139,3 +1139,17 @@ h2, .sec-title { font-size: var(--h2); font-weight: 700; letter-spacing: -.01em;
   .nav-group { padding: 8px 10px 2px; }
   .side-stats { display: none; }
 }
+
+/* 스토어 템플릿 워터마크 편집: 왼쪽 조절, 오른쪽 미리보기 (좁으면 위아래) */
+.wm-edit { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 340px); gap: 16px; align-items: start; }
+.wm-ctrl { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.wm-ctrl input[type=range] { width: 100%; }
+.wm-grid { display: grid; grid-template-columns: repeat(3, 34px); gap: 4px; margin: 4px 0 6px; }
+.wm-grid button { width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 6px; background: var(--card, #fff); padding: 0; cursor: pointer; display: grid; place-items: center; }
+.wm-grid button i { width: 10px; height: 10px; border-radius: 2px; background: var(--muted, #9aa3ad); }
+.wm-grid button.on { border-color: var(--ok, #1f8f4e); background: var(--ok-soft, #e6f4ec); }
+.wm-grid button.on i { background: var(--ok, #1f8f4e); }
+.wm-view { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.wm-view img { width: 100%; height: auto; min-height: 120px; border: 1px solid var(--line); border-radius: 8px; background: #f3f4f6; touch-action: none; user-select: none; }
+.wm-view img.drag { cursor: crosshair; outline: 2px dashed var(--ok, #1f8f4e); outline-offset: 2px; }
+@media (max-width: 700px) { .wm-edit { grid-template-columns: minmax(0, 1fr); } }

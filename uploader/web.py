@@ -2470,6 +2470,13 @@ def create_app(db=None):
         repriced = old.get("tpl_price_pct") != price_pct
         db.x("""UPDATE stores SET wm_text=? WHERE id=?""",
              (str((b.get("wm_text") if "wm_text" in b else old.get("wm_text")) or "").strip(), sid))
+        if "wm" in b:   # 워터마크 스토어별 값 (빈 값 = 설정 공통값)
+            try:
+                wm = _wm_values(b.get("wm") or {})
+            except ValueError as e:
+                return fail(str(e))
+            db.x("UPDATE stores SET wm_pos=?, wm_x=?, wm_y=?, wm_size=?, wm_opacity=?, wm_margin=? WHERE id=?",
+                 (wm["wm_pos"], wm["wm_x"], wm["wm_y"], wm["wm_size"], wm["wm_opacity"], wm["wm_margin"], sid))
         db.x("""UPDATE stores SET tpl_top_html=?, tpl_bottom_html=?, tpl_customs=?, tpl_price_pct=?, tpl_discount_pct=?,
             tpl_ship_addr=?, tpl_return_addr=? WHERE id=?""",
              (str(b.get("top_html") or ""), str(b.get("bottom_html") or ""), config.customs_code(b.get("customs")),
@@ -2525,6 +2532,29 @@ def create_app(db=None):
             os.remove(p)
         return jsonify({"ok": True})
 
+    def _wm_values(w):
+        """템플릿 창의 워터마크 값 검사 → 저장할 값 (빈 값은 None·'' = 설정 공통값)."""
+        def num(k, lo, hi, scale=1.0):
+            v = w.get(k)
+            if v in (None, ""):
+                return None
+            try:
+                x = float(v) * scale
+            except (TypeError, ValueError):
+                raise ValueError("워터마크 값은 숫자로 넣어 주세요.") from None
+            if not lo <= x <= hi:
+                raise ValueError(f"워터마크 값이 범위를 벗어났습니다 ({k}).")
+            return round(x, 4)
+        pos = str(w.get("wm_pos") or "")
+        if pos and pos not in watermark.POSITIONS + ["custom"]:
+            raise ValueError("워터마크 위치를 골라 주세요.")
+        out = {"wm_pos": pos, "wm_size": num("wm_size", 5, 60), "wm_margin": num("wm_margin", 0, 20),
+               "wm_opacity": num("wm_opacity", 0.1, 1.0), "wm_x": None, "wm_y": None}
+        if pos == "custom":
+            out["wm_x"] = num("wm_x", 0, 100) if w.get("wm_x") not in (None, "") else 50.0
+            out["wm_y"] = num("wm_y", 0, 100) if w.get("wm_y") not in (None, "") else 50.0
+        return out
+
     @app.get("/api/watermark/preview")
     def watermark_preview():
         """워터마크 미리보기: 원본 번호가 있으면 그 대표 이미지, 없으면 w×h 예시 이미지 (초록 테두리 = 잘려 보이는 정사각형)."""
@@ -2537,6 +2567,15 @@ def create_app(db=None):
         st = db.store(int(a["store_id"])) if a.get("store_id") else (db.stores() or [{"id": 0, "name": "내 스토어"}])[0]
         if a.get("wm_text") is not None and a.get("wm_text") != "":
             st = {**st, "wm_text": a["wm_text"]}
+        if a.get("tpl") == "1":   # 템플릿 창에서 고치는 중인 값(저장 전)으로 미리보기
+            try:
+                st = {**st, **_wm_values({k: a.get(k) for k in ("wm_pos", "wm_x", "wm_y", "wm_size", "wm_opacity", "wm_margin")})}
+            except ValueError as e:
+                return fail(str(e))
+            if not a.get("source_id") and a.get("store_id"):   # 그 스토어 상품 대표 이미지 하나
+                r = db.one("SELECT source_id FROM listings WHERE store_id=? ORDER BY origin_no='' , id LIMIT 1", (int(a["store_id"]),))
+                if r:
+                    a = {**a, "source_id": r["source_id"]}
         data = None
         if a.get("source_id"):
             row = db.source_row(int(a["source_id"]))
@@ -2552,7 +2591,27 @@ def create_app(db=None):
             out = watermark.apply(data, st, cfg)
         except Exception as e:  # noqa: BLE001
             return fail(f"워터마크를 넣지 못했습니다: {e}")
-        return Response(out, mimetype="image/jpeg", headers={"Cache-Control": "no-store"})
+        hdr = {"Cache-Control": "no-store"}
+        if a.get("guide") == "1":   # 기준 영역(목록에서 잘려 보이는 정사각형)을 옅게 표시 + 크기 알려 주기 (직접 위치 끌기용)
+            from PIL import Image, ImageDraw
+            im = Image.open(io.BytesIO(out)).convert("RGB")
+            ef = watermark.effective(cfg, st)
+            if ef.get("wm_square") == "pad" and im.width == im.height:
+                x0, y0, sw, sh = 0, 0, im.width, im.height
+            else:
+                x0, y0, sw, sh = watermark.area(im.width, im.height, ef)
+            ov = Image.new("RGBA", im.size, (0, 0, 0, 0))
+            d = ImageDraw.Draw(ov)
+            d.rectangle([0, 0, im.width, im.height], fill=(255, 255, 255, 70))
+            d.rectangle([x0, y0, x0 + sw - 1, y0 + sh - 1], fill=(0, 0, 0, 0), outline=(30, 160, 90, 200), width=max(2, sw // 200))
+            if (x0, y0, sw, sh) != (0, 0, im.width, im.height):
+                im = Image.alpha_composite(im.convert("RGBA"), ov).convert("RGB")
+            buf = io.BytesIO()
+            im.save(buf, "JPEG", quality=88)
+            out = buf.getvalue()
+            hdr.update({"X-WM-Area": f"{x0},{y0},{sw},{sh}", "X-WM-Size": f"{im.width},{im.height}",
+                        "Access-Control-Expose-Headers": "X-WM-Area, X-WM-Size"})
+        return Response(out, mimetype="image/jpeg", headers=hdr)
 
     # ── 네이버 키워드
 

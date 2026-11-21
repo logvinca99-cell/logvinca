@@ -291,12 +291,24 @@ App.page("stores", {
         </div>
         <div class="muted small" id="t-price-ex"></div>
         <h3 class="sec-title">워터마크</h3>
-        <div class="two">
-          <label class="field">워터마크 글자 <span class="muted">(비우면 스토어 이름 · 아래 로고를 올리면 로고를 씀)</span><input id="t-wm" value="${esc(t.wm_text || "")}" placeholder="${esc(s.name)}"></label>
-          <div class="field">워터마크 로고 <span class="muted">(권장: 가로 500px 안팎 · 배경 투명 PNG · 100KB 이하 — 대표 이미지 짧은 변의 '워터마크 크기'%로 줄여 넣음)</span>
-            <div class="wm-store"><img id="wm-prev" src="/api/watermark/preview?store_id=${s.id}&w=1000&h=1000&_=${Date.now()}" alt="워터마크 미리보기">
-              <div><label class="btn"><input type="file" id="wm-file" accept=".png,.jpg,.jpeg,.webp" hidden>로고 올리기</label>
-              <button type="button" class="btn ghost" id="wm-del">로고 지우기</button></div></div></div>
+        <p class="muted small" style="margin:0">${cfg.wm_enabled ? "" : '<b class="c-err">설정에서 워터마크가 꺼져 있습니다</b> — 켜야 올릴 때 들어갑니다. '}비운 값은 설정의 공통(기본)값을 씁니다. 초록 테두리 = 네이버 목록에서 잘려 보이는 정사각형.</p>
+        <div class="wm-edit">
+          <div class="wm-ctrl">
+            <label class="field">워터마크 글자 <span class="muted">(비우면 스토어 이름 · 로고를 올리면 로고)</span><input id="t-wm" value="${esc(t.wm_text || "")}" placeholder="${esc(s.name)}"></label>
+            <div class="field">로고 <span class="muted">(가로 500px 안팎 · 배경 투명 PNG · 100KB 이하)</span>
+              <div class="cl-row"><label class="btn sm"><input type="file" id="wm-file" accept=".png,.jpg,.jpeg,.webp" hidden>로고 올리기</label>
+                <button type="button" class="btn sm ghost" id="wm-del">로고 지우기</button></div></div>
+            <div class="field">위치 <span class="muted" id="wm-pos-l"></span>
+              <div class="wm-grid" id="wm-grid">${["top", "middle", "bottom"].map((v) => ["left", "center", "right"].map((h) =>
+                `<button type="button" data-pos="${v}-${h}" aria-label="${{ top: "위", middle: "가운데", bottom: "아래" }[v]} ${{ left: "왼쪽", center: "가운데", right: "오른쪽" }[h]}" title="${{ top: "위", middle: "가운데", bottom: "아래" }[v]} ${{ left: "왼쪽", center: "가운데", right: "오른쪽" }[h]}"><i></i></button>`).join("")).join("")}</div>
+              <div class="cl-row"><button type="button" class="btn sm" data-pos="custom" id="wm-custom">직접 위치 (미리보기에서 끌기)</button>
+                <button type="button" class="btn sm ghost" data-pos="" id="wm-common">공통값 따름</button></div></div>
+            <label class="field">크기 <span class="muted" id="wm-size-l"></span><input type="range" id="wm-size" min="5" max="60" step="1"></label>
+            <label class="field">투명도 <span class="muted" id="wm-op-l"></span><input type="range" id="wm-op" min="10" max="100" step="1"></label>
+            <label class="field">여백 <span class="muted" id="wm-mg-l"></span><input type="range" id="wm-mg" min="0" max="20" step="0.5"></label>
+            <button type="button" class="link-btn" id="wm-reset" style="align-self:flex-start">크기·투명도·여백 모두 공통값으로</button>
+          </div>
+          <div class="wm-view"><img id="wm-prev" alt="워터마크 미리보기" draggable="false"><span class="muted small" id="wm-note">미리보기 (이 스토어 상품 대표 이미지, 없으면 예시)</span></div>
         </div>
         <h3 class="sec-title">상세 옵션표</h3>
         <p class="muted small" style="margin:0">원본 상세의 옵션표(사진 + 옵션 이름)를 <b>2열 그림</b>으로 만들어 네이버에 올립니다 — 표·CSS를 쓰지 않아 휴대폰에서도 선명하고 늘 2열입니다. 고르지 않으면 설정의 공통값을 씁니다.</p>
@@ -325,13 +337,82 @@ App.page("stores", {
         try {
           const r = await App.api(`/api/stores/${s.id}/template`, { json: { top_html: $("#t-top", b).value, bottom_html: $("#t-bottom", b).value,
             customs: $("#t-customs", b).value, wm_text: $("#t-wm", b).value, ship_addr: $("#t-ship", b).value, return_addr: $("#t-ret", b).value, price_pct: $("#t-price", b).value, discount_pct: $("#t-disc", b).value,
-            opt_style: $("#t-optstyle", b).value, opt_color: optColor } });
+            opt_style: $("#t-optstyle", b).value, opt_color: optColor, wm: { ...wm } } });
           App.toast(`${s.name} 템플릿을 저장했습니다` + (r.repriced ? ` · 아직 안 올린 복사본 ${num(r.repriced)}건 가격을 다시 정했습니다` : ""));
         } catch (e) { App.toast(e.message, true); return false; }
       } }],
     });
     const body = $("#tpl-box");   // 창을 다시 그릴 때마다 새 요소라 이벤트가 겹치지 않음
-    const prev = () => { const im = $("#wm-prev"); if (im) im.src = `/api/watermark/preview?store_id=${s.id}&w=1000&h=1000&_=${Date.now()}`; };
+    // 워터마크: 스토어 값(비우면 공통값) — 고치는 대로 서버에서 실제로 넣어 본 미리보기
+    const wm = { wm_pos: "", wm_x: null, wm_y: null, wm_size: null, wm_opacity: null, wm_margin: null, ...(t.wm || {}) };
+    if (wm.wm_pos == null) wm.wm_pos = "";
+    const dflt = { pos: cfg.wm_position || "bottom-right", size: +(cfg.wm_size_pct ?? 22), op: Math.round(+(cfg.wm_opacity ?? 0.85) * 100), mg: +(cfg.wm_margin_pct ?? 3) };
+    const POSN = { top: "위", middle: "가운데", bottom: "아래", left: "왼쪽", center: "가운데", right: "오른쪽" };
+    const posName = (p) => (p === "custom" ? "직접 위치" : p.split("-").map((x) => POSN[x] || x).join(" "));
+    const empty = (v) => v == null || v === "";
+    let area = null, timer = null, seq = 0;
+    const paint = () => {
+      const p = wm.wm_pos || dflt.pos;
+      $$("#wm-grid [data-pos]").forEach((x) => x.classList.toggle("on", x.dataset.pos === p));
+      $("#wm-custom").classList.toggle("primary", p === "custom");
+      $("#wm-pos-l").textContent = wm.wm_pos ? `(${posName(wm.wm_pos)}${p === "custom" ? ` ${wm.wm_x}% · ${wm.wm_y}%` : ""})` : `(공통값: ${posName(dflt.pos)})`;
+      $("#wm-size").value = empty(wm.wm_size) ? dflt.size : +wm.wm_size;
+      $("#wm-op").value = empty(wm.wm_opacity) ? dflt.op : Math.round(+wm.wm_opacity * 100);
+      $("#wm-mg").value = empty(wm.wm_margin) ? dflt.mg : +wm.wm_margin;
+      $("#wm-size-l").textContent = `${$("#wm-size").value}%${empty(wm.wm_size) ? " (공통값)" : ""}`;
+      $("#wm-op-l").textContent = `${$("#wm-op").value}%${empty(wm.wm_opacity) ? " (공통값)" : ""}`;
+      $("#wm-mg-l").textContent = `${$("#wm-mg").value}%${empty(wm.wm_margin) ? " (공통값)" : ""}${p === "custom" ? " · 직접 위치에서는 안 씀" : ""}`;
+      $("#wm-prev").classList.toggle("drag", p === "custom");
+    };
+    const prev = () => {
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        const im = $("#wm-prev");
+        if (!im) return;
+        const q = new URLSearchParams({ store_id: s.id, tpl: "1", guide: "1", w: 1000, h: 1000, wm_text: $("#t-wm")?.value || "", _: Date.now() });
+        Object.entries(wm).forEach(([k, v]) => { if (!empty(v)) q.set(k, v); });
+        const my = ++seq;
+        try {
+          const r = await fetch(`/api/watermark/preview?${q}`);
+          if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || "미리보기를 그리지 못했습니다"); }
+          const a = (r.headers.get("X-WM-Area") || "").split(",").map(Number), z = (r.headers.get("X-WM-Size") || "").split(",").map(Number);
+          const blob = await r.blob();
+          if (my !== seq) return;
+          const old = im.dataset.url;
+          im.dataset.url = URL.createObjectURL(blob);
+          im.src = im.dataset.url;
+          if (old) URL.revokeObjectURL(old);
+          area = a.length === 4 && z.length === 2 ? { x0: a[0], y0: a[1], w: a[2], h: a[3], W: z[0], H: z[1] } : null;
+          $("#wm-note").textContent = "미리보기 (이 스토어 상품 대표 이미지, 없으면 예시)";
+        } catch (err) { $("#wm-note").textContent = err.message; }
+      }, 220);
+    };
+    paint(); prev();
+    $$("#wm-grid [data-pos], #wm-custom, #wm-common").forEach((x) => x.addEventListener("click", () => {
+      wm.wm_pos = x.dataset.pos;
+      if (wm.wm_pos === "custom" && empty(wm.wm_x)) { wm.wm_x = 50; wm.wm_y = 50; }
+      if (wm.wm_pos !== "custom") { wm.wm_x = null; wm.wm_y = null; }
+      paint(); prev();
+    }));
+    $("#wm-size").addEventListener("input", (e) => { wm.wm_size = +e.target.value; paint(); prev(); });
+    $("#wm-op").addEventListener("input", (e) => { wm.wm_opacity = +e.target.value / 100; paint(); prev(); });
+    $("#wm-mg").addEventListener("input", (e) => { wm.wm_margin = +e.target.value; paint(); prev(); });
+    $("#wm-reset").addEventListener("click", () => { wm.wm_size = null; wm.wm_opacity = null; wm.wm_margin = null; paint(); prev(); });
+    $("#t-wm")?.addEventListener("input", prev);
+    // 직접 위치: 미리보기 위에서 누르거나 끌면 그 점이 워터마크 가운데 (기준 영역 안 %)
+    const wimg = $("#wm-prev");
+    let dragging = false;
+    const at = (ev) => {
+      if ((wm.wm_pos || dflt.pos) !== "custom" || !area) return;
+      const r = wimg.getBoundingClientRect();
+      const px = (ev.clientX - r.left) / r.width * area.W, py = (ev.clientY - r.top) / r.height * area.H;
+      wm.wm_x = Math.round(Math.min(100, Math.max(0, (px - area.x0) / area.w * 100)) * 10) / 10;
+      wm.wm_y = Math.round(Math.min(100, Math.max(0, (py - area.y0) / area.h * 100)) * 10) / 10;
+      paint(); prev();
+    };
+    wimg.addEventListener("pointerdown", (ev) => { if ((wm.wm_pos || dflt.pos) !== "custom") return; dragging = true; wimg.setPointerCapture?.(ev.pointerId); at(ev); });
+    wimg.addEventListener("pointermove", (ev) => { if (dragging) at(ev); });
+    wimg.addEventListener("pointerup", () => { dragging = false; });
     $("#wm-file")?.addEventListener("change", async (e) => {
       const f = e.target.files[0];
       if (!f) return;

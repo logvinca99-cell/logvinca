@@ -301,6 +301,9 @@ class DB:
                     # 기준 가격(기준 가격)가 어디서 왔나: file 처음 원본 파일 / adopt 판매 중 상품 연결(그 스토어 손님 가격) / manual 직접 수정
                     ("price_src", "TEXT NOT NULL DEFAULT ''"), ("price_at", "REAL")],
         "stores": [("code", "TEXT NOT NULL DEFAULT ''"), ("orders_synced_to", "REAL"),
+                   # 워터마크 스토어별 덮어쓰기 (비우면 설정 공통값): 위치(9곳·custom), 직접 위치 가운데 점 x·y %, 크기 %, 투명도 0~1, 여백 %
+                   ("wm_pos", "TEXT NOT NULL DEFAULT ''"), ("wm_x", "REAL"), ("wm_y", "REAL"), ("wm_size", "REAL"),
+                   ("wm_opacity", "REAL"), ("wm_margin", "REAL"),
                    # 판매 이력 확인 방법: file(판매 현황 파일·직접 확인 — 지우기 전에 네이버 주문을 받지 않음) / api(지우기 전에 네이버에서 주문 받기)
                    ("sales_mode", "TEXT NOT NULL DEFAULT 'file'"),
                    # 판매 이력을 마지막으로 확인한 때 (파일 넣음·[판매 이력 확인 완료]·네이버 주문 받기 성공) — 파일 방식은 이게 유효 시간 안이어야 지움

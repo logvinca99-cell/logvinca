@@ -1,7 +1,8 @@
 """대표 이미지에 스토어 워터마크를 넣는다 (스토어마다 다르게).
 
 워터마크: 스토어 화면에서 올린 로고 PNG(투명 배경 권장), 없으면 글자(스토어 이름 또는 직접 정한 글자).
-위치: 네 모서리 또는 위·아래 가운데.
+위치: 9곳(위·가운데·아래 × 왼·가운데·오른) 또는 직접 위치(정사각형 기준 가운데 점 x·y %).
+스토어 템플릿에서 위치·크기·투명도·여백을 스토어마다 정할 수 있고, 비우면 설정의 공통(기본)값.
 
 직사각형 이미지는 네이버 목록에서 가운데 정사각형으로 잘려 보이므로, 기본(safe)은
 '가운데 정사각형' 안쪽 모서리에 넣는다 → 잘려도 보이고, 상세에서 전체가 보여도 어색하지 않다.
@@ -30,10 +31,30 @@ def enabled(cfg):
     return bool(cfg.get("wm_enabled"))
 
 
+# 스토어 템플릿 칸 → 설정 이름 (비우면 설정 공통값)
+STORE_KEYS = {"wm_pos": "wm_position", "wm_size": "wm_size_pct", "wm_opacity": "wm_opacity", "wm_margin": "wm_margin_pct"}
+POSITIONS = [f"{v}-{h}" for v in ("top", "middle", "bottom") for h in ("left", "center", "right")]
+
+
+def effective(cfg, store):
+    """설정 공통값에 스토어 템플릿 값(있는 것만)을 덮은 워터마크 설정."""
+    out = dict(cfg)
+    store = store or {}
+    for sk, ck in STORE_KEYS.items():
+        v = store.get(sk)
+        if v not in (None, ""):
+            out[ck] = v
+    if out.get("wm_position") == "custom":
+        out["wm_x"] = store.get("wm_x") if store.get("wm_x") is not None else 50
+        out["wm_y"] = store.get("wm_y") if store.get("wm_y") is not None else 50
+    return out
+
+
 def signature(cfg, store):
-    """설정·로고가 바뀌면 다시 올리도록 이미지 저장 키에 붙이는 값."""
+    """설정·로고·스토어 템플릿 값이 바뀌면 다시 올리도록 이미지 저장 키에 붙이는 값."""
+    cfg = effective(cfg, store)
     p = logo_path(store["id"])
-    parts = [str(cfg.get(k)) for k in ("wm_position", "wm_size_pct", "wm_opacity", "wm_margin_pct", "wm_square")]
+    parts = [str(cfg.get(k)) for k in ("wm_position", "wm_size_pct", "wm_opacity", "wm_margin_pct", "wm_square", "wm_x", "wm_y")]
     parts += [store.get("wm_text") or store.get("name") or "", str(os.path.getmtime(p)) if os.path.exists(p) else ""]
     return hashlib.md5("|".join(parts).encode()).hexdigest()[:10]
 
@@ -83,25 +104,38 @@ def _mark(store, side, cfg):
     return m
 
 
-def place(w, h, mw, mh, cfg):
-    """워터마크 왼쪽 위 좌표. 가운데 정사각형(잘려 보이는 범위) 안쪽 기준."""
-    side = min(w, h)
-    x0, y0 = (w - side) // 2, (h - side) // 2
+def area(w, h, cfg):
+    """워터마크 기준 영역 (x0, y0, 폭, 높이): 기본은 가운데 정사각형(목록에서 잘려 보이는 범위), full이면 이미지 전체."""
     if cfg.get("wm_square") == "full":
-        x0, y0, sw, sh = 0, 0, w, h
-    else:
-        sw = sh = side
-    margin = int(min(sw, sh) * float(cfg.get("wm_margin_pct") or 3) / 100)
+        return 0, 0, w, h
+    side = min(w, h)
+    return (w - side) // 2, (h - side) // 2, side, side
+
+
+def place(w, h, mw, mh, cfg):
+    """워터마크 왼쪽 위 좌표. 기준 영역 안쪽 — 9곳은 여백만큼 안으로, 직접 위치는 가운데 점 x·y %(영역 밖으로 안 나감)."""
+    x0, y0, sw, sh = area(w, h, cfg)
     pos = cfg.get("wm_position") or "bottom-right"
-    vert, horiz = (pos.split("-") + ["right"])[:2]
-    x = {"left": x0 + margin, "center": x0 + (sw - mw) // 2, "right": x0 + sw - mw - margin}[horiz]
-    y = y0 + margin if vert == "top" else y0 + sh - mh - margin
+    if pos == "custom":
+        cx = sw * min(100.0, max(0.0, float(cfg.get("wm_x") if cfg.get("wm_x") is not None else 50))) / 100
+        cy = sh * min(100.0, max(0.0, float(cfg.get("wm_y") if cfg.get("wm_y") is not None else 50))) / 100
+        x = int(min(max(cx - mw / 2, 0), max(0, sw - mw)))
+        y = int(min(max(cy - mh / 2, 0), max(0, sh - mh)))
+        return x0 + x, y0 + y
+    margin = int(min(sw, sh) * float(cfg.get("wm_margin_pct") if cfg.get("wm_margin_pct") not in (None, "") else 3) / 100)
+    parts = pos.split("-")
+    if len(parts) == 1:   # 'center' → 가운데 가운데
+        parts = ["middle", "center"]
+    vert, horiz = (parts + ["right"])[:2]
+    x = {"left": x0 + margin, "center": x0 + (sw - mw) // 2, "right": x0 + sw - mw - margin}.get(horiz, x0 + sw - mw - margin)
+    y = {"top": y0 + margin, "middle": y0 + (sh - mh) // 2}.get(vert, y0 + sh - mh - margin)
     return x, y
 
 
 def apply(data, store, cfg):
     """이미지 바이트 → 워터마크 넣은 JPEG 바이트."""
     from PIL import Image, ImageOps
+    cfg = effective(cfg, store)
     im = Image.open(io.BytesIO(data))
     im = ImageOps.exif_transpose(im).convert("RGB")
     if cfg.get("wm_square") == "pad" and im.width != im.height:

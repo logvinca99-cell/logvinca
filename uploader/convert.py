@@ -647,12 +647,52 @@ def option_boxes(row, cfg, store=None):
     return _layout(detail_source(row, cfg), style, color, None)[1]
 
 
+MEDIA_RE = re.compile(r"<(video|iframe)\b[^>]*?(?:/>|>.*?</\1\s*>)", re.I | re.S)
+_CENTER_OPEN = re.compile(r"<(p|div|center)\b([^>]*)>\s*$", re.I)
+_CENTER_CLOSE = re.compile(r"^\s*</(p|div|center)\s*>", re.I)
+MEDIA_STYLE = "display:block;margin:0 auto;max-width:100%;"
+
+
+def _media_style(tag):
+    """동영상 태그 자체도 가운데로 (display:block + margin auto, 폭은 화면 안)."""
+    head_end = tag.find(">")
+    head = tag[:head_end]
+    m = re.search(r"""\bstyle\s*=\s*(["'])(.*?)\1""", head, re.I | re.S)
+    if m:
+        st = m.group(2)
+        if re.search(r"margin\s*:\s*0\s+auto", st, re.I) and re.search(r"display\s*:\s*block", st, re.I):
+            return tag
+        st = (st.rstrip("; ") + ";" if st.strip() else "") + MEDIA_STYLE
+        head = head[:m.start()] + f'style={m.group(1)}{st}{m.group(1)}' + head[m.end():]
+    else:
+        head = re.sub(r"^<(video|iframe)\b", lambda x: f'<{x.group(1)} style="{MEDIA_STYLE}"', head, flags=re.I)
+    return head + tag[head_end:]
+
+
+def center_media(html):
+    """상세의 동영상(video·iframe)을 가운데로: 이미 가운데 정렬 블록 하나만 감싸고 있으면 그대로(태그만 가운데),
+    아니면 이미지처럼 <p style="text-align:center"> 로 감싼다 — 네이버가 남기는 text-align·margin auto만 씀."""
+    html = str(html or "")
+    out, i = [], 0
+    for m in MEDIA_RE.finditer(html):
+        before = html[i:m.start()]
+        tag = _media_style(m.group(0))
+        o = _CENTER_OPEN.search(before)
+        c = _CENTER_CLOSE.search(html[m.end():])
+        centered = bool(o and c and o.group(1).lower() == c.group(1).lower()
+                        and (o.group(1).lower() == "center" or re.search(r"text-align\s*:\s*center", o.group(2), re.I)))
+        out.append(before)
+        out.append(tag if centered else f'<p style="text-align:center;margin:0;">{tag}</p>')
+        i = m.end()
+    return "".join(out) + html[i:]
+
+
 def detail_html(row, cfg, url_map, top="", bottom="", store=None, opt_urls=None):
     """상세설명 (이미지 주소를 네이버 주소로). top/bottom: 스토어 템플릿 상단·하단 HTML을 앞뒤에 붙인다.
     방문 알림은 지우고, 옵션 사진 묶음은 어떤 경우에도 2열 그림으로 (opt_urls: 엔진이 그려 올린 주소).
     store: 스토어 템플릿의 옵션표 모양·색 (비우면 설정 공통값)."""
     style, color = option_look(cfg, store)
-    html = _layout(detail_source(row, cfg), style, color, opt_urls)[0]
+    html = center_media(_layout(detail_source(row, cfg), style, color, opt_urls)[0])   # 동영상도 이미지처럼 가운데
 
     def repl(m):
         src = m.group(3).strip()
