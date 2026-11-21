@@ -176,15 +176,14 @@ App.page("listings", {
     this.counts = res.counts || {};
     this.rows = res.rows;
     this.total = res.total;
-    $("#l-sales").innerHTML = this.counts.need_sales ? `<div class="notice warn" style="margin-bottom:10px">판매 중 상품 <b>${num(this.counts.need_sales)}</b>개는
-      <b>판매 이력 확인 전</b>이라 최신화·내리기를 하지 않습니다 (팔린 상품을 지우지 않게). <button class="btn tiny primary" id="l-sales-go">판매 이력 확인</button></div>` : "";
-    $("#l-sales-go")?.addEventListener("click", () => App.salesConfirm(+this.f.store_id, () => this.load()));
+    if (setHtml($("#l-sales"), this.counts.need_sales ? `<div class="notice warn" style="margin-bottom:10px">판매 중 상품 <b>${num(this.counts.need_sales)}</b>개는
+      <b>판매 이력 확인 전</b>이라 최신화·내리기를 하지 않습니다 (팔린 상품을 지우지 않게). <button class="btn tiny primary" id="l-sales-go">판매 이력 확인</button></div>` : "")) $("#l-sales-go")?.addEventListener("click", () => App.salesConfirm(+this.f.store_id, () => this.load()));
     App.api(`/api/listings/push_pending?store_id=${this.f.store_id}`).then((p) => {   // 네이버 반영 대기 (가격·상품명 바꾸기를 못 보낸 것)
       const box = $("#l-push");
       if (!box) return;
       const n = (p.price || 0) + (p.name || 0) + (p.detail || 0);
-      box.innerHTML = n ? `<div class="notice warn" style="margin-bottom:10px">네이버 반영 대기 <b>${num(n)}</b>건 (가격 ${num(p.price)} · 상품명 ${num(p.name)} · 상세 ${num(p.detail || 0)}) —
-        실패했거나 아직 못 보낸 가격·상품명·상세 바꾸기입니다(상품은 지우지 않음). <button class="btn tiny primary" id="l-push-go">네이버 반영 다시 시도</button></div>` : "";
+      if (!setHtml(box, n ? `<div class="notice warn" style="margin-bottom:10px">네이버 반영 대기 <b>${num(n)}</b>건 (가격 ${num(p.price)} · 상품명 ${num(p.name)} · 상세 ${num(p.detail || 0)}) —
+        실패했거나 아직 못 보낸 가격·상품명·상세 바꾸기입니다(상품은 지우지 않음). <button class="btn tiny primary" id="l-push-go">네이버 반영 다시 시도</button></div>` : "")) return;
       $("#l-push-go")?.addEventListener("click", async () => {
         if (!await App.yes("네이버 반영 다시 시도", `대기 중인 ${num(n)}건의 네이버 가격·상품명·상세를 다시 보냅니다 (상품은 지우지 않음).`, { label: "다시 보내기" })) return;
         App.startTask(App.api("/api/listings/push_retry", { json: { store_id: +this.f.store_id } }));
@@ -193,8 +192,8 @@ App.page("listings", {
     App.api(`/api/listings/price_check?store_id=${this.f.store_id}`).then((p) => {   // 네이버 가격 ≠ 업스타 가격
       const box = $("#l-pchk");
       if (!box) return;
-      box.innerHTML = p.total ? `<div class="notice warn" style="margin-bottom:10px">가격 확인 필요 <b>${num(p.total)}</b>건 —
-        네이버 가격이 업스타 가격(기준 가격 × 스토어 가격 차이 %)과 다릅니다. <button class="btn tiny primary" id="l-pchk-go">확인하고 맞추기</button></div>` : "";
+      if (!setHtml(box, p.total ? `<div class="notice warn" style="margin-bottom:10px">가격 확인 필요 <b>${num(p.total)}</b>건 —
+        네이버 가격이 업스타 가격(기준 가격 × 스토어 가격 차이 %)과 다릅니다. <button class="btn tiny primary" id="l-pchk-go">확인하고 맞추기</button></div>` : "")) return;
       $("#l-pchk-go")?.addEventListener("click", () => this.priceCheck(p));
     }).catch(() => {});
     // 목록을 다시 그려도 보고 있던 줄이 화면에서 튀지 않게: 화면 맨 위에 보이던 줄 위치를 기억했다가 되돌림
@@ -204,10 +203,11 @@ App.page("listings", {
       if (tr) anchor = { id: tr.dataset.id, top: tr.getBoundingClientRect().top };
     }
     const active = this.f.eye ? `eye_${this.f.eye}` : this.f.nv === "bad" ? "nv_bad" : this.f.status;
-    $("#l-tiles").innerHTML = tilesHtml(LST_TILES.filter((t) => !t.only || this.counts[t.key] || active === t.key), { ...this.counts, all: this.counts.all_ }, active);
-    $("#l-rows").innerHTML = res.rows.length ? res.rows.map((l) => this.rowHtml(l)).join("")
-      : `<tr class="empty-row"><td colspan="7">${this.counts.all_ ? "조건에 맞는 건이 없습니다."
-        : '이 스토어에 복사본이 없습니다. <a href="#inventory">원본 상품</a>에서 원본을 고르고 <b>다른 스토어로 복사</b>를 누르세요.'}</td></tr>`;
+    setHtml($("#l-tiles"), tilesHtml(LST_TILES.filter((t) => !t.only || this.counts[t.key] || active === t.key), { ...this.counts, all: this.counts.all_ }, active));
+    // 목록은 통째로 다시 그리지 않고 바뀐 줄만 바꿈 (같은 줄들이면) — 주기 갱신에 화면·스크롤·선택이 흔들리지 않게
+    if (res.rows.length) patchRows($("#l-rows"), res.rows.map((l) => [String(l.id), this.rowHtml(l)]));
+    else setHtml($("#l-rows"), `<tr class="empty-row"><td colspan="7">${this.counts.all_ ? "조건에 맞는 건이 없습니다."
+        : '이 스토어에 복사본이 없습니다. <a href="#inventory">원본 상품</a>에서 원본을 고르고 <b>다른 스토어로 복사</b>를 누르세요.'}</td></tr>`);
     this.renderBar();
     if (!this._mine(App.run)) this.renderIdle();
     if (anchor) {
@@ -269,24 +269,25 @@ App.page("listings", {
       pageChecked: this.rows.length > 0 && this.rows.every((l) => this.sel.has(l.id)),
       actions: [
         { id: "rename", label: "상품명 바꾸기", primary: true, title: "아직 안 올린 복사본의 상품명을 AI 키워드·AI로 짓기·셔플로 바꿈" },
-        "|",
+        "|등록",
         { id: "refresh", label: "최신화", title: "판매 중인 건을 네이버에서 지우고 같은 내용으로 다시 올림 (회차 +1) · 누르면 바로 시작 (다른 스토어가 돌고 있어도 함께)" },
         { id: "reupload", label: "다시 올리기", title: "문제가 있어 지우고 같은 내용(같은 상품명)으로 다시 올림 · 판매 중인 건은 지우고 다시, 내린 건은 그냥 다시 · 최신화와 따로 기록" },
         { id: "delete", label: "내리기", title: "판매 중인 건을 네이버에서 지움 · 누르면 바로 시작 (다른 스토어가 돌고 있어도 함께)" },
         { id: "cancel", label: "대기·실패 취소", danger: true, title: "아직 처리 안 된 대기·실패 할 일을 취소" },
-        "|",
-        { id: "lock", label: "잠금", title: "판매 이력과 상관없이 지우지 못하게 잠금" },
-        { id: "unlock", label: "잠금 풀기" },
+        "|수정",
+        { id: "price", label: "가격 수정", title: "고른 복사본 원본의 기준 가격을 직접 입력 / n원 / n% 올리기·내리기 → 모든 스토어 복사본이 같이 바뀌고(각 스토어 가격 차이 % 반영), 판매 중은 네이버 가격만 바로" },
         { id: "category", label: "카테고리 바꾸기", title: "고른 복사본의 원본 카테고리를 직접 정함 (인증 때문에 안 올라가는 카테고리 등) — 그 원본의 다른 스토어 복사본도 같이" },
         { id: "chem", label: "생활화학 판정", title: "고른 복사본의 원본을 판정: 물건이면 '인증 대상 아님'으로 다시 등록 대기, 화학제품이면 보류 (애매하면 AI)" },
-        { id: "price", label: "가격 수정", title: "고른 복사본의 그 스토어 손님 가격을 직접 입력 / n원 / n% 올리기·내리기 → 원본 기준 가격이 바뀌어 다른 스토어도 같이, 판매 중은 네이버 가격만 바로" },
         { id: "infopush", label: "네이버 상품 정보 바꾸기", title: "고른 판매 중 복사본의 상세·브랜드·제조사·모델명을 지금 원본·설정 기준으로 네이버에서 바꿈 (지우지 않음 → 상품번호·리뷰 그대로, 잠긴 것 포함)" },
         { id: "clean", label: "상세 정리로 보내기", title: "고른 복사본의 원본 상세를 상세 정리에서 정리 → [원본에 반영]하면 원본 상세가 바뀌고 판매 중 복사본은 네이버 상세만 바꿈 (지우지 않음)" },
         { id: "resetround", label: "회차 초기화", title: "지난 회차 기록을 지우고 1회차로 (다시 다 올릴 때) · 판매 중·내린 건은 다음에 다시 올릴 때 1회차로" },
-        "|",
+        "|보호",
+        { id: "lock", label: "잠금", title: "판매 이력과 상관없이 지우지 못하게 잠금" },
+        { id: "unlock", label: "잠금 풀기" },
+        "|이동",
         { id: "move", label: "다른 스토어로 보내기", title: "아직 안 올린·내린 복사본을 다른 스토어로 옮김 (이 스토어에서는 사라짐) — 받는 스토어 남은 자리만큼" },
         { id: "revert", label: "원본으로 되돌리기", title: "아직 안 올린·내린 복사본을 이 스토어에서 없앰 → 원본의 복사 자리가 비고 상품명은 후보로 (A였으면 다음 복사에 다시 A)" },
-        "|",
+        "|검수",
         { id: "eyeon", label: "검수 완료로 표시", title: "고른 복사본의 원본을 검수 완료로 (새로 올릴 수 있게) — 원본 기준이라 다른 스토어 복사본도 같이" },
         { id: "eyeoff", label: "검수 완료 풀기" },
         "|",
@@ -1068,7 +1069,7 @@ App.page("listings", {
         App.run = await App.api("/api/run/stop", { json: body() }); this.renderRun(App.run); App.renderSideRun();
       });
       clearInterval(this.timer);
-      this.timer = setInterval(() => { if (App.run?.running) this.load(); }, 4000);
+      this.timer = setInterval(() => { if (App.run?.running && !App.userBusy()) this.load(); }, 4000);
     }
     const m = all ? r : mine;
     const paused = all ? r.paused : mine.paused || r.paused;

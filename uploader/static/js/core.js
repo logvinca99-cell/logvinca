@@ -28,6 +28,39 @@ function whyMsg(w, list) {
   return ` (${xs.map(([k, n]) => `${WHY_LABEL[k] || k} ${num(n)}`).join(" · ")}${top ? ` — 예: ${top}` : ""}${(list || []).length > 2 ? " · 전체는 작업 기록에서" : ""})${again}`;
 }
 
+/* 내용이 같으면 그대로 두고 바뀐 때만 innerHTML (주기 갱신에 화면이 다시 그려져 흔들리지 않게). 바꿨으면 true */
+function setHtml(el, html) {
+  if (!el) return false;
+  if (el._html === html) return false;
+  el._html = html;
+  el.innerHTML = html;
+  return true;
+}
+/* 표 줄 고치기: [[id, '<tr data-id=…>…</tr>'], …]. 줄 순서가 같으면 바뀐 줄만 바꾸고, 다르면 통째로 */
+function patchRows(tbody, rows) {
+  if (!tbody) return;
+  const cur = [...tbody.children];
+  const same = cur.length === rows.length && cur.every((tr, i) => tr.dataset && tr.dataset.id === rows[i][0]);
+  if (!same) {
+    const html = rows.map((r) => r[1]).join("");
+    tbody._html = html;
+    tbody.innerHTML = html;
+    [...tbody.children].forEach((tr, i) => { tr._html = rows[i] && rows[i][1]; });
+    return;
+  }
+  tbody._html = null;
+  cur.forEach((tr, i) => {
+    const h = rows[i][1];
+    if (tr._html === h) return;
+    const t = document.createElement("tbody");
+    t.innerHTML = h;
+    const nt = t.firstElementChild;
+    if (!nt) return;
+    nt._html = h;
+    tr.replaceWith(nt);
+  });
+}
+
 function when(ts) {
   if (!ts) return "-";
   const d = new Date(ts * 1000), p = (n) => String(n).padStart(2, "0");
@@ -236,6 +269,8 @@ const App = {
     this.pageGuide?.(view, page);
   },
   go(hash) { if (location.hash === hash) this.route(); else location.hash = hash; },
+  /* 사람이 누르고 있거나(고르기·스크롤 막대 끌기) 창이 열려 있으면 주기 갱신을 미룸 */
+  userBusy() { return !!this._ptrDown || !$("#modal-bg")?.hidden; },
 
   // ── 상태
 
@@ -290,7 +325,7 @@ const App = {
     const box = $("#nav-stores");
     if (!box) return;
     const list = this._navSum || (this.stores || []).map((s) => ({ ...s, live: 0, pending: 0, fail: 0 }));
-    if (!list.length) { box.innerHTML = ""; return; }
+    if (!list.length) { box.innerHTML = ""; box._html = ""; return; }
     const closed = new Set(this._navLoad("nav-biz-closed", []));
     const open = this._navLoad("nav-stores-open", !matchMedia("(max-width: 900px)").matches);
     const q = (this._navQ || "").trim().toLowerCase();
@@ -312,9 +347,15 @@ const App = {
           <span class="ns-caret">▸</span><span class="ns-biz-name">${esc(biz)}</span>${runIn ? '<i class="ns-dot"></i>' : ""}<span class="ns-cnt">${shown.length}</span></button>
         ${isClosed ? "" : `<div class="ns-list">${shown.map(row).join("")}</div>`}</div>`;
     }).join("");
-    box.innerHTML = `<button type="button" class="ns-top" aria-expanded="${open}"><span class="ns-caret">▸</span>스토어 ${num(list.length)}곳${nRun ? ` <span class="ns-top-run"><i class="ns-dot"></i>등록 중 ${num(nRun)}곳</span>` : ""}</button>
+    const prevScroll = $(".ns-scroll", box)?.scrollTop || 0;
+    const html = `<button type="button" class="ns-top" aria-expanded="${open}"><span class="ns-caret">▸</span>스토어 ${num(list.length)}곳${nRun ? ` <span class="ns-top-run"><i class="ns-dot"></i>등록 중 ${num(nRun)}곳</span>` : ""}</button>
       ${open ? `<div class="ns-scroll">${groups || '<p class="muted small ns-none">맞는 스토어가 없습니다</p>'}</div>
       <input class="ns-q" id="ns-q" placeholder="스토어 찾기" value="${esc(this._navQ || "")}" autocomplete="off">` : ""}`;
+    if (box._html === html) return;   // 바뀐 게 없으면 그대로 (1초마다 불려도 다시 그리지 않음)
+    box._html = html;
+    box.innerHTML = html;
+    const sc = $(".ns-scroll", box);
+    if (sc) sc.scrollTop = prevScroll;
     box.classList.toggle("open", !!open);
     $(".ns-top", box).addEventListener("click", () => { this._navSave("nav-stores-open", !open); this.renderNavStores(); });
     $$(".ns-biz-head", box).forEach((b) => b.addEventListener("click", () => {
@@ -338,7 +379,12 @@ const App = {
       });
     }
     const cur = $(".ns-item.on", box);
-    if (cur && !this._navScrolled) { this._navScrolled = true; cur.scrollIntoView({ block: "nearest" }); }
+    // 지금 스토어가 메뉴 목록 밖이면 그 목록 칸만 스크롤 (scrollIntoView는 화면 전체를 끌어올려 복사본 목록이 맨 위로 튐)
+    if (cur && sc && !this._navScrolled) {
+      this._navScrolled = true;
+      const r = cur.getBoundingClientRect(), b = sc.getBoundingClientRect();
+      if (r.top < b.top || r.bottom > b.bottom) sc.scrollTop += r.top - b.top - (b.height - r.height) / 2;
+    }
   },
 
   // ── 뒤에서 도는 작업
@@ -1330,9 +1376,15 @@ const App = {
   listBar(el, o) {
     const unit = o.unit || "개";
     const n = o.count || 0;
-    const acts = (o.actions || []).map((x) => x === "|" ? `<span class="lb-sep"></span>`
-      : `<button class="btn ${x.primary ? "primary" : ""} ${x.danger ? "danger" : ""}" data-act="${x.id}" ${n || x.always ? "" : "disabled"}
-          ${x.title ? `title="${esc(x.title)}"` : ""}>${esc(x.label)}</button>`).join("");
+    // 버튼 묶음: "|" 또는 "|이름"으로 나눔 → 묶음마다 옅은 칸(이름이 있으면 작게), 위험 버튼은 빨강 외곽
+    const groups = [{ name: "", items: [] }];
+    (o.actions || []).forEach((x) => {
+      if (typeof x === "string" && x.startsWith("|")) groups.push({ name: x.slice(1), items: [] });
+      else groups[groups.length - 1].items.push(x);
+    });
+    const acts = groups.filter((g) => g.items.length).map((g) => `<div class="lb-grp${g.items.every((x) => x.danger) ? " danger" : ""}">${g.name ? `<span class="lb-grp-name">${esc(g.name)}</span>` : ""}${g.items.map((x) =>
+      `<button class="btn sm ${x.primary ? "primary" : ""} ${x.danger ? "danger" : ""}" data-act="${x.id}" ${n || x.always ? "" : "disabled"}
+          ${x.title ? `title="${esc(x.title)}"` : ""}>${esc(x.label)}</button>`).join("")}</div>`).join("");
     el.innerHTML = `<div class="lb-row">
         <div class="lb-left">
           <label class="lb-check"><input type="checkbox" data-lb="page" ${o.pageChecked ? "checked" : ""} ${o.selAll ? "disabled" : ""}>이 쪽 전체</label>
@@ -1396,6 +1448,9 @@ const App = {
 
   bind() {
     window.addEventListener("hashchange", () => this.route());
+    document.addEventListener("pointerdown", () => { this._ptrDown = true; }, true);
+    document.addEventListener("pointerup", () => { this._ptrDown = false; }, true);
+    document.addEventListener("pointercancel", () => { this._ptrDown = false; }, true);
     $("#d-close").addEventListener("click", () => this.closeDrawer());
     $("#drawer-bg").addEventListener("click", () => this.closeDrawer());
     $("#d-tabs").addEventListener("click", (e) => { const b = e.target.closest("[data-tab]"); if (b) this.drawerTab(b.dataset.tab); });
