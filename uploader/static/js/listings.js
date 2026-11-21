@@ -59,7 +59,7 @@ App.page("listings", {
         </div></header>
       <div class="card run" id="l-run"><div id="l-run-main"></div></div>
       <div class="run-others" id="l-run-others" hidden></div>
-      <div id="l-sales"></div>
+      <div id="l-sales-warn"></div>
       <div id="l-push"></div>
       <div id="l-pchk"></div>
       <div class="tiles" id="l-tiles"></div>
@@ -176,7 +176,7 @@ App.page("listings", {
     this.counts = res.counts || {};
     this.rows = res.rows;
     this.total = res.total;
-    if (setHtml($("#l-sales"), this.counts.need_sales ? `<div class="notice warn" style="margin-bottom:10px">판매 중 상품 <b>${num(this.counts.need_sales)}</b>개는
+    if (setHtml($("#l-sales-warn"), this.counts.need_sales ? `<div class="notice warn" style="margin-bottom:10px">판매 중 상품 <b>${num(this.counts.need_sales)}</b>개는
       <b>판매 이력 확인 전</b>이라 최신화·내리기를 하지 않습니다 (팔린 상품을 지우지 않게). <button class="btn tiny primary" id="l-sales-go">판매 이력 확인</button></div>` : "")) $("#l-sales-go")?.addEventListener("click", () => App.salesConfirm(+this.f.store_id, () => this.load()));
     App.api(`/api/listings/push_pending?store_id=${this.f.store_id}`).then((p) => {   // 네이버 반영 대기 (가격·상품명 바꾸기를 못 보낸 것)
       const box = $("#l-push");
@@ -924,6 +924,7 @@ App.page("listings", {
     const nSel = this.selAll ? this.total : this.sel.size;
     const est = this.est || {};
     const n = est.count ?? 0;
+    $("#l-run")?.classList.add("idle");   // 쉬는 중: 내용 높이만큼 (처리 중일 때만 높이 고정)
     box.innerHTML = `<div class="run-idle">
         <div class="run-pick">
           <div class="seg" role="group" aria-label="처리 범위">${[["store", "이 스토어 전체"], ["sel", `고른 것만 (${num(nSel)})`], ["visible", "지금 보이는 조건만"]].map(([k, l]) =>
@@ -1034,6 +1035,7 @@ App.page("listings", {
     if (!box) return;
     if (this._live !== (all ? "all" : mine.id)) {
       this._live = all ? "all" : mine.id;
+      $("#l-run")?.classList.remove("idle");
       box.innerHTML = `<div class="run-top">
           <div class="run-count"><b id="r-done">0</b><span> / <span id="r-total">0</span></span></div>
           <div class="run-meta">

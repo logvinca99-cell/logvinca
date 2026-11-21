@@ -92,7 +92,7 @@ App.page("stores", {
       ${storeUsage(s, true)}
       <div class="st-meta">${s.naver_count_at ? `연결 확인 ${when(s.naver_count_at)}${line ? `<br>${esc(line)}` : ""}` : '<span class="c-warn">연결 확인 전 (사용량이 정확하지 않음)</span>'}</div>
       <div class="st-meta">실패 <b class="${s.n_fail ? "c-err" : ""}">${num(s.n_fail)}</b> · 판매 이력 <b>${num(s.n_sold)}</b> · 내림 ${num(s.n_deleted)}${s.n_locked ? ` · 잠금 ${num(s.n_locked)}` : ""}
-        · <a href="#listings?store_id=${s.id}">복사본 보기</a></div>
+        · <a href="#listings?store_id=${s.id}" class="nowrap">복사본 보기</a></div>
       <div class="st-memo"><div class="st-memo-head"><b>메모</b> <span class="muted small" data-memo-st="${s.id}">${s.memo_at ? `${when(s.memo_at)} 저장` : "나만 보는 메모 · 적는 대로 저장"}</span></div>
         <textarea data-memo="${s.id}" rows="2" placeholder="예) 셀업 수집(earth777) 상품으로 채움 · 다음 달부터 최신화 위주로">${esc(s.memo || "")}</textarea></div>
       ${storeLinks(s)}
