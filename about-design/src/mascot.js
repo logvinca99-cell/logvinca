@@ -22,9 +22,13 @@
       <circle cx="38" cy="103" r="4.5" fill="#553C8B"/></g>
     <path d="M22 74 Q20 90 32 98" fill="none" stroke="${INK}" stroke-width="4" stroke-linecap="round"/>
     <path d="M98 74 Q100 90 88 98" fill="none" stroke="${INK}" stroke-width="4" stroke-linecap="round"/>`;
-  const poses = { plain: armL + armR, wave: armL + wave, coupon: coupon };
+  const crown = `<path d="M38 26 L44 8 L52 20 L60 2 L68 20 L76 8 L82 26 Z" fill="#FFB800" stroke="${INK}" stroke-width="4" stroke-linejoin="round"/>
+    <circle cx="44" cy="8" r="3.5" fill="#fff" stroke="${INK}" stroke-width="2.5"/><circle cx="60" cy="2" r="3.5" fill="#fff" stroke="${INK}" stroke-width="2.5"/><circle cx="76" cy="8" r="3.5" fill="#fff" stroke="${INK}" stroke-width="2.5"/>`;
+  const cheer = `<path d="M21 66 Q2 60 -2 34" fill="none" stroke="${INK}" stroke-width="4" stroke-linecap="round"/><path d="M99 66 Q118 60 122 34" fill="none" stroke="${INK}" stroke-width="4" stroke-linecap="round"/><path d="M-8 26 l-5 -5 M2 22 l2 -7 M118 22 l-2 -7 M128 26 l5 -5" stroke="${INK}" stroke-width="3" stroke-linecap="round"/>`;
+  const poses = { plain: armL + armR, wave: armL + wave, coupon: coupon, king: cheer, kingwave: armL + wave };
   for (const el of document.querySelectorAll('.mascot')) {
     const p = el.dataset.pose || 'plain';
-    el.innerHTML = `<svg viewBox="0 0 126 120" style="display:block;width:100%;height:100%;overflow:visible">${p === 'coupon' ? base + poses[p] : poses[p] + base}</svg>`;
+    const top = p.startsWith('king') ? crown : '';
+    el.innerHTML = `<svg viewBox="0 0 126 120" style="display:block;width:100%;height:100%;overflow:visible">${(p === 'coupon' || p === 'king') ? base + poses[p] : poses[p] + base}${top}</svg>`;
   }
 })();
