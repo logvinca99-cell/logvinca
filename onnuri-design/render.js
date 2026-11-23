@@ -19,6 +19,21 @@ const jobs = [
   { file: 'bottom.html', out: 'onnuri_bottom', width: 860, scale: SCALE, split: true },
   { file: 'watermark.html', out: 'onnuri_watermark',       width: 250, scale: 2, element: '#wm', transparent: true, vars: { __VARIANT__: '', __LOGO__: 'logo.svg' } },
   { file: 'watermark.html', out: 'onnuri_watermark_white', width: 250, scale: 2, element: '#wm', transparent: true, vars: { __VARIANT__: 'white', __LOGO__: 'logo-white.svg' } },
+  { file: 'store_profile.html', out: 'store_profile_1300', width: 1000, height: 1000, scale: 1.3 },
+  { file: 'store_logo.html', out: 'store_logo_src', width: 520, scale: 4, element: '#lg', transparent: true },
+  { file: 'store_promo1.html', out: 'store_promo1_pc_1920x400', width: 1920, height: 400, scale: 1, vars: { __SIZE__: 'pc' } },
+  { file: 'store_promo1.html', out: 'store_promo1_mobile_750x600', width: 750, height: 600, scale: 1, vars: { __SIZE__: 'm' } },
+  { file: 'store_promo2.html', out: 'store_promo2_pc_1920x400', width: 1920, height: 400, scale: 1, vars: { __SIZE__: 'pc' } },
+  { file: 'store_promo2.html', out: 'store_promo2_mobile_750x600', width: 750, height: 600, scale: 1, vars: { __SIZE__: 'm' } },
+  { file: 'store_promo3.html', out: 'store_promo3_pc_1920x400', width: 1920, height: 400, scale: 1, vars: { __SIZE__: 'pc' } },
+  { file: 'store_promo3.html', out: 'store_promo3_mobile_750x600', width: 750, height: 600, scale: 1, vars: { __SIZE__: 'm' } },
+  { file: 'store_promo4.html', out: 'store_promo4_pc_1920x400', width: 1920, height: 400, scale: 1, vars: { __SIZE__: 'pc' } },
+  { file: 'store_promo4.html', out: 'store_promo4_mobile_750x600', width: 750, height: 600, scale: 1, vars: { __SIZE__: 'm' } },
+  { file: 'store_free.html', out: 'store_free_pc_1280x200', width: 1280, height: 200, scale: 1, vars: { __SIZE__: 'pc' } },
+  { file: 'store_free.html', out: 'store_free_mobile_750x240', width: 750, height: 240, scale: 1, vars: { __SIZE__: 'm' } },
+  { file: 'store_content_thumb.html', out: 'store_content_thumb_1200x675', width: 1200, height: 675, scale: 1 },
+  { file: 'store_content_main.html', out: 'store_content_main_mobile_750x1200', width: 750, height: 1200, scale: 1, vars: { __SIZE__: 'm' } },
+  { file: 'store_content_main.html', out: 'store_content_main_pc_2880x960', width: 1440, height: 480, scale: 2, vars: { __SIZE__: 'pc' } },
   { file: 'profile.html', out: 'onnuri_profile', width: 1000, height: 1000, scale: 1 },
   { file: 'banner.html',  out: 'onnuri_banner',  width: 1280, height: 480,  scale: 1 },
   { file: 'guide.html',   out: 'onnuri_brand_guide', width: 1200, scale: 1 },
@@ -44,6 +59,7 @@ function compress(file) {
     }
     await page.goto('file://' + src);
     await page.evaluate(() => document.fonts.ready);
+    await page.waitForTimeout(150);
     // 이 작업의 이전 결과물 정리 (onnuri_xxx.png, onnuri_xxx_01.png, onnuri_xxx@2x.png)
     const mine = new RegExp(`^${j.out}(_\\d+|@2x)?\\.png$`);
     for (const f of fs.readdirSync(OUT)) if (mine.test(f)) fs.unlinkSync(path.join(OUT, f));

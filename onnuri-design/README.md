@@ -20,3 +20,19 @@
 
 필요: Node.js + Playwright. pngquant가 있으면 자동으로 용량을 줄입니다.
 글꼴은 `fonts/`의 Pretendard(OFL, 상업 이용 무료)를 사용합니다.
+
+## 스토어 꾸미기 (`output/store_*`)
+에이바우트 스토어 꾸미기와 같은 구성, 온누리 색(차콜 + 골드)과 집 모양 캐릭터(`src/mascot.js`)로 제작.
+| 파일 | 용도 | 크기 | 바탕 |
+|---|---|---|---|
+| `store_profile_1300.png` | 스토어 대표 이미지(프로필) | 1300 × 1300 | 골드 |
+| `store_logo_pc_260x80.png` / `store_logo_mobile_600x80.png` | 로고(GNB), 투명 | 260 × 80 / 600 × 80 | 투명 |
+| `store_promo1_*` | 프로모션 1 브랜드 소개 + 손 흔드는 집 캐릭터 | PC 1920 × 400 / 모바일 750 × 600 | 크림 |
+| `store_promo2_*` | 프로모션 2 최대 3,000원 혜택 + 쿠폰 든 캐릭터 | 〃 | 골드 |
+| `store_promo3_*` | 프로모션 3 혜택 카드 3장 | 〃 | 차콜 |
+| `store_promo4_*` | 프로모션 4 이달의 리뷰왕 (네이버페이 포인트 10,000원, 인원 비공개) | 〃 | 진한 황금색 |
+| `store_free_*` | 자유배너: 문자 상담 | PC 1280 × 200 / 모바일 750 × 240 | 차콜 |
+| `store_content_thumb_1200x675.png` | 이벤트 대표 이미지(팝업) | 1200 × 675 | 차콜 |
+| `store_content_main_mobile_750x1200.png` / `_pc_2880x960.png` | 이벤트 메인 배너 | 750 × 1200 / 2880 × 960 | 차콜 + 흰 |
+
+전달용: `onnuri_store_files.zip`(스토어 이미지 + 지침), `onnuri_store_kit.zip`(+ 업스타용), `GUIDE_넣는곳_지침.txt`

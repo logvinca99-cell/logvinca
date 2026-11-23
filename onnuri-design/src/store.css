@@ -1,0 +1,26 @@
+/* 온누리하우스 스토어 꾸미기 — 차콜 + 골드
+   (에이바우트 스토어 꾸미기와 같은 틀, 색·로고·캐릭터만 온누리용) */
+@font-face { font-family: "Pretendard"; font-weight: 500; src: url("../fonts/Pretendard-Medium.otf"); }
+@font-face { font-family: "Pretendard"; font-weight: 700; src: url("../fonts/Pretendard-Bold.otf"); }
+@font-face { font-family: "Pretendard"; font-weight: 800; src: url("../fonts/Pretendard-ExtraBold.otf"); }
+@font-face { font-family: "Pretendard"; font-weight: 900; src: url("../fonts/Pretendard-Black.otf"); }
+@font-face { font-family: "Anton"; font-weight: 400; src: url("../../about-design/fonts/Anton-400.ttf"); }
+@font-face { font-family: "Inst"; font-style: italic; src: url("../../about-design/fonts/InstrumentSerif-Italic.ttf"); }
+:root {
+  --plum: #2B2620;   /* 이 파일에서는 '메인 진한색' = 차콜 */
+  --mark: #EBAE1F;   /* 포인트 = 온누리 골드 */
+  --ink: #1F1B16;
+  --gray: #6B645A;
+  --tint: #FCF3D9;   /* 소프트 골드 */
+  --line: #ECE3CF;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: "Pretendard", sans-serif; font-weight: 500; color: var(--ink); letter-spacing: -0.025em; word-break: keep-all; -webkit-font-smoothing: antialiased; }
+b { font-weight: 800; }
+.bg { background: var(--plum); }
+.k900 { font-weight: 900; letter-spacing: -0.045em; line-height: 1.15; }
+.pl { color: var(--plum); }
+.num { font-family: "Anton", sans-serif; font-weight: 400; letter-spacing: 0; line-height: 1; }
+.en { font-family: "Inst", serif; font-style: italic; letter-spacing: 0; line-height: 1; }
+.y { color: var(--mark); }
+.hm { display: block; flex: none; }
