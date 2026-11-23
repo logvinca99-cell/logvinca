@@ -1,35 +1,46 @@
-// 온누리하우스 캐릭터 — 로고의 골드 집에서 나온 집 모양 캐릭터
-// 사용: <div class="mascot" data-pose="wave|coupon|plain"></div>
+// 온누리하우스 캐릭터 — 시안 C '창문 얼굴'
+// 골드 집 + 차콜 지붕, 둥근 크림색 창문 안에서 웃는 얼굴
+// 사용: <div class="mascot" data-pose="plain|wave|coupon|king"></div>
 (function () {
-  const INK = '#17141C';
-  const base = `
-    <ellipse cx="60" cy="114" rx="34" ry="5" fill="rgba(0,0,0,.14)"/>
-    <ellipse cx="44" cy="108" rx="9" ry="6" fill="#EBAE1F" stroke="${INK}" stroke-width="4"/>
-    <ellipse cx="76" cy="108" rx="9" ry="6" fill="#EBAE1F" stroke="${INK}" stroke-width="4"/>
-    <path d="M60 12 L102 46 V98 Q102 105 95 105 H25 Q18 105 18 98 V46 Z" fill="#EBAE1F" stroke="${INK}" stroke-width="4" stroke-linejoin="round"/>
-    <circle cx="60" cy="40" r="8" fill="#2B2620"/><ellipse cx="60" cy="40" rx="3.4" ry="8" fill="none" stroke="#EBAE1F" stroke-width="1.8"/><line x1="52" y1="40" x2="68" y2="40" stroke="#EBAE1F" stroke-width="1.8"/>
-    <ellipse cx="47" cy="68" rx="5" ry="7" fill="${INK}"/><ellipse cx="73" cy="68" rx="5" ry="7" fill="${INK}"/>
-    <circle cx="49" cy="65" r="1.8" fill="#fff"/><circle cx="75" cy="65" r="1.8" fill="#fff"/>
-    <ellipse cx="35" cy="80" rx="7" ry="4" fill="#FF9EB5" opacity=".8"/><ellipse cx="85" cy="80" rx="7" ry="4" fill="#FF9EB5" opacity=".8"/>
-    <path d="M51 82 Q60 92 69 82" fill="none" stroke="${INK}" stroke-width="4" stroke-linecap="round"/>`;
-  const armL = `<path d="M18 74 Q8 82 10 92" fill="none" stroke="${INK}" stroke-width="4" stroke-linecap="round"/>`;
-  const armR = `<path d="M102 74 Q112 82 110 92" fill="none" stroke="${INK}" stroke-width="4" stroke-linecap="round"/>`;
-  const wave = `<path d="M102 66 Q114 54 112 38" fill="none" stroke="${INK}" stroke-width="4" stroke-linecap="round"/>
-    <path d="M118 32 l6 -4 M120 40 l7 0" stroke="${INK}" stroke-width="3" stroke-linecap="round"/>`;
-  const coupon = `<g transform="rotate(-8 60 100)">
-      <rect x="28" y="88" width="64" height="30" rx="6" fill="#fff" stroke="${INK}" stroke-width="4"/>
-      <path d="M49 88 V118" stroke="#2B2620" stroke-width="3" stroke-dasharray="4 4"/>
-      <text x="71" y="109" font-family="Anton" font-size="16" fill="#2B2620" text-anchor="middle">₩</text>
-      <circle cx="38" cy="103" r="4.5" fill="#2B2620"/></g>
-    <path d="M22 74 Q20 90 32 98" fill="none" stroke="${INK}" stroke-width="4" stroke-linecap="round"/>
-    <path d="M98 74 Q100 90 88 98" fill="none" stroke="${INK}" stroke-width="4" stroke-linecap="round"/>`;
-  const crown = `<g transform="translate(60 0) scale(.8) translate(-60 -8)"><path d="M38 26 L44 8 L52 20 L60 2 L68 20 L76 8 L82 26 Z" fill="#FFD54A" stroke="${INK}" stroke-width="4" stroke-linejoin="round"/>
-    <circle cx="44" cy="8" r="3.5" fill="#fff" stroke="${INK}" stroke-width="2.5"/><circle cx="60" cy="2" r="3.5" fill="#fff" stroke="${INK}" stroke-width="2.5"/><circle cx="76" cy="8" r="3.5" fill="#fff" stroke="${INK}" stroke-width="2.5"/></g>`;
-  const cheer = `<path d="M18 70 Q2 64 -2 40" fill="none" stroke="${INK}" stroke-width="4" stroke-linecap="round"/><path d="M102 70 Q118 64 122 40" fill="none" stroke="${INK}" stroke-width="4" stroke-linecap="round"/><path d="M-8 26 l-5 -5 M2 22 l2 -7 M118 22 l-2 -7 M128 26 l5 -5" stroke="${INK}" stroke-width="3" stroke-linecap="round"/>`;
-  const poses = { plain: armL + armR, wave: armL + wave, coupon: coupon, king: cheer, kingwave: armL + wave };
+  const INK = '#2B2620', G = '#EBAE1F', CR = '#FFF4D6', PK = '#FF9EB5';
+  const face = (cx, cy, s) => `
+    <ellipse cx="${cx - 14 * s}" cy="${cy}" rx="${5.5 * s}" ry="${7.5 * s}" fill="${INK}"/><ellipse cx="${cx + 14 * s}" cy="${cy}" rx="${5.5 * s}" ry="${7.5 * s}" fill="${INK}"/>
+    <circle cx="${cx - 12 * s}" cy="${cy - 3 * s}" r="${2.2 * s}" fill="#fff"/><circle cx="${cx + 16 * s}" cy="${cy - 3 * s}" r="${2.2 * s}" fill="#fff"/>
+    <ellipse cx="${cx - 25 * s}" cy="${cy + 10 * s}" rx="${7 * s}" ry="${4.2 * s}" fill="${PK}" opacity=".85"/><ellipse cx="${cx + 25 * s}" cy="${cy + 10 * s}" rx="${7 * s}" ry="${4.2 * s}" fill="${PK}" opacity=".85"/>
+    <path d="M${cx - 6 * s} ${cy + 9 * s} Q${cx} ${cy + 15 * s} ${cx + 6 * s} ${cy + 9 * s}" fill="none" stroke="${INK}" stroke-width="${3.6 * s}" stroke-linecap="round"/>`;
+  const arm = (x1, y1, x2, y2, x3, y3) => `<path d="M${x1} ${y1} Q${x2} ${y2} ${x3} ${y3}" fill="none" stroke="${INK}" stroke-width="5" stroke-linecap="round"/>`;
+  const body = `
+    <ellipse cx="70" cy="132" rx="40" ry="5" fill="rgba(0,0,0,.12)"/>
+    <ellipse cx="54" cy="124" rx="10" ry="6.5" fill="${G}" stroke="${INK}" stroke-width="4.5"/><ellipse cx="86" cy="124" rx="10" ry="6.5" fill="${G}" stroke="${INK}" stroke-width="4.5"/>
+    <path d="M70 20 L118 58 V114 Q118 122 110 122 H30 Q22 122 22 114 V58 Z" fill="${G}" stroke="${INK}" stroke-width="5" stroke-linejoin="round"/>
+    <path d="M70 14 L126 60 Q128 64 124 66 L70 24 L16 66 Q12 64 14 60 Z" fill="${INK}" stroke="${INK}" stroke-width="6" stroke-linejoin="round"/>
+    <circle cx="70" cy="88" r="30" fill="${CR}" stroke="${INK}" stroke-width="4.5"/>
+    ${face(70, 88, 0.82)}`;
+  const sparkle = (x, y) => `<path d="M${x} ${y} l4 -6 M${x + 4} ${y + 10} l8 -1" stroke="${INK}" stroke-width="3.5" stroke-linecap="round"/>`;
+  const armDownL = arm(20, 92, 8, 100, 12, 112), armDownR = arm(120, 92, 132, 100, 128, 112);
+  const armUpR = arm(120, 88, 134, 74, 130, 56) + sparkle(134, 46);
+  const armUpL = arm(20, 88, 6, 74, 10, 56) + `<path d="M6 46 l-4 -6 M-2 56 l-8 -1" stroke="${INK}" stroke-width="3.5" stroke-linecap="round"/>`;
+  const coupon = `
+    <g transform="rotate(-7 70 120)">
+      <rect x="34" y="106" width="72" height="30" rx="6" fill="#fff" stroke="${INK}" stroke-width="4.5"/>
+      <path d="M57 106 V136" stroke="${INK}" stroke-width="3" stroke-dasharray="4 4"/>
+      <circle cx="45" cy="121" r="5" fill="${G}" stroke="${INK}" stroke-width="2.5"/>
+      <text x="82" y="128" font-family="Anton" font-size="18" fill="${INK}" text-anchor="middle">₩</text>
+    </g>` + arm(22, 96, 18, 112, 34, 118) + arm(118, 96, 122, 112, 106, 116);
+  const crown = `
+    <g transform="translate(70 0) scale(.78) translate(-60 -6)">
+      <path d="M38 26 L44 8 L52 20 L60 2 L68 20 L76 8 L82 26 Z" fill="#FFD54A" stroke="${INK}" stroke-width="4" stroke-linejoin="round"/>
+      <circle cx="44" cy="8" r="3.5" fill="#fff" stroke="${INK}" stroke-width="2.5"/><circle cx="60" cy="2" r="3.5" fill="#fff" stroke="${INK}" stroke-width="2.5"/><circle cx="76" cy="8" r="3.5" fill="#fff" stroke="${INK}" stroke-width="2.5"/>
+    </g>`;
+  const poses = {
+    plain:  body + armDownL + armDownR,
+    wave:   body + armDownL + armUpR,
+    coupon: body + coupon,
+    king:   body + armUpL + armUpR + crown,
+  };
+  poses.kingwave = poses.king;
   for (const el of document.querySelectorAll('.mascot')) {
-    const p = el.dataset.pose || 'plain';
-    const top = p.startsWith('king') ? crown : '';
-    el.innerHTML = `<svg viewBox="0 0 126 120" style="display:block;width:100%;height:100%;overflow:visible">${(p === 'coupon' || p === 'king') ? base + poses[p] : poses[p] + base}${top}</svg>`;
+    const p = poses[el.dataset.pose] ? el.dataset.pose : 'plain';
+    el.innerHTML = `<svg viewBox="0 -4 140 144" style="display:block;width:100%;height:100%;overflow:visible">${poses[p]}</svg>`;
   }
 })();
