@@ -307,6 +307,7 @@ App.page("listings", {
         { id: "unlock", label: "잠금 풀기" },
         "|이동",
         { id: "move", label: "다른 스토어로 보내기", title: "아직 안 올린·내린 복사본을 다른 스토어로 옮김 (이 스토어에서는 사라짐) — 받는 스토어 남은 자리만큼" },
+        { id: "custom", label: "맞춤 상품으로 복사", title: "고른 복사본 내용 그대로 고객 맞춤 상품 만들기 — 1개면 편집 창, 여러 개(200개까지)면 스토어·가격·출고지·검색 노출을 한꺼번에 (상품명은 그대로, 복사 수에 안 들어감)" },
         { id: "revert", label: "원본으로 되돌리기", title: "아직 안 올린·내린 복사본을 이 스토어에서 없앰 → 원본의 복사 자리가 비고 상품명은 후보로 (A였으면 다음 복사에 다시 A)" },
         "|검수",
         { id: "eyeon", label: "검수 완료로 표시", title: "고른 복사본의 원본을 검수 완료로 (새로 올릴 수 있게) — 원본 기준이라 다른 스토어 복사본도 같이" },
@@ -340,6 +341,8 @@ App.page("listings", {
     if (id === "remove") App.deleteCopies(this.target(), () => { this.clearSel(); this.estKey = ""; this.load(); });
     if (id === "resetround") this.resetRound();
     if (id === "move") this.moveModal();
+    if (id === "custom") App.customBulk({ kind: "listing", target: this.target(), n: this.selAll ? this.total : this.sel.size,
+      ids: this.selAll ? null : [...this.sel], storeId: +this.f.store_id, after: () => { this._custOn = false; if ($("#l-rows")) this.load(); } });
     if (id === "revert") {
       const n = this.selAll ? this.total : this.sel.size;
       if (!await App.yes("원본으로 되돌리기", `고른 복사본 ${num(n)}건을 원본으로 되돌릴까요?\n\n이 스토어에서 복사본이 없어지고(휴지통에 기록), 원본은 그대로 남아 다른 스토어로 다시 복사할 수 있습니다.\n붙어 있던 상품명은 원본의 후보로 돌아갑니다.\n네이버에 올라가 있거나 처리 중인 것·판매 이력(잠금)이 있는 것은 빼고 합니다.`, { label: "되돌리기", danger: true })) return;
@@ -388,6 +391,7 @@ App.page("listings", {
         <div class="p-sub"><span>원본 #${l.source_id}</span>${flags}</div>
         <div class="row-acts" data-stop>
           ${!live && l.status !== "deleted" ? `<button class="btn ${noname ? "primary" : ""}" data-rename="${l.id}">상품명 바꾸기</button>` : ""}
+          <button class="btn sm cust-btn" data-cust="${l.id}" title="이 복사본 내용 그대로 고객 맞춤 상품 만들기 (가격·출고지·이미지 등 고쳐서 따로 올림 — 복사 수에 안 들어감)">맞춤 복사</button>
           ${l.others.map((o) => `<button class="go-store" data-go="${o.id}" title="같은 원본이 있는 다른 스토어로">→ ${esc(o.store_name)}</button>`).join("")}
         </div></td>
       <td class="w-links" data-stop>${goLinks({ storeUrl: l.store_url, channelNo: l.origin_no ? l.channel_no : "", sourceId: l.source_id })}
@@ -1164,6 +1168,8 @@ App.page("listings", {
       if (src) return App.pages.inventory.openSource(+src.dataset.src);
       const go = e.target.closest("[data-go]");
       if (go) return this.goto(+go.dataset.go);
+      const cu = e.target.closest("[data-cust]");
+      if (cu) return App.customEdit({ listingId: +cu.dataset.cust }, () => { this._custOn = false; if ($("#l-rows")) this.load(); });
       const tr = e.target.closest("tr[data-id]");
       if (!tr) return;
       const id = +tr.dataset.id;

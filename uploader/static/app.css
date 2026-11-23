@@ -1252,3 +1252,6 @@ h2, .sec-title { font-size: var(--h2); font-weight: 700; letter-spacing: -.01em;
 .cp-table .cp-sold { width: 56px; } .cp-table .cp-act { width: 300px; }
 .cu-acts { white-space: normal; } .cu-acts .btn { margin: 2px 0; }
 @media (max-width: 900px) { .cp-table .cp-act { width: auto; } .cp-table .cp-code { width: auto; } }
+.row-acts .cust-btn { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+.cb-price { align-items: center; }
+.cb-price .check { flex: 0 0 auto; width: auto; white-space: nowrap; margin: 0; }

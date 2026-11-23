@@ -147,6 +147,7 @@ ACTIONS = {
     "source_content_save": ("원본", lambda b, r: (f"원본 {r.get('what') or '상세·옵션'} 고침" + (f" · {b.get('memo')}" if b.get("memo") else "") if r.get("changed") else "원본 상세·옵션 (바뀐 것 없음)", 1 if r.get("changed") else 0, "")),
     "source_content_undo": ("원본", lambda b, r: (f"원본 상세·옵션 마지막 수정 되돌림 #{r.get('undone', '')}", 1, "")),
     "custom_save": ("맞춤 상품", lambda b, r: (f"고객 맞춤 상품 저장 · {str(b.get('name') or '')[:40]}" + (f" · 메모: {str(b.get('memo'))[:40]}" if b.get("memo") else ""), 1, "")),
+    "custom_bulk_create": ("맞춤 상품", lambda b, r: (f"맞춤 상품으로 복사 ({'원본' if b.get('kind') == 'source' else '복사본'}에서) · {len((r or {}).get('made') or [])}개 만듦" + (" · 바로 올리기" if b.get("send") else ""), len((r or {}).get("made") or []), "")),
     "custom_drop": ("맞춤 상품", lambda b, r: ("고객 맞춤 상품 내리기 (직접)", 1, "")),
     "custom_mlink": ("맞춤 상품", lambda b, r: ("맞춤 상품 마케팅 링크 " + ("저장" if b.get("link") else "지움"), 1, "")),
     "listing_mlink": ("복사본", lambda b, r: ("복사본 마케팅 링크 " + ("저장" if b.get("link") else "지움"), 1, "")),

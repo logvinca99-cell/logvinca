@@ -172,6 +172,7 @@ App.page("inventory", {
         { id: "price", label: "가격 수정", title: "고른 원본의 기준 가격을 직접 입력 / n원 / n% 올리기·내리기 → 모든 스토어 복사본 같이, 판매 중은 네이버 가격만 바로" },
         { id: "edit", label: "일괄 수정", title: "판매자코드 비우기, 재고수(상품·옵션 모두) 바꾸기" },
         { id: "tags", label: "출처 태그 달기·빼기", title: "고른 원본에 어디서·언제 가져왔는지 태그를 달거나 뺌" },
+        { id: "custom", label: "맞춤 상품으로 복사", title: "고른 원본 내용 그대로 고객 맞춤 상품 만들기 — 1개면 편집 창, 여러 개(200개까지)면 스토어·가격·출고지·검색 노출을 한꺼번에 (상품명은 그대로, 복사 수에 안 들어감)" },
         { id: "clean", label: "상세 정리로 보내기", title: "고른 원본의 상세를 상세 정리에서 정리(공통 이미지·전화번호·상세 편집) → [원본에 반영]하면 원본 상세만 바뀌고 판매 중 복사본은 네이버 상세만 바꿈" },
         "|검수·판정",
         { id: "eyeon", label: "검수 완료로 표시", title: "고른 원본을 눈검수 없이 검수 완료로 (새로 올릴 수 있게)" },
@@ -190,6 +191,7 @@ App.page("inventory", {
         if (id === "ctx") App.ctxStart(this.target()); if (id === "copy") this.copyModal(); if (id === "delete") this.remove(); if (id === "edit") this.editModal();
         if (id === "category") App.pickCategory({ target: this.target(), what: `고른 원본 ${num(this.selAll ? this.total : this.sel.size)}개`, after: () => this.load() });
         if (id === "tags") this.tagModal();
+        if (id === "custom") App.customBulk({ kind: "source", target: this.target(), n: this.targetCount(), ids: this.selAll ? null : [...this.sel], after: () => this.load() });
         if (id === "price") App.priceEdit({ level: "source", target: this.target(), n: this.targetCount(), what: `고른 원본 ${num(this.targetCount())}개`, after: () => this.load() });
         if (id === "clean") App.sendToClean(this.target(), `고른 원본 ${num(this.targetCount())}개`);
         if (id === "eyeon" || id === "eyeoff") App.eyeSet(this.target(), id === "eyeon", `고른 원본 ${num(this.targetCount())}개`, () => this.load());

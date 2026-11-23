@@ -540,3 +540,106 @@ def store_counts(db):
     except Exception:  # noqa: BLE001
         pass
     return out
+
+
+# ───────────────────────── 여러 개를 한 번에 맞춤 상품으로 복사 (복사본·원본에서 고르기)
+
+BULK_MAX = 200
+
+
+def _bulk_price(price, o):
+    """공통 가격 바꾸기: keep 그대로 / set 하나로 / won n원 / pct n% (up 올리기는 100원 올림, down 내리기는 100원 내림)."""
+    mode, v = o.get("price_mode") or "keep", float(o.get("price_val") or 0)
+    up = (o.get("price_dir") or "down") == "up"
+    if mode == "set":
+        return convert.round_up(int(v), 100)
+    if mode not in ("won", "pct") or v <= 0:
+        return int(price)
+    d = v if mode == "won" else price * v / 100
+    p = price + d if up else price - d
+    return convert.round_up(int(p), 100) if up else int(p) // 100 * 100
+
+
+def bulk_plan(db, kind, ids, o):
+    """고른 복사본(kind='listing')·원본(kind='source')마다 맞춤 상품 초안 (저장 안 함). → [{from, view(저장할 값), before, after, error}]"""
+    ids = [int(i) for i in ids][:BULK_MAX]
+    sid_new = int(o.get("store_id") or 0) or None
+    if kind == "source" and not sid_new:
+        raise ValueError("원본에서 복사할 때는 스토어를 골라 주세요.")
+    if sid_new and not db.store(sid_new):
+        raise ValueError("스토어를 찾지 못했습니다.")
+    out = []
+    for i in ids:
+        item = {"from_kind": kind, "from_id": i}
+        try:
+            v = start(db, source_id=i if kind == "source" else None, listing_id=i if kind == "listing" else None,
+                      store_id=sid_new if kind == "source" else None)
+            if sid_new and kind == "listing" and sid_new != v["store_id"]:
+                st = db.store(sid_new)
+                v.update(store_id=sid_new, store_name=st["name"], ship_addr=str(st.get("tpl_ship_addr") or ""),
+                         return_addr=str(st.get("tpl_return_addr") or ""))
+            before = int(v["price"] or 0)
+            v["price"] = _bulk_price(before, o)
+            if o.get("ship") not in (None, "", "keep"):
+                v["ship_addr"] = str(o.get("ship"))
+            if o.get("ret") not in (None, "", "keep"):
+                v["return_addr"] = str(o.get("ret"))
+            v["show_search"] = int(bool(o.get("show_search")))
+            v["memo"] = str(o.get("memo") or "")[:2000]
+            item.update(view=v, name=v["name"], store_id=v["store_id"], store_name=v.get("store_name", ""), before=before, after=v["price"])
+            if v["price"] < 100:
+                item["error"] = "가격이 100원보다 낮아짐"
+        except ValueError as e:
+            item["error"] = str(e)
+        out.append(item)
+    return out
+
+
+def bulk_create(db, kind, ids, o):
+    """초안대로 맞춤 상품을 만든다 (안 올림 상태로 저장). 상품명은 원래 이름 그대로. → {made:[{id,name,store_id}], failed:[{name,error}]}"""
+    made, failed = [], []
+    for it in bulk_plan(db, kind, ids, o):
+        if it.get("error"):
+            failed.append({"name": it.get("name") or f"#{it['from_id']}", "error": it["error"]})
+            continue
+        v = it["view"]
+        b = {"store_id": v["store_id"], "name": v["name"], "price": v["price"], "stock": v["stock"], "memo": v["memo"],
+             "thumbs": v["thumbs"], "detail": v["detail"], "category": v["category"], "ship_addr": v["ship_addr"],
+             "return_addr": v["return_addr"], "fee": v["fee"], "follow_rules": True, "origin": v["origin"], "brand": v["brand"],
+             "maker": v["maker"], "model": v["model"], "show_search": v["show_search"],
+             "from_source_id": v.get("from_source_id"), "from_listing_id": v.get("from_listing_id")}
+        try:
+            r = save(db, b)   # 옵션은 원본 그대로 (options 안 보냄)
+            made.append({"id": r["id"], "name": v["name"], "store_id": v["store_id"], "warnings": r.get("warnings") or []})
+        except ValueError as e:
+            failed.append({"name": v["name"], "error": str(e)})
+    return {"made": made, "failed": failed}
+
+
+def send_many(db, cids, progress=None, should_stop=None):
+    """만든 맞춤 상품들을 차례로 올린다. 한도에 걸린 스토어는 남은 것을 보내지 않음(안 올림으로 둠)."""
+    from . import apiuse
+    res, paused = [], set()
+    n = len(cids)
+    for k, cid in enumerate(cids, 1):
+        if should_stop and should_stop():
+            break
+        c = db.one("SELECT name, store_id FROM custom_products WHERE id=?", (int(cid),))
+        if not c:
+            continue
+        if progress:
+            progress(k - 1, n, f"맞춤 상품 올리는 중 {k}/{n} · {c['name'][:30]}")
+        if c["store_id"] in paused:
+            res.append({"id": cid, "name": c["name"], "ok": False, "error": "시간당 한도 — 이 스토어는 나중에 [다시 보내기]"})
+            continue
+        try:
+            r = send(db, cid)
+            res.append({"id": cid, "name": c["name"], "ok": True, "url": r.get("url"), "store_id": r.get("store_id"),
+                        "product_no": r.get("product_no"), "marketing_link": r.get("marketing_link") or ""})
+        except Exception as e:  # noqa: BLE001 - 이 건만 실패
+            msg = str(e)
+            if "시간당 한도" in msg or isinstance(e, apiuse.QuotaPaused):
+                paused.add(c["store_id"])
+            res.append({"id": cid, "name": c["name"], "ok": False, "error": msg[:300]})
+    ok = sum(1 for r in res if r["ok"])
+    return {"results": res, "message": f"맞춤 상품 {ok}/{len(res)}건 올림" + (f" · 실패 {len(res) - ok}건" if len(res) > ok else "")}

@@ -1814,6 +1814,44 @@ def create_app(db=None):
         except RuntimeError as e:
             return fail(str(e))
 
+    def _bulk_ids(b):
+        kind = "source" if b.get("kind") == "source" else "listing"
+        t = b.get("target") or {}
+        f = _filter_from(t)
+        ids = inventory.source_ids(db, f) if kind == "source" else inventory.listing_ids(db, {k: v for k, v in f.items() if k != "op"})
+        if not ids:
+            raise ValueError("고른 상품이 없습니다.")
+        if len(ids) > custom.BULK_MAX:
+            raise ValueError(f"한 번에 {custom.BULK_MAX}개까지 맞춤 상품으로 복사할 수 있습니다 (고른 {len(ids):,}개).")
+        return kind, ids
+
+    @app.post("/api/custom/bulk_preview")
+    def custom_bulk_preview():
+        b = body()
+        try:
+            kind, ids = _bulk_ids(b)
+            plan = custom.bulk_plan(db, kind, ids, b.get("opts") or {})
+        except ValueError as e:
+            return fail(str(e))
+        return jsonify({"count": len(plan), "errors": sum(1 for x in plan if x.get("error")),
+                        "items": [{k: x.get(k) for k in ("from_id", "name", "store_name", "before", "after", "error")} for x in plan]})
+
+    @app.post("/api/custom/bulk_create")
+    def custom_bulk_create():
+        b = body()
+        try:
+            kind, ids = _bulk_ids(b)
+            r = custom.bulk_create(db, kind, ids, b.get("opts") or {})
+        except ValueError as e:
+            return fail(str(e))
+        if b.get("send") and r["made"]:
+            cids = [m["id"] for m in r["made"]]
+            try:
+                r["task"] = tasks.start("custom", f"맞춤 상품 {len(cids):,}개 올리기", lambda **kw: custom.send_many(db, cids, **kw))
+            except RuntimeError as e:
+                r["task_error"] = str(e)
+        return jsonify(r)
+
     @app.post("/api/custom/<int:cid>/drop")
     def custom_drop(cid):
         try:

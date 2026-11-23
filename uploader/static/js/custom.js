@@ -311,6 +311,108 @@ Object.assign(App, {
     });
   },
 
+  /* 고른 복사본·원본을 맞춤 상품으로 복사. 1개면 편집 창 바로, 여러 개면 공통으로 바꿀 것만 고르는 일괄 창.
+     o: {kind: "listing"|"source", target, n, ids(직접 고른 번호들), storeId(복사본 화면 스토어), after} */
+  customBulk(o) {
+    const n = o.n || 0;
+    if (!n) return this.toast("고른 상품이 없습니다", true);
+    if (n === 1 && o.ids?.length === 1) {
+      return o.kind === "source" ? this.customEdit({ sourceId: o.ids[0] }, o.after) : this.customEdit({ listingId: o.ids[0] }, o.after);
+    }
+    if (n > 200) return this.toast(`한 번에 200개까지 맞춤 상품으로 복사할 수 있습니다 (고른 ${num(n)}개) — 나눠서 하세요`, true);
+    const stores = this.stores || [];
+    const src = o.kind === "source";
+    const opts = (b) => ({
+      store_id: +$("#cb-store", b).value || 0, price_mode: $("input[name=cb-pm]:checked", b).value, price_val: +$("#cb-pv", b).value || 0,
+      price_dir: $("#cb-dir", b).value, ship: $("#cb-ship", b).value.trim() || "keep", ret: $("#cb-ret", b).value.trim() || "keep",
+      show_search: $("#cb-search", b).checked, memo: $("#cb-memo", b).value,
+    });
+    const make = async (b, send) => {
+      let r;
+      try { r = await this.api("/api/custom/bulk_create", { json: { kind: o.kind, target: o.target, opts: opts(b), send } }); }
+      catch (e) { this.toast(e.message, true); return false; }
+      const done = (res) => this.customBulkResult(r, res, o.after);
+      if (send && r.task) {
+        const h = (t) => { if (t.id !== r.task) return; this.off("task-done", h); done(t.result || {}); };
+        this.on("task-done", h);
+        this.toast(`맞춤 상품 ${num(r.made.length)}개를 만들었고 올리는 중입니다 (오른쪽 아래 작업)`);
+      } else {
+        if (send && r.task_error) this.toast(r.task_error, true);
+        done(null);
+      }
+      return true;
+    };
+    this.openModal({
+      title: `맞춤 상품으로 복사 · ${src ? "원본" : "복사본"} ${num(n)}개`, wide: true,
+      body: (b) => {
+        b.innerHTML = `<div class="notice info small">고른 ${src ? "원본" : "복사본"} 내용 그대로 맞춤 상품을 만듭니다 — <b>상품명은 원래 이름 그대로</b>(아무 문구도 붙이지 않음), 원본·복사본·복사 수·후보상품명은 바뀌지 않습니다.
+            아래는 <b>모두에 공통으로</b> 바꿀 것만 — 하나씩 다르게 고치려면 만든 뒤 맞춤 상품 목록에서 [고치기].</div>
+          <div class="cu-grid">
+            <label class="field">스토어<select id="cb-store">${src ? "" : '<option value="">그대로 (각 복사본의 스토어)</option>'}${stores.map((s) =>
+              `<option value="${s.id}" ${src && +o.storeId === s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></label>
+            <label class="field">메모 (모두 같게, 업스타 안에서만)<input id="cb-memo" placeholder="예) 11/23 김OO 고객 대량 문의"></label>
+          </div>
+          <div class="field">손님 가격<div class="cl-row cb-price">
+            <label class="check"><input type="radio" name="cb-pm" value="keep" checked> 그대로</label>
+            <label class="check"><input type="radio" name="cb-pm" value="won"> n원</label>
+            <label class="check"><input type="radio" name="cb-pm" value="pct"> n%</label>
+            <label class="check"><input type="radio" name="cb-pm" value="set"> 모두 이 값으로</label>
+            <input id="cb-pv" type="number" min="0" step="1" placeholder="값" style="width:110px">
+            <select id="cb-dir" class="sel"><option value="down">내리기</option><option value="up">올리기</option></select></div>
+            <span class="muted small">100원 단위 (올리기는 올림, 내리기는 내림) · 기준 가격은 바뀌지 않음 (맞춤 상품 가격만)</span></div>
+          <div class="cu-grid">
+            <label class="field">출고지 (주소록 번호)<input id="cb-ship" placeholder="비우면 그대로 (스토어 템플릿)"></label>
+            <label class="field">반품·교환지 (주소록 번호)<input id="cb-ret" placeholder="비우면 그대로 (스토어 템플릿)"></label>
+          </div>
+          <label class="check"><input type="checkbox" id="cb-search"> 네이버쇼핑 검색에 노출 <span class="muted small">(기본 끔 — 검색에만 안 나오고 링크로는 열림)</span></label>
+          <div class="cl-row" style="margin-top:8px"><button type="button" class="btn sm" id="cb-prev">미리보기</button><span class="small muted" id="cb-sum"></span></div>
+          <div id="cb-list"></div>`;
+        const prev = async () => {
+          let r;
+          try { r = await this.api("/api/custom/bulk_preview", { json: { kind: o.kind, target: o.target, opts: opts(b) } }); }
+          catch (e) { $("#cb-sum", b).textContent = e.message; $("#cb-list", b).innerHTML = ""; return; }
+          $("#cb-sum", b).textContent = `${num(r.count)}개 만들 예정` + (r.errors ? ` · 못 만드는 ${num(r.errors)}개` : "");
+          const ex = r.items.filter((x) => !x.error).slice(0, 3), bad = r.items.filter((x) => x.error).slice(0, 5);
+          $("#cb-list", b).innerHTML = `<table class="grid small"><thead><tr><th>상품명</th><th>스토어</th><th class="w-num">손님 가격</th></tr></thead><tbody>
+            ${ex.map((x) => `<tr><td>${esc(x.name)}</td><td>${esc(x.store_name)}</td><td class="num">${num(x.before)}원 → <b>${num(x.after)}원</b></td></tr>`).join("")}
+            ${bad.map((x) => `<tr><td>${esc(x.name || `#${x.from_id}`)}</td><td colspan="2" class="c-err">${esc(x.error)}</td></tr>`).join("")}</tbody></table>`;
+        };
+        $("#cb-prev", b).addEventListener("click", prev);
+        b.addEventListener("change", (e) => { if (e.target.closest("#cb-store, [name=cb-pm], #cb-dir")) prev(); });
+        prev();
+      },
+      buttons: [{ label: "취소" },
+        { label: "만들기만 (안 올림)", noConfirm: true, onClick: (b) => make(b, false) },
+        { label: "만들고 바로 올리기", primary: true, confirm: `고른 ${num(n)}개를 맞춤 상품으로 만들고 네이버에 올립니다 (스토어마다 한도에 걸리면 그 스토어는 멈춤)`, onClick: (b) => make(b, true) }],
+    });
+  },
+  customBulkResult(r, sent, after) {
+    const res = sent?.results || null;
+    const rows = res ? res.map((x) => `<tr><td>${esc(x.name)}</td><td>${x.ok ? '<span class="flag ok">올림</span>' : `<span class="flag bad">실패</span> <span class="small c-err">${esc(x.error || "")}</span>`}</td>
+        <td class="cu-acts">${x.ok && x.url ? `<button class="btn tiny" data-cb-copy="${esc(x.url)}">링크 복사</button>` : ""}
+          ${x.ok && x.product_no ? `<button class="btn tiny" data-cb-mkt="${x.id}">마케팅 링크 만들기</button>` : ""}</td></tr>`).join("")
+      : r.made.map((x) => `<tr><td>${esc(x.name)}</td><td><span class="flag">안 올림</span>${x.warnings?.length ? ` <span class="small c-warn">${esc(x.warnings[0])}</span>` : ""}</td>
+        <td><button class="btn tiny" data-cb-edit="${x.id}">고치기</button></td></tr>`).join("");
+    this.openModal({
+      title: res ? "맞춤 상품 올리기 결과" : "맞춤 상품 만듦",
+      body: `<p>${res ? esc(sent.message || "") : `맞춤 상품 ${num(r.made.length)}개를 만들었습니다 (아직 안 올림 — 목록에서 [다시 보내기]로 올림).`}
+          ${r.failed?.length ? ` <span class="c-err">못 만든 ${num(r.failed.length)}개</span>` : ""}</p>
+        <table class="grid small"><tbody>${rows}${(r.failed || []).map((x) => `<tr><td>${esc(x.name)}</td><td colspan="2" class="c-err">${esc(x.error)}</td></tr>`).join("")}</tbody></table>
+        <p class="small"><a href="#custom">맞춤 상품 목록 보기 ›</a></p>`,
+      buttons: [{ label: "닫기" }],
+    });
+    const box = $("#m-body");
+    box.addEventListener("click", (e) => {
+      const c = e.target.closest("[data-cb-copy]");
+      if (c) return copyText(c.dataset.cbCopy);
+      const m = e.target.closest("[data-cb-mkt]");
+      if (m) { const x = res.find((y) => y.id === +m.dataset.cbMkt); return this.marketingLink({ kind: "custom", id: x.id, storeId: x.store_id, productNo: x.product_no, name: x.name, link: x.marketing_link }); }
+      const ed = e.target.closest("[data-cb-edit]");
+      if (ed) { this.closeModal(); this.customEdit({ id: +ed.dataset.cbEdit }, after); }
+    });
+    if (after) after();
+  },
+
   /* 올린 뒤: 상품 링크 복사 · 판매자센터에서 열기 · 마케팅 링크(판매자센터에서 만들기) */
   customResult(r) {
     this.openModal({
@@ -388,6 +490,7 @@ App.page("custom", {
     el.innerHTML = `<div class="page">
       <header class="page-head"><h1>맞춤 상품</h1>
         <div class="head-actions"><button class="btn primary" id="cp-new">맞춤 상품 새로 만들기</button></div></header>
+      <p class="small muted cp-hint">복사본 화면에서 상품 줄의 <b>[맞춤 복사]</b>(또는 여러 개 고르고 선택 막대의 <b>[맞춤 상품으로 복사]</b>)로 그 상품 그대로 만들 수 있습니다 — 원본 상품 화면에서도 같음.</p>
       <div class="tiles" id="cp-tiles"></div>
       <div class="filters-row">
         <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
