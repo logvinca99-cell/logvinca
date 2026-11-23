@@ -148,6 +148,8 @@ ACTIONS = {
     "source_content_undo": ("원본", lambda b, r: (f"원본 상세·옵션 마지막 수정 되돌림 #{r.get('undone', '')}", 1, "")),
     "custom_save": ("맞춤 상품", lambda b, r: (f"고객 맞춤 상품 저장 · {str(b.get('name') or '')[:40]}" + (f" · 메모: {str(b.get('memo'))[:40]}" if b.get("memo") else ""), 1, "")),
     "custom_drop": ("맞춤 상품", lambda b, r: ("고객 맞춤 상품 내리기 (직접)", 1, "")),
+    "custom_mlink": ("맞춤 상품", lambda b, r: ("맞춤 상품 마케팅 링크 " + ("저장" if b.get("link") else "지움"), 1, "")),
+    "listing_mlink": ("복사본", lambda b, r: ("복사본 마케팅 링크 " + ("저장" if b.get("link") else "지움"), 1, "")),
     "custom_remove": ("맞춤 상품", lambda b, r: ("고객 맞춤 상품 업스타에서 지움 (안 올린·내린 것)", 1, "")),
     "listings_info_push": ("복사본", lambda b, r: ("네이버 상품 정보 바꾸기 (상세·브랜드·제조사·모델명)", r.get("count"), "")),
     "listings_bulk_apply": ("복사본", lambda b, r: ("복사본 일괄 수정", (r.get("prices") or 0) + (r.get("names") or 0) + (r.get("name_live") or 0),

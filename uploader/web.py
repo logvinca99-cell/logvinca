@@ -1751,6 +1751,34 @@ def create_app(db=None):
             return fail("스토어를 골라 주세요.")
         return jsonify({"rows": custom.listing(db, sid, (request.args.get("q") or "").strip())})
 
+    @app.get("/api/custom/all")
+    def custom_all():
+        """맞춤 상품 화면: 모든 스토어 맞춤 상품 (스토어·상태·올린 지 n일·검색, 쪽)."""
+        a = request.args
+        return jsonify(custom.listing_all(db, int(a.get("store_id") or 0) or None, (a.get("status") or "").strip(),
+                                          int(a.get("days") or 0) or None, (a.get("q") or "").strip(),
+                                          max(0, int(a.get("page") or 0)), max(1, min(500, int(a.get("size") or 100)))))
+
+    @app.post("/api/custom/<int:cid>/mlink")
+    def custom_mlink(cid):
+        """판매자센터에서 만든 마케팅 링크를 붙여넣어 저장 (비우면 지움)."""
+        try:
+            return jsonify(custom.set_mlink(db, cid, body().get("link")))
+        except ValueError as e:
+            return fail(str(e))
+
+    @app.post("/api/listings/<int:lid>/mlink")
+    def listing_mlink(lid):
+        """복사본(판매 중)의 마케팅 링크 저장 (비우면 지움)."""
+        try:
+            link = custom.clean_link(body().get("link"))
+        except ValueError as e:
+            return fail(str(e))
+        if not db.one("SELECT 1 FROM listings WHERE id=?", (lid,)):
+            return fail("복사본이 없습니다.", 404)
+        db.x("UPDATE listings SET marketing_link=? WHERE id=?", (link, lid))
+        return jsonify({"marketing_link": link})
+
     @app.get("/api/custom/start")
     def custom_start():
         a = request.args

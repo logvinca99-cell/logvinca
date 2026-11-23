@@ -343,6 +343,7 @@ class DB:
         "imports": [("method", "TEXT NOT NULL DEFAULT ''"), ("file", "TEXT NOT NULL DEFAULT ''"),
                     ("store_name", "TEXT NOT NULL DEFAULT ''"), ("via", "TEXT NOT NULL DEFAULT ''")],
         "listings": [("sale_shown", "INTEGER"),
+                     ("marketing_link", "TEXT NOT NULL DEFAULT ''"),   # 판매자센터에서 만든 마케팅 링크 (붙여넣어 저장)
                      # 판매 중 상품 연결로 들어온 복사본 (가져오기 되돌리기 대상 구분용 — 가격 계산은 다른 복사본과 같음)
                      ("linked", "INTEGER NOT NULL DEFAULT 0"),
                      # 연결 확인 때 읽은 네이버 손님 가격 (업스타 가격은 바꾸지 않음 — 다르면 '가격 확인 필요'로 알림)

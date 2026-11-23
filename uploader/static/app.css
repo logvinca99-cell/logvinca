@@ -1246,3 +1246,9 @@ h2, .sec-title { font-size: var(--h2); font-weight: 700; letter-spacing: -.01em;
 .cu-tbtn { display: flex; gap: 4px; justify-content: center; margin-top: 4px; flex-wrap: wrap; }
 /* 좁은 화면: 버튼이 여러 줄인 머리를 위에 붙여 두면 아래 내용을 가리므로 붙이지 않음 */
 @media (max-width: 700px) { .page-head { position: static; } }
+
+/* 맞춤 상품 화면 표: 상품명 칸을 넓게, 할 일 버튼은 줄바꿈되며 나란히 */
+.cp-table .cp-store { width: 96px; } .cp-table .cp-code { width: 140px; } .cp-table .cp-st { width: 112px; } .cp-table .flag { white-space: nowrap; }
+.cp-table .cp-sold { width: 56px; } .cp-table .cp-act { width: 300px; }
+.cu-acts { white-space: normal; } .cu-acts .btn { margin: 2px 0; }
+@media (max-width: 900px) { .cp-table .cp-act { width: auto; } .cp-table .cp-code { width: auto; } }

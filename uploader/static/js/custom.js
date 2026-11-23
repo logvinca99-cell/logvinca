@@ -9,6 +9,9 @@ const CUSTOM_LOCAL = "http://upstar.local/custom/";
 const cimg = (u) => (String(u || "").startsWith(CUSTOM_LOCAL) ? "/api/custom/img/" + String(u).slice(CUSTOM_LOCAL.length) : u);
 const cimgHtml = (html) => String(html || "").split(CUSTOM_LOCAL).join("/api/custom/img/");
 
+// 판매자센터 상품조회/수정 (마케팅 링크: 상품번호로 검색 → 체크 → 일괄변경 → 마케팅 링크 생성/복사). 검색 조건은 주소에 안 들어감
+const SELLER_ORIGIN_LIST = "https://sell.smartstore.naver.com/#/products/origin-list";
+
 async function copyText(t) {
   try { await navigator.clipboard.writeText(t); App.toast("복사했습니다"); }
   catch (e) { window.prompt("복사하세요", t); }
@@ -255,6 +258,59 @@ Object.assign(App, {
     catch (e) { this.toast(e.message, true); return null; }
   },
 
+  /* 마케팅 링크 만들기 (클릭한 그 순간에 부름 — 클립보드·새 창은 클릭 안에서만 됨):
+     상품번호(스마트스토어)를 복사하고 그 스토어 판매자센터 상품조회 화면을 연 뒤, 붙여넣는 순서를 안내하고 만든 링크를 붙여넣어 저장.
+     o: {kind: "custom"|"listing", id, storeId, productNo, link, name, after} */
+  marketingLink(o) {
+    const st = (this.stores || []).find((s) => s.id === +o.storeId);
+    const no = String(o.productNo || "");
+    const copied = no && navigator.clipboard ? navigator.clipboard.writeText(no).then(() => true, () => false) : Promise.resolve(false);
+    let how = "";
+    if (st?.chrome_profile) {
+      how = this.api(`/api/stores/${st.id}/open_seller`, { json: { url: SELLER_ORIGIN_LIST } })
+        .then((r) => (r.opened ? "크롬 프로필로 판매자센터를 열었습니다" : `${r.reason || "크롬으로 못 열었습니다"} — 아래 [판매자센터 상품조회 열기]를 누르세요`))
+        .catch((e) => `${e.message} — 아래 [판매자센터 상품조회 열기]를 누르세요`);
+    } else {
+      how = Promise.resolve(window.open(SELLER_ORIGIN_LIST, "_blank") ? "새 창으로 판매자센터 상품조회를 열었습니다"
+        : "팝업이 막혔습니다 — 아래 [판매자센터 상품조회 열기]를 누르세요");
+    }
+    const save = async (link) => {
+      const url = o.kind === "listing" ? `/api/listings/${o.id}/mlink` : `/api/custom/${o.id}/mlink`;
+      const r = await this.api(url, { json: { link } });
+      if (o.after) o.after(r.marketing_link);
+      return r.marketing_link;
+    };
+    this.openModal({
+      title: "마케팅 링크 만들기",
+      body: async (b) => {
+        b.innerHTML = `<div class="form">
+          ${o.name ? `<p class="small muted" style="margin:0">${esc(o.name)}</p>` : ""}
+          <div class="notice info small" id="ml-state">판매자센터를 여는 중…</div>
+          <div class="cl-row"><span class="small">상품번호(스마트스토어)</span><input id="ml-no" value="${esc(no)}" readonly style="width:180px;font-weight:700">
+            <button type="button" class="btn sm" id="ml-copyno">다시 복사</button>
+            <a class="btn sm" href="${SELLER_ORIGIN_LIST}" ${st?.chrome_profile ? `data-seller-sid="${st.id}"` : 'target="_blank" rel="noopener"'}>판매자센터 상품조회 열기 ↗</a></div>
+          <ol class="small ml-steps"><li>판매자센터 <b>상품조회/수정</b>의 상품번호 검색칸에 <b>붙여넣기(Ctrl+V)</b> → 검색</li>
+            <li>찾은 상품 <b>체크</b> → <b>일괄변경</b> → <b>마케팅 링크 생성/복사</b></li>
+            <li>복사된 마케팅 링크를 아래에 <b>붙여넣고 [저장]</b> — 다음부터 목록에서 바로 복사</li></ol>
+          <label class="field">만든 마케팅 링크<div class="cl-row"><input id="ml-link" value="${esc(o.link || "")}" placeholder="https://…" style="flex:1;min-width:220px">
+            <button type="button" class="btn sm primary" id="ml-save">저장</button>${o.link ? '<button type="button" class="btn sm" id="ml-copy">복사</button>' : ""}</div></label></div>`;
+        const ok = await copied;
+        const msg = await how;
+        const box = $("#ml-state", b);
+        if (box) box.innerHTML = (ok ? `상품번호 <b>${esc(no)}</b> 복사함. ` : no ? `상품번호를 자동으로 복사하지 못했습니다 — 아래 칸을 선택해 복사(Ctrl+C)하세요. ` : "상품번호가 없습니다 (아직 안 올린 상품). ")
+          + esc(msg);
+        if (!ok && no) $("#ml-no", b)?.select();
+        $("#ml-copyno", b)?.addEventListener("click", () => copyText(no));
+        $("#ml-copy", b)?.addEventListener("click", () => copyText($("#ml-link", b).value));
+        $("#ml-save", b)?.addEventListener("click", async () => {
+          try { const l = await save($("#ml-link", b).value); this.toast(l ? "마케팅 링크를 저장했습니다" : "마케팅 링크를 지웠습니다"); this.closeModal(); }
+          catch (e) { this.toast(e.message, true); }
+        });
+      },
+      buttons: [{ label: "닫기" }],
+    });
+  },
+
   /* 올린 뒤: 상품 링크 복사 · 판매자센터에서 열기 · 마케팅 링크(판매자센터에서 만들기) */
   customResult(r) {
     this.openModal({
@@ -262,12 +318,42 @@ Object.assign(App, {
       body: `<p>${esc(r.message || "")}</p>${r.notes?.length ? `<p class="small muted">${esc(r.notes.join(" · "))}</p>` : ""}
         ${r.url ? `<div class="cl-row"><input id="cr-url" value="${esc(r.url)}" readonly style="flex:1;min-width:240px"><button type="button" class="btn sm primary" id="cr-copy">상품 링크 복사</button></div>` : '<p class="muted small">스토어 주소가 없어 링크를 만들 수 없습니다 (스토어 수정에서 주소 넣기).</p>'}
         <div class="cl-row" style="margin-top:8px">${r.seller_url ? `<a class="btn sm" href="${esc(r.seller_url)}" target="_blank" rel="noopener">판매자센터에서 이 상품 열기 ↗</a>` : ""}
-          <a class="btn sm" href="${esc(r.marketing_url || "")}" target="_blank" rel="noopener" title="마케팅 링크는 판매자센터에서 만듭니다 (업스타가 자동으로 만들지 않음)">마케팅 링크 만들기 (판매자센터 열기) ↗</a></div>`,
+          ${r.product_no ? `<button type="button" class="btn sm" id="cr-mkt" title="상품번호를 복사하고 판매자센터 상품조회를 엽니다 (검색칸에 붙여넣기 → 체크 → 일괄변경 → 마케팅 링크 생성/복사)">마케팅 링크 만들기</button>` : ""}</div>`,
       buttons: [{ label: "닫기" }],
     });
     $("#cr-copy")?.addEventListener("click", () => copyText(r.url));
+    $("#cr-mkt")?.addEventListener("click", () => this.marketingLink({ kind: "custom", id: r.id, storeId: r.store_id, productNo: r.product_no, link: r.marketing_link }));
   },
 });
+
+/* 맞춤 상품 줄의 버튼들 (복사본 화면 '맞춤 상품' 칸·맞춤 상품 화면 공용) */
+function customRowActions(r) {
+  const live = r.status === "success";
+  return `${r.url ? `<button class="btn tiny" data-cu-copy="${esc(r.url)}">링크 복사</button> ` : ""}`
+    + (live && r.product_no ? (r.marketing_link
+      ? `<button class="btn tiny" data-cu-mcopy="${esc(r.marketing_link)}" title="${esc(r.marketing_link)}">마케팅 링크 복사</button> <button class="btn tiny ghost" data-cu-mkt="${r.id}" title="다시 만들기·바꾸기">↻</button> `
+      : `<button class="btn tiny" data-cu-mkt="${r.id}">마케팅 링크 만들기</button> `) : "")
+    + `<button class="btn tiny" data-cu-edit="${r.id}">${live ? "고치기·다시 보내기" : "고치기·올리기"}</button>`
+    + (live && !r.locked ? ` <button class="btn tiny ghost danger" data-cu-drop="${r.id}">내리기</button>` : "");
+}
+
+/* 맞춤 상품 줄 버튼 클릭 (rows: 지금 보이는 줄들, again: 다시 그리기) */
+async function customRowClick(e, rows, again) {
+  const c = e.target.closest("[data-cu-copy]"), mc = e.target.closest("[data-cu-mcopy]"), mk = e.target.closest("[data-cu-mkt]");
+  const ed = e.target.closest("[data-cu-edit]"), dr = e.target.closest("[data-cu-drop]");
+  if (c) return copyText(c.dataset.cuCopy);
+  if (mc) return copyText(mc.dataset.cuMcopy);
+  if (mk) {
+    const r = rows.find((x) => x.id === +mk.dataset.cuMkt);
+    if (r) App.marketingLink({ kind: "custom", id: r.id, storeId: r.store_id, productNo: r.product_no, link: r.marketing_link, name: r.name, after: again });
+    return;
+  }
+  if (ed) return App.customEdit({ id: +ed.dataset.cuEdit }, again);
+  if (dr) {
+    if (!await App.yes("맞춤 상품 내리기", "이 맞춤 상품을 네이버에서 지웁니다 (판매 이력이 있으면 잠겨 막힘 · 판매 이력 확인이 유효 시간 안일 때만).", { label: "내리기", danger: true })) return;
+    try { await App.api(`/api/custom/${dr.dataset.cuDrop}/drop`, { json: {} }); App.toast("내렸습니다"); again(); } catch (err) { App.toast(err.message, true); }
+  }
+}
 
 /* 복사본 화면 '맞춤 상품' 칸: 이 스토어 맞춤 상품 목록 */
 const Custom = {
@@ -276,7 +362,7 @@ const Custom = {
     try { res = await App.api(`/api/custom?${new URLSearchParams({ store_id: storeId, q })}`); } catch (e) { box.innerHTML = `<p class="c-err">${esc(e.message)}</p>`; return; }
     const rows = res.rows || [];
     box.innerHTML = `<div class="card table-card"><div class="sec-head pad-x"><h2>고객 맞춤 상품 <span class="muted small">${num(rows.length)}개 — 복사본과 따로 (복사 수·일괄 작업에 안 들어감, 자동으로 내리지 않음)</span></h2>
-        <button class="btn sm primary" id="cu-new">맞춤 상품 새로 만들기</button></div>
+        <div class="cl-row"><a class="btn sm ghost" href="#custom?store_id=${storeId}">모든 스토어 맞춤 상품 보기 ›</a><button class="btn sm primary" id="cu-new">맞춤 상품 새로 만들기</button></div></div>
       <table class="grid"><thead><tr><th>상품명 · 메모</th><th class="w-num">손님 가격</th><th class="w-round">관리코드 · 올린 날</th><th class="w-status">상태</th><th>판매 이력</th><th></th></tr></thead>
       <tbody>${rows.length ? rows.map((r) => {
         const [lab, cls] = CUSTOM_ST[r.status] || [r.status, ""];
@@ -284,19 +370,70 @@ const Custom = {
           <td class="num">${num(r.price)}원</td><td class="small">${esc(r.seller_code)}<div class="p-sub">${r.registered_at ? ymd(r.registered_at) : "-"}${r.show_search ? "" : " · 검색 노출 안 함"}</div></td>
           <td><span class="flag ${cls}">${lab}</span>${r.locked ? ` <span class="flag" title="${esc(r.lock_note)}">잠김</span>` : ""}</td>
           <td class="small">${r.sold_count ? `${num(r.sold_count)}개` : "-"}</td>
-          <td class="nowrap">${r.url ? `<button class="btn tiny" data-cu-copy="${esc(r.url)}">링크 복사</button> ` : ""}<button class="btn tiny" data-cu-edit="${r.id}">${r.status === "success" ? "고치기·다시 보내기" : "고치기·올리기"}</button>
-            ${r.status === "success" && !r.locked ? ` <button class="btn tiny ghost danger" data-cu-drop="${r.id}">내리기</button>` : ""}</td></tr>`;
+          <td class="cu-acts">${customRowActions(r)}</td></tr>`;
       }).join("") : '<tr class="empty-row"><td colspan="6">아직 맞춤 상품이 없습니다 — [맞춤 상품 새로 만들기] 또는 복사본·원본 상세의 [고객 맞춤 상품 만들기]</td></tr>'}</tbody></table></div>`;
     const again = () => this.render(box, storeId, q);
     $("#cu-new", box).addEventListener("click", () => App.customEdit({ storeId }, again));
-    box.onclick = async (e) => {
-      const c = e.target.closest("[data-cu-copy]"), ed = e.target.closest("[data-cu-edit]"), dr = e.target.closest("[data-cu-drop]");
-      if (c) copyText(c.dataset.cuCopy);
-      else if (ed) App.customEdit({ id: +ed.dataset.cuEdit }, again);
-      else if (dr) {
-        if (!await App.yes("맞춤 상품 내리기", "이 맞춤 상품을 네이버에서 지웁니다 (판매 이력이 있으면 잠겨 막힘 · 판매 이력 확인이 유효 시간 안일 때만).", { label: "내리기", danger: true })) return;
-        try { await App.api(`/api/custom/${dr.dataset.cuDrop}/drop`, { json: {} }); App.toast("내렸습니다"); again(); } catch (err) { App.toast(err.message, true); }
-      }
-    };
+    box.onclick = (e) => customRowClick(e, rows, again);
   },
 };
+
+/* 맞춤 상품 화면: 모든 스토어의 고객 맞춤 상품 한 목록 (거르기·검색·쪽 넘김, 줄마다 링크·마케팅 링크·고치기·다시 보내기·내리기) */
+App.page("custom", {
+  async mount(el, params) {
+    this.f = { store_id: params.store_id || "", status: "", days: "", q: "" };
+    this.page = 0;
+    this.size = App.pageSize("custom");
+    const stores = App.stores || [];
+    el.innerHTML = `<div class="page">
+      <header class="page-head"><h1>맞춤 상품</h1>
+        <div class="head-actions"><button class="btn primary" id="cp-new">맞춤 상품 새로 만들기</button></div></header>
+      <div class="tiles" id="cp-tiles"></div>
+      <div class="filters-row">
+        <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
+          <input id="cp-q" placeholder="상품명·메모·관리코드·상품번호 검색"></div>
+        <select id="cp-store" class="sel" aria-label="스토어"><option value="">모든 스토어</option>${byBusiness(stores).map(([biz, ss]) =>
+          `<optgroup label="${esc(biz)}">${ss.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join("")}</optgroup>`).join("")}</select>
+        <select id="cp-days" class="sel" aria-label="올린 날"><option value="">올린 날 전체</option><option value="7">최근 7일</option><option value="30">최근 30일</option><option value="90">최근 90일</option></select>
+      </div>
+      <div class="card table-card"><table class="grid cp-table"><thead><tr><th class="cp-store">스토어</th><th>상품명 · 메모</th><th class="w-num">손님 가격</th>
+        <th class="cp-code">관리코드 · 올린 날</th><th class="cp-st">상태</th><th class="cp-sold">판매</th><th class="cp-act">링크 · 할 일</th></tr></thead><tbody id="cp-rows"></tbody></table>
+        <div class="pg-foot"><div class="pg" id="cp-pager"></div></div></div>
+    </div>`;
+    $("#cp-store").value = String(this.f.store_id || "");
+    $("#cp-new").addEventListener("click", () => App.customEdit({ storeId: this.f.store_id || "" }, () => this.load()));
+    $("#cp-tiles").addEventListener("click", (e) => {
+      const t = e.target.closest("[data-filter]");
+      if (t) { this.f.status = t.dataset.filter === "all" ? "" : t.dataset.filter; this.page = 0; this.load(); }
+    });
+    onTyped($("#cp-q"), (v) => { this.f.q = v.trim(); this.page = 0; this.load(); });
+    $("#cp-store").addEventListener("change", (e) => { this.f.store_id = e.target.value; this.page = 0; this.load(); });
+    $("#cp-days").addEventListener("change", (e) => { this.f.days = e.target.value; this.page = 0; this.load(); });
+    $("#cp-rows").addEventListener("click", (e) => customRowClick(e, this.rows || [], () => this.load()));
+    await this.load();
+  },
+
+  async load() {
+    let r;
+    try { r = await App.api(`/api/custom/all?${new URLSearchParams({ ...this.f, page: this.page, size: this.size })}`); }
+    catch (e) { $("#cp-rows").innerHTML = `<tr class="empty-row"><td colspan="7" class="c-err">${esc(e.message)}</td></tr>`; return; }
+    this.rows = r.rows;
+    const c = r.counts || {};
+    const counts = { all: Object.values(c).reduce((a, b) => a + b, 0), success: c.success || 0, draft: c.draft || 0,
+      fail: (c.fail || 0) + (c.running || 0), deleted: c.deleted || 0 };
+    $("#cp-tiles").innerHTML = tilesHtml([{ key: "all", label: "전체", dot: "var(--muted)" }, { key: "success", label: "판매 중", dot: "var(--ok)" },
+      { key: "draft", label: "안 올림", dot: "var(--info)" }, { key: "fail", label: "실패", dot: "var(--err)" }, { key: "deleted", label: "내림", dot: "var(--muted)" }],
+    counts, this.f.status || "all");
+    $("#cp-rows").innerHTML = r.rows.length ? r.rows.map((x) => {
+      const [lab, cls] = CUSTOM_ST[x.status] || [x.status, ""];
+      return `<tr data-cid="${x.id}"><td class="small"><a href="#listings?store_id=${x.store_id}">${esc(x.store_name || "")}</a></td>
+        <td><div class="p-name">${esc(x.name)}</div>${x.memo ? `<div class="p-sub">${esc(x.memo)}</div>` : ""}${x.message && x.status !== "success" ? `<div class="p-sub c-err">${esc(x.message)}</div>` : ""}</td>
+        <td class="num">${num(x.price)}원</td>
+        <td class="small">${esc(x.seller_code || "-")}<div class="p-sub">${x.registered_at ? ymd(x.registered_at) : "-"}${x.show_search ? "" : " · 검색 노출 안 함"}</div></td>
+        <td><span class="flag ${cls}">${lab}</span>${x.locked ? ` <span class="flag" title="${esc(x.lock_note)}">잠김</span>` : ""}</td>
+        <td class="small">${x.sold_count ? `${num(x.sold_count)}개` : "-"}</td>
+        <td class="cu-acts">${x.marketing_link ? '<span class="flag ok" title="마케팅 링크 저장됨">마케팅 링크</span> ' : ""}${customRowActions(x)}</td></tr>`;
+    }).join("") : `<tr class="empty-row"><td colspan="7">${counts.all ? "조건에 맞는 맞춤 상품이 없습니다" : "아직 맞춤 상품이 없습니다 — [맞춤 상품 새로 만들기] 또는 원본·복사본 상세의 [고객 맞춤 상품 만들기]"}</td></tr>`;
+    App.pager($("#cp-pager"), { page: this.page, size: this.size, total: r.total, onPage: (p) => { this.page = p; this.load(); } });
+  },
+});

@@ -52,7 +52,9 @@ CREATE TABLE IF NOT EXISTS custom_products (
 CREATE INDEX IF NOT EXISTS custom_store ON custom_products(store_id, status);
 """
 
-# 판매자센터 화면 주소 (마케팅 링크를 API로 만드는지는 확인 못 함 → 판매자센터를 새 창으로 엶; 바뀌면 여기만 고침)
+# 판매자센터 화면 주소 (바뀌면 여기만 고침). 마케팅 링크는 판매자센터 상품조회/수정에서 만든다:
+# 상품번호(스마트스토어)로 검색 → 체크 → 일괄변경 → 마케팅 링크 생성/복사. 검색 조건은 주소에 안 들어가서
+# 업스타는 상품번호를 복사해 두고 이 화면을 연다 (만든 링크는 붙여넣어 저장).
 SELLER_PRODUCT_URL = "https://sell.smartstore.naver.com/#/products/edit/{origin_no}"
 SELLER_MARKETING_URL = "https://sell.smartstore.naver.com/#/products/origin-list"
 
@@ -68,6 +70,9 @@ def ensure(db):
         cols = {r[1] for r in c.execute("PRAGMA table_info(orders)").fetchall()}
         if cols and "custom_id" not in cols:
             c.execute("ALTER TABLE orders ADD COLUMN custom_id INTEGER")
+        cp = {r[1] for r in c.execute("PRAGMA table_info(custom_products)").fetchall()}
+        if "marketing_link" not in cp:
+            c.execute("ALTER TABLE custom_products ADD COLUMN marketing_link TEXT NOT NULL DEFAULT ''")
 
 
 def seller_code(store, cid):
@@ -160,7 +165,57 @@ def get(db, cid):
     out["url"] = product_url(c, c["channel_no"])
     out["seller_url"] = SELLER_PRODUCT_URL.format(origin_no=c["origin_no"]) if c["origin_no"] else ""
     out["marketing_url"] = SELLER_MARKETING_URL
+    out["product_no"] = c["channel_no"] or c["origin_no"]
     return out
+
+
+def clean_link(link):
+    """붙여넣은 마케팅 링크 검사 → 앞뒤 공백 뺀 주소 (비우면 지움). http(s)로 시작하지 않으면 ValueError."""
+    link = str(link or "").strip()
+    if link and (not re.match(r"^https?://\S+$", link, re.I) or len(link) > 2000):
+        raise ValueError("마케팅 링크는 http:// 또는 https://로 시작하는 주소여야 합니다 (판매자센터에서 복사한 그대로 붙여넣기).")
+    return link
+
+
+def set_mlink(db, cid, link):
+    link = clean_link(link)
+    if not db.one("SELECT 1 FROM custom_products WHERE id=?", (int(cid),)):
+        raise ValueError("맞춤 상품이 없습니다.")
+    db.x("UPDATE custom_products SET marketing_link=?, updated_at=? WHERE id=?", (link, time.time(), int(cid)))
+    return {"marketing_link": link}
+
+
+LIST_COLS = """c.id, c.store_id, c.name, c.price, c.stock, c.memo, c.status, c.message, c.seller_code, c.origin_no,
+        c.channel_no, c.registered_at, c.deleted_at, c.sold_count, c.locked, c.lock_note, c.show_search, c.from_source_id,
+        c.marketing_link, c.created_at, c.updated_at, s.store_url, s.name AS store_name"""
+
+
+def _row_out(r):
+    r["url"] = product_url(r, r["channel_no"]) if r["status"] == "success" else ""
+    r["product_no"] = r["channel_no"] or r["origin_no"]
+    return r
+
+
+def listing_all(db, store_id=None, status="", days=None, q="", page=0, size=100):
+    """모든 스토어 맞춤 상품 (맞춤 상품 화면). status: success·deleted·draft·fail(실패·보내는 중 포함) / days: 올린 지 n일 안."""
+    w, a = ["c.status!='removed'"], []
+    if store_id:
+        w.append("c.store_id=?"); a.append(int(store_id))
+    if q:
+        w.append("(c.name LIKE ? OR c.memo LIKE ? OR c.seller_code LIKE ? OR c.channel_no LIKE ? OR c.origin_no LIKE ?)")
+        a += [f"%{q}%"] * 5
+    if days:
+        w.append("c.registered_at>=?"); a.append(time.time() - float(days) * 86400)
+    base = " AND ".join(w)
+    counts = {r["status"]: r["n"] for r in db.q(f"SELECT c.status, COUNT(*) AS n FROM custom_products c WHERE {base} GROUP BY c.status", a)}
+    if status:
+        sts = ("fail", "running") if status == "fail" else (status,)
+        w.append(f"c.status IN ({','.join('?' * len(sts))})"); a += list(sts)
+    where = " AND ".join(w)
+    total = db.one(f"SELECT COUNT(*) AS n FROM custom_products c WHERE {where}", a)["n"]
+    rows = db.q(f"""SELECT {LIST_COLS} FROM custom_products c LEFT JOIN stores s ON s.id=c.store_id
+        WHERE {where} ORDER BY c.id DESC LIMIT ? OFFSET ?""", (*a, int(size), int(page) * int(size)))
+    return {"rows": [_row_out(r) for r in rows], "total": total, "counts": counts, "page": int(page), "size": int(size)}
 
 
 def listing(db, store_id, q=""):
@@ -168,13 +223,9 @@ def listing(db, store_id, q=""):
     if q:
         w.append("(c.name LIKE ? OR c.memo LIKE ? OR c.seller_code LIKE ? OR c.channel_no LIKE ?)")
         a += [f"%{q}%"] * 4
-    rows = db.q(f"""SELECT c.id, c.store_id, c.name, c.price, c.stock, c.memo, c.status, c.message, c.seller_code, c.origin_no,
-        c.channel_no, c.registered_at, c.deleted_at, c.sold_count, c.locked, c.lock_note, c.show_search, c.from_source_id,
-        c.created_at, c.updated_at, s.store_url FROM custom_products c LEFT JOIN stores s ON s.id=c.store_id
+    rows = db.q(f"""SELECT {LIST_COLS} FROM custom_products c LEFT JOIN stores s ON s.id=c.store_id
         WHERE {' AND '.join(w)} ORDER BY c.id DESC""", a)
-    for r in rows:
-        r["url"] = product_url(r, r["channel_no"]) if r["status"] == "success" else ""
-    return rows
+    return [_row_out(r) for r in rows]
 
 
 def count(db, store_id):
@@ -403,7 +454,8 @@ def send(db, cid, progress=None, should_stop=None):
             what = "등록함"
         r = get(db, cid)
         return {"id": int(cid), "message": f"맞춤 상품 {what} · {c['name'][:40]}", "url": r["url"], "seller_url": r["seller_url"],
-                "marketing_url": r["marketing_url"], "notes": notes}
+                "marketing_url": r["marketing_url"], "notes": notes, "store_id": r["store_id"], "product_no": r["product_no"],
+                "marketing_link": r.get("marketing_link") or ""}
     except apiuse.QuotaPaused as e:
         msg = f"시간당 한도 — {apiuse.hm(e.until)} 이후 다시 보내세요"
         db.x("UPDATE custom_products SET status=?, message=? WHERE id=?", (prev if prev != "running" else "draft", msg, int(cid)))

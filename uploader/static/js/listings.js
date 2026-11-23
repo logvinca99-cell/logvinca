@@ -1192,7 +1192,9 @@ App.page("listings", {
                 : /카테고리|인증|category|certif/i.test(l.message || "") ? `<br><button class="btn sm d-cat">카테고리 바꾸기</button> <span class="small">원본에 저장되어 다른 스토어 복사본도 같이 바뀝니다</span>` : ""}</div>` : "")
             + (l.origin_no ? `<div class="notice ok"><b>판매 중</b> · 상품번호 ${esc(l.channel_no)} · ${ymd(l.registered_at)}에 올림 (${age(l.registered_at)})<br>
                 ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">스토어에서 보기</a> · ` : ""}
-                ${sellerLink((App.stores || []).find((s) => s.id === l.store_id), `https://sell.smartstore.naver.com/#/products/edit/${l.origin_no}`, "스마트스토어센터에서 수정")}</div>` : "")
+                ${sellerLink((App.stores || []).find((s) => s.id === l.store_id), `https://sell.smartstore.naver.com/#/products/edit/${l.origin_no}`, "스마트스토어센터에서 수정")}
+                ${l.status !== "deleted" ? `<div class="cl-row" style="margin-top:6px">${l.marketing_link ? `<button class="btn sm" id="d-mcopy" title="${esc(l.marketing_link)}">마케팅 링크 복사</button>` : ""}
+                  <button class="btn sm" id="d-mkt" title="상품번호를 복사하고 판매자센터 상품조회를 엽니다">${l.marketing_link ? "마케팅 링크 다시 만들기" : "마케팅 링크 만들기"}</button></div>` : ""}</div>` : "")
             + `<div class="gallery">${img(l.thumb, "g-main")}</div>
               ${!l.origin_no && l.status !== "deleted" ? `<div class="notice ${l.name_id ? "" : "err"} name-edit">
                 <div><b>${l.name_id ? "바꾼 상품명" : "이름 변경 필요 — 후보상품명이 없어 올리지 않습니다"}</b></div>
@@ -1230,6 +1232,9 @@ App.page("listings", {
             } catch (err) { App.toast(err.message, true); }
           });
           $("#d-src", b)?.addEventListener("click", () => App.pages.inventory.openSource(l.source_id));
+          $("#d-mcopy", b)?.addEventListener("click", () => copyText(l.marketing_link));
+          $("#d-mkt", b)?.addEventListener("click", () => App.marketingLink({ kind: "listing", id: l.id, storeId: l.store_id, productNo: l.channel_no || l.origin_no,
+            link: l.marketing_link, name: l.name, after: (v) => { l.marketing_link = v; } }));
           $$(".d-cat", b).forEach((x) => x.addEventListener("click", () => App.pickCategory({
             target: { ids: [l.source_id] }, current: l.category, excel: l.category_excel, what: `원본 #${l.source_id}`,
             after: () => { this.openListing(id); if ($("#l-rows")) this.load(); } })));
