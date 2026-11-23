@@ -562,7 +562,6 @@ const App = {
       return;
     }
     if (t.status === "error") { this.toast(`${t.title}: ${t.error}`, true); }
-    else if (t.status === "stopped" && t.title.includes("자동 가져오기")) this.toast("주문 자동 가져오기를 중단하고 껐습니다. 다시 켜려면 설정 → 판매 이력의 자동 가져오기 간격을 넣으세요.");
     else {
       this.toast(this.taskMsg(t));
     }
