@@ -1,0 +1,37 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>라벤더라 이벤트 메인</title><link rel="stylesheet" href="store.css">
+<style>html{overflow:hidden} body{position:relative;overflow:hidden;background:#fff}
+body.m{width:750px;height:1200px} body.pc{width:1440px;height:480px}
+.top{position:absolute;background:var(--plum);color:#fff}
+.m .top{left:0;right:0;top:0;height:520px;padding:56px 48px} .pc .top{left:0;top:0;bottom:0;width:640px;padding:54px 56px}
+.lo{display:flex;align-items:center;gap:10px} .lo .nm{font-size:26px;color:#F2EEF7}
+.cap{font-weight:900;letter-spacing:-.03em} .m .cap{margin-top:48px;font-size:40px} .pc .cap{margin-top:40px;font-size:36px}
+.big{font-weight:900;letter-spacing:-.05em;line-height:1;margin-top:10px} .m .big{font-size:60px} .pc .big{font-size:50px}
+.big .num{color:var(--mark)} .cap .y{color:var(--mark)} .m .big .num{font-size:170px} .pc .big .num{font-size:128px}
+.eq{position:absolute;display:flex;align-items:center}
+.m .eq{left:48px;right:48px;top:560px;flex-direction:column;gap:14px} .pc .eq{left:690px;right:56px;top:40px;flex-direction:column;gap:6px}
+.pc .cp .r{padding:12px 22px} .pc .op{font-size:34px}
+.cp{position:relative;flex:1;border:4px solid var(--plum);border-radius:20px;background:#fff;display:grid;grid-template-columns:92px 1fr;width:100%}
+.cp .l{background:var(--plum);color:#fff;font-weight:900;display:grid;place-items:center;font-size:22px;letter-spacing:-.02em;text-align:center;line-height:1.2}
+.cp .r{border-left:4px dashed var(--plum);margin-left:-4px;padding:18px 22px}
+.cp .k{font-weight:700;color:var(--gray);font-size:22px}
+.cp .v{font-weight:900;font-size:40px;letter-spacing:-.04em;color:var(--ink);line-height:1.15}
+.cp .v .num{color:var(--plum);font-size:48px}
+.op{font-weight:900;color:var(--plum);font-size:44px;line-height:1}
+.gift{position:absolute;display:flex;align-items:center;gap:16px;background:var(--tint);border-radius:22px;font-weight:900;letter-spacing:-.03em;color:var(--ink)}
+.m .gift{left:48px;right:48px;bottom:200px;padding:18px 24px;font-size:30px} .pc .gift{left:690px;bottom:56px;width:470px;padding:14px 22px;font-size:26px}
+.gift .adp{width:64px;height:64px;flex:none}
+.note{position:absolute;color:var(--ink);font-weight:700;letter-spacing:-.02em;line-height:1.45}
+.m .note{left:48px;right:240px;bottom:60px;font-size:24px} .pc .note{display:none}
+.mascot{position:absolute} .m .mascot{right:36px;bottom:36px;width:190px;height:181px} .pc .mascot{right:50px;bottom:22px;width:150px;height:143px}
+.pc .mbr{display:none}
+</style></head><body class="__SIZE__">
+<div class="top"><div class="lo"><img class="hm" src="sprig.svg" width="26" height="50" alt=""><span class="nm">LAVENDERA</span></div>
+ <div class="cap">알림받기 + 리뷰 쓰면 <span class="y">최대</span></div><div class="big"><span class="num">3,000</span>원 혜택</div></div>
+<div class="eq">
+ <div class="cp"><div class="l">알림<br>받기</div><div class="r"><div class="k">스토어 알림받기</div><div class="v"><span class="num">1,000</span>원 할인 쿠폰</div></div></div>
+ <div class="op">+</div>
+ <div class="cp"><div class="l">리뷰</div><div class="r"><div class="k">리뷰 쓰면 최대</div><div class="v"><span class="num">2,000</span>원 적립</div></div></div>
+</div>
+<div class="gift"><svg class="adp" viewBox="0 0 200 200"><circle cx="100" cy="100" r="92" fill="#fff" stroke="#DCD2E8" stroke-width="6"/><circle cx="100" cy="100" r="70" fill="#F1ECF7"/><rect x="88" y="10" width="24" height="14" rx="4" fill="#CFC5DD"/><rect x="88" y="176" width="24" height="14" rx="4" fill="#CFC5DD"/><circle cx="70" cy="100" r="16" fill="#9D93AE"/><circle cx="130" cy="100" r="16" fill="#9D93AE"/><circle cx="65" cy="95" r="5" fill="#F4F0F8"/><circle cx="125" cy="95" r="5" fill="#F4F0F8"/></svg><span>+ 220V 돼지코 어댑터 증정</span></div>
+<div class="note">스토어 알림받기 1,000원 할인 쿠폰<br>+ 리뷰 쓰면 최대 2,000원 적립</div>
+<div class="mascot" data-pose="wave"></div><script src="mascot.js"></script></body></html>

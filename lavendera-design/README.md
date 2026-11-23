@@ -22,3 +22,19 @@
 
 ## 다시 만들기
 `node render.js` (글꼴: Noto Serif 영문 축소본, OFL 무료)
+
+## 스토어 꾸미기 (`output/store_*`, 렌더: `node render_store.js`)
+에이바우트·온누리와 같은 구성. 짙은 가지색 + 라벤더, 라벤더 봉오리 캐릭터(`src/mascot.js`).
+| 파일 | 용도 | 크기 | 바탕 |
+|---|---|---|---|
+| `store_profile_1300.png` | 프로필 | 1300 × 1300 | 짙은 가지색 |
+| `store_logo_pc_260x80.png` / `store_logo_mobile_600x80.png` | 로고(GNB), 투명 | 260 × 80 / 600 × 80 | 투명 |
+| `store_promo1_*` | 브랜드 소개 | PC 1920 × 400 / 모바일 750 × 600 | 연보라 |
+| `store_promo2_*` | 최대 3,000원 혜택 | 〃 | 라벤더 |
+| `store_promo3_*` | 혜택 카드 | 〃 | 짙은 가지색 |
+| `store_promo4_*` | 이달의 리뷰왕 | 〃 | 진보라 |
+| `store_free_*` | 자유배너: 문자 상담 | PC 1280 × 200 / 모바일 750 × 240 | 짙은 가지색 |
+| `store_content_thumb_1200x675.png` | 팝업 | 1200 × 675 | 짙은 가지색 |
+| `store_content_main_*` | 이벤트 메인 | 750 × 1200 / 2880 × 960 | 짙은 가지색 + 흰 |
+
+전달용: `lavendera_store_files.zip`(스토어 이미지 + 지침), `GUIDE_넣는곳_지침.txt`

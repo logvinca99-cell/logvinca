@@ -1,0 +1,27 @@
+/* 라벤더라 스토어 꾸미기 — 짙은 가지색 + 라벤더 (에이바우트·온누리와 같은 틀) */
+@font-face { font-family: "Pretendard"; font-weight: 500; src: url("../../onnuri-design/fonts/Pretendard-Medium.otf"); }
+@font-face { font-family: "Pretendard"; font-weight: 700; src: url("../../onnuri-design/fonts/Pretendard-Bold.otf"); }
+@font-face { font-family: "Pretendard"; font-weight: 800; src: url("../../onnuri-design/fonts/Pretendard-ExtraBold.otf"); }
+@font-face { font-family: "Pretendard"; font-weight: 900; src: url("../../onnuri-design/fonts/Pretendard-Black.otf"); }
+@font-face { font-family: "Anton"; font-weight: 400; src: url("../../about-design/fonts/Anton-400.ttf"); }
+@font-face { font-family: "Inst"; font-style: italic; src: url("../../about-design/fonts/InstrumentSerif-Italic.ttf"); }
+@font-face { font-family: "LSerif"; font-weight: 500; src: url("../fonts/NotoSerif-Latin-500.ttf"); }
+:root {
+  --plum: #251D31;   /* 메인 진한색 = 짙은 가지색 */
+  --mark: #C3B2D6;   /* 포인트 = 라벤더 */
+  --ink: #1B1524;
+  --gray: #6E6580;
+  --tint: #F1ECF7;
+  --line: #E4DCEE;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: "Pretendard", sans-serif; font-weight: 500; color: var(--ink); letter-spacing: -0.025em; word-break: keep-all; -webkit-font-smoothing: antialiased; }
+b { font-weight: 800; }
+.bg { background: var(--plum); }
+.k900 { font-weight: 900; letter-spacing: -0.045em; line-height: 1.15; }
+.pl { color: var(--plum); }
+.num { font-family: "Anton", sans-serif; font-weight: 400; letter-spacing: 0; line-height: 1; }
+.en { font-family: "Inst", serif; font-style: italic; letter-spacing: 0; line-height: 1; }
+.y { color: var(--mark); }
+.hm { display: block; flex: none; }
+.lo .nm { font-family: "LSerif", serif !important; font-weight: 500 !important; letter-spacing: .22em !important; }
