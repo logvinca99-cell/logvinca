@@ -11,6 +11,7 @@ import uuid
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
+from . import custom
 from . import VERSION, activity, adopt, aiwords, baseprice, bulkedit, srcedit, chem, chrome, clean, eye, excel, mail, nvstate, srctags, ctxkw, templates, trash, config, convert, engine, inventory, keywords, lexicon, naver, optimage, orders, watermark
 from .db import DB
 from .tasks import Tasks
@@ -1741,12 +1742,89 @@ def create_app(db=None):
 
     # ── 등록 건
 
+    # ── 고객 맞춤 상품 (보통 복사본과 따로 — 복사 수·후보상품명·일괄 작업에 안 들어감, 자동으로 내리지 않음)
+
+    @app.get("/api/custom")
+    def custom_list():
+        sid = int(request.args.get("store_id") or 0)
+        if not sid:
+            return fail("스토어를 골라 주세요.")
+        return jsonify({"rows": custom.listing(db, sid, (request.args.get("q") or "").strip())})
+
+    @app.get("/api/custom/start")
+    def custom_start():
+        a = request.args
+        try:
+            return jsonify(custom.start(db, int(a.get("source_id") or 0) or None, int(a.get("listing_id") or 0) or None,
+                                        int(a.get("store_id") or 0) or None))
+        except ValueError as e:
+            return fail(str(e))
+
+    @app.get("/api/custom/<int:cid>")
+    def custom_get(cid):
+        try:
+            return jsonify(custom.get(db, cid))
+        except ValueError as e:
+            return fail(str(e), 404)
+
+    @app.post("/api/custom/save")
+    def custom_save():
+        try:
+            return jsonify(custom.save(db, body()))
+        except ValueError as e:
+            return fail(str(e))
+
+    @app.post("/api/custom/<int:cid>/send")
+    def custom_send(cid):
+        c = db.one("SELECT name, store_id, origin_no, status FROM custom_products WHERE id=?", (cid,))
+        if not c:
+            return fail("맞춤 상품이 없습니다.", 404)
+        what = "수정해서 다시 보내기" if c["origin_no"] and c["status"] != "deleted" else "올리기"
+        try:
+            return jsonify({"task": tasks.start("custom", f"맞춤 상품 {what} · {c['name'][:30]}",
+                                                lambda **kw: custom.send(db, cid, **kw))})
+        except RuntimeError as e:
+            return fail(str(e))
+
+    @app.post("/api/custom/<int:cid>/drop")
+    def custom_drop(cid):
+        try:
+            return jsonify(custom.drop(db, cid))
+        except (ValueError, naver.ApiError) as e:
+            return fail(naver.explain(e) if isinstance(e, naver.ApiError) else str(e))
+
+    @app.post("/api/custom/<int:cid>/remove")
+    def custom_remove(cid):
+        try:
+            return jsonify(custom.remove(db, cid))
+        except ValueError as e:
+            return fail(str(e))
+
+    @app.post("/api/custom/img")
+    def custom_img_up():
+        f = request.files.get("file")
+        if not f:
+            return fail("그림 파일을 골라 주세요.")
+        try:
+            return jsonify({"url": custom.save_image(f.filename, f.read())})
+        except ValueError as e:
+            return fail(str(e))
+
+    @app.get("/api/custom/img/<path:name>")
+    def custom_img(name):
+        p = custom.image_path(name)
+        if not p:
+            return fail("그림이 없습니다.", 404)
+        return send_from_directory(os.path.dirname(p), os.path.basename(p), max_age=3600)
+
     @app.get("/api/listings")
     def listings():
         f = _filter_from(request.args)
         page, size = int(request.args.get("page", 0)), min(int(request.args.get("size", 100)), 500)
-        return jsonify({**inventory.query_listings(db, f, page, size),
-                        "counts": inventory.listing_counts(db, f.get("store_id"), f.get("plan_id"))})
+        counts = inventory.listing_counts(db, f.get("store_id"), f.get("plan_id"))
+        if f.get("store_id"):
+            counts["custom"] = custom.count(db, f["store_id"])   # 고객 맞춤 상품 (복사본과 따로)
+        return jsonify({**inventory.query_listings(db, f, page, size), "counts": counts})
 
     # ── 휴지통: 지우면 휴지통으로 옮기고, 되살리거나 완전히 지운다
 

@@ -29,7 +29,7 @@ CREATE INDEX IF NOT EXISTS activity_started ON activity(started_at);
 """
 
 # 오래 걸리는 작업 종류 → 묶음
-TASK_GROUP = {"mail": "메일함", "srctags": "원본", "baseprice": "원본", "adopt": "원본", "adopt_check": "원본", "clean_import": "상세 정리", "clean_hash": "상세 정리", "clean_chem": "상세 정리", "clean_send": "상세 정리", "chem": "원본", "rename": "상품명", "names": "상품명", "ctxkw": "AI 키워드", "plan": "복사·등록", "import": "원본",
+TASK_GROUP = {"mail": "메일함", "srctags": "원본", "baseprice": "원본", "adopt": "원본", "adopt_check": "원본", "clean_import": "상세 정리", "clean_hash": "상세 정리", "clean_chem": "상세 정리", "clean_send": "상세 정리", "chem": "원본", "rename": "상품명", "names": "상품명", "ctxkw": "AI 키워드", "plan": "복사·등록", "import": "원본", "custom": "맞춤 상품",
               "revalidate": "원본", "orders": "주문", "nvcheck": "복사·등록", "keywords": "상품명", "kipris": "금지어·사전",
               "lexicon": "금지어·사전", "dictfile": "금지어·사전"}
 
@@ -146,6 +146,9 @@ ACTIONS = {
                                           f"판매 중 복사본이 있어 뺀 원본 {r['skipped_live']}개" if r.get("skipped_live") else "")),
     "source_content_save": ("원본", lambda b, r: (f"원본 {r.get('what') or '상세·옵션'} 고침" + (f" · {b.get('memo')}" if b.get("memo") else "") if r.get("changed") else "원본 상세·옵션 (바뀐 것 없음)", 1 if r.get("changed") else 0, "")),
     "source_content_undo": ("원본", lambda b, r: (f"원본 상세·옵션 마지막 수정 되돌림 #{r.get('undone', '')}", 1, "")),
+    "custom_save": ("맞춤 상품", lambda b, r: (f"고객 맞춤 상품 저장 · {str(b.get('name') or '')[:40]}" + (f" · 메모: {str(b.get('memo'))[:40]}" if b.get("memo") else ""), 1, "")),
+    "custom_drop": ("맞춤 상품", lambda b, r: ("고객 맞춤 상품 내리기 (직접)", 1, "")),
+    "custom_remove": ("맞춤 상품", lambda b, r: ("고객 맞춤 상품 업스타에서 지움 (안 올린·내린 것)", 1, "")),
     "listings_info_push": ("복사본", lambda b, r: ("네이버 상품 정보 바꾸기 (상세·브랜드·제조사·모델명)", r.get("count"), "")),
     "listings_bulk_apply": ("복사본", lambda b, r: ("복사본 일괄 수정", (r.get("prices") or 0) + (r.get("names") or 0) + (r.get("name_live") or 0),
                                                     f"가격 바꾼 원본 {r.get('prices', 0)} · 상품명 {r.get('names', 0)} · 네이버 반영 대기 가격 {r.get('price_live', 0)}·상품명 {r.get('name_live', 0)}")),

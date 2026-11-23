@@ -501,7 +501,8 @@ App.page("inventory", {
       ["생활화학", `${d.chem_judge ? `<b>${esc(CHEM_LABEL[d.chem_judge] || d.chem_judge)}</b> <span class="muted small">${esc(d.chem_reason || "")}</span>` : '<span class="muted">판정 안 함</span>'}
         ${d.drop_pending ? ' <span class="flag warn">판매 중 내리고 지우는 중</span>' : ""} <button class="btn sm" id="s-chem">판정 바꾸기</button>`], ...Object.entries(d.fields).map(([k, v]) => [esc(k), esc(v)]),
       ["이미지", `대표·추가 ${Math.min(10, d.thumbnails.length)}장 · 상세 ${d.detail_images.length}장`],
-      ["상세·옵션", `<button class="btn sm" id="s-edit">상세·옵션 고치기</button> <span class="muted small">원본 파일을 다시 올려도 덮어쓰지 않으므로 여기서 고칩니다</span>`]];
+      ["상세·옵션", `<button class="btn sm" id="s-edit">상세·옵션 고치기</button> <span class="muted small">원본 파일을 다시 올려도 덮어쓰지 않으므로 여기서 고칩니다</span>`],
+      ["고객 맞춤 상품", `<button class="btn sm" id="s-custom">고객 맞춤 상품 만들기</button> <span class="muted small">이 원본 내용으로 고객 문의용 상품을 따로 올림 (복사 수에 안 들어감, 원본은 안 바뀜)</span>`]];
     b.innerHTML = notes.join("") +
       (d.thumbnails.length ? `<div class="gallery">${d.thumbnails.map((u, i) => img(u, i === 0 ? "g-main" : "")).join("")}</div>` : "") +
       `<dl class="kv">${kv.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>` +
@@ -512,6 +513,7 @@ App.page("inventory", {
         </table></div>` : "") +
       (d.tags_list.length ? `<div><h3 class="sec-title">엑셀 태그</h3><div class="tags">${d.tags_list.map((t) => `<span>${esc(t)}</span>`).join("")}</div></div>` : "");
     $("#s-chem", b)?.addEventListener("click", () => App.chemSet({ ids: [d.id] }, `원본 #${d.id}`, () => { this.openSource(d.id); if ($("#i-rows")) this.load(); }));
+    $("#s-custom", b)?.addEventListener("click", () => { App.closeDrawer(); App.customEdit({ sourceId: d.id }); });
     $("#s-edit", b)?.addEventListener("click", () => App.editContent(d.id, () => { this.openSource(d.id); if ($("#i-rows")) this.load(); }));
     $("#s-bp", b)?.addEventListener("click", () => App.basePrice({ sourceId: d.id, current: d, after: () => { this.openSource(d.id); if ($("#i-rows")) this.load(); } }));
     $("#s-eye", b)?.addEventListener("click", () => App.eyeSet({ ids: [d.id] }, !d.eye_at, `원본 #${d.id}`, () => { this.openSource(d.id); if ($("#i-rows")) this.load(); }));

@@ -15,6 +15,7 @@ const LST_TILES = [
   { key: "eye_done", label: "검수 완료", dot: "var(--ok)" },
   { key: "eye_todo", label: "미검수", dot: "var(--muted)", title: "눈검수 안 한 원본의 복사본 — 새로 못 올림" },
   { key: "nv_bad", label: "판매중지·금지", dot: "var(--err)", title: "판매중지·판매금지·스토어에 없음 등 — 최신화하지 않음" },
+  { key: "custom", label: "맞춤 상품", dot: "var(--accent)", title: "고객 맞춤 상품 — 복사본과 따로 (복사 수·일괄 작업에 안 들어감, 자동으로 내리지 않음)" },
 ];
 // 네이버 상태 (스토어처럼): 판매 중은 표시 안 함, 품절은 노랑, 판매중지·판매금지·스토어에 없음 등은 빨강
 const NV_LABEL = { SALE: "판매 중", OUTOFSTOCK: "품절", SUSPENSION: "판매중지", PROHIBITION: "판매금지", WAIT: "판매 대기", CLOSE: "판매 종료",
@@ -56,6 +57,7 @@ App.page("listings", {
           <button class="btn" id="l-nv" title="네이버 상품 목록을 받아 판매 중 복사본마다 판매 중·품절·판매중지·판매금지·스토어에 없음을 표시 (최신화 직전에도 자동으로 확인)">네이버 상태 확인</button>
           <button class="btn" id="l-sales" title="이 스토어 판매 이력 확인: 판매 현황 파일 넣기 · 파일 없이 직접 잠그고 확인 완료">판매 이력 확인</button>
           <a class="btn" href="#orders" title="넣은 판매 이력(주문)을 기간·스토어별로 보기">판매 현황</a>
+          <button class="btn" id="l-custom-new" title="고객 문의용 맞춤 상품(대량 할인·다른 출고지·주문제작)을 이 스토어에 새로 만들기 — 복사 수에 안 들어감">맞춤 상품 새로 만들기</button>
         </div></header>
       <div class="card run" id="l-run"><div id="l-run-main"></div></div>
       <div class="run-others" id="l-run-others" hidden></div>
@@ -69,8 +71,9 @@ App.page("listings", {
         <select id="l-age" class="sel"><option value="">올린 날 전체</option><option value="7">올린 지 7일 넘음</option>
           <option value="30">30일 넘음</option><option value="60">60일 넘음</option><option value="90">90일 넘음</option></select>
       </div>
+      <div id="l-custom" hidden></div>
       <div class="listbar" id="l-bar"></div>
-      <div class="card table-card">
+      <div class="card table-card" id="l-table">
         <table class="grid"><thead><tr><th class="w-check"></th>
           <th class="w-thumb"></th><th>등록 상품명 <span class="muted small" style="font-weight:400">(원본과 비교)</span>${ND_LEGEND}</th>
           <th class="w-links">바로 가기</th><th class="w-round">관리코드 · 올린 날</th><th class="w-num">손님 가격</th><th class="w-status">상태</th></tr></thead><tbody id="l-rows"></tbody></table>
@@ -166,7 +169,7 @@ App.page("listings", {
   query() {
     const f = { ...this.f };
     Object.keys(f).forEach((k) => (f[k] === "" || f[k] == null) && delete f[k]);
-    if (f.status === "all") delete f.status;
+    if (f.status === "all" || f.status === "custom") delete f.status;
     return f;
   },
 
@@ -212,6 +215,16 @@ App.page("listings", {
     }
     const active = this.f.eye ? `eye_${this.f.eye}` : this.f.nv === "bad" ? "nv_bad" : this.f.status;
     setHtml($("#l-tiles"), tilesHtml(LST_TILES.filter((t) => !t.only || this.counts[t.key] || active === t.key), { ...this.counts, all: this.counts.all_ }, active));
+    // 맞춤 상품 칸: 복사본 목록 대신 이 스토어 맞춤 상품 목록 (들어올 때 한 번 그림 — 주기 갱신으로 다시 그리지 않음)
+    const cust = this.f.status === "custom";
+    for (const id of ["#l-bar", "#l-table"]) { const x = $(id); if (x) x.hidden = cust; }
+    const cbox = $("#l-custom");
+    if (cbox) {
+      cbox.hidden = !cust;
+      if (cust && !this._custOn) { this._custOn = true; Custom.render(cbox, +this.f.store_id, this.f.q || ""); }
+      if (!cust) this._custOn = false;
+    }
+    if (cust) { this.renderOthers(App.run); return; }
     // 목록은 통째로 다시 그리지 않고 바뀐 줄만 바꿈 (같은 줄들이면) — 주기 갱신에 화면·스크롤·선택이 흔들리지 않게
     if (res.rows.length) patchRows($("#l-rows"), res.rows.map((l) => [String(l.id), this.rowHtml(l)]));
     else setHtml($("#l-rows"), `<tr class="empty-row"><td colspan="7">${this.counts.all_ ? "조건에 맞는 건이 없습니다."
@@ -1129,6 +1142,7 @@ App.page("listings", {
 
   bind() {
     $("#l-sales")?.addEventListener("click", () => { if (this.f.store_id) App.salesConfirm(+this.f.store_id, () => this.load()); });
+    $("#l-custom-new")?.addEventListener("click", () => App.customEdit({ storeId: +this.f.store_id }, () => { this._custOn = false; this.load(); }));
     $("#l-tiles").addEventListener("click", (e) => {
       const t = e.target.closest("[data-filter]");
       if (!t) return;
@@ -1137,6 +1151,7 @@ App.page("listings", {
       if (k.startsWith("eye_")) { this.f.eye = k.slice(4); this.f.status = "all"; }
       else if (k === "nv_bad") { this.f.nv = "bad"; this.f.status = "all"; this.f.eye = ""; }
       else { this.f.status = k; this.f.eye = ""; }
+      this._custOn = false;
       this.page = 0; this.clearSel(); this.load();
     });
     onTyped($("#l-q"), (v) => { if (v.trim() === (this.f.q || "")) return; this.f.q = v.trim(); this.page = 0; this.clearSel(); this.load(); });
@@ -1191,6 +1206,7 @@ App.page("listings", {
               <dt>카테고리</dt><dd>${esc(l.category)}${l.category_fixed ? ` <span class="flag">직접 정함</span> <span class="muted small">(엑셀: ${esc(l.category_excel)})</span>` : ""}
                 <button class="btn sm d-cat">바꾸기</button></dd>
               <dt>손님 가격</dt><dd>손님 가격 <b>${num(l.final)}원</b> <span class="muted">(기준 가격 ${num(l.source_price)}원)</span> <button class="btn sm" id="d-price" type="button">가격 수정</button>
+                <button class="btn sm" id="d-custom" type="button" title="이 복사본 내용으로 고객 맞춤 상품(대량 할인·다른 출고지 등)을 따로 만들기 — 복사 수에 안 들어감">고객 맞춤 상품 만들기</button>
                 ${l.off ? `<br><span class="muted">네이버 판매가 ${num(l.shown)}원 · 즉시할인 ${num(l.off)}원 (할인율 ${(l.off / l.shown * 100).toFixed(1)}% — 손님 가격을 그대로 두고 ${l.disc_pct}%에 가깝게)</span>` : ""}
 </dd>
               <dt>다른 스토어</dt><dd>${l.siblings.length ? l.siblings.map((x) => `<div><button class="go-store" data-go="${x.id}">→ ${esc(x.store_name)}</button> ${esc(x.name)} <span class="muted">(${STATUS[x.status] || x.status})</span></div>`).join("") : "같은 원본이 다른 스토어에는 없음"}</dd></dl>`
@@ -1220,6 +1236,7 @@ App.page("listings", {
           $("#d-rename", b)?.addEventListener("click", () => this.renameModal([id]));
           $(".d-chem", b)?.addEventListener("click", async () => { if (await App.yes("생활화학 판정", CHEM_JUDGE_TXT, { label: "판정 시작" })) App.startTask(App.api("/api/chem/judge", { json: { ids: [l.source_id] } })); });
           $$("[data-go]", b).forEach((x) => x.addEventListener("click", () => { App.closeDrawer(); this.goto(+x.dataset.go); }));
+          $("#d-custom", b)?.addEventListener("click", () => { App.closeDrawer(); App.customEdit({ listingId: id, storeId: l.store_id }, () => { this._custOn = false; if ($("#l-rows")) this.load(); }); });
           $("#d-price", b)?.addEventListener("click", () => App.priceEdit({ level: "listing", target: { ids: [id] }, n: 1, what: `이 복사본 (${l.store_name || ""})`,
             after: () => { if ($("#l-rows")) this.load(); this.openListing(id); } }));
           $("#d-lock", b)?.addEventListener("click", async () => {

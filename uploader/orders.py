@@ -64,25 +64,30 @@ def save_orders(db, orders, source, store_id=None, import_id=None):
         for o in orders:
             if not o.get("order_key"):
                 continue
-            lid = _match(c, o, o.get("store_id") or store_id)
+            from . import custom
+            cid = custom.match(c, o, o.get("store_id") or store_id)   # 맞춤 상품 (상품번호·관리코드가 정확히 같을 때)
+            lid = None if cid else _match(c, o, o.get("store_id") or store_id)
             cur = c.execute("""INSERT OR IGNORE INTO orders(order_key, store_id, listing_id, channel_no, origin_no,
-                seller_code, product_name, quantity, status, ordered_at, source, created_at, import_id)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                seller_code, product_name, quantity, status, ordered_at, source, created_at, import_id, custom_id)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                             (o["order_key"], o.get("store_id") or store_id or o.get("_store_hint")
                              or (c.execute("SELECT store_id FROM listings WHERE id=?", (lid,)).fetchone() or [None])[0], lid, o.get("channel_no", ""),
                              o.get("origin_no", ""), o.get("seller_code", ""), o.get("product_name", ""),
-                             int(o.get("quantity") or 1), o.get("status", ""), o.get("ordered_at"), source, now, import_id))
+                             int(o.get("quantity") or 1), o.get("status", ""), o.get("ordered_at"), source, now, import_id, cid))
             if cur.rowcount:
                 new += 1
             else:
                 # 이미 있던 주문: 상태(취소·반품·구매확정 등)를 최신으로, 못 맞췄던 복사본은 이번에 맞춤
                 c.execute("""UPDATE orders SET status=COALESCE(NULLIF(?,''), status),
-                    ordered_at=COALESCE(ordered_at, ?), listing_id=COALESCE(listing_id, ?) WHERE order_key=?""",
-                          (o.get("status", ""), o.get("ordered_at"), lid, o["order_key"]))
+                    ordered_at=COALESCE(ordered_at, ?), listing_id=COALESCE(listing_id, ?), custom_id=COALESCE(custom_id, ?) WHERE order_key=?""",
+                          (o.get("status", ""), o.get("ordered_at"), lid, cid, o["order_key"]))
             if lid:
                 matched += 1
                 touched.add(lid)
+            elif cid:
+                matched += 1
     recount_sold(db, touched)
+    custom.recount(db)
     return new, matched
 
 
@@ -139,15 +144,21 @@ def set_manual_lock(db, ids, on):
 
 def rematch(db):
     """아직 복사본을 못 찾은 주문을 다시 맞춘다 (복사본이 나중에 생긴 경우 등)."""
-    rows = db.q("SELECT * FROM orders WHERE listing_id IS NULL")
+    from . import custom
+    rows = db.q("SELECT * FROM orders WHERE listing_id IS NULL AND custom_id IS NULL")
     touched = set()
     with db.tx() as c:
         for o in rows:
+            cid = custom.match(c, o, o.get("store_id"))
+            if cid:
+                c.execute("UPDATE orders SET custom_id=? WHERE order_key=?", (cid, o["order_key"]))
+                continue
             lid = _match(c, o, o.get("store_id"))
             if lid:
                 c.execute("UPDATE orders SET listing_id=? WHERE order_key=?", (lid, o["order_key"]))
                 touched.add(lid)
     recount_sold(db, touched)
+    custom.recount(db)
     return len(touched)
 
 
@@ -211,8 +222,8 @@ def file_breakdown(db, where, args):
     """파일로 넣은 주문 나누기: 주문 n = 복사본에 맞춘 주문 a(복사본 b개, 그중 2건 이상 c개) + 못 맞춘 주문 d.
     where는 orders(별칭 o)에 붙는 조건 (source='file'은 여기서 붙임)."""
     w = f"o.source='file' AND {where}" if where else "o.source='file'"
-    t = db.one(f"""SELECT COUNT(*) AS n, SUM(o.listing_id IS NOT NULL) AS a, COUNT(DISTINCT o.listing_id) AS b,
-        SUM(o.listing_id IS NULL) AS d, MIN(o.ordered_at) AS mn, MAX(o.ordered_at) AS mx FROM orders o WHERE {w}""", args)
+    t = db.one(f"""SELECT COUNT(*) AS n, SUM(o.listing_id IS NOT NULL OR o.custom_id IS NOT NULL) AS a, COUNT(DISTINCT o.listing_id) AS b,
+        SUM(o.listing_id IS NULL AND o.custom_id IS NULL) AS d, MIN(o.ordered_at) AS mn, MAX(o.ordered_at) AS mx FROM orders o WHERE {w}""", args)
     c = db.one(f"""SELECT COUNT(*) AS c FROM (SELECT o.listing_id FROM orders o WHERE {w} AND o.listing_id IS NOT NULL
         GROUP BY o.listing_id HAVING COUNT(*) >= 2)""", args)["c"]
     return {"orders": t["n"] or 0, "matched": t["a"] or 0, "copies": t["b"] or 0, "multi": c or 0, "unmatched": t["d"] or 0,
@@ -226,7 +237,7 @@ def unmatched_orders(db, import_id=None, store_id=None, limit=300):
     else:
         w, a = "o.store_id=?", (int(store_id),)
     return db.q(f"""SELECT o.rowid AS id, o.channel_no, o.origin_no, o.seller_code, o.product_name, o.quantity, o.ordered_at, st.name AS store
-        FROM orders o LEFT JOIN stores st ON st.id=o.store_id WHERE o.source='file' AND o.listing_id IS NULL AND {w}
+        FROM orders o LEFT JOIN stores st ON st.id=o.store_id WHERE o.source='file' AND o.listing_id IS NULL AND o.custom_id IS NULL AND {w}
         ORDER BY o.ordered_at DESC LIMIT ?""", (*a, int(limit)))
 
 
@@ -242,9 +253,9 @@ def order_where(f):
         w.append("COALESCE(o.ordered_at, o.created_at)<?")
         a.append(float(f["to_ts"]))
     if f.get("matched") == "1":
-        w.append("o.listing_id IS NOT NULL")
+        w.append("(o.listing_id IS NOT NULL OR o.custom_id IS NOT NULL)")
     elif f.get("matched") == "0":
-        w.append("o.listing_id IS NULL")
+        w.append("o.listing_id IS NULL AND o.custom_id IS NULL")
     if f.get("status"):
         w.append("o.status=?")
         a.append(f["status"])
@@ -262,7 +273,7 @@ def query_orders(db, f, page=0, size=100):
     where, args = order_where(f)
     base = "FROM orders o LEFT JOIN listings l ON l.id=o.listing_id LEFT JOIN stores t ON t.id=o.store_id"
     summary = db.one(f"""SELECT COUNT(*) AS orders, COALESCE(SUM(o.quantity),0) AS quantity,
-        SUM(o.listing_id IS NOT NULL) AS matched, SUM(o.listing_id IS NULL) AS unmatched,
+        SUM(o.listing_id IS NOT NULL OR o.custom_id IS NOT NULL) AS matched, SUM(o.listing_id IS NULL AND o.custom_id IS NULL) AS unmatched,
         COUNT(DISTINCT o.listing_id) AS copies, COUNT(DISTINCT l.source_id) AS sources,
         SUM(o.status IN ('CANCELED','RETURNED','CANCELED_BY_NOPAYMENT')) AS canceled
         {base}{where}""", args)
@@ -415,6 +426,8 @@ def undo_import(db, import_id):
     for i in range(0, len(lids), 900):
         ch = lids[i:i + 900]
         still += db.one(f"SELECT COUNT(*) AS n FROM listings WHERE locked=1 AND id IN ({','.join('?' * len(ch))})", ch)["n"]
+    from . import custom
+    custom.recount(db)   # 맞춤 상품 판매 이력도 다시 셈
     return {**pv, "removed": pv["orders"], "still_locked": still, "unlocked": max(0, len(lids) - still) if lids else 0}
 
 

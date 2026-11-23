@@ -253,6 +253,8 @@ class DB:
         srcedit.ensure(self)
         adopt.ensure(self)
         eye.ensure(self)
+        from . import custom
+        custom.ensure(self)
         lexicon.ensure(self)
         kipris.ensure(self)
         keywords.ensure(self)
@@ -706,11 +708,12 @@ class DB:
               b.name AS business_name
             FROM stores s LEFT JOIN businesses b ON b.id=s.business_id
             ORDER BY s.business_id IS NULL, b.sort, b.id, s.sort, s.id""")
-        from . import apiuse
+        from . import apiuse, custom
         try:
             use = apiuse.recent(self)
         except Exception:  # noqa: BLE001
             use = {}
+        cust = custom.store_counts(self)   # 맞춤 상품도 실제 네이버 상품 → 남은 자리 계산에 넣음
         for r in rows:
             r["has_keys"] = bool(r["client_id"] and r["client_secret"])
             r["quota_until"] = apiuse.until(r["id"])   # 시간당 한도로 멈춤 (풀리는 시각, 아니면 None)
@@ -721,15 +724,17 @@ class DB:
             #   네이버 수를 확인했다면: 확인 때 수 + 그 뒤 올린 수 - 그 뒤 지운 수 (다른 데서 올린 상품 포함)
             #   고구마(전시중지) 상품도 한도를 차지한다: 직접 넣은 수가 있으면 그 수, 없으면 연결 확인 때 받은 수
             r["goguma"] = r["goguma_manual"] if r["goguma_manual"] is not None else (r["naver_suspended"] or 0)
+            cu = cust.get(r["id"]) or {"live": 0, "added": 0, "removed": 0}
+            r["n_custom"] = cu["live"]
             if r["naver_count"] is not None:
-                base = r["naver_count"]
+                base = r["naver_count"] + cu["added"] - cu["removed"]
                 if r["naver_sale"] is not None:   # 전체 조회 수에 전시중지가 빠져 있어도 맞게
                     base = max(base, r["naver_sale"] + r["goguma"])
                 elif r["goguma_manual"] is not None:
                     base = base + r["goguma_manual"]
                 live = max(0, base + r["n_added_since"] - r["n_removed_since"])
             else:
-                live = r["n_live"] + r["goguma"]
+                live = r["n_live"] + r["goguma"] + cu["live"]
             r["used"] = live + r["n_pending"]
             r["on_naver"] = live
             r["free"] = max(0, r["capacity"] - r["used"])

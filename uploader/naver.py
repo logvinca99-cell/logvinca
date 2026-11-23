@@ -22,6 +22,18 @@ API = "https://api.commerce.naver.com/external"
 CATEGORY_CACHE = os.path.join(config.DATA_DIR, "category_cache.json")
 CATEGORY_TTL = 7 * 86400
 IMAGES_PER_CALL = 10
+# 맞춤 상품에서 직접 올린 그림 (업스타 안에서만 쓰는 주소 — 내려받을 때 데이터 폴더 custom_img에서 읽음)
+LOCAL_IMG = "http://upstar.local/custom/"
+
+
+def _local_image(url):
+    import os as _os
+    name = _os.path.basename(str(url)[len(LOCAL_IMG):].split("?")[0])
+    p = _os.path.join(config.DATA_DIR, "custom_img", name)
+    if not name or not _os.path.exists(p):
+        raise ApiError(f"직접 올린 그림 파일이 없습니다: {name}")
+    with open(p, "rb") as f:
+        return f.read(), ""
 
 
 
@@ -210,6 +222,8 @@ _dl_local = threading.local()
 
 def download(url, cache=None):
     """이미지 내려받기 (디스크 캐시 먼저)."""
+    if str(url).startswith(LOCAL_IMG):
+        return _local_image(url)
     if cache:
         hit = cache.get(url)
         if hit:
@@ -510,6 +524,13 @@ class Client:
 
     # ── 주문 (판매 이력)
 
+    def update_product(self, origin_no, body, on_wait=None):
+        """원상품 통째로 수정해서 다시 보내기 (맞춤 상품 — 상품번호·리뷰 그대로)."""
+        r = self._put(origin_no, body, on_wait=on_wait)
+        if r.status_code != 200:
+            raise ApiError(f"상품 수정 실패: {explain_error(r)}")
+        return True
+
     def delete_product(self, origin_no, on_wait=None):
         """원상품 삭제. 지웠으면 True, 이미 없던 상품(404, 스토어에서 직접 지운 것)이면 False."""
         r = self.request("DELETE", f"/v2/products/origin-products/{origin_no}", on_wait=on_wait)
@@ -674,6 +695,14 @@ class FakeClient:
             FakeClient._bodies[str(9000000000 + n)] = body   # 시연: 올린 내용을 기억 (_get_origin·시험용)
         return {"originProductNo": 9000000000 + n, "smartstoreChannelProductNo": 8000000000 + n}
 
+    def update_product(self, origin_no, body, on_wait=None):
+        """시연: 원상품 통째로 수정 (올린 내용을 바꿔 기억)."""
+        self._call("반영")
+        time.sleep(random.uniform(0.1, 0.3))
+        with FakeClient._class_lock:
+            FakeClient._bodies[str(origin_no)] = body
+        return True
+
     def update_price(self, origin_no, final, pct, unit=100, on_wait=None):
         """시연: 가격만 바꾸기 (가끔 실패)."""
         from . import convert
@@ -757,6 +786,8 @@ _FAKE_JPG = None
 def fake_download(url, cache=None):
     """시연: 이 PC 안 시험 서버(127.0.0.1) 주소는 진짜로 받고, 나머지는 작은 회색 JPG."""
     global _FAKE_JPG
+    if str(url).startswith(LOCAL_IMG):
+        return _local_image(url)
     if str(url).startswith(("http://127.0.0.1", "http://localhost")):
         return download(url, cache)
     time.sleep(random.uniform(0.05, 0.2))
