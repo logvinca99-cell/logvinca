@@ -1380,6 +1380,33 @@ def create_app(db=None):
             return Response("<meta charset=utf-8><p>이 원본에는 수집URL이 없습니다.</p>", status=404, mimetype="text/html")
         return Response(status=302, headers={"Location": url})
 
+    def _detail_preview(row):
+        """원본 상세를 올릴 때와 같은 정리 결과로 (스토어 상하단은 없음 — 원본엔 스토어가 없음).
+        기억한 배너 빼기·추적 그림·사진 사이 빈 줄·표 옵션 → 옵션표 그림(설정 공통 모양, 이 PC에서 그린 미리보기 주소).
+        이미지는 원래 주소 그대로 (네이버에 올리지 않음)."""
+        try:
+            cfg = config.load()
+            row, _ = runner._banner().strip_row(row)
+            look = convert.option_look(cfg, None)
+            opt_urls = []
+            for box in convert.option_boxes(row, cfg, None):
+                k = optimage.remember(box, *look)
+                opt_urls.append([f"/api/optimg/{k}/{i}.jpg" for i in range(optimage.count(len(box["cards"])))])
+            return convert.detail_html(row, cfg, {}, store=None, opt_urls=opt_urls)
+        except Exception:  # noqa: BLE001 - 미리보기만: 정리하다 막히면 원래 상세
+            return row.get("상세설명") or ""
+
+    @app.post("/api/sources/preview_detail")
+    def source_preview_detail():
+        """상세·옵션 고치기 창의 미리보기: 고치는 중인 HTML을 올릴 때 모양으로."""
+        b = body()
+        row = {"상세설명": str(b.get("html") or ""), "상품명": ""}
+        sid = int(b.get("source_id") or 0)
+        if sid:
+            src = db.source_row(sid) or {}
+            row = {**src, "상세설명": row["상세설명"]}   # 옵션표 그림은 원본 옵션 기준 (상세만 고친 내용으로)
+        return jsonify({"html": _detail_preview(row)})
+
     @app.get("/api/sources/<int:sid>")
     def source(sid):
         s = inventory.source_detail(db, sid)
@@ -1396,6 +1423,7 @@ def create_app(db=None):
             "fields": {k: row.get(k) for k in ("브랜드", "제조사", "모델명", "원산지", "재고수", "배송비", "판매상태")
                        if row.get(k) not in (None, "")},
             "detail_html": row.get("상세설명") or "",
+            "detail_preview": _detail_preview(row),   # 올릴 때 모양 (사진 사이 틈·추적 그림·표 옵션·기억한 배너 정리)
             "source_url": _source_url(row),
         })
         s["kw"] = _source_kw(sid, row)

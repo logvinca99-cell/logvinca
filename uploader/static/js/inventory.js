@@ -481,7 +481,8 @@ App.page("inventory", {
         { key: "names", label: `상품명 후보 ${d.names.filter((n) => n.listing_id !== -1).length}`, render: (b) => self.renderNames(b, d) },
         { key: "detail", label: "상세페이지", render: (b) => {
           b.innerHTML = `<iframe class="preview" sandbox referrerpolicy="no-referrer"></iframe>`;
-          $("iframe", b).srcdoc = `<meta name="referrer" content="no-referrer"><style>body{margin:0}img{max-width:100%}video,iframe{display:block;margin:0 auto;max-width:100%}</style>` + d.detail_html;
+          b.innerHTML = `<p class="muted small" style="margin:0 0 6px">올릴 때 모양 — 사진 사이 틈·추적 그림·표 옵션(→ 옵션표 그림)·기억한 배너를 정리해 보여 줍니다. 스토어 상단·하단은 복사본에서 붙습니다.</p>` + b.innerHTML;
+          $("iframe", b).srcdoc = `<meta name="referrer" content="no-referrer"><style>body{margin:0}img{max-width:100%}video,iframe{display:block;margin:0 auto;max-width:100%}</style>` + (d.detail_preview ?? d.detail_html);
         } },
       ],
     });
@@ -674,7 +675,7 @@ App.editContent = async function (sid, after) {
         <div data-sec="detail">
           <label class="field">상세페이지 HTML <span class="muted small">(이미지 주소·글자를 고치거나 필요 없는 부분을 지우세요)</span>
             <textarea id="se-html" rows="16" spellcheck="false" style="font-family:ui-monospace,Consolas,monospace;font-size:12px">${esc(d.detail)}</textarea></label>
-          <div class="cl-row"><button type="button" class="btn sm" id="se-prev">미리보기 새로 그리기</button><span class="muted small">아래는 고친 HTML 그대로 (스토어 상단·하단은 올릴 때 붙음)</span></div>
+          <div class="cl-row"><button type="button" class="btn sm" id="se-prev">미리보기 새로 그리기</button><span class="muted small">아래는 올릴 때 모양 (사진 사이 틈·추적 그림·표 옵션 정리됨, 스토어 상단·하단은 올릴 때 붙음) — 위 편집 칸은 원본 HTML 그대로</span></div>
           <iframe id="se-frame" sandbox="allow-same-origin" title="상세 미리보기" style="width:100%;height:360px;border:1px solid var(--line);border-radius:8px;margin-top:6px;background:#fff"></iframe></div>
         <div data-sec="opt" hidden>
           ${o.editable ? `<p class="small muted" style="margin:0 0 6px">조합형 옵션입니다. 옵션 이름(예: 색상·사이즈)과 값, 추가금(기준 가격에 더하는 금액 — 스토어마다 그 스토어 가격 차이 %가 같이 붙음, 0이면 같은 가격)을 고치세요.
@@ -689,7 +690,11 @@ App.editContent = async function (sid, after) {
         <label class="field" style="margin-top:10px">메모 <span class="muted small">(왜 고쳤는지 — 기록에 남음)</span><input id="se-memo" placeholder="예) 품절 색상 빼기"></label>
         ${d.log.length ? `<details class="small" style="margin-top:6px"><summary>고친 기록 ${num(d.log.length)}건</summary><ul>${d.log.map((x) =>
           `<li>${when(x.at)} · ${esc(x.what)}${x.memo ? ` · ${esc(x.memo)}` : ""}</li>`).join("")}</ul></details>` : ""}`;
-      const draw = () => { $("#se-frame", b).srcdoc = `<meta name="referrer" content="no-referrer"><style>body{margin:0}img{max-width:100%}video,iframe{display:block;margin:0 auto;max-width:100%}</style>` + $("#se-html", b).value; };
+      const draw = async () => {   // 미리보기는 올릴 때 모양 (편집 칸은 원본 HTML 그대로)
+        let html = $("#se-html", b).value;
+        try { html = (await App.api("/api/sources/preview_detail", { json: { source_id: sid, html } })).html; } catch (e) { /* 원래 HTML로 */ }
+        $("#se-frame", b).srcdoc = `<meta name="referrer" content="no-referrer"><style>body{margin:0}img{max-width:100%}video,iframe{display:block;margin:0 auto;max-width:100%}</style>` + html;
+      };
       const snap = () => JSON.stringify([$("#se-html", b).value, $$(".se-opt input, [id^=se-g]", b).map((x) => (x.type === "checkbox" ? x.checked : x.value))]);
       const first = snap();
       App._dirty = () => !!$("#se-html") && snap() !== first;
