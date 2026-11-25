@@ -38,3 +38,7 @@
 | `store_content_main_*` | 이벤트 메인 | 750 × 1200 / 2880 × 960 | 짙은 가지색 + 흰 |
 
 전달용: `lavendera_store_files.zip`(스토어 이미지 + 지침), `GUIDE_넣는곳_지침.txt`
+
+## 최종 전달 묶음: `lavendera_final.zip` + `GUIDE_넣는곳_지침.txt`
+- 1_store (16장): 프로필 · 로고 · 프로모션 1~4(리뷰왕 10,000원) · 자유배너 · 팝업 · 이벤트 메인
+- 2_upsta (1장): 워터마크 `lavendera_wm_3_arch_small` (우측 하단, 22%)
