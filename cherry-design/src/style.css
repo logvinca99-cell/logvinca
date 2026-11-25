@@ -1,0 +1,62 @@
+/* ============================================================
+   미스터 체리 — 문자 대화형 안내 디자인 (에이바우트 구성, 체리 색)
+   · 섹션마다 [손님 질문 말풍선] → [가게 답 말풍선] → 짧은 줄 목록
+   · 강조는 답 말풍선이 전부 맡는다 (목록 안에는 굵은 글씨·밑줄 없음)
+   · 한글 = Wanted Sans / 숫자 = Anton / 영문 = Instrument Serif Italic
+   · 컬러: 흰 바탕 + 먹색 + 플럼 + 노랑(포인트)
+   ============================================================ */
+@font-face { font-family: "Wanted"; font-weight: 500; src: url("../../about-design/fonts/WantedSans-Medium.otf"); }
+@font-face { font-family: "Wanted"; font-weight: 700; src: url("../../about-design/fonts/WantedSans-Bold.otf"); }
+@font-face { font-family: "Wanted"; font-weight: 900; src: url("../../about-design/fonts/WantedSans-ExtraBlack.otf"); }
+@font-face { font-family: "Anton";  font-weight: 400; src: url("../../about-design/fonts/Anton-400.ttf"); }
+@font-face { font-family: "Inst";   font-style: italic; src: url("../../about-design/fonts/InstrumentSerif-Italic.ttf"); }
+
+:root {
+  --plum: #E23D55;   /* 체리 빨강 */
+  --ink: #2A1A1E;
+  --mark: #FFE9A8;   /* 버터 크림: 빨강 위 강조 */
+  --gray: #7A6468;
+  --hair: #F2DCE0;
+  --tint: #FFEEF0;   /* 연분홍 */
+
+  /* 글씨 크기 3단계 */
+  --t: 40px;   /* 답 말풍선·제목 */
+  --b: 27px;   /* 본문·질문 말풍선 */
+  --c: 24px;   /* 표·라벨 */
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: #fff; }
+body { width: 860px; font-family: "Wanted", sans-serif; font-weight: 500; font-size: var(--b); line-height: 1.5; color: var(--ink); letter-spacing: -0.02em; word-break: keep-all; -webkit-font-smoothing: antialiased; }
+b { font-weight: 700; }
+.t { font-weight: 900; font-size: var(--t); line-height: 1.28; letter-spacing: -0.035em; }
+.num { font-family: "Anton", sans-serif; font-weight: 400; letter-spacing: 0; line-height: 1; }
+.en { font-family: "Inst", serif; font-style: italic; letter-spacing: 0; line-height: 1; }
+.y { color: var(--mark); }
+
+/* 로고 */
+.mark { display: inline-flex; align-items: center; justify-content: center; width: 60px; height: 60px; border-radius: 16px; background: var(--plum); color: #fff; font-family: "Inst", serif; font-style: italic; font-size: 56px; line-height: 1; letter-spacing: 0; padding-bottom: 8px; }
+.mark i { font-style: italic; color: var(--mark); }
+.logo { display: flex; align-items: center; gap: 14px; }
+.logo .name { font-weight: 900; font-size: 30px; letter-spacing: -0.04em; }
+
+/* 지면 */
+.page { padding: 0 48px; }
+.gap { height: 64px; }
+
+/* 대화: 영문 라벨 + 질문(왼쪽) + 답(오른쪽) */
+.chat { display: flex; flex-direction: column; gap: 12px; }
+.chat .en { font-size: 34px; color: var(--plum); margin-bottom: 4px; }
+.chat p { padding: 14px 26px; border-radius: 30px; max-width: 640px; }
+.chat .q { align-self: flex-start; background: var(--tint); border-bottom-left-radius: 6px; font-weight: 700; }
+.chat .a { align-self: flex-end; background: var(--plum); color: #fff; border-bottom-right-radius: 6px; padding: 18px 30px; }
+
+/* 줄 목록: 한 가지 크기, 가는 선으로만 구분 */
+.rows { list-style: none; margin-top: 26px; border-top: 2px solid var(--ink); }
+.rows li { padding: 15px 0; border-bottom: 1px solid var(--hair); }
+
+/* 체리 로고 */
+.clogo{display:flex;align-items:center;gap:10px}
+.clogo img{display:block;flex:none}
+.clogo .name{font-weight:900;letter-spacing:-.04em;line-height:1}
+.leaf{color:#3E8E4A}
