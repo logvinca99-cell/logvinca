@@ -78,3 +78,7 @@
 | `cherry_wm_C2_sit.png` | C 발전 2: 캐릭터가 리본 위에 걸터앉음 | 506 × 418 | 15% |
 | `cherry_wm_C3_shield.png` | C 발전 3: 아래가 둥근 배지 + 양쪽 접힌 띠 | 506 × 378 | 15% |
 | `cherry_wm_C_variants_preview.png` | C1~C3을 썸네일 상단 가운데에 넣어 본 미리보기 | | |
+| `cherry_wm_F1_stitch.png` | **위에 딱 붙임** 1: 바느질 리본 (위 여백 0, 윗변 테두리 없음) | 484 × 362 | 15~17% |
+| `cherry_wm_F2_hang.png` | **위에 딱 붙임** 2: 리본 아래에 체리가 꼭지째 매달림 | 469 × 308 | 15~17% |
+| `cherry_wm_F3_badge.png` | **위에 딱 붙임** 3: 아래가 둥근 배지 | 485 × 341 | 15~17% |
+| `cherry_wm_F_preview.png` | F1~F3 썸네일 상단 가운데 미리보기 | | |
