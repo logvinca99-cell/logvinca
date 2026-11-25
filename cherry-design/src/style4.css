@@ -1,0 +1,32 @@
+/* 미스터 체리 4차 — 쇼핑몰 공지 스타일 (미스터오렌지 계열)
+   진한 체리 단색 + 흰 바탕, 굵은 테두리 박스 + 테두리에 걸친 제목, 가운데 정렬, 띠 배너
+   글꼴: 나눔스퀘어 네오 */
+@font-face { font-family: "NSN"; font-weight: 400; src: url("../fonts/NanumSquareNeo-bRg.ttf"); }
+@font-face { font-family: "NSN"; font-weight: 700; src: url("../fonts/NanumSquareNeo-cBd.ttf"); }
+@font-face { font-family: "NSN"; font-weight: 800; src: url("../fonts/NanumSquareNeo-dEb.ttf"); }
+@font-face { font-family: "NSN"; font-weight: 900; src: url("../fonts/NanumSquareNeo-eHv.ttf"); }
+:root { --r: #E0344B; --rd: #B71E35; --rl: #FFF0F2; --ink: #222; --gray: #666; --line: #F3C9CF; --leaf: #3D8F4F; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: #fff; }
+body { width: 860px; font-family: "NSN", sans-serif; font-weight: 400; font-size: 26px; line-height: 1.6; color: var(--ink); letter-spacing: -0.03em; word-break: keep-all; -webkit-font-smoothing: antialiased; }
+b, strong { font-weight: 800; }
+.r { color: var(--r); }
+.ic { width: 1em; height: 1em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; display: block; }
+.logo { display: inline-flex; align-items: center; gap: 10px; }
+.logo img { display: block; }
+.logo .name { font-weight: 900; font-size: 34px; letter-spacing: -0.05em; line-height: 1; }
+/* 굵은 테두리 박스 + 걸친 제목 */
+.box { position: relative; margin: 0 36px; border: 5px solid var(--r); border-radius: 34px; padding: 70px 34px 36px; background: #fff; }
+.box > .tt { position: absolute; left: 50%; top: 0; transform: translate(-50%, -50%); background: var(--r); color: #fff; border-radius: 999px; padding: 10px 40px 12px; font-weight: 900; font-size: 32px; white-space: nowrap; letter-spacing: -0.04em; }
+.box > .foot { margin: 30px -34px -36px; background: var(--r); color: #fff; border-radius: 0 0 28px 28px; padding: 26px 30px 28px; text-align: center; font-weight: 800; font-size: 30px; line-height: 1.4; }
+.box > .foot em { font-style: normal; background: #fff; color: var(--r); border-radius: 8px; padding: 0 8px; }
+/* 점 목록 */
+.dl { list-style: none; margin-top: 26px; }
+.dl li { position: relative; padding-left: 26px; }
+.dl li + li { margin-top: 14px; }
+.dl li::before { content: ""; position: absolute; left: 4px; top: 16px; width: 9px; height: 9px; border-radius: 50%; background: var(--r); }
+.dl b { color: var(--r); }
+.cap { text-align: center; font-weight: 800; font-size: 34px; letter-spacing: -0.04em; line-height: 1.35; }
+.gap { height: 80px; }
+.mbub { background: #fff; border-radius: 50%; display: grid; place-items: center; box-shadow: 0 6px 0 rgba(0,0,0,.08); }
+.mbub .mascot { width: 78%; height: 72%; margin-top: 6%; }

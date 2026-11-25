@@ -1,0 +1,148 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>미스터 체리 하단</title><link rel="stylesheet" href="style4.css"><style>
+ .hero { position: relative; text-align: center; padding: 56px 0 0; }
+ .hero .band { margin-top: 30px; background: var(--r); color: #fff; padding: 46px 36px 50px; position: relative; }
+ .hero .band h1 { font-weight: 900; font-size: 60px; letter-spacing: -0.05em; line-height: 1.2; }
+ .hero .band p { margin-top: 12px; font-size: 28px; font-weight: 700; }
+ .hero .band p em { font-style: normal; background: #fff; color: var(--r); border-radius: 8px; padding: 0 10px; }
+ /* 배송 단계 2줄 */
+ .steps { display: grid; grid-template-columns: 1fr 34px 1fr 34px 1fr; row-gap: 26px; align-items: center; text-align: center; }
+ .steps .s i { display: grid; place-items: center; width: 104px; height: 104px; margin: 0 auto; border-radius: 50%; background: var(--rl); color: var(--r); font-size: 50px; }
+ .steps .s.end i { background: var(--r); color: #fff; }
+ .steps .s span { display: block; margin-top: 10px; font-weight: 800; font-size: 26px; }
+ .steps .s small { font-weight: 800; color: var(--r); font-size: 20px; letter-spacing: .04em; }
+ .steps .ar { color: var(--line); font-size: 30px; font-weight: 900; }
+ /* 착불 2x2 */
+ .cod { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+ .cod div { background: var(--rl); border-radius: 22px; padding: 22px 10px 20px; text-align: center; }
+ .cod b { display: block; color: var(--r); font-weight: 900; font-size: 54px; line-height: 1.1; letter-spacing: -0.03em; }
+ .cod b small { font-size: 30px; }
+ .cod span { display: block; margin-top: 6px; font-weight: 700; font-size: 24px; }
+ /* 교환 두 칸 */
+ .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; text-align: center; }
+ .two div { border-radius: 22px; padding: 24px 12px 22px; }
+ .two .a { background: var(--r); color: #fff; } .two .b { background: #F4F4F4; }
+ .two small { display: block; font-weight: 800; font-size: 22px; opacity: .9; }
+ .two b { display: block; margin-top: 4px; font-weight: 900; font-size: 32px; line-height: 1.3; letter-spacing: -0.04em; }
+ /* 취소 3단계 */
+ .three { display: grid; grid-template-columns: 1fr 30px 1fr 30px 1fr; align-items: center; text-align: center; }
+ .three div { border-radius: 22px; padding: 22px 6px; background: #F4F4F4; }
+ .three .ok { background: var(--r); color: #fff; }
+ .three small { display: block; font-weight: 700; font-size: 21px; }
+ .three b { display: block; font-weight: 900; font-size: 28px; letter-spacing: -0.04em; margin-top: 2px; }
+ .three .ar { color: var(--line); font-size: 28px; font-weight: 900; }
+ /* 개인정보 */
+ .pt { margin-top: 22px; border-top: 3px solid var(--r); font-size: 23px; }
+ .pt div { display: grid; grid-template-columns: 170px 1fr; border-bottom: 1px solid var(--line); }
+ .pt b { background: var(--rl); color: var(--r); padding: 12px 14px; }
+ .pt span { padding: 12px 16px; }
+ .note { font-size: 23px; color: var(--gray); }
+ /* 고객센터 띠 */
+ .cs { position: relative; background: var(--r); color: #fff; text-align: center; padding: 60px 36px 66px; }
+ .cs .mbub { position: absolute; left: 40px; top: -60px; width: 160px; height: 160px; }
+ .cs .pill { display: inline-flex; align-items: center; gap: 10px; background: #fff; color: var(--r); border-radius: 999px; padding: 8px 28px; font-weight: 900; font-size: 28px; }
+ .cs .pill .ic { font-size: 30px; }
+ .cs .tel { margin-top: 18px; font-weight: 900; font-size: 92px; letter-spacing: -0.02em; line-height: 1.05; }
+ .cs p { margin-top: 18px; font-size: 25px; font-weight: 700; opacity: .95; }
+ .rights { padding: 30px 36px 44px; text-align: center; font-size: 21px; color: var(--gray); }
+</style></head><body>
+<div class="hero">
+  <div class="logo"><img src="logo.svg" width="54" height="54" alt=""><span class="name">미스터 체리</span></div>
+  <div class="band"><div class="mbub" style="width:200px;height:200px;margin:0 auto 24px"><div class="mascot" data-pose="wave"></div></div><h1>구매 전 꼭 확인해 주세요!</h1><p>본 상품은 <em>주문 후 준비되어 발송</em>되는 상품입니다</p></div>
+</div>
+
+<div class="gap"></div>
+<div class="box"><div class="tt">배송 진행 순서</div>
+  <div class="steps">
+    <div class="s"><i><svg class="ic" viewBox="0 0 24 24"><circle cx="9" cy="20" r="1.4"/><circle cx="19" cy="20" r="1.4"/><path d="M2 3h3l2.7 12.4a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L22 7H6"/></svg></i><span><small>STEP 1</small><br>주문·결제</span></div><div class="ar">▶</div><div class="s"><i><svg class="ic" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg></i><span><small>STEP 2</small><br>상품 발주</span></div><div class="ar">▶</div><div class="s"><i><svg class="ic" viewBox="0 0 24 24"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg></i><span><small>STEP 3</small><br>상품 입고</span></div>
+    <div class="s"><i><svg class="ic" viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/></svg></i><span><small>STEP 4</small><br>꼼꼼 검수</span></div><div class="ar">▶</div><div class="s"><i><svg class="ic" viewBox="0 0 24 24"><path d="M1 4h14v12H1z"/><path d="M15 8h4l4 4v4h-8z"/><circle cx="5.5" cy="18.5" r="2"/><circle cx="18.5" cy="18.5" r="2"/></svg></i><span><small>STEP 5</small><br>택배 출고</span></div><div class="ar">▶</div><div class="s end"><i><svg class="ic" viewBox="0 0 24 24"><path d="M3 10 12 3l9 7v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg></i><span><small>STEP 6</small><br>도착</span></div>
+  </div>
+  <ul class="dl">
+    <li>재고를 쌓아두지 않고 주문이 들어오면 발주해 준비하는 상품이라, 일반 상품보다 배송 기간이 깁니다.</li>
+    <li>입고된 상품은 검수를 마친 뒤 발송하며, 이 과정에서 상품 박스가 개봉될 수 있습니다. 반품 사유에 해당하지 않습니다.</li>
+    <li>배송 조회는 <b>택배 출고 이후부터</b> 가능합니다.</li>
+    <li>입고 지연·명절·기상 상황 등으로 늦어질 수 있고, 여러 상품을 함께 주문하시면 따로 도착할 수 있습니다.</li>
+  </ul>
+  <div class="foot">받아보시기까지 <em>약 2주</em> 소요됩니다<br><span style="font-size:24px;font-weight:700">(영업일 기준 7~15일)</span></div>
+</div>
+
+<div class="gap"></div>
+<div class="box"><div class="tt">착불 배송비 안내</div>
+  <div class="cap">아래에 해당하면 <span class="r">착불 배송비</span>가 발생해요</div>
+  <div class="cod" style="margin-top:24px">
+    <div><b>1<small>m</small> ↑</b><span>박스 한 변 1m 이상</span></div>
+    <div><b>150<small>cm</small> ↑</b><span>박스 세 변의 합 150cm 이상</span></div>
+    <div><b>20<small>kg</small> ↑</b><span>상품 무게 20kg 초과</span></div>
+    <div><b>이형</b><span>상품 모양이 이형인 경우</span></div>
+  </div>
+  <ul class="dl">
+    <li>착불 배송비는 <b>구매자 부담</b>이며, 담당 기사님이 실제로 측정해 정하므로 미리 안내드리기 어렵습니다.</li>
+  </ul>
+</div>
+
+<div class="gap"></div>
+<div class="box"><div class="tt">상품 안내</div>
+  <div class="cap">대표 사진이 아닌<br><span class="r">옵션명·옵션 이미지</span> 기준으로 발송돼요</div>
+  <ul class="dl">
+    <li>대표 사진은 연출 이미지라 구성이 다를 수 있습니다.</li>
+    <li>제조 공정 변화 등으로 디자인·사이즈에 차이가 있을 수 있으며, 리뉴얼 상품으로 발송될 수 있습니다.</li>
+    <li>색상은 화면에 따라 다르게 보일 수 있고, 실측 사이즈는 1~3cm 오차가 있을 수 있습니다. 불량에 해당하지 않습니다.</li>
+    <li>전자·전기제품은 <b>전압(110V/220V)과 플러그 규격</b>을 확인해 주세요. 변압기·어댑터가 필요할 수 있으며, 한글 설명서가 제공되지 않을 수 있습니다.</li>
+    <li>의류·잡화는 사이즈 기준이 다를 수 있으니 상세 사이즈표를 확인해 주세요. 착용·세탁 후에는 반품이 불가합니다.</li>
+  </ul>
+</div>
+
+<div class="gap"></div>
+<div class="box"><div class="tt">교환 · 반품 안내</div>
+  <div class="two">
+    <div class="a"><small>무상 교환·환불</small><b>파손 · 오배송<br>제품 결함</b></div>
+    <div class="b"><small>왕복 배송비 구매자 부담</small><b>단순 변심</b></div>
+  </div>
+  <ul class="dl">
+    <li>교환·반품은 <b>받으신 뒤 7일 안에 문자로 먼저</b> 접수해 주세요.</li>
+    <li>무상 교환·환불을 접수하실 때는 상품 개봉 영상과 포장 상태 사진을 함께 보내주세요.</li>
+    <li>단순 변심 시 왕복 배송비는 상품 부피·무게에 따라 달라지며, 접수 시 안내해 드립니다.</li>
+    <li>반품 회수는 당사에서 진행합니다. 사전 연락 없이 보내신 상품은 수취 거부되며, 임의로 다른 택배사로 보내 분실된 경우 환불이 어렵습니다.</li>
+    <li>전자·전기제품은 개봉 후 교환·반품이 불가합니다.</li>
+    <li>배송 중 생길 수 있는 미세한 스크래치, 찌그러짐, 마감·접착 흔적, 박스 눌림·손상은 무상 교환·환불 대상이 아닙니다.</li>
+    <li>사용·세탁하셨거나 택·본품 박스가 훼손된 경우, 위생 상품을 개봉한 경우, 기능상 문제가 없는 경미한 하자는 반품이 어렵습니다.</li>
+    <li>제조사 A/S는 제공되지 않습니다.</li>
+  </ul>
+</div>
+
+<div class="gap"></div>
+<div class="box"><div class="tt">주문 취소 안내</div>
+  <div class="three">
+    <div class="ok"><small>발주 전</small><b>전액 취소</b></div><div class="ar">▶</div>
+    <div><small>발주 완료 후</small><b>취소 불가</b></div><div class="ar">▶</div>
+    <div><small>택배 출고 후</small><b>반품 진행</b></div>
+  </div>
+  <ul class="dl">
+    <li>발주가 완료되면 이미 상품 준비가 시작된 상태라 취소가 불가합니다.</li>
+    <li>품절 시에는 바로 안내드리고 <b>전액 환불</b>해 드립니다.</li>
+    <li>상품의 리뉴얼·단종, 공장 사정, 과도한 배송 지연 등으로 주문하신 사양 그대로 발송이 어려운 경우, 안내 후 주문을 취소하고 전액 환불해 드립니다. 결제 금액 외의 별도 보상은 어려운 점 양해 부탁드립니다.</li>
+    <li>리뉴얼된 상품은 사양과 원가가 달라 기존 판매가와 가격이 다를 수 있으며, 별도 상품으로 등록됩니다.</li>
+  </ul>
+</div>
+
+<div class="gap"></div>
+<div class="box"><div class="tt">개인정보 제3자 제공 동의</div>
+  <p class="note">주문하신 상품은 발주부터 배송까지 여러 업체를 거치며, 이 과정에서 수취인 정보를 제공해야 배송이 가능합니다. 주문 시 아래 내용에 동의하신 것으로 봅니다.</p>
+  <div class="pt">
+    <div><b>제공받는 자</b><span>물류대행사, 운송사, 택배사</span></div>
+    <div><b>제공 목적</b><span>상품 발주, 운송, 배송</span></div>
+    <div><b>제공 항목</b><span>수취인 성명, 연락처, 배송지 주소</span></div>
+    <div><b>보유·이용 기간</b><span>제공 목적 달성 시까지 (관계 법령에 보존 기간이 정해진 경우 해당 기간까지)</span></div>
+  </div>
+  <p class="note" style="margin-top:16px">동의를 거부하실 수 있으나, 배송에 필요한 최소한의 항목이므로 거부 시 주문 진행이 제한됩니다.</p>
+</div>
+
+<div class="gap" style="height:170px"></div>
+<div class="cs">
+  <div class="mbub"><div class="mascot" data-pose="love"></div></div>
+  <span class="pill"><svg class="ic" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.8A8 8 0 1 1 21 12z"/></svg>고객센터 · 문자 상담</span>
+  <div class="tel">010-5934-5488</div>
+  <p>상품 문의 · 교환/반품 접수는 문자로 남겨주세요.<br>전화 상담은 운영하지 않으며, 확인 후 순서대로 답변드립니다.</p>
+</div>
+<div class="rights">본 상품페이지는 제조 업체의 이미지를 사용하여 제작되었습니다.<br>권리침해 등의 문제가 있는 경우 연락 주시면 즉시 시정하겠습니다.</div>
+<script src="mascot4.js"></script>
+</body></html>
