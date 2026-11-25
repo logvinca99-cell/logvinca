@@ -1,0 +1,44 @@
+/* 미스터 체리 — 단정한 과일가게 (3차)
+   깊은 체리색 + 크림, 안내서 카드(진한 머리띠) + 핵심 요약, 장식은 체리 로고 하나 */
+@font-face { font-family: "Pretendard"; font-weight: 500; src: url("../../onnuri-design/fonts/Pretendard-Medium.otf"); }
+@font-face { font-family: "Pretendard"; font-weight: 600; src: url("../../onnuri-design/fonts/Pretendard-SemiBold.otf"); }
+@font-face { font-family: "Pretendard"; font-weight: 700; src: url("../../onnuri-design/fonts/Pretendard-Bold.otf"); }
+@font-face { font-family: "Pretendard"; font-weight: 800; src: url("../../onnuri-design/fonts/Pretendard-ExtraBold.otf"); }
+:root {
+  --ch: #A61D33;      /* 체리 */
+  --deep: #6E1222;    /* 깊은 체리(머리띠·패널) */
+  --cream: #FBF6F0;   /* 바탕 */
+  --blush: #F6E6E3;   /* 보조면 */
+  --ink: #2A1B1D; --gray: #6F6264; --line: #EADBD8; --leaf: #4F7A4A;
+  --t: 40px; --b: 27px; --c: 24px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: var(--cream); }
+body { width: 860px; font-family: "Pretendard", sans-serif; font-weight: 500; font-size: var(--b); line-height: 1.55; color: var(--ink); letter-spacing: -0.025em; word-break: keep-all; -webkit-font-smoothing: antialiased; }
+b { font-weight: 700; }
+.ch { color: var(--ch); }
+.ic { width: 1em; height: 1em; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; display: block; }
+.logo { display: inline-flex; align-items: center; gap: 12px; }
+.logo .name { font-weight: 800; font-size: 32px; letter-spacing: -0.04em; color: var(--deep); line-height: 1; }
+.logo .en { font-weight: 600; font-size: 15px; letter-spacing: .28em; color: var(--gray); margin-top: 6px; }
+
+/* 안내서 카드 */
+.card { margin: 0 40px; background: #fff; border-radius: 24px; overflow: hidden; border: 1px solid var(--line); }
+.card .hd { background: var(--deep); color: #fff; display: flex; align-items: center; gap: 16px; padding: 22px 32px; }
+.card .hd .no { font-weight: 800; font-size: 24px; color: #F2C9CF; letter-spacing: .02em; }
+.card .hd .ic { font-size: 34px; color: #F2C9CF; }
+.card .hd h2 { font-weight: 800; font-size: var(--t); letter-spacing: -0.04em; line-height: 1.2; }
+.card .bd { padding: 34px 32px 34px; }
+
+/* 체크 목록 */
+.ck { list-style: none; }
+.ck li { position: relative; padding: 16px 0 16px 46px; border-top: 1px solid var(--line); }
+.ck li:first-child { border-top: 0; padding-top: 0; }
+.ck li:first-child::before { top: 3px; }
+.ck li::before { content: ""; position: absolute; left: 0; top: 19px; width: 30px; height: 30px; border-radius: 50%;
+  background: var(--blush) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M6 12.5l4 4 8-9' fill='none' stroke='%23A61D33' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/></svg>") center/18px no-repeat; }
+.key { background: var(--blush); border-radius: 18px; padding: 22px 26px; margin-bottom: 26px; display: flex; align-items: center; gap: 18px; }
+.key .ic { font-size: 40px; color: var(--ch); flex: none; }
+.key p { font-weight: 700; }
+.small { font-size: var(--c); color: var(--gray); }
+.gap { height: 56px; }

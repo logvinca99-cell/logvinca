@@ -19,6 +19,8 @@ const jobs = [
   { file: 'bottom.html', out: 'cherry_bottom', width: 860, scale: SCALE, split: true },
   { file: 'top2.html',    out: 'cherry2_top',    width: 860, scale: SCALE, split: true },
   { file: 'bottom2.html', out: 'cherry2_bottom', width: 860, scale: SCALE, split: true },
+  { file: 'top3.html',    out: 'cherry3_top',    width: 860, scale: SCALE, split: true },
+  { file: 'bottom3.html', out: 'cherry3_bottom', width: 860, scale: SCALE, split: true },
 ];
 
 function compress(file) {
