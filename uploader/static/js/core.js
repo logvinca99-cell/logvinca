@@ -527,7 +527,7 @@ const App = {
         + (r.capacity ? ` · 스토어 자리 부족 ${num(r.capacity)}` : "") + (r.invalid ? ` · 오류 원본 ${num(r.invalid)}개는 뺌` : "")
         + (r.named ? ` · 후보상품명 바로 붙음 ${num(r.named)}건` : "")
         + (r.created - (r.named || 0) > 0 ? " · 나머지는 복사본 화면 '이름 변경 필요'에서 상품명을 바꾼 뒤 올리세요" : ""),
-      clean_import: () => `엑셀 올리기 끝: ${num(r.total)}개 → 정리함 · 가격 한 칸으로 ${num(r.price)}개 · 상품코드 비움 ${num(r.code)}개` + (r.dup ? ` · 상품명 중복이라 안 넣음 ${num(r.dup)}개` : "") + (r.img_skipped ? ` · 대표 이미지 겹쳐서 버림 ${num(r.img_skipped)}개` : "")
+      clean_import: () => `엑셀 올리기 끝: ${num(r.total)}개 → 정리함 · 가격 한 칸으로 ${num(r.price)}개 · 상품코드 비움 ${num(r.code)}개` + (r.dup ? ` · 상품명 중복이라 안 넣음 ${num(r.dup)}개` : "") + (r.img_skipped ? ` · 대표 이미지 겹쳐서 버림 ${num(r.img_skipped)}개` : "") + (r.trackers ? ` · 숨은 추적 그림 뺌 ${num(r.trackers)}개` : "")
         + (r.rule_imgs ? ` · 기억한 공통 이미지 뺌 ${num(r.rule_imgs)}장` : "") + " · 상세 정리 화면에서 이어서",
       clean_chem: () => `생활화학 판정 끝: 인증 대상 카테고리 상품 ${num(r.target)}개 · 물건 ${num(r.tool)} · 화학제품 ${num(r.chemical)} · 애매 ${num(r.unclear)}`
         + (r.chemical + r.unclear ? " (보류 목록에서 검수)" : "") + (r.error ? ` · ${r.error}` : ""),

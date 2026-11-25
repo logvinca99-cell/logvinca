@@ -54,7 +54,7 @@ def thumbnails(row):
 
 
 def detail_images(row):
-    html = row.get("상세설명") or ""
+    html = strip_trackers(row.get("상세설명") or "")
     seen, out = set(), []
     for m in IMG_SRC_RE.finditer(html):
         u = m.group(3).strip()
@@ -199,7 +199,16 @@ def detail_images_to_upload(row, cfg):
         return []
     keep = cfg.get("keep_pstatic_detail_images", True)
     thumbs = set(thumbnails(row)[:10])
-    return [u for u in detail_images(row) if u not in thumbs and not (keep and is_naver_image(u))]
+    # 보낼 상세에 실제로 남는 사진만 (옵션표 그림으로 들어가는 옵션 사진·추적 그림은 올리지 않음 — 요청 수 아낌)
+    sent = _layout(detail_source(row, cfg), "basic", OPTION_COLOR, None)[0]
+    seen, out = set(), []
+    for m in IMG_SRC_RE.finditer(sent):
+        u = m.group(3).strip()
+        u = "https:" + u if u.startswith("//") else u
+        if u.startswith("http") and u not in seen and u not in thumbs and not (keep and is_naver_image(u)):
+            seen.add(u)
+            out.append(u)
+    return out
 
 
 def images_to_upload(row, cfg):
@@ -469,9 +478,290 @@ _BG_EMPTY = re.compile(r"""<(p|div|span)\b[^>]*\bstyle\s*=\s*(["'])(?:(?!\2).)*u
                        re.I | re.S)
 
 
+# 수집·대량 등록 프로그램이 상세에 숨겨 넣는 추적 그림 주소 (손님이 볼 때마다, 또는 내려받을 때 그쪽에 기록이 남음)
+TRACKER_HOSTS = ("p.tcdn.co.kr",)
+_TINY_BOX = re.compile(r"""<(div|p|span|section)\b[^>]*\bstyle\s*=\s*(["'])(?:(?!\2).)*?\bmax-width\s*:\s*[0-2]px(?:(?!\2).)*\2[^>]*>""",
+                       re.I | re.S)
+
+
+def _img_src(tag):
+    m = _SRC.search(tag)
+    u = m.group(2).strip() if m else ""
+    return "https:" + u if u.startswith("//") else u
+
+
+def is_tracker_img(tag):
+    """추적 그림인지: 알려진 추적 주소, 주소가 사이트 첫 화면뿐(그림이 아님), 1~2px 크기로 숨긴 그림."""
+    u = _img_src(tag)
+    if not u or u.startswith("#") or u.startswith("data:"):
+        return False
+    host = u.split("/")[2].lower() if "//" in u else ""
+    if host in TRACKER_HOSTS or any(host.endswith("." + h) for h in TRACKER_HOSTS):
+        return True
+    if re.fullmatch(r"https?://[^/?#]+/?", u, re.I):
+        return True
+    w = re.search(r"""\bwidth\s*=\s*["']?\s*([0-9.]+)\s*(?:px)?["']?""", tag, re.I)
+    h = re.search(r"""\bheight\s*=\s*["']?\s*([0-9.]+)\s*(?:px)?["']?""", tag, re.I)
+    if w and h and float(w.group(1)) <= 2 and float(h.group(1)) <= 2:
+        return True
+    st = re.search(r"""\bstyle\s*=\s*(["'])(.*?)\1""", tag, re.I | re.S)
+    if st and (re.search(r"(?<![-\w])width\s*:\s*[0-2]px", st.group(2), re.I) or re.search(r"(?<![-\w])height\s*:\s*[0-2]px", st.group(2), re.I)):
+        return True
+    return False
+
+
+def strip_trackers_count(html):
+    """보이지 않는 방문 알림·추적 그림을 지운다 → (HTML, 지운 수).
+    ① 네이버 밖 배경 그림만 있는 빈 요소(픽투셀 등) ② 알려진 추적 주소·사이트 주소뿐인 그림·1~2px 그림(퍼센티 등)
+    ③ 폭을 1~2px로 줄인 칸 안의 그림. 빈 칸은 공백 정리(tighten)가 치운다."""
+    html = str(html or "")
+    n = 0
+
+    def bg(m):
+        nonlocal n
+        if "pstatic.net" in m.group(3):
+            return m.group(0)
+        n += 1
+        return ""
+    html = _BG_EMPTY.sub(bg, html)
+    # ③ max-width:0~2px 칸 안의 그림
+    out, i = [], 0
+    for m in _TINY_BOX.finditer(html):
+        if m.start() < i:
+            continue
+        tag = m.group(1).lower()
+        if tag == "div":
+            end = _div_end(html, m.start())
+        else:
+            e = re.search(rf"</{tag}\s*>", html[m.end():], re.I)
+            end = m.end() + e.end() if e else -1
+        if end < 0:
+            continue
+        inner = html[m.start():end]
+        k = len(_IMG_TAG.findall(inner))
+        if k:
+            n += k
+            out.append(html[i:m.start()])
+            out.append(_IMG_TAG.sub("", inner))
+            i = end
+    html = "".join(out) + html[i:]
+
+    def img(m):
+        nonlocal n
+        if is_tracker_img(m.group(0)):
+            n += 1
+            return ""
+        return m.group(0)
+    return _IMG_TAG.sub(img, html), n
+
+
 def strip_trackers(html):
-    """보이지 않는 방문 알림(네이버 밖 배경 그림만 있는 빈 요소)을 지운다."""
-    return _BG_EMPTY.sub(lambda m: m.group(0) if "pstatic.net" in m.group(3) else "", html)
+    """보이지 않는 방문 알림·추적 그림을 지운다."""
+    return strip_trackers_count(html)[0]
+
+
+# 2) 상세 공백 정리 — 사진 사이 빈 줄(빈 문단·보이지 않는 글자 하나만 든 문단·줄바꿈)과 사진 아래 틈을 없앤다
+_INVIS = "(?:\\s|&nbsp;|&#160;|&#8203;|&#x200b;|\u200b|\u00a0|\ufeff)"
+_EMPTY_INLINE = rf"(?:<(?:span|b|strong|i|em|font|u)\b[^>]*>{_INVIS}*</(?:span|b|strong|i|em|font|u)>)"
+_EMPTY_P = re.compile(rf"<p\b[^>]*>(?:{_INVIS}|<br\s*/?>|{_EMPTY_INLINE})*</p>", re.I)
+_EMPTY_BOX = re.compile(rf"<(div|span|a|section|center)\b[^>]*>{_INVIS}*</\1>", re.I)
+_BR_NEAR_IMG = re.compile(r"(<img\b[^>]*>(?:\s*</a>)?)(?:\s*<br\s*/?>)+|(?:<br\s*/?>\s*)+(?=(?:<a\b[^>]*>\s*)?<img\b)", re.I)
+IMG_BLOCK = "display:block;margin:0 auto;"
+
+
+def _img_block(tag):
+    """사진 아래 글자 줄 틈(인라인 그림의 기준선 여백)이 생기지 않게 display:block + 가운데."""
+    if tag.startswith("<img") and re.search(r"display\s*:\s*block", tag, re.I):
+        return tag
+    m = re.search(r"""\bstyle\s*=\s*(["'])(.*?)\1""", tag, re.I | re.S)
+    if m:
+        st = m.group(2).strip()
+        st = (st.rstrip("; ") + ";" if st else "") + IMG_BLOCK
+        return tag[:m.start()] + f'style={m.group(1)}{st}{m.group(1)}' + tag[m.end():]
+    return re.sub(r"^<img\b", f'<img style="{IMG_BLOCK}"', tag, flags=re.I)
+
+
+def tighten(html):
+    """상세의 사진 사이 공백 정리. 글자가 있는 문단·표·동영상은 그대로.
+    빈 줄(빈 문단·보이지 않는 글자 하나만 든 문단·빈 감싸개·줄바꿈)이 사진과 사진 사이에 있으면 없애고,
+    글자와 글자(또는 글자와 사진) 사이의 빈 줄 여러 개는 한 줄로. 사진은 아래 틈이 없게 display:block.
+    (원본 상세는 그대로 두고 보낼 상세·미리보기에만)"""
+    html = str(html or "")
+    box = re.compile(rf"<(div|span|a|section|center|p)\b[^>]*>((?:{_INVIS}|{re.escape(_GAP)})*)</\1>", re.I)
+    for _ in range(6):   # 빈 감싸개 안의 빈 문단 → 비게 된 감싸개 … (몇 겹) — 빈 문단은 표시만 남김
+        new = box.sub(lambda m: _GAP if _GAP in m.group(2) else "", _EMPTY_P.sub(_GAP, html))
+        if new == html:
+            break
+        html = new
+    # 빈 줄 묶음(표시·줄바꿈·공백) 하나하나: 양쪽이 사진이면 없앰, 아니면 빈 줄 하나로
+    def run(m):
+        before, after = html[max(0, m.start() - 2000):m.start()], html[m.end():m.end() + 2000]
+        prev_img = re.search(r"<img\b[^>]*>\s*(?:</(?:a|span|p|div|center)>\s*)*$", before, re.I)
+        next_img = re.match(r"\s*(?:<(?:a|span|p|div|center)\b[^>]*>\s*)*<img\b", after, re.I)
+        if prev_img and next_img:
+            return ""
+        return SPACER if _GAP in m.group(0) else m.group(0)
+    html = re.sub(rf"(?:{re.escape(_GAP)}|<br\s*/?>|\s)*{re.escape(_GAP)}(?:{re.escape(_GAP)}|<br\s*/?>|\s)*", run, html)
+    html = html.replace(_GAP, "")
+    html = _BR_NEAR_IMG.sub(lambda m: m.group(1) or "", html)
+    return _IMG_TAG.sub(lambda m: _img_block(m.group(0)), html)
+
+
+_GAP = "\u0000GAP\u0000"   # 빈 문단 자리 표시 (tighten 안에서만)
+
+
+# 3) 스마트에디터 표(table)로 만든 옵션표 → 옵션 사진 묶음(grid)으로 바꿔 두면 아래 _layout이 옵션표 그림으로 바꾼다
+_TABLE_OPEN = re.compile(r"<table\b[^>]*>", re.I)
+_TR = re.compile(r"<tr\b[^>]*>(.*?)</tr>", re.I | re.S)
+_TD = re.compile(r"<t([dh])\b[^>]*>(.*?)</t\1>", re.I | re.S)
+_SE_TABLE = re.compile(r"""<div\b[^>]*\bclass\s*=\s*(["'])[^"']*\bse-component\b[^"']*\bse-table\b[^"']*\1[^>]*>""", re.I)
+_SE_TEXT = re.compile(r"""<div\b[^>]*\bclass\s*=\s*(["'])[^"']*\bse-component\b[^"']*\bse-text\b[^"']*\1[^>]*>""", re.I)
+OPTION_TITLE = re.compile(r"^(?:옵션|옵션(?:설명|안내|선택|정보|구성|종류|보기)|option|options)[:：]?$", re.I)
+
+
+def _is_option_title(t):
+    """'옵션'·'옵 션'·'옵션 설명'·'OPTION' 같은 짧은 제목인지 (띄어쓰기 무시)."""
+    return bool(OPTION_TITLE.match(re.sub(r"\s+", "", t or "")))
+
+
+def _table_end(html, start):
+    depth = 0
+    for m in re.finditer(r"<(/?)table\b[^>]*>", html[start:], re.I):
+        depth += -1 if m.group(1) else 1
+        if depth == 0:
+            return start + m.end()
+    return -1
+
+
+def _vis(h):
+    """보이는 글자만 (보이지 않는 글자·&nbsp; 뺌)."""
+    t = _text(h).replace("&nbsp;", " ").replace("\u200b", "").replace("\xa0", " ").replace("\ufeff", "")
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _imgs_of(h):
+    return [u for u in (_img_src(t) for t in _IMG_TAG.findall(h)) if u and not u.startswith("#")]
+
+
+def table_cards(table):
+    """표 하나 → 옵션 카드 [[사진들], 이름] 또는 None(옵션표 아님: 사진 없는 표·사진만 있는 표·글자 덩어리 표).
+    모양: ① 사진 칸 아래 줄에 이름 칸(옵션마다 표 하나·한 줄에 여러 칸) ② 한 칸에 사진+이름 ③ 사진 칸 오른쪽에 이름 칸."""
+    rows = []
+    for tr in _TR.findall(table):
+        cells = [(_imgs_of(c), _vis(_IMG_TAG.sub("", c))) for _, c in _TD.findall(tr)]
+        if cells:
+            rows.append(cells)
+    if not rows or not any(im for r in rows for im, _ in r):
+        return None
+    if any(len(t) > 80 for r in rows for _, t in r):   # 긴 글(설명 표)은 옵션표가 아님
+        return None
+    cards, used = [], set()
+    for ri, r in enumerate(rows):
+        for ci, (im, t) in enumerate(r):
+            if (ri, ci) in used or not im:
+                continue
+            used.add((ri, ci))
+            name = t
+            if not name and ri + 1 < len(rows) and ci < len(rows[ri + 1]):
+                im2, t2 = rows[ri + 1][ci]
+                if not im2 and t2:
+                    name = t2
+                    used.add((ri + 1, ci))
+            if not name and ci + 1 < len(r):
+                im2, t2 = r[ci + 1]
+                if not im2 and t2:
+                    name = t2
+                    used.add((ri, ci + 1))
+            cards.append([im, name])
+    leftover = [t for ri, r in enumerate(rows) for ci, (im, t) in enumerate(r) if (ri, ci) not in used and t]
+    if leftover or not any(name for _, name in cards):   # 짝 없는 글자가 있거나 이름이 하나도 없으면 옵션표로 보지 않음
+        return None
+    return cards
+
+
+def _grid_html(cards):
+    cells = "".join(f'<div>{"".join(f"<img src={chr(34)}{u}{chr(34)}>" for u in im)}<div>{name}</div></div>' for im, name in cards)
+    return f'<div style="display:grid;grid-template-columns:1fr 1fr;">{cells}</div>'
+
+
+def se_option_tables(html):
+    """이어진 표 옵션표(스마트에디터 se-table 또는 일반 table, 사이에 빈 문단만)를 옵션 사진 묶음 하나로.
+    바로 앞의 '옵션'·'옵션 설명' 같은 짧은 제목 문단은 제목(<h3>)으로. 옵션표가 아닌 표는 그대로."""
+    html = str(html or "")
+    spans, flats = [], []   # (시작, 끝, 카드들) · (시작, 끝, 사진들)
+    i = 0
+    while True:
+        se = _SE_TABLE.search(html, i)
+        tb = _TABLE_OPEN.search(html, i)
+        if not se and not tb:
+            break
+        if se and (not tb or se.start() <= tb.start()):
+            start, end = se.start(), _div_end(html, se.start())
+            t = _TABLE_OPEN.search(html, start)
+            if end < 0 or not t:   # 엑셀 칸 글자 수 제한으로 상세가 표 중간에서 잘림 → 남은 부분은 사진만
+                end = len(html)
+            tend = _table_end(html, t.start()) if t and t.start() < end else -1
+            table = html[t.start():tend] if tend > 0 else (html[t.start():end] if t else "")
+        else:
+            start, end = tb.start(), _table_end(html, tb.start())
+            if end < 0:
+                end = len(html)
+            table = html[start:end]
+        if not table:
+            i = (se or tb).end()
+            continue
+        cards = table_cards(table) if _table_end(table, 0) > 0 else None
+        if cards:
+            spans.append((start, end, cards))
+        else:
+            rows_txt = [_vis(_IMG_TAG.sub("", c)) for _, c in _TD.findall(table)] or [_vis(_IMG_TAG.sub("", table))]
+            ims = _imgs_of(table)
+            if ims and not any(rows_txt):   # 사진만 든 표(또는 잘린 표) → 사진을 위아래로 (모바일 흐린 캡처 방지)
+                flats.append((start, end, ims))
+            elif end == len(html) and _table_end(table, 0) < 0 and not ims and not _vis(re.sub(r"<[^>]*$", "", table)):
+                flats.append((start, end, []))   # 잘려서 사진·글자 없이 남은 표 꼬리 → 뺌
+        i = end
+    if flats:
+        out, j = [], 0
+        for st, en, ims in flats:
+            out.append(html[j:st])
+            out.append("".join(f'<p style="text-align:center;margin:0;"><img src="{u}" style="width:100%;"></p>' for u in ims))
+            j = en
+        html = "".join(out) + html[j:]
+        return se_option_tables(html) if spans else html
+    if not spans:
+        return html
+    # 사이에 빈 것만 있는 이어진 표들 → 한 묶음
+    groups = []
+    for st, en, cards in spans:
+        gap = html[groups[-1][1]:st] if groups else ""
+        if groups and not _vis(gap) and not _IMG_TAG.search(gap) and not re.search(r"<(video|iframe|table)\b", gap, re.I):
+            groups[-1] = (groups[-1][0], en, groups[-1][2] + cards)
+        else:
+            groups.append((st, en, cards))
+    out, i = [], 0
+    for st, en, cards in groups:
+        before = html[i:st]
+        title = ""
+        # 바로 앞 제목 문단(스마트에디터 글자 칸 또는 짧은 문단) — 글자가 '옵션'류면 제목으로
+        tail = tighten(before)
+        ms = list(_SE_TEXT.finditer(before))
+        if ms:
+            m = ms[-1]
+            e = _div_end(before, m.start())
+            if e > 0 and not _vis(before[e:]) and not _IMG_TAG.search(before[e:]) and _is_option_title(_vis(before[m.start():e])):
+                title = _vis(before[m.start():e])
+                before = before[:m.start()]
+        if not title:
+            mp = re.search(r"<(p|h[1-6]|div)\b[^>]*>((?:(?!<\1\b).)*?)</\1>\s*$", tail, re.I | re.S)
+            if mp and not _IMG_TAG.search(mp.group(2)) and _is_option_title(_vis(mp.group(2))):
+                title = _vis(mp.group(2))
+                k = before.rfind(mp.group(0)) if mp.group(0) in before else -1
+                before = before[:k] if k >= 0 else before
+        out.append(before)
+        out.append((f"<h3>{title}</h3>" if title else "") + _grid_html(cards))
+        i = en
+    return "".join(out) + html[i:]
 
 
 def _cards(inner):
@@ -536,7 +826,7 @@ def _layout(html, style, color, opt_urls):
         urls = (opt_urls[k] if opt_urls and k < len(opt_urls) else
                 [f"#옵션표그림{k + 1}-{j + 1}" for j in range(optimage.count(len(cards)))])
         out.append(before)
-        out.append("".join(f'<p style="text-align:center;margin:0;"><img src="{u}" width="100%" style="width:100%;"></p>'
+        out.append("".join(f'<p style="text-align:center;margin:0;"><img src="{u}" width="100%" style="width:100%;{IMG_BLOCK}"></p>'
                            for u in urls))
         i = end
     html = "".join(out) + html[i:]
@@ -550,8 +840,12 @@ def naver_safe_layout(html, style="basic", color=None, opt_urls=None):
 
 
 def layout_left(html):
-    """naver_safe_layout 뒤에도 남은 옵션 사진 묶음 수 (사진 둘 이상인 grid·줄바꿈 flex) — 0이 아니면 경고."""
+    """naver_safe_layout 뒤에도 남은 옵션 사진 묶음 수 (사진 둘 이상인 grid·줄바꿈 flex, 옵션표 모양인데 못 바꾼 표) — 0이 아니면 경고."""
     n = 0
+    for m in _TABLE_OPEN.finditer(html):
+        e = _table_end(html, m.start())
+        if e > 0 and _IMG_TAG.search(html[m.start():e]):
+            n += 1
     for m in _DIV_STYLED.finditer(html):
         if _card_box(m.group(2)):
             end = _div_end(html, m.start())
@@ -634,9 +928,12 @@ def set_no_unit_price(body):
 
 
 def detail_source(row, cfg):
-    """올릴 상세의 출발점: 엑셀 상세 − 방문 알림 − http(보안 아님) 동영상 − (설정이면) 동영상 전부, 폭은 PC 860px에 맞춤."""
+    """올릴 상세의 출발점: 엑셀 상세 − 방문 알림·추적 그림 − http(보안 아님) 동영상 − (설정이면) 동영상 전부, 폭은 PC 860px에 맞춤,
+    표로 만든 옵션표는 옵션 사진 묶음으로(→ 옵션표 그림), 사진 사이 빈 줄은 정리."""
     html = row.get("상세설명") or f"<p>{row.get('상품명') or ''}</p>"
+    html = re.sub(r"<[^>]*$", "", html)   # 엑셀 칸 글자 수 제한으로 태그 중간에서 잘린 꼬리
     html = fit_width(strip_trackers(html))
+    html = tighten(se_option_tables(html))   # 표로 만든 옵션표도 옵션표로 · 사진 사이 빈 줄 정리
     if cfg.get("detail_video") == "remove":
         html = VIDEO_RE.sub("", html)
     else:   # 네이버(https) 화면에서 http 동영상은 막히거나 안 열림

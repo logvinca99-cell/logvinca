@@ -18,6 +18,10 @@ class BadImage(Exception):
     pass
 
 
+class TinyImage(BadImage):
+    """1~2px짜리 그림 — 보이지 않는 추적 그림 (상세에서 뺌)."""
+
+
 def sniff(data):
     """바이트 앞부분으로 형식 짐작 (열지 않고)."""
     b = bytes(data[:16]) if data else b""
@@ -48,6 +52,8 @@ def normalize(data, ctype="", url=""):
     if not data:
         raise BadImage(f"원본 이미지가 비어 있음(지워졌거나 막힘): {url}")
     fmt = sniff(data)
+    if _tiny(data):
+        raise TinyImage(f"1~2px짜리 보이지 않는 그림(추적 그림): {url}")
     if fmt in OK_FORMATS and len(data) <= MAX_BYTES:
         if fmt == "JPEG" and not _cmyk_or_huge(data):
             return data, MIME[fmt][1]
@@ -105,3 +111,12 @@ def _cmyk_or_huge(data):
         return im.mode in ("CMYK", "YCCK") or max(im.size) > MAX_SIDE * 2
     except Exception:  # noqa: BLE001
         return True   # JPG 머리인데 못 엶 → 다시 저장 시도 (안 되면 BadImage)
+
+
+def _tiny(data):
+    try:
+        from PIL import Image
+        w, h = Image.open(io.BytesIO(data)).size
+        return w <= 2 and h <= 2
+    except Exception:  # noqa: BLE001
+        return False

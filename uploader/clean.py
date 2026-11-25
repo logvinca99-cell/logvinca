@@ -173,6 +173,11 @@ def auto_fix(row, opts, rule_srcs):
         if n:
             row["상세설명"] = html
             notes["rule_imgs"] = n
+    if row.get("상세설명"):   # 숨은 추적 그림(퍼센티 등 1px 그림·추적 주소)·방문 알림
+        html, n = convert.strip_trackers_count(row.get("상세설명"))
+        if n:
+            row["상세설명"] = html
+            notes["trackers"] = n
     return row, notes
 
 
@@ -185,7 +190,7 @@ def import_excel(db, path, filename, opts=None, progress=None, should_stop=None)
     bid = db.x("INSERT INTO clean_batch(created_at, file_name, tags, store_tag) VALUES(?,?,?,?)",
                (now, filename, srctags.join(srctags.parse(opts.get("tags"))), int(opts.get("store_tag", True))))
     cols, n = [], 0
-    st = {"total": 0, "price": 0, "code": 0, "rule_imgs": 0, "skipped_empty": 0, "img_skipped": 0, "dup": 0}
+    st = {"total": 0, "price": 0, "code": 0, "rule_imgs": 0, "trackers": 0, "skipped_empty": 0, "img_skipped": 0, "dup": 0}
     from . import inventory
     skip_img = inventory.img_skipper(db) if opts.get("skip_img_dup") else None
     dc = inventory.DupChecker(db)   # 상품명이 완전히 같은 원본이 이미 있거나 앞줄에 있으면 넣지 않음
@@ -219,6 +224,7 @@ def import_excel(db, path, filename, opts=None, progress=None, should_stop=None)
         for k in ("price", "code"):
             st[k] += notes.get(k, 0)
         st["rule_imgs"] += notes.get("rule_imgs", 0)
+        st["trackers"] += notes.get("trackers", 0)
         batch.append((i, fixed))
         st["total"] += 1
         n += 1
@@ -230,7 +236,7 @@ def import_excel(db, path, filename, opts=None, progress=None, should_stop=None)
         flush()
     if st["rule_imgs"]:
         db.x("UPDATE clean_rule SET hits=hits+1")
-    note = f"가격 한 칸으로 {st['price']:,} · 상품코드 비움 {st['code']:,}" + (f" · 기억한 공통 이미지 뺌 {st['rule_imgs']:,}장" if st["rule_imgs"] else "")
+    note = f"가격 한 칸으로 {st['price']:,} · 상품코드 비움 {st['code']:,}" + (f" · 기억한 공통 이미지 뺌 {st['rule_imgs']:,}장" if st["rule_imgs"] else "") + (f" · 추적 그림 뺌 {st['trackers']:,}개" if st["trackers"] else "")
     db.x("UPDATE clean_batch SET columns=?, total=?, note=? WHERE id=?", (json.dumps(cols, ensure_ascii=False), st["total"], note, bid))
     _prefetch_batch(db, bid)
     return {**st, "batch_id": bid, "file": filename}

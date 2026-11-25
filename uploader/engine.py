@@ -780,8 +780,10 @@ class Runner:
                 wm = (marked, lambda data: watermark.apply(data, store, cfg), watermark.signature(cfg, store))
             url_map, n1, _ = self._images(client, pool, cache, sid, thumbs, True, lid, label, on_wait, wm=wm)
             details = convert.detail_images_to_upload(row, cfg)
-            dmap, n2, failed = self._images(client, pool, cache, DETAIL_SCOPE, details, False, lid, label, on_wait)
+            tiny = []
+            dmap, n2, failed = self._images(client, pool, cache, DETAIL_SCOPE, details, False, lid, label, on_wait, tiny=tiny)
             url_map.update(dmap)
+            n_trk = convert.strip_trackers_count(row.get("상세설명") or "")[1] + len(tiny)
             if failed and cfg.get("detail_bad_image") == "fail":
                 raise naver.ApiError(f"상세 이미지 {len(failed)}장을 받지 못했거나 그림이 아님 (설정: 그 상품 실패) — 예: {failed[0]}")
             # 옵션 사진 묶음 → 2열 그림 (표·CSS 없이: 모바일에서도 선명하고 늘 2열)
@@ -789,9 +791,12 @@ class Runner:
             if boxes:
                 kw["opt_urls"] = self._option_images(client, cache, boxes, convert.option_look(cfg, store), lid, label, on_wait)
             body = convert.build_body(row, cfg, cat_id, url_map, **kw)
-            if failed:   # 못 받거나 그림이 아닌 상세 이미지는 그 한 장만 빼고 올림 (네이버 밖 주소가 남지 않게)
-                body["originProduct"]["detailContent"] = drop_images(body["originProduct"]["detailContent"], failed)
+            if failed or tiny:   # 못 받거나 그림이 아닌 상세 이미지·추적 그림은 그 한 장만 빼고 올림 (네이버 밖 주소가 남지 않게)
+                body["originProduct"]["detailContent"] = drop_images(body["originProduct"]["detailContent"], failed + tiny)
+            if failed:
                 notes.append(f"상세 이미지 {len(failed)}장 빼고 올림 (못 받음·그림 아님)")
+            if n_trk:
+                notes.append(f"추적 그림 {n_trk}개 뺌")
             iss = convert.mobile_issues(body["originProduct"]["detailContent"])
             if iss:   # 스토어 상단·하단 HTML 등에 남은 것
                 notes.append("모바일에서 흐린 캡처로 보일 수 있음: " + ", ".join(iss))
@@ -929,7 +934,7 @@ class Runner:
             out.append([saved[kk] for kk in keys])
         return out
 
-    def _images(self, client, pool, cache, scope, srcs, required, lid, label, on_wait, wm=None):
+    def _images(self, client, pool, cache, scope, srcs, required, lid, label, on_wait, wm=None, tiny=None):
         """(원본→네이버 주소, 새로 올린 수, 못 받은 주소). required면 하나라도 못 받으면 실패.
         wm=(워터마크 넣을 원본 주소들, 변환 함수, 서명): 그 이미지는 워터마크를 넣어 따로 올리고 따로 기억한다."""
         if not srcs:
@@ -959,6 +964,9 @@ class Runner:
                         self._log("warn", f"워터마크 못 넣음 · {e}")
                 got.append((u, data, ctype))
             except Exception as e:  # noqa: BLE001
+                if isinstance(e, imgfix.TinyImage) and not required and tiny is not None:
+                    tiny.append(u)   # 보이지 않는 추적 그림 → 실패가 아니라 그냥 뺌
+                    continue
                 if required:
                     if isinstance(e, imgfix.BadImage):
                         raise naver.ApiError(f"대표/추가 이미지: {e}") from None
