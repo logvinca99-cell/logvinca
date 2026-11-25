@@ -1,0 +1,33 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>미스터 체리 워터마크 (새 느낌)</title><link rel="stylesheet" href="style4.css">
+<style>
+ html,body{background:transparent} body{width:340px}
+ .wrap{display:inline-block;padding:0 6px 14px;margin-bottom:80px}
+ .nm{font-weight:900;letter-spacing:-.05em;line-height:1;white-space:nowrap}
+ /* N1 가격표(행택): 위에서 끈으로 매달린 크림색 태그 */
+ #n1 .s{position:relative;width:210px;padding-top:44px;text-align:center}
+ #n1 .str{position:absolute;left:50%;top:0;width:3px;height:56px;margin-left:-1.5px;background:#7A4A3A}
+ #n1 .tag{position:relative;background:#FFF6E9;border:3px solid #9E1B31;border-radius:14px 14px 22px 22px;padding:36px 0 16px;box-shadow:0 6px 10px rgba(0,0,0,.18)}
+ #n1 .tag::before{content:"";position:absolute;left:50%;top:9px;width:12px;height:12px;margin-left:-6px;border-radius:50%;background:#fff;border:3px solid #9E1B31}
+ #n1 .nm{font-size:27px;color:#9E1B31}
+ #n1 .sub{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:6px}
+ #n1 .sub i{display:block;width:26px;height:2px;background:#E9B8BF}
+ /* N2 체리 모양: 꼭지가 위 가장자리에 붙고, 열매 두 알 위에 이름 */
+ #n2 .s{position:relative;width:230px;height:186px}
+ #n2 svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+ #n2 .nm{position:absolute;left:0;right:0;top:126px;text-align:center;color:#fff;font-size:26px;text-shadow:0 2px 0 rgba(120,0,20,.35)}
+ /* N3 먹색 노치 탭 + 체리색 점 */
+ #n3 .s{display:inline-flex;align-items:center;gap:10px;background:#2A1418;color:#FFF3E6;border-radius:0 0 24px 24px;padding:14px 26px 16px 22px;box-shadow:0 3px 0 #fff,3px 0 0 #fff,-3px 0 0 #fff,3px 3px 0 #fff,-3px 3px 0 #fff}
+ #n3 .nm{font-size:27px}
+ #n3 .dot{display:inline-flex;gap:3px} #n3 .dot b{display:block;width:13px;height:13px;border-radius:50%;background:#E0344B}
+</style></head><body>
+<div class="wrap" id="n1"><div class="s"><span class="str"></span><div class="tag"><div class="nm">미스터 체리</div><div class="sub"><i></i><img src="logo.svg" width="26" height="26" alt=""><i></i></div></div></div></div><br>
+<div class="wrap" id="n2"><div class="s"><svg viewBox="0 0 230 186">
+  <path d="M80 112 Q86 44 118 0" fill="none" stroke="#3D8F4F" stroke-width="7" stroke-linecap="round"/>
+  <path d="M152 112 Q150 50 118 0" fill="none" stroke="#3D8F4F" stroke-width="7" stroke-linecap="round"/>
+  <path d="M119 4 Q139 -2 160 8 Q140 22 119 4Z" fill="#5BB46B"/>
+  <circle cx="76" cy="134" r="52" fill="#E0344B" stroke="#fff" stroke-width="5"/><circle cx="154" cy="134" r="52" fill="#E0344B" stroke="#fff" stroke-width="5"/>
+  <circle cx="76" cy="134" r="49.5" fill="#E0344B"/>
+  <ellipse cx="52" cy="110" rx="12" ry="7" fill="#fff" opacity=".55" transform="rotate(-35 52 110)"/><ellipse cx="132" cy="110" rx="12" ry="7" fill="#fff" opacity=".55" transform="rotate(-35 132 110)"/>
+ </svg><div class="nm">미스터 체리</div></div></div><br>
+<div class="wrap" id="n3"><div class="s"><span class="dot"><b></b><b></b></span><span class="nm">미스터 체리</span></div></div>
+</body></html>
