@@ -1,0 +1,21 @@
+/* 라벤더라 스토어 꾸미기 2차 — 고상하고 우아하게
+   아이보리·안개 보라 바탕 + 짙은 가지색, 선 라벤더 장식, 아치 프레임, 가는 글씨, 세리프 영문 */
+@font-face { font-family: "Pre"; font-weight: 300; src: url("../fonts/Pretendard-Light.otf"); }
+@font-face { font-family: "Pre"; font-weight: 400; src: url("../fonts/Pretendard-Regular.otf"); }
+@font-face { font-family: "Pre"; font-weight: 500; src: url("../fonts/Pretendard-Medium.otf"); }
+@font-face { font-family: "Pre"; font-weight: 600; src: url("../fonts/Pretendard-SemiBold.otf"); }
+@font-face { font-family: "Ser"; font-weight: 400; src: url("../fonts/NotoSerif-Latin-400.ttf"); }
+@font-face { font-family: "Ser"; font-weight: 500; src: url("../fonts/NotoSerif-Latin-500.ttf"); }
+:root { --au: #251D31; --au2: #3A2F4A; --lav: #C3B2D6; --lavd: #8E7BAB; --mist: #EFE9F5; --iv: #F8F5F0; --ink: #251D31; --gray: #7A7086; --line: #D9CFE5; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { overflow: hidden; }
+body { position: relative; overflow: hidden; font-family: "Pre", sans-serif; font-weight: 400; color: var(--ink); letter-spacing: -0.02em; word-break: keep-all; -webkit-font-smoothing: antialiased; }
+b { font-weight: 600; }
+.pc { width: 1920px; height: 400px; } .m { width: 750px; height: 600px; }
+.ser { font-family: "Ser", serif; font-weight: 500; letter-spacing: .32em; }
+.lav { color: var(--lav); } .lavd { color: var(--lavd); }
+.in { position: absolute; top: 0; bottom: 0; }
+.pc .in { left: 360px; right: 360px; } .m .in { left: 40px; right: 40px; }
+.sprig { display: block; }
+.rule { height: 1px; background: currentColor; opacity: .35; }
+.arch { border-radius: 999px 999px 0 0; }
