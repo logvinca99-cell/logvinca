@@ -1,0 +1,23 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>미스터 체리 상단</title><link rel="stylesheet" href="style4.css"><style>
+ .w{padding:34px 36px 40px}
+ .top{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:-2px}
+ .tab{background:var(--r);color:#fff;border-radius:22px 22px 0 0;padding:14px 30px 12px;font-weight:900;font-size:28px;letter-spacing:-.04em}
+ .panel{background:var(--rl);border-top:6px solid var(--r);border-radius:0 30px 30px 30px;padding:34px 34px 34px}
+ .h{text-align:center;font-weight:900;font-size:44px;letter-spacing:-.05em;line-height:1.3}
+ .h em{font-style:normal;color:var(--r)}
+ .sub{text-align:center;font-weight:700;font-size:25px;color:var(--gray);margin-top:6px}
+ .road{position:relative;height:150px;margin:20px 10px 0;background:#fff;border-radius:22px}
+ .ln{position:absolute;left:60px;right:60px;top:92px;height:10px;border-radius:10px;background:repeating-linear-gradient(90deg,var(--line) 0 18px,transparent 18px 30px)}
+ .done{position:absolute;left:60px;top:92px;height:10px;width:58%;border-radius:10px;background:var(--r)}
+ .dot{position:absolute;top:80px;width:34px;height:34px;margin-left:-17px;border-radius:50%;background:#fff;border:6px solid var(--r)}
+ .dot.end{background:var(--r)}
+ .lab{position:absolute;top:118px;transform:translateX(-50%);font-weight:800;font-size:22px}
+ .truck{position:absolute;top:28px;left:calc(60px + 58%);margin-left:-30px;color:var(--r);font-size:58px}
+ .pin{position:absolute;right:24px;top:18px;background:var(--r);color:#fff;border-radius:12px;padding:4px 14px;font-weight:900;font-size:22px}
+</style></head><body><div class="w"><div class="top"><div class="tab">배송 안내</div><div class="logo"><img src="logo.svg" width="50" height="50" alt=""><span class="name" style="font-size:30px">미스터 체리</span></div></div>
+<div class="panel"><div class="h">받아보시기까지 <em>약 2주</em> 소요됩니다</div><div class="sub">주문 후 준비되어 발송되는 상품이에요 (영업일 기준 7~15일)</div>
+<div class="road"><div class="ln"></div><div class="done"></div><div class="pin">약 2주 후 도착!</div><div class="truck"><svg class="ic" viewBox="0 0 24 24"><path d="M1 4h14v12H1z"/><path d="M15 8h4l4 4v4h-8z"/><circle cx="5.5" cy="18.5" r="2"/><circle cx="18.5" cy="18.5" r="2"/></svg></div>
+<div class="dot" style="left:60px"></div><div class="lab" style="left:60px">주문</div>
+<div class="dot" style="left:calc(60px + 58%)"></div><div class="lab" style="left:calc(60px + 58%)">출고</div>
+<div class="dot end" style="left:calc(100% - 60px)"></div><div class="lab" style="left:calc(100% - 60px)">도착</div></div>
+</div></div></body></html>
