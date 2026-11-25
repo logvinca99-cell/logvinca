@@ -15,6 +15,9 @@ const MAX_H = 2000;           // 장당 최대 세로(px, 출력 기준)
 const SCALE = 1000 / 860;     // 860px 디자인 → 가로 1000px 출력
 
 const jobs = [
+  { file: 'store2_profile.html', out: 'store_profile_1300_A', width: 1000, height: 1000, scale: 1.3, vars: { __V__: 'A' } },
+  { file: 'store2_profile.html', out: 'store_profile_1300_B', width: 1000, height: 1000, scale: 1.3, vars: { __V__: 'B' } },
+  { file: 'store2_profile.html', out: 'store_profile_1300_C', width: 1000, height: 1000, scale: 1.3, vars: { __V__: 'C' } },
   { file: 'store2_promo1.html', out: 'store_promo1_pc_1920x400', width: 1920, height: 400, scale: 1, vars: { __SIZE__: 'pc' } },
   { file: 'store2_promo1.html', out: 'store_promo1_mobile_750x600', width: 750, height: 600, scale: 1, vars: { __SIZE__: 'm' } },
   { file: 'store2_promo2.html', out: 'store_promo2_pc_1920x400', width: 1920, height: 400, scale: 1, vars: { __SIZE__: 'pc' } },

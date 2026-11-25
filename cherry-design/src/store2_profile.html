@@ -1,0 +1,23 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>미스터 체리 프로필</title><link rel="stylesheet" href="store2.css">
+<style>
+ body{width:1000px;height:1000px}
+ .__V__ {}
+ /* A 빨강 바탕 + 흰 외곽선 캐릭터 꽉 차게 */
+ .A{background:var(--r)}
+ .A .mascot{position:absolute;left:110px;top:150px;width:780px;height:720px;filter:drop-shadow(10px 0 0 #fff) drop-shadow(-10px 0 0 #fff) drop-shadow(0 10px 0 #fff) drop-shadow(0 -10px 0 #fff)}
+ .A .mascot svg > ellipse:first-child{display:none}
+ /* B 흰 바탕 + 빨간 굵은 링 */
+ .B{background:#fff}
+ .B .ring{position:absolute;left:70px;top:70px;width:860px;height:860px;border-radius:50%;border:34px solid var(--r)}
+ .B .mascot{position:absolute;left:170px;top:190px;width:660px;height:610px}
+ /* C 버터 바탕 + 체리 + 아래 이름 */
+ .C{background:var(--bt)}
+ .C .sun{position:absolute;left:50%;top:50%;width:4000px;height:4000px;margin:-2000px 0 0 -2000px;background:repeating-conic-gradient(rgba(255,255,255,.4) 0 8deg,transparent 8deg 20deg)}
+ .C .mascot{position:absolute;left:190px;top:120px;width:620px;height:572px}
+ .C .nm{position:absolute;left:0;right:0;bottom:150px;text-align:center;font-weight:900;font-size:120px;letter-spacing:-.06em;color:var(--r)}
+</style></head><body class="__V__">
+<div class="sun"></div><div class="ring"></div>
+<div class="mascot" data-pose="plain"></div>
+<div class="nm"></div>
+<script>document.querySelector('.nm').textContent = document.body.className==='C' ? '미스터 체리' : '';</script>
+<script src="mascot4.js"></script></body></html>
