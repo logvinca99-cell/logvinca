@@ -23,7 +23,15 @@
   const outL = limb('M11 108 Q4 114 7 122'), outR = limb('M134 108 Q141 114 138 122');
   const waveR = limb('M133 98 Q145 86 141 70');
   const heart = `<path d="M128 44 c-6 -8 -17 -2 -11 8 l11 11 l11 -11 c6 -10 -5 -16 -11 -8 z" fill="${HL}"/>`;
-  const poses = { plain: body(false) + outL + outR, wave: body(false) + outL + waveR, love: body(true) + outL + outR + heart };
+  const coupon = `<g transform="rotate(-6 72 122)"><rect x="36" y="108" width="74" height="30" rx="6" fill="#fff" stroke="${RD}" stroke-width="3.5"/>
+      <path d="M58 108 V138" stroke="${RD}" stroke-width="2.5" stroke-dasharray="4 4"/><circle cx="47" cy="123" r="5" fill="${R}"/>
+      <text x="84" y="130" font-family="sans-serif" font-weight="900" font-size="17" fill="${R}" text-anchor="middle">₩</text></g>`;
+  const crown = `<g transform="translate(80 -2) scale(.62) translate(-60 -8)"><path d="M38 26 L44 8 L52 20 L60 2 L68 20 L76 8 L82 26 Z" fill="#FFD54A" stroke="#E0A800" stroke-width="3" stroke-linejoin="round"/>
+      <circle cx="44" cy="8" r="3.5" fill="#fff"/><circle cx="60" cy="2" r="3.5" fill="#fff"/><circle cx="76" cy="8" r="3.5" fill="#fff"/></g>`;
+  const upL = limb('M12 96 Q0 84 4 66'), upR = limb('M133 98 Q145 86 141 68');
+  const poses = { plain: body(false) + outL + outR, wave: body(false) + outL + waveR, love: body(true) + outL + outR + heart,
+                  coupon: body(false) + limb('M14 104 Q12 118 40 120') + limb('M132 106 Q132 118 106 118') + coupon,
+                  king: crown + body(false) + upL + upR };
   for (const el of document.querySelectorAll('.mascot')) {
     const p = poses[el.dataset.pose] ? el.dataset.pose : 'plain';
     el.innerHTML = `<svg viewBox="-4 -4 156 144" style="display:block;width:100%;height:100%;overflow:visible">${poses[p]}</svg>`;

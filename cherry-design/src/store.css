@@ -1,0 +1,19 @@
+/* 미스터 체리 스토어 꾸미기 — 체리 빨강 + 버터 노랑, 나눔스퀘어 네오 (에이바우트 스토어 틀) */
+@font-face { font-family: "NSN"; font-weight: 400; src: url("../fonts/NanumSquareNeo-bRg.ttf"); }
+@font-face { font-family: "NSN"; font-weight: 700; src: url("../fonts/NanumSquareNeo-cBd.ttf"); }
+@font-face { font-family: "NSN"; font-weight: 800; src: url("../fonts/NanumSquareNeo-dEb.ttf"); }
+@font-face { font-family: "NSN"; font-weight: 900; src: url("../fonts/NanumSquareNeo-eHv.ttf"); }
+@font-face { font-family: "Anton"; font-weight: 400; src: url("../../about-design/fonts/Anton-400.ttf"); }
+@font-face { font-family: "Inst"; font-style: italic; src: url("../../about-design/fonts/InstrumentSerif-Italic.ttf"); }
+:root { --plum: #9E1B31; --mark: #FFE08A; --ink: #2A1418; --gray: #7A6468; --tint: #FFF0F2; --line: #F3C9CF; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: "NSN", sans-serif; font-weight: 400; color: var(--ink); letter-spacing: -0.03em; word-break: keep-all; -webkit-font-smoothing: antialiased; }
+b { font-weight: 800; }
+.bg { background: var(--plum); }
+.k900 { font-weight: 900; letter-spacing: -0.05em; line-height: 1.15; }
+.pl { color: var(--plum); }
+.num { font-family: "Anton", sans-serif; font-weight: 400; letter-spacing: 0; line-height: 1; }
+.en { font-family: "Inst", serif; font-style: italic; letter-spacing: 0; line-height: 1; }
+.y { color: var(--mark); }
+.hm { display: block; flex: none; }
+.mb { filter: drop-shadow(3px 0 0 #fff) drop-shadow(-3px 0 0 #fff) drop-shadow(0 3px 0 #fff) drop-shadow(0 -3px 0 #fff); }
