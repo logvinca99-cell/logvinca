@@ -74,3 +74,7 @@
 | `cherry_wm_B_white_pill.png` | 흰 알약 + 빨간 테두리 | 493 × 150 | 22% |
 | `cherry_wm_C_ribbon.png` | 위에서 걸린 리본 + 캐릭터 | 439 × 471 | 15% |
 | `cherry_wm_preview.png` | 위 3종을 썸네일 상단 가운데에 넣어 본 미리보기 | | |
+| `cherry_wm_C1_stitch.png` | C 발전 1: 안쪽 바느질 점선 리본 + 흰 원 캐릭터 (영문 삭제) | 497 × 400 | 15% |
+| `cherry_wm_C2_sit.png` | C 발전 2: 캐릭터가 리본 위에 걸터앉음 | 506 × 418 | 15% |
+| `cherry_wm_C3_shield.png` | C 발전 3: 아래가 둥근 배지 + 양쪽 접힌 띠 | 506 × 378 | 15% |
+| `cherry_wm_C_variants_preview.png` | C1~C3을 썸네일 상단 가운데에 넣어 본 미리보기 | | |

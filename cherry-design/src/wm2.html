@@ -1,0 +1,35 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>미스터 체리 리본 워터마크</title><link rel="stylesheet" href="style4.css">
+<style>
+ html,body{background:transparent} body{width:300px}
+ .wrap{display:inline-block;padding:8px 10px}
+ .nm{font-weight:900;letter-spacing:-.05em;line-height:1;white-space:nowrap;color:#fff}
+
+ /* C1 바느질 리본: 안쪽 점선 + 흰 원 캐릭터 */
+ #c1 .s{position:relative;width:200px;background:var(--r);text-align:center;padding:12px 0 40px;clip-path:polygon(0 0,100% 0,100% 100%,50% 86%,0 100%);filter:drop-shadow(0 0 0 #fff)}
+ #c1 .st{position:absolute;inset:6px 6px 0;border:2px dashed rgba(255,255,255,.65);border-bottom:0;pointer-events:none}
+ #c1 .cb{width:72px;height:72px;margin:0 auto;border-radius:50%;background:#fff;display:grid;place-items:center}
+ #c1 .mascot{width:60px;height:55px;margin-top:4px}
+ #c1 .nm{font-size:26px;margin-top:10px}
+ #c1 .out{background:#fff;padding:3px;clip-path:polygon(0 0,100% 0,100% 100%,50% 86%,0 100%)}
+
+ /* C2 캐릭터가 리본 위에 걸터앉음 */
+ #c2 .s{position:relative;width:210px;padding-top:84px}
+ #c2 .mascot{position:absolute;left:50%;top:0;transform:translateX(-50%);width:104px;height:96px;z-index:2}
+ #c2 .rb{position:relative;background:var(--r);text-align:center;padding:22px 0 34px;clip-path:polygon(0 0,100% 0,100% 100%,50% 82%,0 100%)}
+ #c2 .rb .nm{font-size:28px}
+ #c2 .out{background:#fff;padding:3px;clip-path:polygon(0 0,100% 0,100% 100%,50% 82%,0 100%)}
+
+ /* C3 둥근 방패 배지 + 접힌 양쪽 띠 */
+ #c3 .s{position:relative;width:210px;padding:0 16px}
+ #c3 .fold{position:absolute;top:0;width:22px;height:30px;background:var(--rd)}
+ #c3 .fold.l{left:0;clip-path:polygon(0 0,100% 0,100% 100%,40% 70%)} #c3 .fold.r{right:0;clip-path:polygon(0 0,100% 0,60% 70%,0 100%)}
+ #c3 .bd{position:relative;background:var(--r);border-radius:0 0 100px 100px;text-align:center;padding:14px 0 26px;box-shadow:0 0 0 3px #fff}
+ #c3 .cb{width:70px;height:70px;margin:0 auto;border-radius:50%;background:#fff;display:grid;place-items:center}
+ #c3 .mascot{width:58px;height:53px;margin-top:4px}
+ #c3 .nm{font-size:25px;margin-top:8px}
+ #c3 .line{width:60px;height:3px;border-radius:3px;background:rgba(255,255,255,.6);margin:10px auto 0}
+</style></head><body>
+<div class="wrap" id="c1"><div class="out"><div class="s"><span class="st"></span><div class="cb"><div class="mascot" data-pose="plain"></div></div><div class="nm">미스터 체리</div></div></div></div><br>
+<div class="wrap" id="c2"><div class="s"><div class="mascot" data-pose="wave"></div><div class="out"><div class="rb"><div class="nm">미스터 체리</div></div></div></div></div><br>
+<div class="wrap" id="c3"><div class="s"><span class="fold l"></span><span class="fold r"></span><div class="bd"><div class="cb"><div class="mascot" data-pose="plain"></div></div><div class="nm">미스터 체리</div><div class="line"></div></div></div></div>
+<script src="mascot4.js"></script></body></html>
