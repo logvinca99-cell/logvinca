@@ -17,6 +17,8 @@ const SCALE = 1000 / 860;     // 860px 디자인 → 가로 1000px 출력
 const jobs = [
   { file: 'top.html',    out: 'cherry_top',    width: 860, scale: SCALE, split: true },
   { file: 'bottom.html', out: 'cherry_bottom', width: 860, scale: SCALE, split: true },
+  { file: 'top2.html',    out: 'cherry2_top',    width: 860, scale: SCALE, split: true },
+  { file: 'bottom2.html', out: 'cherry2_bottom', width: 860, scale: SCALE, split: true },
 ];
 
 function compress(file) {
