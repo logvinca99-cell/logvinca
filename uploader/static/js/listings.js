@@ -1096,7 +1096,7 @@ App.page("listings", {
         App.run = await App.api("/api/run/stop", { json: body() }); this.renderRun(App.run); App.renderSideRun();
       });
       clearInterval(this.timer);
-      this.timer = setInterval(() => { if (App.run?.running && !App.userBusy()) this.load(); }, 4000);
+      this.timer = setInterval(() => { if (App.run?.running && !App.userBusy() && !document.hidden) this.load(); }, 4000);
     }
     const m = all ? r : mine;
     const paused = all ? r.paused : mine.paused || r.paused;

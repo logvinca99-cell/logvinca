@@ -446,8 +446,11 @@ const App = {
     for (const t of list) {
       const prev = this.taskSeen[t.id];
       if (prev === "running" && t.status !== "running") this.taskFinished(t);
+      // 창이 안 보이는 사이에 시작해서 끝난 작업도 알림을 놓치지 않게
+      else if (prev === undefined && t.status !== "running" && this._resumeFrom && t.ended_at && t.ended_at >= this._resumeFrom) this.taskFinished(t);
       this.taskSeen[t.id] = t.status;
     }
+    if (!document.hidden) this._resumeFrom = null;
     this._tasksRunning = list.some((t) => t.status === "running");
   },
 
@@ -878,7 +881,23 @@ const App = {
     if (el._html !== html) { el._html = html; el.innerHTML = html; }
   },
 
+  /* 창(탭)이 안 보이면 주기 갱신을 멈춤 (서버 부담 0) — 다시 보이면 바로 한 번 갱신하고 이어서 */
+  watchVisible() {
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) { this._hiddenAt ||= Date.now() / 1000; return; }
+      this._resumeFrom = this._hiddenAt;
+      this._hiddenAt = null;
+      clearTimeout(this._runT); clearTimeout(this._stateT);
+      this.pollRun();
+      this.pollState();
+      this.refreshNav(true);
+      this.emit("visible");
+    });
+  },
+
   async pollRun() {
+    clearTimeout(this._runT);
+    if (document.hidden) { this._runT = setTimeout(() => this.pollRun(), 3000); return; }
     try {
       const was = this.run?.running;
       this.run = await this.api("/api/run");
@@ -891,12 +910,14 @@ const App = {
         this.refreshNav(true);
       }
     } catch (e) { /* 서버가 꺼졌을 수 있음 */ }
-    setTimeout(() => this.pollRun(), this.run?.running ? 1000 : 3000);
+    this._runT = setTimeout(() => this.pollRun(), this.run?.running ? 1000 : 3000);
   },
 
   async pollState() {
+    clearTimeout(this._stateT);
+    if (document.hidden) { this._stateT = setTimeout(() => this.pollState(), 3000); return; }
     try { await this.refreshState(); } catch (e) { /* 무시 */ }
-    setTimeout(() => this.pollState(), this._tasksRunning ? 1200 : 5000);
+    this._stateT = setTimeout(() => this.pollState(), this._tasksRunning ? 1200 : 5000);
   },
 
   // ── 서랍 (오른쪽 상세)
@@ -1626,7 +1647,8 @@ const App = {
     for (const t of this.state.tasks) this.taskSeen[t.id] = t.status;
     this.route();
     this.pollRun();
-    setTimeout(() => this.pollState(), 1500);
+    this._stateT = setTimeout(() => this.pollState(), 1500);
+    this.watchVisible();
   },
 };
 window.onImgError = onImgError;
