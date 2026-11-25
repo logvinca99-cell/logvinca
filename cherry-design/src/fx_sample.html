@@ -1,0 +1,86 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>미스터 체리 효과 견본</title><style>
+@font-face{font-family:"NSN";font-weight:400;src:url("../fonts/NanumSquareNeo-bRg.ttf")}
+@font-face{font-family:"NSN";font-weight:800;src:url("../fonts/NanumSquareNeo-dEb.ttf")}
+@font-face{font-family:"NSN";font-weight:900;src:url("../fonts/NanumSquareNeo-eHv.ttf")}
+@font-face{font-family:"Jua";src:url("../fonts/Jua-400.ttf")}
+:root{--r:#E0344B;--rd:#9E1B31;--rl:#FFF0F2;--bt:#FFE08A;--ink:#2A1418;--gray:#7A6468}
+*{box-sizing:border-box;margin:0;padding:0}
+body{width:2390px;background:#F2EEEC;font-family:"NSN",sans-serif;color:var(--ink);letter-spacing:-.035em;word-break:keep-all;padding:70px 70px 40px;-webkit-font-smoothing:antialiased}
+h1{font-weight:900;font-size:54px;letter-spacing:-.05em} .lead{margin-top:10px;font-size:26px;color:var(--gray)}
+.grid{margin-top:50px;display:grid;grid-template-columns:repeat(3,750px);gap:60px 50px}
+.cap{margin-bottom:16px} .cap b{display:inline-block;background:var(--ink);color:#fff;border-radius:10px;padding:4px 14px;font-size:24px;font-weight:900;margin-right:10px}
+.cap span{font-size:27px;font-weight:900} .cap p{margin-top:6px;font-size:22px;color:var(--gray);line-height:1.45}
+.cap.best b{background:var(--r)}
+/* 기본 배너 */
+.pn{position:relative;width:750px;height:600px;overflow:hidden;background:var(--rl);border-radius:6px}
+.box{position:absolute;left:34px;right:34px;top:62px;bottom:34px;border:6px solid var(--r);border-radius:36px;background:#fff}
+.tt{position:absolute;left:50%;top:0;transform:translate(-50%,-50%);background:var(--r);color:#fff;border-radius:999px;padding:8px 30px;font-weight:900;font-size:27px;white-space:nowrap;z-index:3}
+.c{position:absolute;left:0;right:0;top:58px;text-align:center;z-index:2}
+.big{font-weight:900;font-size:76px;letter-spacing:-.05em;line-height:1.1}
+.big .n{color:var(--r);position:relative;display:inline-block;line-height:1.05}
+.eq{display:flex;justify-content:center;gap:8px;margin-top:20px;font-weight:900;font-size:22px}
+.eq span{background:var(--rl);border-radius:14px;padding:7px 12px;white-space:nowrap} .eq i{font-style:normal;color:var(--r)}
+.mascot{position:absolute;left:50%;bottom:20px;width:170px;height:157px;margin-left:-85px;z-index:4}
+.grain { position: absolute; inset: 0; z-index: 9; pointer-events: none;
+  background-image:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='600' height='600'><filter id='p'><feTurbulence type='fractalNoise' baseFrequency='.012' numOctaves='4' seed='7'/><feDiffuseLighting lighting-color='white' surfaceScale='3'><feDistantLight azimuth='225' elevation='55'/></feDiffuseLighting></filter><rect width='100%' height='100%' filter='url(%23p)'/></svg>"),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 .55 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  background-size: 600px 600px, 240px 240px; mix-blend-mode: soft-light; opacity: .55; }
+
+/* B 겹치기 + 2단 그림자 */
+.vB .box{box-shadow:0 2px 3px rgba(80,0,20,.12),0 26px 50px -14px rgba(80,0,20,.38)}
+.vB .mascot{left:auto;right:-6px;bottom:-14px;margin:0;width:270px;height:250px;filter:drop-shadow(0 14px 12px rgba(80,0,20,.28))}
+.vB .c{right:150px}
+/* C 하프톤 + 리소 어긋남 */
+.vC{background:#FFF4EC}
+.vC .dots{position:absolute;inset:0;z-index:0;background-image:radial-gradient(var(--r) 1.6px,transparent 2px);background-size:14px 14px;opacity:.28;-webkit-mask:radial-gradient(circle at 100% 100%,#000 0,transparent 60%),radial-gradient(circle at 0 0,#000 0,transparent 45%)}
+.vC .big{text-shadow:3px 3px 0 rgba(255,140,165,.75)}
+.vC .big .n{text-shadow:3px 3px 0 rgba(255,214,107,.95)}
+/* D 손그림 표시 */
+.vD .hand{position:absolute;z-index:3;pointer-events:none}
+.vD .note{position:absolute;z-index:3;font-family:"Jua";font-size:30px;color:var(--r);transform:rotate(-8deg)}
+/* E 큰 배경 글자 + 반짝임 */
+.vE .bgw{position:absolute;left:0;right:0;top:350px;text-align:center;font-weight:900;font-size:150px;letter-spacing:-.04em;color:rgba(224,52,75,.07);z-index:1;line-height:1}
+.vE .box{background:transparent}
+.vE .sp{position:absolute;z-index:3;color:#E8B23A;font-size:34px;line-height:1}
+/* F 테이프 + 스티커 */
+.vF .tape{position:absolute;z-index:5;width:130px;height:38px;background:rgba(244,222,180,.82);box-shadow:0 2px 3px rgba(0,0,0,.08);border-left:2px dashed rgba(255,255,255,.6);border-right:2px dashed rgba(255,255,255,.6)}
+.vF .stk{position:absolute;z-index:5;right:40px;top:170px;width:130px;height:130px;border-radius:50%;background:var(--bt);border:4px dashed #fff;box-shadow:0 0 0 4px var(--bt),0 10px 16px -4px rgba(0,0,0,.25);display:grid;place-items:center;text-align:center;font-family:"Jua";font-size:28px;line-height:1.15;transform:rotate(12deg)}
+/* G 추천 조합 */
+.vG{background:#FFF4EC}
+.vG .dots{position:absolute;inset:0;z-index:0;background-image:radial-gradient(var(--r) 1.6px,transparent 2px);background-size:14px 14px;opacity:.25;-webkit-mask:radial-gradient(circle at 100% 100%,#000 0,transparent 55%)}
+.vG .box{box-shadow:0 2px 3px rgba(80,0,20,.12),0 26px 50px -14px rgba(80,0,20,.38)}
+.vG .mascot{left:auto;right:-6px;bottom:-14px;margin:0;width:270px;height:250px;filter:drop-shadow(0 14px 12px rgba(80,0,20,.28))}
+.vG .c{right:150px} .vG .hand{position:absolute;z-index:3}
+/* H 톤온톤 */
+.vH{background:linear-gradient(160deg,#FF8A9B,#E0344B 55%,#B71E35)}
+.vH .box{border-color:#FFD1D9;background:linear-gradient(180deg,#FFF6F7,#FFE3E8)}
+.vH .tt{background:#9E1B31}
+.vH .big{color:#7A1225} .vH .big .n{color:#E0344B}
+.vH .eq span{background:#FFD1D9;color:#7A1225} .vH .eq i{color:#B71E35}
+</style></head><body><h1>미스터 체리 · 디자인 효과 견본 시트</h1><p class="lead">같은 배너(최대 3,000원 혜택)에 효과만 바꿔 넣었습니다. 마음에 드는 번호를 골라 주세요.</p><div class="grid"><div><div class="cap"><b>A</b><span>기본 (지금)</span><p>효과 없이 테두리 박스만 쓴 현재 모습입니다.</p></div><div class="pn vA"><div class="box"><div class="tt">알림받기 + 리뷰 쓰면</div>
+<div class="c"><div class="big">최대 <span class="n">3,000원</span><br>혜택</div>
+<div class="eq"><span>알림받기 <i>1,000원</i> 할인</span><span>리뷰 최대 <i>2,000원</i> 적립</span></div></div></div>
+<div class="mascot" data-pose="coupon"></div><div class="grain"></div></div></div><div><div class="cap"><b>B</b><span>겹치기 + 2단 그림자</span><p>캐릭터를 크게 키워 박스 밖으로 튀어나오게 하고, 박스 아래에 진한 그림자와 넓은 그림자를 같이 깔았습니다.</p></div><div class="pn vB"><div class="box"><div class="tt">알림받기 + 리뷰 쓰면</div>
+<div class="c"><div class="big">최대 <span class="n">3,000원</span><br>혜택</div>
+<div class="eq"><span>알림받기 <i>1,000원</i> 할인</span><span>리뷰 최대 <i>2,000원</i> 적립</span></div></div></div>
+<div class="mascot" data-pose="coupon"></div><div class="grain"></div></div></div><div><div class="cap"><b>C</b><span>하프톤 도트 + 리소 어긋남</span><p>모서리에 인쇄 망점 무늬를 깔고, 제목 글자 뒤에 색을 살짝 어긋나게 찍어 옛날 인쇄물 느낌을 냈습니다.</p></div><div class="pn vC"><div class="dots"></div><div class="box"><div class="tt">알림받기 + 리뷰 쓰면</div>
+<div class="c"><div class="big">최대 <span class="n">3,000원</span><br>혜택</div>
+<div class="eq"><span>알림받기 <i>1,000원</i> 할인</span><span>리뷰 최대 <i>2,000원</i> 적립</span></div></div></div>
+<div class="mascot" data-pose="coupon"></div><div class="grain"></div></div></div><div><div class="cap"><b>D</b><span>손그림 표시</span><p>"3,000원"에 펜으로 그린 듯한 동그라미와 화살표, 손글씨 메모를 더했습니다.</p></div><div class="pn vD"><div class="box"><div class="tt">알림받기 + 리뷰 쓰면</div>
+<div class="c"><div class="big">최대 <span class="n">3,000원</span><br>혜택</div>
+<div class="eq"><span>알림받기 <i>1,000원</i> 할인</span><span>리뷰 최대 <i>2,000원</i> 적립</span></div></div></div>
+<div class="mascot" data-pose="coupon"></div><svg class="hand circ" viewBox="0 0 300 120" preserveAspectRatio="none"><path d="M140 8 C240 2 296 28 294 60 C292 98 220 116 150 115 C66 114 6 96 6 60 C6 24 74 4 176 12" fill="none" stroke="#E0344B" stroke-width="5" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg><div class="note" style="left:56px;top:430px">이거 놓치면 손해!</div><div class="grain"></div></div></div><div><div class="cap"><b>E</b><span>큰 배경 글자 + 반짝임</span><p>박스 뒤에 "CHERRY"를 아주 크고 옅게 깔고, 금색 반짝임을 세 개만 찍었습니다.</p></div><div class="pn vE"><div class="bgw">CHERRY</div><div class="box"><div class="tt">알림받기 + 리뷰 쓰면</div>
+<div class="c"><div class="big">최대 <span class="n">3,000원</span><br>혜택</div>
+<div class="eq"><span>알림받기 <i>1,000원</i> 할인</span><span>리뷰 최대 <i>2,000원</i> 적립</span></div></div></div>
+<div class="mascot" data-pose="coupon"></div><span class="sp" style="left:90px;top:120px">✦</span><span class="sp" style="right:96px;top:110px;font-size:24px">✦</span><span class="sp" style="left:130px;bottom:120px;font-size:22px">✦</span><div class="grain"></div></div></div><div><div class="cap"><b>F</b><span>마스킹테이프 + 스티커</span><p>박스 모서리에 반투명 테이프를 붙이고, 점선 테두리 스티커를 비스듬히 붙였습니다.</p></div><div class="pn vF"><div class="box"><div class="tt">알림받기 + 리뷰 쓰면</div>
+<div class="c"><div class="big">최대 <span class="n">3,000원</span><br>혜택</div>
+<div class="eq"><span>알림받기 <i>1,000원</i> 할인</span><span>리뷰 최대 <i>2,000원</i> 적립</span></div></div></div>
+<div class="mascot" data-pose="coupon"></div><span class="tape" style="left:6px;top:58px;transform:rotate(-30deg)"></span><span class="tape" style="right:6px;bottom:44px;transform:rotate(-30deg)"></span><div class="stk">최대<br>3천원</div><div class="grain"></div></div></div><div><div class="cap best"><b>G</b><span>추천 조합: 겹치기 + 하프톤 + 손그림</span><p>B·C·D에서 한 가지씩만 가져왔습니다. 세 가지까지만 섞으면 정돈돼 보입니다.</p></div><div class="pn vG"><div class="dots"></div><div class="box"><div class="tt">알림받기 + 리뷰 쓰면</div>
+<div class="c"><div class="big">최대 <span class="n">3,000원</span><br>혜택</div>
+<div class="eq"><span>알림받기 <i>1,000원</i> 할인</span><span>리뷰 최대 <i>2,000원</i> 적립</span></div></div></div>
+<div class="mascot" data-pose="coupon"></div><svg class="hand circ" viewBox="0 0 300 120" preserveAspectRatio="none"><path d="M140 8 C240 2 296 28 294 60 C292 98 220 116 150 115 C66 114 6 96 6 60 C6 24 74 4 176 12" fill="none" stroke="#E0344B" stroke-width="5" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg><div class="grain"></div></div></div><div><div class="cap"><b>H</b><span>톤온톤 (같은 빨강의 진하기 단계)</span><p>다른 색 없이 빨강 하나를 5단계로 나눠 바탕·박스·글자에 썼습니다. 차분하고 고급스러워 보입니다.</p></div><div class="pn vH"><div class="box"><div class="tt">알림받기 + 리뷰 쓰면</div>
+<div class="c"><div class="big">최대 <span class="n">3,000원</span><br>혜택</div>
+<div class="eq"><span>알림받기 <i>1,000원</i> 할인</span><span>리뷰 최대 <i>2,000원</i> 적립</span></div></div></div>
+<div class="mascot" data-pose="coupon"></div><div class="grain"></div></div></div></div><script>document.fonts.ready.then(()=>{for(const sv of document.querySelectorAll('.circ')){const pn=sv.closest('.pn');const n=pn.querySelector('.big .n');const a=pn.getBoundingClientRect(),r=n.getBoundingClientRect();
+sv.style.left=(r.left-a.left-26)+'px';sv.style.top=(r.top-a.top-r.height*0.16)+'px';sv.style.width=(r.width+60)+'px';sv.style.height=(r.height*1.3)+'px';sv.style.left=(r.left-a.left-30)+'px';}});</script><script src="mascot4.js"></script></body></html>

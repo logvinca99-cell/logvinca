@@ -101,3 +101,4 @@
 | `cherry_wm_K1_quarter_left/right.png` | **모서리형** 1: 먹색 사분원 + 체리 + "미스터 체리" (위·옆 여백 0) | 500 × 500 | 18~20% |
 | `cherry_wm_K2_sash_left/right.png` | 모서리형 2: 크림색 대각선 띠 | 476 × 476 | 18~20% |
 | `cherry_wm_K3_label_left/right.png` | 모서리형 3: 크림색 작은 라벨 (한쪽만 둥근) | 505 × 155 | 22~24% |
+효과 견본 시트: `output/cherry_fx_sample_sheet.png` (src/fx_sample.html) — A 기본 / B 겹치기+2단 그림자 / C 하프톤+리소 / D 손그림 / E 큰 배경 글자+반짝임 / F 테이프+스티커 / G 추천 조합 / H 톤온톤
