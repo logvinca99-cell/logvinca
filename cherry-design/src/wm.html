@@ -1,0 +1,22 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>미스터 체리 워터마크</title><link rel="stylesheet" href="style4.css">
+<style>
+ html,body{background:transparent} body{width:280px}
+ .wrap{display:inline-block;padding:6px}
+ .nm{font-weight:900;letter-spacing:-.05em;line-height:1;white-space:nowrap}
+ /* A 빨간 알약 */
+ #a .s{display:inline-flex;align-items:center;gap:8px;background:var(--r);border-radius:999px;padding:6px 20px 6px 8px;box-shadow:0 0 0 3px #fff}
+ #a .ci{width:40px;height:40px;border-radius:50%;background:#fff;display:grid;place-items:center}
+ #a .nm{color:#fff;font-size:28px}
+ /* B 흰 알약 + 빨간 테두리 */
+ #b .s{display:inline-flex;align-items:center;gap:8px;background:#fff;border:3.5px solid var(--r);border-radius:999px;padding:4px 20px 4px 12px}
+ #b .nm{color:var(--ink);font-size:28px} #b .nm span{color:var(--r)}
+ /* C 위에서 걸린 리본 (아래 V자) */
+ #c .s{position:relative;background:var(--r);color:#fff;text-align:center;padding:10px 22px 40px;clip-path:polygon(0 0,100% 0,100% 100%,50% 86%,0 100%);display:inline-flex;flex-direction:column;align-items:center}
+ #c .cb{width:66px;height:66px;border-radius:50%;background:#fff;display:grid;place-items:center} #c .mini{width:54px;height:50px;margin-top:4px}
+ #c .nm{font-size:24px;margin-top:8px}
+ #c .en{font-weight:800;font-size:10px;letter-spacing:.3em;opacity:.9;margin-top:4px}
+</style></head><body>
+<div class="wrap" id="a"><div class="s"><span class="ci"><img src="logo.svg" width="32" height="32" alt=""></span><span class="nm">미스터 체리</span></div></div><br>
+<div class="wrap" id="b"><div class="s"><img src="logo.svg" width="34" height="34" alt=""><span class="nm">미스터 <span>체리</span></span></div></div><br>
+<div class="wrap" id="c"><div class="s"><div class="cb"><div class="mini mascot" data-pose="plain"></div></div><span class="nm">미스터 체리</span><span class="en">MR. CHERRY</span></div></div>
+<script src="mascot4.js"></script></body></html>
