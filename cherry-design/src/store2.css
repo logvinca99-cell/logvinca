@@ -1,0 +1,23 @@
+/* 미스터 체리 스토어 꾸미기 2차 — 상세페이지 4차와 같은 쇼핑몰 공지 스타일
+   가운데 정렬 · 굵은 빨간 테두리 박스 + 걸친 제목 · 흰 원 캐릭터 · 숫자도 나눔스퀘어 네오 */
+@font-face { font-family: "NSN"; font-weight: 400; src: url("../fonts/NanumSquareNeo-bRg.ttf"); }
+@font-face { font-family: "NSN"; font-weight: 700; src: url("../fonts/NanumSquareNeo-cBd.ttf"); }
+@font-face { font-family: "NSN"; font-weight: 800; src: url("../fonts/NanumSquareNeo-dEb.ttf"); }
+@font-face { font-family: "NSN"; font-weight: 900; src: url("../fonts/NanumSquareNeo-eHv.ttf"); }
+:root { --r: #E0344B; --rd: #9E1B31; --rl: #FFF0F2; --bt: #FFE08A; --ink: #2A1418; --gray: #7A6468; --line: #F3C9CF; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { overflow: hidden; }
+body { position: relative; overflow: hidden; font-family: "NSN", sans-serif; font-weight: 400; color: var(--ink); letter-spacing: -0.035em; word-break: keep-all; -webkit-font-smoothing: antialiased; }
+b { font-weight: 900; }
+.pc { width: 1920px; height: 400px; } .m { width: 750px; height: 600px; }
+.r { color: var(--r); } .w { color: #fff; } .bt { color: var(--bt); }
+.in { position: absolute; top: 0; bottom: 0; }
+.pc .in { left: 360px; right: 360px; } .m .in { left: 36px; right: 36px; }
+.mbub { background: #fff; border-radius: 50%; display: grid; place-items: center; box-shadow: 0 6px 0 rgba(0,0,0,.10); }
+.mbub .mascot { width: 80%; height: 74%; margin-top: 6%; }
+.logo { display: inline-flex; align-items: center; gap: 10px; font-weight: 900; letter-spacing: -0.05em; line-height: 1; }
+.pill { display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; font-weight: 900; white-space: nowrap; }
+.pill svg { width: 1em; height: 1em; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linejoin: round; }
+.box { position: relative; border: 6px solid var(--r); border-radius: 36px; background: #fff; }
+.box > .tt { position: absolute; left: 50%; top: 0; transform: translate(-50%, -50%); background: var(--r); color: #fff; border-radius: 999px; font-weight: 900; white-space: nowrap; }
+.adp { display: block; }
