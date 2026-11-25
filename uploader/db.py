@@ -28,6 +28,7 @@ orders    판매 이력 (판매 현황 파일 넣기 — 예전 네이버 주문
     deleted  내림 (네이버에서 지움). 다시 계획하면 같은 줄이 다음 회차로 살아난다.
 """
 
+import copy
 import json
 import os
 import re
@@ -235,6 +236,8 @@ class DB:
     def __init__(self, path=DB_PATH):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         self.lock = threading.RLock()
+        self._path = path
+        self._init_readers()
         self.c = sqlite3.connect(path, check_same_thread=False, timeout=30)
         self.c.row_factory = sqlite3.Row
         self.c.execute("PRAGMA journal_mode=WAL")
@@ -279,7 +282,85 @@ class DB:
                        "WHERE status='running'")
         self.c.execute("UPDATE listings SET status='planned', stage='' WHERE status='queued'")
         self.c.execute("UPDATE runs SET ended_at=started_at WHERE ended_at IS NULL")
+        # 복사본 집계(스토어별 상태 수)를 빠르게 하는 색인
+        self.c.execute("CREATE INDEX IF NOT EXISTS listings_store_stat ON listings(store_id, status, origin_no)")
         self.c.commit()
+        self._optimize()
+
+    # ── 속도: 읽기 전용 연결 묶음 · 짧은 집계 캐시 · 조회 계획 통계
+
+    _READ_MAX = 4   # 읽기 연결 최대 수 (연결마다 캐시 최대 64MB)
+
+    def _init_readers(self):
+        self._path = getattr(self, "_path", None)
+        self._readers, self._n_readers = [], 0
+        self._rcond = threading.Condition()
+        self._cache, self._cache_lock = {}, threading.Lock()
+
+    def _reader(self):
+        """읽기 전용 연결 하나 빌리기 (WAL이라 쓰는 중에도 읽을 수 있음). 없으면 최대 _READ_MAX개까지 새로 만듦."""
+        with self._rcond:
+            while True:
+                if self._readers:
+                    return self._readers.pop()
+                if self._n_readers < self._READ_MAX:
+                    self._n_readers += 1
+                    break
+                self._rcond.wait(5)
+        try:
+            c = sqlite3.connect(self._path, check_same_thread=False, timeout=30, isolation_level=None)
+            c.row_factory = sqlite3.Row
+            c.execute("PRAGMA query_only=ON")
+            c.execute("PRAGMA cache_size=-65536")
+            return c
+        except Exception:
+            with self._rcond:
+                self._n_readers -= 1
+                self._rcond.notify()
+            raise
+
+    def _give_back(self, c):
+        with self._rcond:
+            self._readers.append(c)
+            self._rcond.notify()
+
+    _READ_SQL = re.compile(r"\s*(SELECT|WITH)\b", re.I)
+
+    def cached(self, key, fn, ttl=15):
+        """집계 결과를 잠깐 기억: 그 사이 db에 쓴 것이 하나도 없고(쓰기 연결의 바뀐 줄 수가 같음) ttl초 안이면 다시 계산하지 않는다.
+        돌려주는 값은 복사본(받은 쪽이 고쳐도 캐시는 그대로)."""
+        gen, now = self.c.total_changes, time.time()
+        with self._cache_lock:
+            hit = self._cache.get(key)
+        if hit and hit[0] == gen and now - hit[1] < ttl:
+            return copy.deepcopy(hit[2])
+        val = fn()
+        with self._cache_lock:
+            self._cache[key] = (gen, now, val)
+        return copy.deepcopy(val)
+
+    def _optimize(self):
+        """조회 계획 통계: 가볍게 PRAGMA optimize, 통계가 한 번도 없으면 뒤에서 한 번 ANALYZE (시작을 늦추지 않음)."""
+        try:
+            self.c.execute("PRAGMA analysis_limit=400")
+            self.c.execute("PRAGMA optimize")
+            has = self.c.execute("SELECT 1 FROM sqlite_master WHERE name='sqlite_stat1'").fetchone()
+        except sqlite3.Error:
+            return
+        if has:
+            return
+
+        def bg():
+            time.sleep(15)
+            try:
+                c = sqlite3.connect(self._path, timeout=60)
+                c.execute("PRAGMA analysis_limit=400")
+                c.execute("ANALYZE")
+                c.commit()
+                c.close()
+            except sqlite3.Error:
+                pass
+        threading.Thread(target=bg, daemon=True).start()
 
     # 예전 버전의 db에 새 열을 더한다 (SCHEMA의 CREATE는 이미 있는 표를 바꾸지 않으므로).
     NEW_COLUMNS = {
@@ -640,8 +721,15 @@ class DB:
         self.c.executescript(SCHEMA)  # 색인 다시
 
     def q(self, sql, args=()):
-        with self.lock:
-            return [dict(r) for r in self.c.execute(sql, args).fetchall()]
+        # 쓰기 중인 묶음(tx) 안이거나 SELECT가 아니면 쓰기 연결(잠금), 아니면 읽기 연결로 기다리지 않고 바로
+        if self.lock._is_owned() or not self._READ_SQL.match(sql):
+            with self.lock:
+                return [dict(r) for r in self.c.execute(sql, args).fetchall()]
+        c = self._reader()
+        try:
+            return [dict(r) for r in c.execute(sql, args).fetchall()]
+        finally:
+            self._give_back(c)
 
     def one(self, sql, args=()):
         rows = self.q(sql, args)
@@ -690,31 +778,47 @@ class DB:
 
     # ── 스토어
 
-    def stores(self, with_secret=False):
-        rows = self.q("""
-            SELECT s.*,
-              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.origin_no!='') AS n_live,
-              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.origin_no=''
-                 AND l.status IN ('planned','queued','running')) AS n_pending,
-              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.origin_no!=''
-                 AND l.status IN ('planned','queued','running')) AS n_ops,
-              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.status='fail') AS n_fail,
-              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.status='deleted') AS n_deleted,
-              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.registered_at > s.naver_count_at) AS n_added_since,
-              (SELECT COUNT(*) FROM listing_history h JOIN listings l ON l.id=h.listing_id
-                 WHERE l.store_id=s.id AND h.deleted_at > s.naver_count_at) AS n_removed_since,
-              (SELECT MIN(l.registered_at) FROM listings l WHERE l.store_id=s.id AND l.origin_no!='') AS oldest_at,
-              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.sold_count>0) AS n_sold,
-              (SELECT COUNT(*) FROM listings l WHERE l.store_id=s.id AND l.locked=1 AND l.status!='deleted') AS n_locked,
-              b.name AS business_name
+    def _store_rows(self):
+        """스토어 표 + 스토어별 복사본 수 (한 번에 묶어 셈 — 예전 스토어마다 11번 세던 것과 결과 같음)."""
+        base = self.q("""SELECT s.*, b.name AS business_name
             FROM stores s LEFT JOIN businesses b ON b.id=s.business_id
             ORDER BY s.business_id IS NULL, b.sort, b.id, s.sort, s.id""")
+        agg = {r["store_id"]: r for r in self.q("""SELECT l.store_id,
+              SUM(CASE WHEN l.origin_no!='' THEN 1 ELSE 0 END) AS n_live,
+              SUM(CASE WHEN l.origin_no='' AND l.status IN ('planned','queued','running') THEN 1 ELSE 0 END) AS n_pending,
+              SUM(CASE WHEN l.origin_no!='' AND l.status IN ('planned','queued','running') THEN 1 ELSE 0 END) AS n_ops,
+              SUM(CASE WHEN l.status='fail' THEN 1 ELSE 0 END) AS n_fail,
+              SUM(CASE WHEN l.status='deleted' THEN 1 ELSE 0 END) AS n_deleted,
+              SUM(CASE WHEN l.registered_at > s.naver_count_at THEN 1 ELSE 0 END) AS n_added_since,
+              MIN(CASE WHEN l.origin_no!='' THEN l.registered_at END) AS oldest_at,
+              SUM(CASE WHEN l.sold_count>0 THEN 1 ELSE 0 END) AS n_sold,
+              SUM(CASE WHEN l.locked=1 AND l.status!='deleted' THEN 1 ELSE 0 END) AS n_locked
+            FROM listings l JOIN stores s ON s.id=l.store_id GROUP BY l.store_id""")}
+        rem = {r["store_id"]: r["n"] for r in self.q("""SELECT l.store_id, COUNT(*) AS n FROM listing_history h
+            JOIN listings l ON l.id=h.listing_id JOIN stores s ON s.id=l.store_id
+            WHERE h.deleted_at > s.naver_count_at GROUP BY l.store_id""")}
+        rows = []
+        for b in base:
+            a = agg.get(b["id"]) or {}
+            r = {k: v for k, v in b.items() if k != "business_name"}
+            for k in ("n_live", "n_pending", "n_ops", "n_fail", "n_deleted", "n_added_since"):
+                r[k] = a.get(k) or 0
+            r["n_removed_since"] = rem.get(b["id"], 0)
+            r["oldest_at"] = a.get("oldest_at")
+            r["n_sold"] = a.get("n_sold") or 0
+            r["n_locked"] = a.get("n_locked") or 0
+            r["business_name"] = b["business_name"]
+            rows.append(r)
         from . import apiuse, custom
         try:
             use = apiuse.recent(self)
         except Exception:  # noqa: BLE001
             use = {}
-        cust = custom.store_counts(self)   # 맞춤 상품도 실제 네이버 상품 → 남은 자리 계산에 넣음
+        return rows, use, custom.store_counts(self)
+
+    def stores(self, with_secret=False):
+        rows, use, cust = self.cached("stores", self._store_rows)
+        from . import apiuse
         for r in rows:
             r["has_keys"] = bool(r["client_id"] and r["client_secret"])
             r["quota_until"] = apiuse.until(r["id"])   # 시간당 한도로 멈춤 (풀리는 시각, 아니면 None)
@@ -787,6 +891,9 @@ class DB:
                (time.time(), ok, fail, images, rid))
 
     def stats(self):
+        return self.cached("stats", self._stats)
+
+    def _stats(self):
         return self.one("""SELECT
             (SELECT COUNT(*) FROM sources) AS sources,
             (SELECT COUNT(*) FROM sources WHERE valid=1) AS sources_valid,

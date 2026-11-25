@@ -1928,7 +1928,7 @@ def price_viewer(db):
 
 def store_summaries(db):
     """복사본 첫 화면: 스토어마다 복사본 수·이름 변경 필요·대기·판매 중·실패."""
-    rows = {r["store_id"]: r for r in db.q("""SELECT store_id, COUNT(*) AS all_,
+    rows = db.cached("store_summaries", lambda: {r["store_id"]: r for r in db.q("""SELECT store_id, COUNT(*) AS all_,
         SUM(name_id IS NULL AND status!='deleted' AND origin_no='') AS noname,
         SUM(name_id IS NOT NULL AND origin_no='' AND status='planned' AND op IN ('create','reupload') AND source_id IN (SELECT id FROM sources WHERE eye_at IS NOT NULL)) AS named,
         SUM(status IN ('planned','queued','running')) AS pending,
@@ -1938,7 +1938,7 @@ def store_summaries(db):
         SUM(status IN ('planned','queued','running') AND op='delete') AS p_delete,
         SUM(origin_no!='' AND status='success') AS live, SUM(status='fail') AS fail,
         MAX(updated_at) AS last_at
-        FROM listings WHERE status!='deleted' GROUP BY store_id""")}
+        FROM listings WHERE status!='deleted' GROUP BY store_id""")})
     out = []
     for s in db.stores():
         r = rows.get(s["id"], {})

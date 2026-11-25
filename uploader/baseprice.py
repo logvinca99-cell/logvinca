@@ -347,7 +347,7 @@ def price_checks(db, store_id=None, ids=None):
     """가격 확인 필요한 판매 중 복사본 → [{id, store_id, store_name, source_id, source_name, name, nv_price, upstar, diff, locked}]"""
     cfg = config.load()
     unit = max(1, convert.to_int(cfg.get("price_round"), 100))
-    stores = {x["id"]: x for x in db.stores()}
+    stores = {x["id"]: x for x in db.q("SELECT id, name, store_url, tpl_price_pct FROM stores")}   # 필요한 칸만 (복사본 집계 없이)
     w, a = ["l.origin_no!=''", "l.status NOT IN ('deleted','queued','running')", "l.nv_price IS NOT NULL", "l.nv_price>0",
             "l.price_push IS NULL"], []
     if store_id:
