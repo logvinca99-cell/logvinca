@@ -98,3 +98,6 @@
 | `cherry_wm_N1_hangtag.png` | **새 느낌** 1: 끈에 매달린 크림색 가격표 | 504 × ~370 | 18~20% |
 | `cherry_wm_N2_cherry.png` | 새 느낌 2: 꼭지가 맨 위에 닿은 체리 모양 자체에 이름 | 431 × 433 | 18~20% |
 | `cherry_wm_N3_dark.png` | 새 느낌 3: 먹색 탭 + 체리색 점 두 개 | 507 × 139 | 22~24% |
+| `cherry_wm_K1_quarter_left/right.png` | **모서리형** 1: 먹색 사분원 + 체리 + "미스터 체리" (위·옆 여백 0) | 500 × 500 | 18~20% |
+| `cherry_wm_K2_sash_left/right.png` | 모서리형 2: 크림색 대각선 띠 | 476 × 476 | 18~20% |
+| `cherry_wm_K3_label_left/right.png` | 모서리형 3: 크림색 작은 라벨 (한쪽만 둥근) | 505 × 155 | 22~24% |

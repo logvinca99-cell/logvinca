@@ -1,0 +1,23 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>미스터 체리 모서리 워터마크</title><link rel="stylesheet" href="style4.css">
+<style>
+ html,body{background:transparent;margin:0} body{width:260px}
+ .k{position:relative;margin-bottom:60px}
+ .nm{font-weight:900;letter-spacing:-.05em;line-height:1;white-space:nowrap}
+ /* K1 사분원: 모서리를 동그랗게 감싸는 먹색 판 */
+ #k1{width:200px;height:200px}
+ #k1 .q{position:absolute;left:0;top:0;width:200px;height:200px;background:#2A1418;border-radius:0 0 100% 0;box-shadow:3px 3px 0 #fff}
+ #k1 .in{position:absolute;left:20px;top:24px;display:flex;flex-direction:column;align-items:flex-start;gap:8px;color:#FFF3E6}
+ #k1 .nm{font-size:27px;line-height:1.1}
+ /* K2 대각선 띠 */
+ #k2{width:220px;height:220px;overflow:hidden}
+ #k2 .band{position:absolute;left:-74px;top:44px;width:300px;transform:rotate(-45deg);background:#FFF6E9;border-top:3px solid #9E1B31;border-bottom:3px solid #9E1B31;box-shadow:0 4px 8px rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 0;color:#9E1B31}
+ #k2 .nm{font-size:22px}
+ /* K3 둥근 모서리 라벨: 위·옆은 붙고 한쪽만 둥근 작은 라벨 */
+ #k3{display:inline-block}
+ #k3 .lb{display:inline-flex;align-items:center;gap:8px;background:#FFF6E9;color:#9E1B31;border-radius:0 0 26px 0;padding:14px 22px 14px 16px;box-shadow:3px 3px 0 #9E1B31}
+ #k3 .nm{font-size:26px}
+</style></head><body>
+<div class="k" id="k1"><div class="q"></div><div class="in"><img src="logo.svg" width="40" height="40" alt=""><span class="nm">미스터<br>체리</span></div></div>
+<div class="k" id="k2"><div class="band"><img src="logo.svg" width="26" height="26" alt=""><span class="nm">미스터 체리</span></div></div>
+<div class="k" id="k3"><div class="lb"><img src="logo.svg" width="34" height="34" alt=""><span class="nm">미스터 체리</span></div></div>
+</body></html>
