@@ -1,7 +1,1 @@
 playwright>=1.40
-# 셀업 자동 수집(sellup.py)용
-pyautogui
-pyperclip
-pillow
-pywinauto; sys_platform == "win32"
-pywin32; sys_platform == "win32"
