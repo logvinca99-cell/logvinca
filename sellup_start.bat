@@ -10,7 +10,7 @@ if errorlevel 1 (
   exit /b
 )
 
-python -c "import pyautogui, pyperclip, pywinauto, playwright" > nul 2>&1
+python -c "import pyautogui, pyperclip, pywinauto, win32clipboard" > nul 2>&1
 if errorlevel 1 (
   echo 필요한 도구를 설치합니다. 1~2분 걸립니다...
   python -m pip install -r requirements.txt

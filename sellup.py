@@ -1,7 +1,7 @@
 """셀업 캡처 브라우저에서 스토어 전체 상품을 자동으로 열고 CAPTURE(Alt+C)를 누른다.
 
 흐름
-  1) stores.txt 의 스토어마다 별도 크롬으로 목록 페이지를 넘기며 상품 주소를 전부 모은다 (sellup.db 에 저장)
+  1) stores.txt 의 스토어마다 캡처 브라우저에서 목록 페이지를 넘기며 상품 주소를 전부 모은다 (sellup.db 에 저장)
   2) 셀업 캡처 브라우저 창에서  Ctrl+L → 주소 붙여넣기 → Enter → 로딩 대기 → Alt+C  를 반복한다
   3) 캡처할 때마다 셀업 본체에 '중복' 팝업이 떴는지 확인해 '아니오'를 누른다
   이미 처리한 상품은 sellup.db 에 기록되어 다시 들어가지 않고, 껐다 켜도 이어서 진행한다.
@@ -37,7 +37,8 @@ DEFAULTS = {
     # --- 속도 (초). 줄일수록 빠르지만 캡처 누락·네이버 차단 가능성이 커진다 ---
     "load_timeout": 8.0,        # 상품 페이지 제목이 뜰 때까지 최대 대기
     "settle": 1.0,              # 제목이 뜬 뒤 CAPTURE 버튼이 준비될 때까지 추가 대기
-    "after_capture": 2.0,       # Alt+C 뒤 셀업이 상품을 받아 적을 때까지 대기
+    "after_capture": 2.0,
+    "list_wait": 3.0,           # 목록 페이지를 연 뒤 복사하기 전 대기       # Alt+C 뒤 셀업이 상품을 받아 적을 때까지 대기
     # --- 창 찾기 ---
     "sellup_title": "셀업",      # 셀업 본체 창 제목에 들어 있는 글자
     # --- 중복 팝업 ---
@@ -116,85 +117,48 @@ def read_stores(path):
 
 
 # ───────────────────────── 1단계: 상품 주소 모으기 ─────────────────────────
+# 캡처 브라우저(로그인된 그 창)에서 목록 페이지를 열고 Ctrl+A, Ctrl+C 로 복사한 뒤
+# 클립보드의 HTML 에서 /products/<번호> 링크를 읽는다. 별도 브라우저를 띄우지 않는다.
 
-IDS_JS = r"""
-() => [...new Set([...document.querySelectorAll('a[href*="/products/"]')]
-        .map(a => ((a.getAttribute('href') || '').match(/\/products\/(\d+)/) || [])[1])
-        .filter(Boolean))]
-"""
+def parse_ids(html):
+    out = []
+    for i in re.findall(r"/products/(\d+)", html):
+        if i not in out:
+            out.append(i)
+    return out
 
 
-def harvest_store(page, store, db):
-    """목록 페이지를 끝까지 넘기며 상품 번호를 모아 DB에 넣는다. 새로 넣은 개수를 돌려준다."""
-    added, total, pages, n, empty_streak = 0, None, None, 1, 0
-    while True:
-        url = f"{store}/category/ALL?st=RECENT&dt=IMAGE&page={n}&size={PAGE_SIZE}"
-        ids = []
-        for attempt in range(3):
-            try:
-                page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                page.wait_for_selector('a[href*="/products/"]', timeout=10000)
-            except Exception:
-                pass
-            prev = -1
-            for _ in range(30):                      # 지연 로딩 카드가 다 그려질 때까지 스크롤
-                page.mouse.wheel(0, 3000)
-                page.wait_for_timeout(250)
-                h = page.evaluate("document.body.scrollHeight")
-                if h == prev:
-                    break
-                prev = h
-            ids = page.evaluate(IDS_JS)
-            if ids:
-                break
-            log(f"  {n}쪽에서 상품을 못 찾음. 20초 뒤 다시 시도 ({attempt + 1}/3) "
-                f"- 보안 확인 화면이 떠 있으면 직접 풀어 주세요")
-            page.wait_for_timeout(20000)
-        if total is None:
-            m = re.search(r"총\s*([\d,]+)\s*개", page.inner_text("body"))
-            if m:
-                total = int(m.group(1).replace(",", ""))
-                pages = math.ceil(total / PAGE_SIZE)
-        before = db.total_changes
-        db.executemany("INSERT OR IGNORE INTO products(store, pid, url) VALUES(?,?,?)",
-                       [(store, i, f"{store}/products/{i}") for i in ids])
-        db.commit()
-        new = db.total_changes - before
-        added += new
-        log(f"  목록 {n}/{pages or '?'}쪽: 상품 {len(ids)}개, 신규 {new}개")
-        empty_streak = 0 if new else empty_streak + 1
-        if pages is not None and n >= pages:
-            break
-        if pages is None and empty_streak >= 1:      # 총 개수를 못 읽었으면 새 상품이 없을 때 끝
-            break
-        if not ids:
-            break
-        n += 1
-    db.execute("INSERT OR REPLACE INTO stores VALUES(?,?,?)",
-               (store, time.strftime("%Y-%m-%d %H:%M:%S"), total))
+def parse_total(text):
+    m = re.search(r"총\s*([\d,]+)\s*개", text)
+    return int(m.group(1).replace(",", "")) if m else None
+
+
+def save_ids(db, store, ids):
+    before = db.total_changes
+    db.executemany("INSERT OR IGNORE INTO products(store, pid, url) VALUES(?,?,?)",
+                   [(store, i, f"{store}/products/{i}") for i in ids])
     db.commit()
-    return added
+    return db.total_changes - before
 
 
-def harvest(stores, db, force=False):
-    todo = [s for s in stores
-            if force or not db.execute("SELECT 1 FROM stores WHERE store=?", (s,)).fetchone()]
-    if not todo:
-        return
-    from playwright.sync_api import sync_playwright
-    with sync_playwright() as p:
+def read_clip_html():
+    """클립보드의 'HTML Format' 내용을 문자열로. 없으면 빈 문자열."""
+    import win32clipboard as wc
+    fmt = wc.RegisterClipboardFormat("HTML Format")
+    for _ in range(5):
         try:
-            browser = p.chromium.launch(channel="chrome", headless=False)
+            wc.OpenClipboard()
         except Exception:
-            browser = p.chromium.launch(headless=False)
-        page = browser.new_context(locale="ko-KR", viewport={"width": 1400, "height": 900}).new_page()
-        for s in todo:
-            log(f"상품 주소 모으는 중: {s}")
-            try:
-                log(f"  → 신규 {harvest_store(page, s, db)}개")
-            except Exception as e:
-                log(f"  → 실패, 다음 실행 때 다시 시도: {e}")
-        browser.close()
+            time.sleep(0.1)
+            continue
+        try:
+            if not wc.IsClipboardFormatAvailable(fmt):
+                return ""
+            data = wc.GetClipboardData(fmt)
+        finally:
+            wc.CloseClipboard()
+        return data.decode("utf-8", "ignore") if isinstance(data, bytes) else str(data)
+    return ""
 
 
 # ───────────────────────── 윈도우 창 다루기 ─────────────────────────
@@ -248,13 +212,13 @@ class Win:
         return bool(self.u.GetAsyncKeyState(vk) & 1)
 
     def pick(self, what):
-        """사용자가 클릭한 창을 잡는다."""
-        print(f"\n▶ 5초 안에 [{what}] 창을 한 번 클릭해 두세요...", flush=True)
-        for i in range(5, 0, -1):
-            print(f"   {i}", end=" ", flush=True)
-            time.sleep(1)
+        """사용자가 창을 클릭하고 F9를 누르면 그 창을 잡는다."""
+        print(f"\n▶ [{what}] 창을 마우스로 한 번 클릭한 다음 F9 키를 누르세요.", flush=True)
+        self.pressed(VK_F9)                      # 이전에 눌린 기록 지우기
+        while not self.pressed(VK_F9):
+            time.sleep(0.05)
         hwnd = self.u.GetForegroundWindow()
-        print(f"\n   선택됨: {self.title(hwnd)!r}")
+        print(f"   선택됨: {self.title(hwnd)!r}")
         return hwnd
 
 
@@ -318,7 +282,9 @@ class Capturer:
         self.count = {"done": 0, "dup": 0, "fail": 0}
         self.t0 = time.time()
 
-        self.browser = self.win.pick("셀업 캡처 브라우저(크롬)")
+        print("\n먼저 셀업 캡처 브라우저에서 네이버 로그인을 끝내 주세요. "
+              "그 전에는 프로그램이 아무것도 건드리지 않습니다.")
+        self.browser = self.win.pick("로그인을 마친 셀업 캡처 브라우저(크롬)")
         found = [h for h in self.win.windows(title_part=cfg["sellup_title"]) if h != self.browser]
         self.sellup = found[0] if found else self.win.pick("셀업 본체")
         log(f"캡처 브라우저: {self.win.title(self.browser)!r}")
@@ -351,16 +317,70 @@ class Capturer:
                 return
             time.sleep(0.1)
 
-    def open(self, url):
-        """캡처 브라우저의 주소창으로 이동하고, 페이지 제목이 뜰 때까지 기다린다. 제목을 돌려준다."""
+    def goto(self, url):
         if not self.win.u.IsWindow(self.browser):
             raise StopRun("캡처 브라우저 창이 닫혔습니다.")
         self.win.focus(self.browser)
-        before = self.win.title(self.browser)
         self.clip.copy(url)
         self.gui.hotkey("ctrl", "l")
         self.gui.hotkey("ctrl", "v")
         self.gui.press("enter")
+
+    def copy_list_page(self, url):
+        """목록 페이지를 열어 끝까지 내린 뒤 전체 복사. (상품 번호 목록, 화면 글자)를 돌려준다."""
+        self.goto(url)
+        self.sleep(self.cfg["list_wait"])
+        for _ in range(5):                       # 지연 로딩 카드가 그려지도록 맨 아래로
+            self.gui.press("end")
+            self.sleep(0.4)
+        self.clip.copy("")
+        self.gui.hotkey("ctrl", "a")
+        self.gui.hotkey("ctrl", "c")
+        html, end = "", time.time() + 6
+        while not html and time.time() < end:
+            self.sleep(0.3)
+            html = read_clip_html()
+        return parse_ids(html), self.clip.paste()
+
+    def harvest_store(self, store, force=False):
+        """목록을 끝까지 넘기며 상품 번호를 DB에 넣는다."""
+        if not force and self.db.execute("SELECT 1 FROM stores WHERE store=?", (store,)).fetchone():
+            return
+        log(f"상품 주소 모으는 중: {store}")
+        added, total, pages, n = 0, None, None, 1
+        while True:
+            url = f"{store}/category/ALL?st=RECENT&dt=IMAGE&page={n}&size={PAGE_SIZE}"
+            ids, text = self.copy_list_page(url)
+            if not ids:
+                self.sleep(5)
+                ids, text = self.copy_list_page(url)
+            if not ids and n == 1:
+                self.pause(f"목록에서 상품을 찾지 못했습니다: {url}\n"
+                           "   캡처 브라우저 화면을 확인해 주세요(로그인·보안 확인 등). 처리한 뒤")
+                ids, text = self.copy_list_page(url)
+            if not ids:
+                if n == 1:
+                    log("  → 실패. 이 스토어는 건너뜁니다(다음 실행 때 다시 시도).")
+                    return
+                break
+            if total is None:
+                total = parse_total(text)
+                pages = math.ceil(total / PAGE_SIZE) if total else None
+            new = save_ids(self.db, store, ids)
+            added += new
+            log(f"  목록 {n}/{pages or '?'}쪽: 상품 {len(ids)}개, 신규 {new}개")
+            if (pages is not None and n >= pages) or (pages is None and new == 0):
+                break
+            n += 1
+        self.db.execute("INSERT OR REPLACE INTO stores VALUES(?,?,?)",
+                        (store, time.strftime("%Y-%m-%d %H:%M:%S"), total))
+        self.db.commit()
+        log(f"  → 신규 {added}개")
+
+    def open(self, url):
+        """캡처 브라우저의 주소창으로 이동하고, 페이지 제목이 뜰 때까지 기다린다. 제목을 돌려준다."""
+        before = self.win.title(self.browser)
+        self.goto(url)
         end = time.time() + self.cfg["load_timeout"]
         while time.time() < end:
             self.sleep(0.1)
@@ -416,8 +436,9 @@ def cmd_run(args, cfg, db):
     log("수집 시작. F9 일시정지, F10 종료. 수집 중에는 키보드·마우스를 건드리지 마세요.")
     try:
         for s in stores:
-            harvest([s], db, force=args.reharvest)
-            cap.run_store(s)
+            cap.harvest_store(s, force=args.reharvest)
+            if not args.harvest_only:
+                cap.run_store(s)
         log("모든 스토어를 마쳤습니다.")
     except StopRun as e:
         log(f"중단: {e}")
@@ -469,9 +490,11 @@ def main():
     cfg = load_settings()
     db = open_db()
     if args.cmd == "run":
+        args.harvest_only = False
         cmd_run(args, cfg, db)
     elif args.cmd == "harvest":
-        harvest(read_stores(args.file), db, force=args.reharvest)
+        args.harvest_only = True
+        cmd_run(args, cfg, db)
         cmd_status(db)
     elif args.cmd == "status":
         cmd_status(db)
