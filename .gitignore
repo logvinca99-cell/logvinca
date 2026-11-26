@@ -3,3 +3,8 @@ zzim_*.csv
 stores.txt
 zzim_settings.json
 zzim_report*.csv
+sellup.db
+sellup_settings.json
+sellup_log.txt
+sellup_inspect.txt
+no_button.png
