@@ -83,6 +83,6 @@ python zzim.py --console --file stores.txt
 
 ## v17과 달라진 점
 
-- `stores.txt`의 스토어마다 목록(80개씩)을 열어 Ctrl+A, Ctrl+C로 복사하고, 클립보드 HTML의 `/products/<번호>` 링크를 읽어 `urls.txt`에 추가합니다. 모은 스토어는 `harvested_stores.txt`에 기록되어 다시 훑지 않습니다(신상품을 다시 모으려면 그 파일에서 해당 줄을 지움).
+- `stores.txt`의 스토어마다 스토어 페이지를 열고, 주소창으로 스크립트를 실행해 목록(80개씩)을 한 쪽씩 `fetch`로 받아 `/products/<번호>`를 모읍니다. 진행 상황은 탭 제목(`HARVEST 12p / 960`)에 표시되고, 끝나면 결과를 복사해 `urls.txt`에 추가합니다. 모은 스토어는 `harvested_stores.txt`에 기록되어 다시 훑지 않습니다(신상품을 다시 모으려면 그 파일에서 해당 줄을 지움).
 - 이어하기는 `progress.txt` 번호 대신 `done_urls.txt` 기준입니다. 이미 수집한 주소는 건너뛰고, 실패한 주소는 다음 실행 때 다시 시도합니다.
 - 연속 실패(`MAX_CONSEC`) 시 바로 끝내지 않고 `REST_MIN`분 쉬었다가 재개합니다. `MAX_RESTS`번 연속으로 쉬어도 실패하면 중단합니다.

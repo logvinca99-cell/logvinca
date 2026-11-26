@@ -13,9 +13,9 @@ SetMouseDelay 30
 ;  수집(클릭) 동작은 v17 그대로입니다. 바뀐 것은 아래 네 가지입니다.
 ;
 ;  v18 변경점
-;   · stores.txt 에 스토어 주소만 적으면, 목록 페이지를 넘기며
-;     전체 상품 주소를 직접 모아 urls.txt 에 추가합니다
-;     (셀업 크롬 창에서 목록을 열고 Ctrl+A, Ctrl+C 로 읽음)
+;   · stores.txt 에 스토어 주소만 적으면 전체 상품 주소를 모아
+;     urls.txt 에 추가합니다. 스토어 페이지 안에서 스크립트를 실행해
+;     목록을 한 쪽씩 fetch 로 받아 /products/<번호> 를 읽는 방식입니다
 ;   · 이어하기를 번호(progress.txt) 대신 done_urls.txt 기준으로 합니다
 ;     이미 수집한 주소는 자동으로 건너뛰고, 실패한 주소는
 ;     다음 실행 때 다시 시도합니다. 시작할 때 묻지 않습니다
@@ -46,8 +46,76 @@ STOREFILE := A_ScriptDir "\stores.txt"
 HARVFILE  := A_ScriptDir "\harvested_stores.txt"
 
 ; ---------- 스토어 주소 모으기 (v18) ----------
-LIST_WAIT := 3500     ; 목록 페이지를 연 뒤 복사하기 전 대기 ms (목록이 덜 읽히면 올릴 것)
-LIST_SIZE := 80       ; 목록 한 쪽당 상품 수
+LIST_WAIT := 3500     ; 스토어 페이지를 연 뒤 스크립트를 넣기 전 대기 ms
+HARVEST_MAX_MIN := 180   ; 한 스토어 주소 모으기 최대 대기(분)
+
+; 스토어 페이지 안에서 실행되는 스크립트.
+; 목록(80개씩)을 한 쪽씩 fetch 로 받아 상품 주소를 모으고, 끝나면 화면을 주소 목록으로 바꾼다.
+; ※ 주소창으로 실행하므로 큰따옴표, 백틱, #, %, // 주석을 쓰면 안 됩니다
+HARVEST_JS := "
+(
+(async () => {
+  const store = location.pathname.split('/')[1];
+  if (!store) { document.title = 'HARVEST_FAIL no-store'; return; }
+  const MAX_PAGE = 2000;
+  const SIZE = 80;
+  const ids = new Set();
+  const sleep = ms => new Promise(s => setTimeout(s, ms));
+  window.__stop = false;
+  window.stopHarvest = () => { window.__stop = true; };
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;top:10px;right:10px;z-index:999999;background:black;'
+    + 'color:lime;padding:14px 18px;font:13px monospace;border-radius:8px;'
+    + 'white-space:pre;line-height:1.6;max-width:380px';
+  document.body.appendChild(box);
+  let page = 1, empty = 0, reqCount = 0, stopReason = '';
+  const t0 = Date.now();
+  document.title = 'HARVEST start';
+  while (page <= MAX_PAGE) {
+    if (window.__stop) { stopReason = 'user-stop'; break; }
+    const url = '/' + store + '/category/ALL?st=RECENT&dt=IMAGE&page=' + page + '&size=' + SIZE;
+    let text = '';
+    try {
+      const r = await fetch(url, { credentials: 'include' });
+      if (r.status === 429 || r.status === 403) {
+        box.textContent = 'blocked (' + r.status + ')\nwait 60s\ntotal ' + ids.size;
+        document.title = 'HARVEST wait ' + r.status + ' / ' + ids.size;
+        await sleep(60000);
+        continue;
+      }
+      if (!r.ok) { stopReason = 'HTTP ' + r.status + ' (' + page + 'p)'; break; }
+      text = await r.text();
+    } catch (e) {
+      await sleep(3000);
+      continue;
+    }
+    reqCount++;
+    const matches = text.match(/\/products\/\d{6,}/g) || [];
+    if (matches.length === 0) { stopReason = page + 'p empty (last page)'; break; }
+    const before = ids.size;
+    matches.forEach(m => ids.add(location.origin + '/' + store + m));
+    const gain = ids.size - before;
+    const mins = ((Date.now() - t0) / 60000).toFixed(1);
+    box.textContent = page + 'p / max ' + MAX_PAGE + '\n+' + gain + ' (links ' + matches.length + ')\n'
+      + 'total ' + ids.size + '\n' + mins + 'min, req ' + reqCount;
+    document.title = 'HARVEST ' + page + 'p / ' + ids.size;
+    if (gain === 0) {
+      if (++empty >= 3) { stopReason = page + 'p no-new (done)'; break; }
+    } else {
+      empty = 0;
+    }
+    page++;
+    await sleep(1100 + Math.random() * 700);
+  }
+  if (!stopReason) stopReason = 'max page ' + MAX_PAGE;
+  const list = [...ids];
+  const pre = document.createElement('pre');
+  pre.textContent = 'HARVEST_RESULT ' + list.length + ' / ' + stopReason + '\n' + list.join('\n');
+  document.body.innerHTML = '';
+  document.body.appendChild(pre);
+  document.title = 'HARVEST_DONE ' + list.length;
+})(); void 0
+)"
 
 ; ---------- 연속 실패 시 휴식 (v18) ----------
 REST_MIN  := 10       ; 연속 실패(MAX_CONSEC) 시 쉬는 시간(분)
@@ -460,8 +528,7 @@ RunLoop() {
 
 ; ==========================================================
 ;  스토어 전체 상품 주소 모으기 (v18)
-;  셀업 크롬 창에서 목록 페이지(80개씩)를 열고 전체 복사한 뒤
-;  클립보드 HTML 에 들어 있는 /products/<번호> 링크를 읽는다
+;  스토어 페이지 안에서 HARVEST_JS 를 실행해 목록을 fetch 로 받아 읽는다
 ; ==========================================================
 
 HarvestOnly() {
@@ -538,134 +605,117 @@ NormalizeStore(line) {
     return ""
 }
 
-; 한 스토어의 목록을 끝까지 넘긴다. 새로 추가한 주소 수, 첫 쪽부터 실패하면 -1
+; 한 스토어의 전체 상품 주소를 모은다. 새로 추가한 주소 수, 실패하면 -1
+;  1) 스토어 페이지를 연다
+;  2) 주소창에 javascript:<HARVEST_JS> 를 넣어 페이지 안에서 스크립트를 실행한다
+;     스크립트는 목록 페이지를 fetch 로 한 쪽씩 받아 /products/<번호> 를 모으고,
+;     진행 상황을 탭 제목(HARVEST ...)에 적는다
+;  3) 제목이 HARVEST_DONE 이 되면 화면이 주소 목록으로 바뀌어 있으므로
+;     전체 복사해서 urls.txt 에 추가한다
 HarvestStore(store, known) {
-    global URLFILE, LIST_SIZE
+    global URLFILE, LIST_WAIT, HARVEST_JS, HARVEST_MAX_MIN, browserHwnd
 
-    added := 0
-    pages := 0
-    page := 1
+    ToolTip "주소 모으는 중`n" store "`n(F2 중단)", 20, 20
 
-    loop {
-        ToolTip "주소 모으는 중`n" store "`n" . page . (pages ? "/" pages : "") . "쪽 · 신규 " . added . "개`n(F2 중단)", 20, 20
-
-        url := store "/category/ALL?st=RECENT&dt=IMAGE&page=" page "&size=" LIST_SIZE
-        txt := ""
-        ids := CopyListPage(url, &txt)
-        if (ids.Length = 0) {
-            Sleep 4000
-            ids := CopyListPage(url, &txt)
-        }
-        if (ids.Length = 0) {
-            WriteLog("[목록] " store " " page "쪽에서 상품을 찾지 못함")
-            if (page = 1)
-                return -1
-            break
-        }
-
-        if (pages = 0 && RegExMatch(txt, "총\s*([\d,]+)\s*개", &m))
-            pages := Ceil(Integer(StrReplace(m[1], ",")) / LIST_SIZE)
-
-        fresh := 0
-        buf := ""
-        for id in ids {
-            u := store "/products/" id
-            if !known.Has(u) {
-                known[u] := true
-                buf .= u "`n"
-                fresh++
-            }
-        }
-        if (buf != "")
-            FileAppend buf, URLFILE, "UTF-8"
-        added += fresh
-
-        WriteLog("[목록] " store " " page "/" (pages ? pages : "?") "쪽 : 상품 " ids.Length "개, 신규 " fresh "개")
-
-        ; 총 쪽수를 알면 끝까지, 모르면 새 상품이 안 나올 때까지
-        if (pages > 0 ? page >= pages : fresh = 0)
-            break
-
-        page++
-        Sleep Random(800, 1500)
-    }
-
-    WriteLog("[목록] " store " 완료 : 신규 " added "개")
-    return added
-}
-
-; 목록 페이지를 열어 맨 아래까지 내린 뒤 전체 복사. 상품 번호 배열을 돌려주고 txt 에 화면 글자를 담는다
-CopyListPage(url, &txt) {
-    global LIST_WAIT, browserHwnd
-
-    txt := ""
     if !FocusBrowser()
-        return []
-    if !GotoUrl(url)
-        return []
+        return -1
+    if !GotoUrl(store)
+        return -1
     Sleep LIST_WAIT
 
-    loop 2 {
-        ; 지연 로딩되는 상품 카드가 모두 그려지도록 맨 아래로
-        loop 5 {
-            Send "{End}"
-            Sleep 400
+    ; ---- 스크립트 실행 ----
+    ; 크롬은 붙여넣은 글자 맨 앞의 javascript: 를 지우므로 그 부분만 직접 입력한다
+    A_Clipboard := RegExReplace(HARVEST_JS, "\R", " ")
+    if !ClipWait(2)
+        return -1
+    Send "^l"
+    Sleep 250
+    SendText "javascript:"
+    Sleep 200
+    Send "^v"
+    Sleep 400
+    Send "{Enter}"
+
+    ; ---- 시작 확인 ----
+    endT := A_TickCount + 15000
+    started := false
+    while (A_TickCount < endT) {
+        if InStr(WinGetTitle("ahk_id " browserHwnd), "HARVEST") {
+            started := true
+            break
         }
-
-        A_Clipboard := ""
-        Send "^a"
-        Sleep 150
-        Send "^c"
-
-        if ClipWait(8) {
-            Sleep 300
-            txt := A_Clipboard
-            ; 주소 한 줄만 복사됐다면 포커스가 주소창에 남아 있던 것
-            if !(SubStr(txt, 1, 4) = "http" && !InStr(txt, "`n"))
-                return ParseIds(GetClipHtml())
-        }
-
-        ; 포커스를 페이지 본문으로 옮기고 한 번 더 (창 왼쪽 가장자리 여백 클릭)
-        WinGetPos &wx, &wy, &ww, &wh, "ahk_id " browserHwnd
-        Click wx + 12, wy + wh // 2
         Sleep 300
     }
-    return []
-}
-
-; HTML 에서 /products/<번호> 를 중복 없이 순서대로 뽑는다
-ParseIds(html) {
-    ids := []
-    seen := Map()
-    pos := 1
-    while (pos := RegExMatch(html, "/products/(\d+)", &m, pos)) {
-        if !seen.Has(m[1]) {
-            seen[m[1]] := true
-            ids.Push(m[1])
-        }
-        pos += m.Len
+    if !started {
+        WriteLog("[목록] " store " : 스크립트가 실행되지 않음 (제목에 HARVEST 가 안 뜸)")
+        return -1
     }
-    return ids
-}
 
-; 클립보드의 "HTML Format" 내용 (링크 주소가 들어 있음)
-GetClipHtml() {
-    static fmt := DllCall("RegisterClipboardFormat", "Str", "HTML Format", "UInt")
+    ; ---- 끝날 때까지 대기 ----
+    endT := A_TickCount + HARVEST_MAX_MIN * 60000
+    loop {
+        title := WinGetTitle("ahk_id " browserHwnd)
+        if InStr(title, "HARVEST_DONE")
+            break
+        if InStr(title, "HARVEST_FAIL") {
+            WriteLog("[목록] " store " : " title)
+            return -1
+        }
+        if (A_TickCount > endT) {
+            WriteLog("[목록] " store " : " HARVEST_MAX_MIN "분 안에 끝나지 않음 (" title ")")
+            return -1
+        }
+        ToolTip "주소 모으는 중`n" store "`n" title "`n(F2 중단)", 20, 20
+        Sleep 500
+    }
+    Sleep 500
 
-    if !DllCall("IsClipboardFormatAvailable", "UInt", fmt)
-        return ""
-    if !DllCall("OpenClipboard", "Ptr", A_ScriptHwnd)
-        return ""
+    ; ---- 결과 복사 (화면은 주소 목록 글자뿐이라 아무 데나 눌러도 안전) ----
+    txt := ""
+    loop 3 {
+        FocusBrowser()
+        WinGetPos &wx, &wy, &ww, &wh, "ahk_id " browserHwnd
+        Click wx + ww // 2, wy + wh // 2
+        Sleep 300
+        A_Clipboard := ""
+        Send "^a"
+        Sleep 200
+        Send "^c"
+        if (ClipWait(20) && InStr(A_Clipboard, "HARVEST_RESULT")) {
+            txt := A_Clipboard
+            break
+        }
+        Sleep 1000
+    }
+    if (txt = "") {
+        WriteLog("[목록] " store " : 결과 복사 실패")
+        return -1
+    }
 
-    html := ""
-    if (h := DllCall("GetClipboardData", "UInt", fmt, "Ptr")) {
-        if (p := DllCall("GlobalLock", "Ptr", h, "Ptr")) {
-            html := StrGet(p, "UTF-8")
-            DllCall("GlobalUnlock", "Ptr", h)
+    added := 0
+    found := 0
+    buf := ""
+    summary := ""
+    for line in StrSplit(txt, "`n", "`r") {
+        line := Trim(line)
+        if (summary = "" && InStr(line, "HARVEST_RESULT"))
+            summary := line
+        if !InStr(line, "/products/")
+            continue
+        found++
+        if !known.Has(line) {
+            known[line] := true
+            buf .= line "`n"
+            added++
         }
     }
-    DllCall("CloseClipboard")
-    return html
+    if (buf != "")
+        FileAppend buf, URLFILE, "UTF-8"
+
+    WriteLog("[목록] " store " 완료 : 상품 " found "개, 신규 " added "개  <" summary ">")
+    if (found = 0)
+        return -1
+    return added
 }
 
 ; 반환값 : 0=실패 / 1=클릭함(ARMED 미포착) / 2=ARMED 포착 / 3=중복 건너뜀
