@@ -2289,6 +2289,10 @@ def create_app(db=None):
             return fail("등록 건이 없습니다.", 404)
         cfg = config.load()
         row = db.source_row(l["source_id"])
+        try:   # 기억한 배너(다른 스토어 상하단)는 올릴 때처럼 빼고 보여 줌 (원본은 그대로)
+            row, _ = runner._banner().strip_row(row)
+        except Exception:  # noqa: BLE001 - 미리보기만
+            pass
         cats = naver.cached_categories() or {}
         cat = str(row.get("카테고리") or "").strip()
         url_map = {**db.image_map(l["store_id"], convert.thumbnails(row)[:10]),
