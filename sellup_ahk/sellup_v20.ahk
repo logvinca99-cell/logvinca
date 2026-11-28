@@ -8,26 +8,30 @@ SetKeyDelay 40, 40
 SetMouseDelay 60
 
 ; ==========================================================
-;  셀업(SmartSellUp) 상품 자동 수집 v19  (v8 기반)
+;  셀업(SmartSellUp) 상품 자동 수집 v20  (v8 기반)
 ;  ---------------------------------------------------------
 ;  수집 동작(주소 이동 → CAPTURE 찾기 → 대기 → 고정 오프셋 클릭 →
 ;  중복팝업 No)은 v8 과 같은 순서, 같은 방식입니다.
 ;
-;  v8 에서 달라진 점
-;   · 조작 창 : 스토어 주소 입력, 속도 선택, 시작/일시정지/중단,
-;     진행률·수집/중복/실패·시간당 속도·남은 시간 표시
-;   · 스토어 주소만 넣으면  주소 모으기 → 상품 수집  까지 자동
-;   · 속도 3단계 : "안전" 은 v8 과 똑같은 대기시간,
-;     "보통"/"빠름" 은 상품 사이 간격과 입력 대기만 줄임
-;   · 이어하기는 done_urls.txt 기준 (이미 한 상품은 건너뜀, 묻지 않음)
-;   · 연속 실패 시 종료하지 않고 쉬었다가 같은 상품부터 재개
-;   · 늦게 뜬 중복 팝업이 다음 상품을 막지 않도록 매 상품 전에 확인
+;  조작 창
+;   · 스토어 목록 : 스토어별 모은 주소 / 완료 / 실패 / 남음 / 상태
+;     체크한 스토어만 작업합니다
+;   · 수집 시작   : 주소가 없는 스토어만 주소를 모으고, 남은 상품을 수집
+;                   (이미 모은 스토어는 다시 모으지 않고 바로 이어서 수집)
+;   · 주소만 모으기 : 수집 없이 주소만 모음
+;   · "이미 모은 스토어도 주소 다시 모으기" 를 켜면 신상품을 추가로 모음
+;   · 속도 3단계 : "안전" 은 v8 과 똑같은 대기시간
 ;
-;  준비물 (같은 폴더)
+;  파일 (같은 폴더)
 ;   - img\capture.png , img\armed.png   (v8 에서 쓰던 그대로)
+;   - stores.txt            스토어 목록과 체크 상태
+;   - urls.txt              모은 상품 주소 전체
+;   - done_urls.txt         수집했거나 중복으로 건너뛴 주소 (다시 안 들어감)
+;   - fail_urls.txt         실패한 주소 (다시 시도하려면 이 파일을 지움)
+;   - harvested_stores.txt  스토어별 주소 모은 기록
 ;
 ;  단축키
-;   F1 시작 / F2 즉시 종료 / F3 단발 테스트 / F4 일시정지·계속
+;   F1 수집 시작 / F2 즉시 종료 / F3 단발 테스트 / F4 일시정지·계속
 ; ==========================================================
 
 ; ---------- 경로 ----------
@@ -145,6 +149,11 @@ running := false
 paused := false
 stopReq := false
 logLines := []
+jobStores := []     ; 이번에 작업할 스토어
+jobMode := "run"    ; "run" = 주소 모으기 + 수집 / "harvest" = 주소만
+stats := Map()      ; 스토어 → {total, done, fail}  (urls.txt / done_urls.txt / fail_urls.txt 에서 계산)
+harv := Map()       ; 스토어 → {n, date, state}     (harvested_stores.txt)
+note := Map()       ; 스토어 → 지금 진행 중인 작업 표시
 
 statStart := 0
 statDone := 0
@@ -155,42 +164,62 @@ statArmed := 0
 ; ==========================================================
 ;  조작 창
 ; ==========================================================
-ui := Gui("+AlwaysOnTop", "셀업 자동 수집 v19")
+ui := Gui("+AlwaysOnTop", "셀업 자동 수집 v20")
 ui.SetFont("s9", "Malgun Gothic")
 ui.MarginX := 10
 ui.MarginY := 8
 
-ui.Add("Text", "Section", "스토어 주소 (한 줄에 하나)")
-edStores := ui.Add("Edit", "xs w340 r5 -Wrap", FileExist(STOREFILE) ? Trim(FileRead(STOREFILE, "UTF-8"), "`r`n") : "")
+ui.Add("Text", "Section", "스토어 목록  (체크한 스토어만 작업합니다)")
+lv := ui.Add("ListView", "xs w570 r9 Checked Grid", ["스토어", "모은 주소", "완료", "실패", "남음", "상태"])
+lv.ModifyCol(1, 185)
+lv.ModifyCol(2, "62 Integer")
+lv.ModifyCol(3, "55 Integer")
+lv.ModifyCol(4, "45 Integer")
+lv.ModifyCol(5, "55 Integer")
+lv.ModifyCol(6, 145)
+
+ui.Add("Text", "xs y+8", "스토어 추가 (주소를 붙여넣기, 여러 줄 가능)")
+edAdd  := ui.Add("Edit", "xs w330 r2 -Wrap")
+btnAdd := ui.Add("Button", "x+6 w74 h38", "추가")
+btnDel := ui.Add("Button", "x+6 w74 h38", "선택 삭제")
+btnAll := ui.Add("Button", "x+6 w74 h38", "전체 체크")
 
 ui.Add("Text", "xs y+10", "속도")
-ddSpeed := ui.Add("DropDownList", "x+8 yp-3 w200 Choose2", ["안전 (v8 과 동일)", "보통", "빠름"])
+ddSpeed := ui.Add("DropDownList", "x+8 yp-3 w150 Choose2", ["안전 (v8 과 동일)", "보통", "빠름"])
+chkRe   := ui.Add("Checkbox", "x+14 yp+3", "이미 모은 스토어도 주소 다시 모으기 (신상품 추가)")
 
-btnStart := ui.Add("Button", "xs y+10 w108 h30", "▶ 시작 (F1)")
-btnPause := ui.Add("Button", "x+8 w108 h30", "⏸ 일시정지 (F4)")
-btnStop  := ui.Add("Button", "x+8 w108 h30", "■ 중단")
+btnStart := ui.Add("Button", "xs y+10 w150 h32", "▶ 수집 시작 (F1)")
+btnHarv  := ui.Add("Button", "x+6 w130 h32", "주소만 모으기")
+btnPause := ui.Add("Button", "x+6 w136 h32", "⏸ 일시정지 (F4)")
+btnStop  := ui.Add("Button", "x+6 w136 h32", "■ 중단")
 
 ui.SetFont("s10 bold")
-txtStage := ui.Add("Text", "xs y+12 w340", "대기 중")
+txtStage := ui.Add("Text", "xs y+12 w570", "대기 중")
 ui.SetFont("s9 norm")
-barProg  := ui.Add("Progress", "xs w340 h14")
-txtCount := ui.Add("Text", "xs w340", "수집 0 · 중복 0 · 실패 0 · 남음 0")
-txtSpeed := ui.Add("Text", "xs w340", "")
-txtItem  := ui.Add("Text", "xs w340 cGray", "")
-edLog    := ui.Add("Edit", "xs w340 r8 ReadOnly -Wrap")
+barProg  := ui.Add("Progress", "xs w570 h14")
+txtCount := ui.Add("Text", "xs w570", "")
+txtSpeed := ui.Add("Text", "xs w570", "")
+txtItem  := ui.Add("Text", "xs w570 cGray", "")
+edLog    := ui.Add("Edit", "xs w570 r7 ReadOnly -Wrap")
 
-btnStart.OnEvent("Click", (*) => StartRun(false))
+btnStart.OnEvent("Click", (*) => StartRun(false, "run"))
+btnHarv.OnEvent("Click", (*) => StartRun(false, "harvest"))
 btnPause.OnEvent("Click", (*) => TogglePause())
 btnStop.OnEvent("Click", (*) => RequestStop())
+btnAdd.OnEvent("Click", (*) => AddStores())
+btnDel.OnEvent("Click", (*) => DelStores())
+btnAll.OnEvent("Click", (*) => ToggleAll())
 ui.OnEvent("Close", (*) => ExitApp())
-ui.Show("x10 y10 NoActivate")
+OnExit((*) => SaveStores())
 
-Say("준비 완료. 셀업 크롬 창에서 네이버 로그인 후 시작을 누르세요.")
+InitStores()
+ui.Show("x10 y10 NoActivate")
+Say("준비 완료. 셀업 크롬 창에서 네이버 로그인 후 스토어를 체크하고 시작하세요.")
 
 ; ==========================================================
 ;  단축키
 ; ==========================================================
-F1:: StartRun(true)
+F1:: StartRun(true, "run")
 F2:: ExitApp
 F4:: TogglePause()
 
@@ -213,16 +242,213 @@ F3:: {
 }
 
 ; ==========================================================
+;  스토어 목록 관리
+; ==========================================================
+
+; 시작할 때 : stores.txt, harvested_stores.txt, urls.txt 를 읽어 목록을 채운다
+InitStores() {
+    global harv
+
+    ; 주소 모은 기록  (스토어 TAB 개수 TAB 날짜 TAB done|partial)
+    harv := Map()
+    if FileExist(HARVFILE) {
+        for line in StrSplit(FileRead(HARVFILE, "UTF-8"), "`n", "`r") {
+            p := StrSplit(line, "`t")
+            if (p.Length < 1 || Trim(p[1]) = "")
+                continue
+            h := {n: "", date: "", state: "done"}
+            if (p.Length >= 2)
+                h.n := p[2]
+            if (p.Length >= 3)
+                h.date := p[3]
+            if (p.Length >= 4 && Trim(p[4]) != "")
+                h.state := Trim(p[4])
+            harv[Trim(p[1])] := h
+        }
+    }
+
+    RefreshStats()
+
+    lv.Opt("-Redraw")
+    if FileExist(STOREFILE) {
+        for line in StrSplit(FileRead(STOREFILE, "UTF-8"), "`n", "`r") {
+            st := NormalizeStore(line)
+            if (st = "" || RowOf(st))
+                continue
+            p := StrSplit(line, "`t")
+            checked := !(p.Length >= 2 && Trim(p[2]) = "0")
+            lv.Add(checked ? "Check" : "", StrReplace(st, "https://"))
+        }
+    } else {
+        ; 처음 실행 : urls.txt 에 이미 들어 있는 스토어를 목록에 올린다
+        for st, v in stats
+            lv.Add("Check", StrReplace(st, "https://"))
+    }
+    lv.Opt("+Redraw")
+    UpdateAllRows()
+}
+
+; urls.txt 를 스토어별로 세고, 그중 완료(done)·실패(fail) 개수를 구한다
+RefreshStats() {
+    global stats
+
+    stats := Map()
+    done := LoadLines(DONEFILE, false)
+    fail := LoadLines(FAILFILE, false)
+    seen := Map()
+
+    if !FileExist(URLFILE)
+        return
+
+    for line in StrSplit(FileRead(URLFILE, "UTF-8"), "`n", "`r") {
+        line := Trim(line)
+        p := InStr(line, "/products/")
+        if (!p || seen.Has(line))
+            continue
+        seen[line] := true
+        st := SubStr(line, 1, p - 1)
+        if !stats.Has(st)
+            stats[st] := {total: 0, done: 0, fail: 0}
+        v := stats[st]
+        v.total++
+        if done.Has(line)
+            v.done++
+        else if fail.Has(line)
+            v.fail++
+    }
+}
+
+StatOf(store) {
+    if !stats.Has(store)
+        stats[store] := {total: 0, done: 0, fail: 0}
+    return stats[store]
+}
+
+RowOf(store) {
+    name := StrReplace(store, "https://")
+    loop lv.GetCount() {
+        if (lv.GetText(A_Index, 1) = name)
+            return A_Index
+    }
+    return 0
+}
+
+StatusText(store) {
+    if (note.Has(store) && note[store] != "")
+        return note[store]
+
+    v := StatOf(store)
+    left := v.total - v.done - v.fail
+
+    if (harv.Has(store) && harv[store].state = "partial")
+        return "주소 일부만 모음 (중단됨)"
+    if (v.total = 0)
+        return "주소 없음"
+    if (left = 0)
+        return "수집 완료"
+    if (v.done + v.fail > 0)
+        return "이어하기 가능"
+    if harv.Has(store)
+        return "주소 모음 " SubStr(harv[store].date, 6)
+    return "주소 모음"
+}
+
+UpdateRow(store) {
+    r := RowOf(store)
+    if !r
+        return
+    v := StatOf(store)
+    lv.Modify(r, "Col2", v.total, v.done, v.fail, v.total - v.done - v.fail, StatusText(store))
+}
+
+UpdateAllRows() {
+    loop lv.GetCount()
+        UpdateRow("https://" lv.GetText(A_Index, 1))
+}
+
+AddStores() {
+    added := 0
+    for st in ParseStores(edAdd.Value) {
+        if RowOf(st)
+            continue
+        lv.Add("Check", StrReplace(st, "https://"))
+        UpdateRow(st)
+        added++
+    }
+    edAdd.Value := ""
+    SaveStores()
+    if !added
+        Say("추가할 새 스토어 주소가 없습니다 (smartstore.naver.com/... 형태인지 확인)")
+}
+
+; 목록에서만 뺀다. 모아 둔 주소와 수집 기록 파일은 그대로 둔다
+DelStores() {
+    rows := []
+    r := 0
+    while (r := lv.GetNext(r))
+        rows.Push(r)
+    if (rows.Length = 0) {
+        Say("삭제할 스토어 줄을 먼저 클릭해서 선택하세요")
+        return
+    }
+    loop rows.Length
+        lv.Delete(rows[rows.Length - A_Index + 1])
+    SaveStores()
+}
+
+ToggleAll() {
+    static on := false
+    on := !on
+    lv.Modify(0, on ? "Check" : "-Check")
+    btnAll.Text := on ? "전체 해제" : "전체 체크"
+}
+
+CheckedStores() {
+    out := []
+    r := 0
+    while (r := lv.GetNext(r, "Checked"))
+        out.Push("https://" lv.GetText(r, 1))
+    return out
+}
+
+SaveStores() {
+    buf := ""
+    loop lv.GetCount() {
+        isChecked := (lv.GetNext(A_Index - 1, "Checked") = A_Index)
+        buf .= "https://" lv.GetText(A_Index, 1) "`t" (isChecked ? 1 : 0) "`n"
+    }
+    try FileDelete STOREFILE
+    if (buf != "")
+        FileAppend buf, STOREFILE, "UTF-8"
+}
+
+SaveHarv() {
+    buf := ""
+    for st, h in harv
+        buf .= st "`t" h.n "`t" h.date "`t" h.state "`n"
+    try FileDelete HARVFILE
+    if (buf != "")
+        FileAppend buf, HARVFILE, "UTF-8"
+}
+
+; ==========================================================
 ;  시작 / 일시정지 / 중단
 ; ==========================================================
-StartRun(fromHotkey) {
-    global browserHwnd, running, paused, stopReq
+StartRun(fromHotkey, mode) {
+    global browserHwnd, running, paused, stopReq, jobStores, jobMode
     global statStart, statDone, statDup, statFail, statArmed
 
     if running
         return
 
-    ; 어느 크롬 창에서 수집할지 정한다
+    jobStores := CheckedStores()
+    if (jobStores.Length = 0) {
+        MsgBox("작업할 스토어를 체크해 주세요.", , 262144)
+        return
+    }
+    jobMode := mode
+
+    ; 어느 크롬 창에서 작업할지 정한다
     hwnd := 0
     if fromHotkey {
         a := WinExist("A")
@@ -244,10 +470,7 @@ StartRun(fromHotkey) {
     }
     browserHwnd := hwnd
 
-    ; 스토어 목록 저장
-    try FileDelete STOREFILE
-    FileAppend edStores.Value "`n", STOREFILE, "UTF-8"
-
+    SaveStores()
     ApplyPreset(ddSpeed.Value)
 
     running := true
@@ -258,8 +481,8 @@ StartRun(fromHotkey) {
     btnPause.Text := "⏸ 일시정지 (F4)"
 
     WinGetPos &bx, &by, &bw, &bh, "ahk_id " browserHwnd
-    Say("=== 시작 / 속도 " ddSpeed.Text " / 창 '" SubStr(WinGetTitle("ahk_id " browserHwnd), 1, 30) "' "
-      . bx "," by " " bw "x" bh " ===")
+    Say("=== " (mode = "run" ? "수집 시작" : "주소만 모으기") " / 스토어 " jobStores.Length "곳 / 속도 " ddSpeed.Text
+      . " / 창 '" SubStr(WinGetTitle("ahk_id " browserHwnd), 1, 30) "' " bx "," by " " bw "x" bh " ===")
 
     SetTimer RunAll, -50
 }
@@ -279,7 +502,7 @@ RequestStop() {
         return
     stopReq := true
     paused := false
-    Say("중단 요청 (지금 하던 상품까지 처리하고 멈춥니다)")
+    Say("중단 요청 (지금 하던 것까지 처리하고 멈춥니다. 진행 상황은 저장됩니다)")
 }
 
 ApplyPreset(n) {
@@ -308,14 +531,12 @@ Wait(ms) {
 }
 
 ; ==========================================================
-;  전체 흐름 : 스토어 → 주소 모으기 → 상품 수집
+;  전체 흐름 : 체크한 스토어마다  (필요하면) 주소 모으기 → 상품 수집
 ; ==========================================================
 RunAll() {
     global running
 
     try {
-        stores := ParseStores(edStores.Value)
-        harvested := LoadLines(HARVFILE, true)
         known := LoadLines(URLFILE, false)
 
         ; urls.txt 가 줄바꿈 없이 끝났으면 새 주소가 이어 붙지 않게 줄바꿈 추가
@@ -325,31 +546,43 @@ RunAll() {
                 FileAppend "`n", URLFILE, "UTF-8"
         }
 
-        ; 1) urls.txt 에 이미 남아 있는 상품부터
-        CollectPending("남은 상품")
-
-        ; 2) 스토어마다 : 주소 모으기 → 수집
-        for store in stores {
+        for store in jobStores {
             if !Gate()
                 break
-            if !harvested.Has(store) {
-                n := HarvestStore(store, known)
-                if (n < 0) {
-                    if !stopReq
-                        Say("[목록] " store " 주소 모으기 실패 → 다음 스토어로")
-                    continue
-                }
-                FileAppend store "`t" n "`t" FormatTime(A_Now, "yyyy-MM-dd HH:mm") "`n", HARVFILE, "UTF-8"
-                harvested[store] := true
+
+            ; 주소를 모아야 하는 경우 : 아직 주소가 없음 / 지난번에 모으다 중단됨 / "다시 모으기" 체크
+            v := StatOf(store)
+            need := false
+            if chkRe.Value
+                need := true
+            else if (v.total = 0)
+                need := true
+            else if (harv.Has(store) && harv[store].state = "partial")
+                need := true
+
+            if need {
+                HarvestStore(store, known)
+                note[store] := ""
+                UpdateRow(store)
+                if stopReq
+                    break
+            } else if (jobMode = "harvest") {
+                Say("[목록] " StoreName(store) " : 이미 모은 주소 " v.total "개 사용 (다시 모으려면 체크박스를 켜세요)")
             }
-            CollectPending(StoreName(store))
+
+            if (jobMode = "run")
+                CollectStore(store)
         }
     } catch as e {
         Say("오류 : " e.Message " (줄 " e.Line ")")
     }
 
     running := false
-    SetStage(stopReq ? "중단됨" : "완료")
+    for st in jobStores
+        note[st] := ""
+    RefreshStats()
+    UpdateAllRows()
+    SetStage(stopReq ? "중단됨 (다시 시작하면 이어서 합니다)" : "완료")
     txtItem.Text := ""
     Say("=== " (stopReq ? "중단" : "완료") " : 수집 " statDone " / 중복 " statDup " / 실패 " statFail
       . " / ARMED " statArmed " ===")
@@ -357,34 +590,41 @@ RunAll() {
         SoundBeep 880, 300
 }
 
-; urls.txt 에서 아직 안 한 상품을 모두 수집
-CollectPending(label) {
+; 한 스토어에서 아직 안 한 상품을 모두 수집
+CollectStore(store) {
     global statStart
 
-    LoadUrls()
-    if (urls.Length = 0)
+    LoadUrls(store)
+    if (urls.Length = 0) {
+        Say(StoreName(store) " : 남은 상품 없음")
         return
+    }
     if !statStart
         statStart := A_TickCount
-    Say("수집 시작 (" label ") : " urls.Length "개")
-    RunLoop(label)
+    Say("수집 시작 (" StoreName(store) ") : 남은 " urls.Length "개")
+    note[store] := "수집 중"
+    UpdateRow(store)
+    RunLoop(store)
+    note[store] := ""
+    UpdateRow(store)
 }
 
-; urls.txt 에서 done_urls.txt, fail_urls.txt 에 없는 주소만 urls 에 담는다
-LoadUrls() {
+; urls.txt 에서 이 스토어 주소 중 done_urls.txt, fail_urls.txt 에 없는 것만 urls 에 담는다
+LoadUrls(store) {
     global urls
 
     urls := []
     done := LoadLines(DONEFILE, false)
     fail := LoadLines(FAILFILE, false)
     seen := Map()
+    prefix := store "/products/"
 
     if !FileExist(URLFILE)
         return
 
     for line in StrSplit(FileRead(URLFILE, "UTF-8"), "`n", "`r") {
         line := Trim(line)
-        if !InStr(line, "/products/")
+        if (SubStr(line, 1, StrLen(prefix)) != prefix)
             continue
         if (seen.Has(line) || done.Has(line) || fail.Has(line))
             continue
@@ -435,9 +675,11 @@ StoreName(store) {
 ; ==========================================================
 ;  상품 수집 (v8 RunLoop)
 ; ==========================================================
-RunLoop(label) {
+RunLoop(store) {
     global statDone, statDup, statFail, statArmed, stopReq
 
+    label := StoreName(store)
+    v := StatOf(store)
     consec := 0
     rests := 0
     waitingFails := []      ; 연속 실패 중인 주소 (차단인지 그 상품 문제인지 아직 모름)
@@ -446,7 +688,7 @@ RunLoop(label) {
 
     while (i <= total) {
         if !Gate()
-            return
+            break
 
         UpdateUI(label, i, total)
         r := Collect(urls[i], i)
@@ -468,9 +710,12 @@ RunLoop(label) {
                 }
                 Say("=== 연속 " consec "회 실패. " REST_MIN "분 쉬고 같은 상품부터 재개 (" rests "/" MAX_RESTS ") ===")
                 SetStage("연속 실패 → " REST_MIN "분 휴식 (" rests "/" MAX_RESTS ")")
+                note[store] := "연속 실패 → 휴식 중"
+                UpdateRow(store)
                 SoundBeep 440, 300
                 if !Wait(REST_MIN * 60000)
                     return
+                note[store] := "수집 중"
                 ; 차단이었을 수 있으니 실패한 상품부터 다시
                 i -= consec - 1
                 statFail -= consec
@@ -480,8 +725,10 @@ RunLoop(label) {
             }
         } else {
             ; 성공이 나왔으니 앞선 실패는 그 상품 자체의 문제 → 실패 목록에 기록
-            for u in waitingFails
+            for u in waitingFails {
                 FileAppend u "`n", FAILFILE, "UTF-8"
+                v.fail++
+            }
             waitingFails := []
             consec := 0
             rests := 0
@@ -494,16 +741,23 @@ RunLoop(label) {
                     statArmed++
             }
             RecordDone(urls[i])
+            v.done++
         }
 
+        UpdateRow(store)
         i++
         UpdateUI(label, Min(i, total), total)
         if !Wait(Random(GAP_MIN, GAP_MAX))
-            return
+            break
     }
 
-    for u in waitingFails
-        FileAppend u "`n", FAILFILE, "UTF-8"
+    ; 끝까지 돌았을 때만 남은 실패를 확정 (중단이면 다음에 다시 시도)
+    if (i > total) {
+        for u in waitingFails {
+            FileAppend u "`n", FAILFILE, "UTF-8"
+            v.fail++
+        }
+    }
 }
 
 ; 반환값 : 0=실패 / 1=수집실행(ARMED 미확인) / 2=ARMED 확인 / 3=중복이라 건너뜀
@@ -683,22 +937,25 @@ WaitImage(file, timeout) {
 ;  스토어 전체 상품 주소 모으기
 ;   1) 스토어 페이지를 연다
 ;   2) 주소창에 javascript:<HARVEST_JS> 를 넣어 페이지 안에서 실행한다
-;      진행 상황은 탭 제목(HARVEST 12p / 960)에 표시된다
+;      진행 상황은 탭 제목(HARVEST 12p / 960)에 표시되고 스토어 목록의 "상태" 칸에 보인다
 ;   3) 제목이 HARVEST_DONE 이 되면 화면이 주소 목록으로 바뀌어 있으므로
 ;      전체 복사해서 urls.txt 에 추가한다
-;  새로 추가한 주소 수를 돌려준다. 실패하면 -1
+;   · 도중에 중단을 누르면 그때까지 모은 주소를 저장하고 "일부만 모음" 으로 기록한다
+;  성공하면 true
 ; ==========================================================
 HarvestStore(store, known) {
     SetStage("주소 모으는 중 : " StoreName(store))
     barProg.Value := 0
+    note[store] := "주소 모으는 중"
+    UpdateRow(store)
     Say("[목록] " store " 주소 모으기 시작")
 
     if !FocusBrowser()
-        return -1
+        return false
     if !GotoUrl(store)
-        return -1
+        return false
     if !Wait(LIST_WAIT)
-        return -1
+        return false
 
     ; ---- 스크립트 실행 ----
     ; 크롬은 붙여넣은 글자 맨 앞의 javascript: 를 지우므로 그 부분만 직접 입력한다
@@ -706,7 +963,7 @@ HarvestStore(store, known) {
     FocusBrowser()
     A_Clipboard := js
     if !ClipWait(2)
-        return -1
+        return false
     Send "^l"
     Sleep 300
     SendText "javascript:"
@@ -718,36 +975,58 @@ HarvestStore(store, known) {
     ; ---- 시작 확인 ----
     if !WaitTitle("HARVEST", 15000) {
         if stopReq
-            return -1
+            return false
         ; 자동 실행이 안 되면 사람이 콘솔에 붙여넣을 수 있게 한다
         A_Clipboard := js
         Say("[목록] 스크립트 자동 실행 실패")
         Say("→ 크롬에서 F12 > Console 에 Ctrl+V, Enter 를 해 주세요 (5분 대기)")
         SetStage("직접 실행 필요 : F12 > Console > Ctrl+V > Enter")
+        note[store] := "직접 실행 필요 (F12)"
+        UpdateRow(store)
         SoundBeep 660, 400
-        if !WaitTitle("HARVEST", 300000)
-            return -1
+        if !WaitTitle("HARVEST", 300000) {
+            Say("[목록] " StoreName(store) " : 스크립트가 실행되지 않아 건너뜁니다")
+            return false
+        }
         SetStage("주소 모으는 중 : " StoreName(store))
     }
 
     ; ---- 끝날 때까지 대기 ----
     endT := A_TickCount + HARVEST_MAX_MIN * 60000
+    stopSent := false
     loop {
-        if !Gate()
-            return -1
         title := WinGetTitle("ahk_id " browserHwnd)
         if InStr(title, "HARVEST_DONE")
             break
         if InStr(title, "HARVEST_FAIL") {
             Say("[목록] " store " : " title)
-            return -1
+            return false
         }
         if (A_TickCount > endT) {
-            Say("[목록] " store " : " HARVEST_MAX_MIN "분 안에 끝나지 않음")
-            return -1
+            Say("[목록] " store " : 제한 시간 안에 끝나지 않음")
+            return false
         }
-        if RegExMatch(title, "HARVEST[^-]*", &m)
-            txtItem.Text := Trim(m[0])
+
+        ; 중단 요청 : 페이지의 스크립트를 멈춰 그때까지 모은 주소를 받아 온다
+        if (stopReq && !stopSent) {
+            stopSent := true
+            endT := A_TickCount + 90000
+            Say("[목록] 중단 요청 → 지금까지 모은 주소를 저장합니다")
+            if FocusBrowser() {
+                Send "^l"
+                Sleep 300
+                SendText "javascript:window.stopHarvest()"
+                Sleep 200
+                Send "{Delete}"
+                Send "{Enter}"
+            }
+        }
+
+        if RegExMatch(title, "HARVEST\s+(\d+)p\s*/\s*(\d+)", &m) {
+            note[store] := "모으는 중 " m[1] "쪽 · " m[2] "개"
+            txtItem.Text := note[store]
+            UpdateRow(store)
+        }
         Sleep 500
     }
     Sleep 500
@@ -755,9 +1034,11 @@ HarvestStore(store, known) {
     ; ---- 결과 복사 (화면은 주소 목록 글자뿐이라 아무 데나 눌러도 안전) ----
     txt := ""
     loop 3 {
-        FocusBrowser()
-        WinGetPos &wx, &wy, &ww, &wh, "ahk_id " browserHwnd
-        Click wx + ww // 2, wy + wh // 2
+        if WinExist("ahk_id " browserHwnd)
+            WinActivate "ahk_id " browserHwnd
+        Sleep 300
+        pt := SafePoint()
+        Click pt[1], pt[2]
         Sleep 300
         A_Clipboard := ""
         Send "^a"
@@ -771,7 +1052,7 @@ HarvestStore(store, known) {
     }
     if (txt = "") {
         Say("[목록] " store " : 결과 복사 실패")
-        return -1
+        return false
     }
 
     added := 0
@@ -791,9 +1072,30 @@ HarvestStore(store, known) {
     if (buf != "")
         FileAppend buf, URLFILE, "UTF-8"
 
-    Say("[목록] " StoreName(store) " 완료 : 상품 " found "개, 신규 " added "개")
+    partial := InStr(txt, "user-stop") ? true : false
+    v := StatOf(store)
+    v.total += added
+    if (found > 0 || partial) {
+        harv[store] := {n: found, date: FormatTime(A_Now, "yyyy-MM-dd HH:mm"), state: partial ? "partial" : "done"}
+        SaveHarv()
+    }
+
+    Say("[목록] " StoreName(store) (partial ? " 중단 (일부 저장)" : " 완료") " : 상품 " found "개, 신규 " added "개")
     txtItem.Text := ""
-    return found ? added : -1
+    return found > 0
+}
+
+; 크롬 창 안에서 조작 창에 가려지지 않은 지점
+SafePoint() {
+    WinGetPos &wx, &wy, &ww, &wh, "ahk_id " browserHwnd
+    ui.GetPos(&gx, &gy, &gw, &gh)
+    for c in [[0.5, 0.5], [0.75, 0.5], [0.5, 0.8], [0.25, 0.7], [0.8, 0.3]] {
+        x := wx + Round(ww * c[1])
+        y := wy + Round(wh * c[2])
+        if !(x >= gx && x <= gx + gw && y >= gy && y <= gy + gh)
+            return [x, y]
+    }
+    return [wx + ww // 2, wy + wh // 2]
 }
 
 ; 크롬 창 제목에 글자가 나타날 때까지 기다린다
