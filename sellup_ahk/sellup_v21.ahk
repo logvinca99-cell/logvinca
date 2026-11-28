@@ -8,7 +8,7 @@ SetKeyDelay 40, 40
 SetMouseDelay 60
 
 ; ==========================================================
-;  셀업(SmartSellUp) 상품 자동 수집 v20  (v8 기반)
+;  셀업(SmartSellUp) 상품 자동 수집 v21  (v8 기반)
 ;  ---------------------------------------------------------
 ;  수집 동작(주소 이동 → CAPTURE 찾기 → 대기 → 고정 오프셋 클릭 →
 ;  중복팝업 No)은 v8 과 같은 순서, 같은 방식입니다.
@@ -20,7 +20,8 @@ SetMouseDelay 60
 ;                   (이미 모은 스토어는 다시 모으지 않고 바로 이어서 수집)
 ;   · 주소만 모으기 : 수집 없이 주소만 모음
 ;   · "이미 모은 스토어도 주소 다시 모으기" 를 켜면 신상품을 추가로 모음
-;   · 속도 3단계 : "안전" 은 v8 과 똑같은 대기시간
+;   · 속도 4단계 : "안전" 은 v8 과 똑같은 대기시간, "최고속" 은 ARMED 확인 생략
+;   · 속도 줄 끝의 [이동 · 대기 · 클릭후] 는 상품 하나에서 각 구간에 걸린 평균 초
 ;
 ;  파일 (같은 폴더)
 ;   - img\capture.png , img\armed.png   (v8 에서 쓰던 그대로)
@@ -56,15 +57,26 @@ MAX_CONSEC := 3       ; 연속 실패 몇 회에 쉬어갈지
 
 ; ---------- 속도 단계 ----------
 ; 조작 창의 "속도" 에서 고릅니다. 숫자를 바꾸면 그 단계의 속도가 바뀝니다.
-;            상품간격(최소,최대)  ARMED후  감시최대  클릭전   주소입력 대기
-;                                  대기              대기     (^l, ^a, ^v 뒤)
+;   1,2 상품간격(최소,최대)   3 ARMED 본 뒤 대기   4 클릭 후 감시 최대
+;   5 클릭 전 대기            6,7,8 주소 입력 대기 (^l, ^a, ^v 뒤)
+;   9 키 입력 간격            10 ARMED 이미지 확인 (1=함, 0=안 함)
+; ARMED 확인을 끄면 클릭 후 4번 시간만큼 중복 팝업만 살피고 바로 넘어갑니다.
 PRESETS := [
-    [3000, 6000, 1500, 8000, 1200, 300, 150, 300],   ; 1 안전 = v8 그대로
-    [1000, 2000, 1000, 4000, 1200, 150,  80, 150],   ; 2 보통
-    [ 300,  800,  700, 2500, 1000, 120,  60, 120]    ; 3 빠름
+    [3000, 6000, 1500, 8000, 1200, 300, 150, 300, 40, 1],   ; 1 안전 = v8 그대로
+    [1000, 2000, 1000, 4000, 1200, 150,  80, 150, 40, 1],   ; 2 보통
+    [ 300,  800,  700, 2500, 1000, 120,  60, 120, 25, 1],   ; 3 빠름
+    [   0,  200,  600,  700,  900,  60,  30,  60, 10, 0]    ; 4 최고속
 ]
 GAP_MIN := 0, GAP_MAX := 0, ARMED_EXTRA := 0, WATCH_MS := 0, SETTLE := 0
-NAV1 := 0, NAV2 := 0, NAV3 := 0
+NAV1 := 0, NAV2 := 0, NAV3 := 0, KEYD := 40, USE_ARMED := 1
+
+; ---------- 이미지 탐색 범위 ----------
+; 버튼을 한 번 찾은 뒤에는 그 주변만 찾습니다 (창 전체를 훑는 것보다 훨씬 빠름).
+; 주변에서 못 찾으면 창 전체를 다시 찾습니다.
+USE_REGION := true
+REGION_PAD := 160
+lastX := 0
+lastY := 0
 
 ; ---------- 연속 실패 시 휴식 ----------
 REST_MIN  := 10       ; 쉬는 시간(분)
@@ -160,11 +172,12 @@ statDone := 0
 statDup := 0
 statFail := 0
 statArmed := 0
+phN := 0, phNav := 0, phLoad := 0, phWatch := 0   ; 구간별 소요시간 합계 (속도 진단용)
 
 ; ==========================================================
 ;  조작 창
 ; ==========================================================
-ui := Gui("+AlwaysOnTop", "셀업 자동 수집 v20")
+ui := Gui("+AlwaysOnTop", "셀업 자동 수집 v21")
 ui.SetFont("s9", "Malgun Gothic")
 ui.MarginX := 10
 ui.MarginY := 8
@@ -185,7 +198,7 @@ btnDel := ui.Add("Button", "x+6 w74 h38", "선택 삭제")
 btnAll := ui.Add("Button", "x+6 w74 h38", "전체 체크")
 
 ui.Add("Text", "xs y+10", "속도")
-ddSpeed := ui.Add("DropDownList", "x+8 yp-3 w150 Choose2", ["안전 (v8 과 동일)", "보통", "빠름"])
+ddSpeed := ui.Add("DropDownList", "x+8 yp-3 w150 Choose3", ["안전 (v8 과 동일)", "보통", "빠름", "최고속"])
 chkRe   := ui.Add("Checkbox", "x+14 yp+3", "이미 모은 스토어도 주소 다시 모으기 (신상품 추가)")
 
 btnStart := ui.Add("Button", "xs y+10 w150 h32", "▶ 수집 시작 (F1)")
@@ -227,6 +240,7 @@ F3:: {
     global browserHwnd
     browserHwnd := WinGetID("A")
     ApplyPreset(ddSpeed.Value)
+    SetKeyDelay KEYD, KEYD
 
     pos := FindImage("capture.png")
     if !pos {
@@ -506,10 +520,11 @@ RequestStop() {
 }
 
 ApplyPreset(n) {
-    global GAP_MIN, GAP_MAX, ARMED_EXTRA, WATCH_MS, SETTLE, NAV1, NAV2, NAV3
+    global GAP_MIN, GAP_MAX, ARMED_EXTRA, WATCH_MS, SETTLE, NAV1, NAV2, NAV3, KEYD, USE_ARMED
     p := PRESETS[n]
     GAP_MIN := p[1], GAP_MAX := p[2], ARMED_EXTRA := p[3], WATCH_MS := p[4]
     SETTLE := p[5], NAV1 := p[6], NAV2 := p[7], NAV3 := p[8]
+    KEYD := p[9], USE_ARMED := p[10]
 }
 
 ; 일시정지 중이면 풀릴 때까지 기다린다. 중단 요청이면 false
@@ -534,7 +549,10 @@ Wait(ms) {
 ;  전체 흐름 : 체크한 스토어마다  (필요하면) 주소 모으기 → 상품 수집
 ; ==========================================================
 RunAll() {
-    global running
+    global running, phN, phNav, phLoad, phWatch
+
+    SetKeyDelay KEYD, KEYD
+    phN := 0, phNav := 0, phLoad := 0, phWatch := 0
 
     try {
         known := LoadLines(URLFILE, false)
@@ -762,6 +780,8 @@ RunLoop(store) {
 
 ; 반환값 : 0=실패 / 1=수집실행(ARMED 미확인) / 2=ARMED 확인 / 3=중복이라 건너뜀
 Collect(url, idx) {
+    global phN, phNav, phLoad, phWatch
+
     loop 3 {
         ; 늦게 뜬 중복 팝업이 남아 있으면 먼저 닫는다 (안 닫으면 이후 수집이 전부 무시됨)
         HandleDupPopup(idx)
@@ -769,8 +789,10 @@ Collect(url, idx) {
         if !FocusBrowser()
             return 0
 
+        t0 := A_TickCount
         if !GotoUrl(url)
             return 0
+        t1 := A_TickCount
 
         if !WaitImage("capture.png", LOAD_WAIT) {
             Say(idx " [경고] 로딩 확인 실패 → 재시도")
@@ -779,6 +801,10 @@ Collect(url, idx) {
         }
         Sleep SETTLE
 
+        ; 앞 상품의 중복 팝업이 이제야 떴으면 닫고 진행
+        if HandleDupPopup(idx)
+            FocusBrowser()
+
         pos := FindImage("capture.png")
         if !pos {
             Say(idx " [경고] 클릭 직전 버튼 소실 → 재시도")
@@ -786,9 +812,15 @@ Collect(url, idx) {
         }
 
         FocusBrowser()
+        t2 := A_TickCount
         DoCapture(CenterOf(pos, "capture.png"))
+        r := WatchAfterCapture(idx)
 
-        return WatchAfterCapture(idx)
+        phN++
+        phNav += t1 - t0
+        phLoad += t2 - t1
+        phWatch += A_TickCount - t2
+        return r
     }
     return 0
 }
@@ -814,14 +846,19 @@ WatchAfterCapture(idx) {
             endT := A_TickCount + 3000
             continue
         }
-        if !seen && FindImage("armed.png") {
+        if !USE_ARMED {
+            ; ARMED 확인 안 함 : 중복 팝업만 짧게 살핀다
+            Sleep 50
+            continue
+        }
+        if !seen && FindImage("armed.png", false) {
             seen := true
             endT := A_TickCount + ARMED_EXTRA
         }
         Sleep POLL_MS
     }
 
-    if !seen
+    if (USE_ARMED && !seen)
         Say(idx " [정보] ARMED 미포착")
 
     return seen ? 2 : 1
@@ -904,7 +941,10 @@ FocusBrowser() {
     return true
 }
 
-FindImage(file) {
+; allowFull=false 면 주변에서 못 찾았을 때 창 전체를 다시 찾지 않는다 (ARMED 처럼 없는 게 보통인 경우)
+FindImage(file, allowFull := true) {
+    global lastX, lastY
+
     if browserHwnd && WinExist("ahk_id " browserHwnd) {
         WinGetPos &x, &y, &w, &h, "ahk_id " browserHwnd
         x1 := x, y1 := y, x2 := x + w, y2 := y + h
@@ -914,8 +954,23 @@ FindImage(file) {
     }
 
     try {
-        if ImageSearch(&fx, &fy, x1, y1, x2, y2, "*" TOL " " IMGDIR file)
+        ; 1) 지난번에 찾은 위치 주변
+        if (USE_REGION && (lastX || lastY)) {
+            rx1 := Max(x1, lastX - REGION_PAD), ry1 := Max(y1, lastY - REGION_PAD)
+            rx2 := Min(x2, lastX + REGION_PAD * 2), ry2 := Min(y2, lastY + REGION_PAD)
+            if ImageSearch(&fx, &fy, rx1, ry1, rx2, ry2, "*" TOL " " IMGDIR file)
+                return [fx, fy]
+            if !allowFull
+                return 0
+        }
+        ; 2) 창 전체
+        if ImageSearch(&fx, &fy, x1, y1, x2, y2, "*" TOL " " IMGDIR file) {
+            if InStr(file, "capture") {
+                lastX := fx
+                lastY := fy
+            }
             return [fx, fy]
+        }
     } catch as e {
         MsgBox("이미지 파일 오류: " file "`n" e.Message "`n`nimg 폴더에 capture.png, armed.png 가 있는지 확인하세요.", , 262144)
         ExitApp
@@ -1128,8 +1183,12 @@ UpdateUI(label, i, total) {
     if (statStart && processed > 0) {
         perItem := (A_TickCount - statStart) / 1000 / processed
         etaMin := Round((total - i) * perItem / 60)
-        txtSpeed.Text := "개당 " Round(perItem, 1) "초 · 시간당 " Round(3600 / perItem) "개 · 남은 시간 "
+        t := "개당 " Round(perItem, 1) "초 · 시간당 " Round(3600 / perItem) "개 · 남은 시간 "
             . (etaMin >= 60 ? Round(etaMin / 60, 1) "시간" : etaMin "분")
+        if (phN > 0)
+            t .= "   [이동 " Round(phNav / phN / 1000, 1) " · 대기 " Round(phLoad / phN / 1000, 1)
+               . " · 클릭후 " Round(phWatch / phN / 1000, 1) "]"
+        txtSpeed.Text := t
     }
 }
 
